@@ -5,8 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>01 · Learning from Data — AI Encyclopedia</title>
 <meta name="description" content="What machine learning actually is: functions with knobs, loss as disagreement, the train/test split, and the predict–measure–adjust loop behind every system in this encyclopedia." />
+<link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
+<meta name="theme-color" content="#000000" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-<link rel="stylesheet" href="../assets/css/manual.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=3" />
 </head>
 <body>
 
@@ -70,6 +72,13 @@
         <div class="eq"><span class="eq-tag">EQ M1.1 — A FUNCTION WITH TWO KNOBS</span>
         $$ h_{w,b}(x) \;=\; w\,x + b $$
         <div class="eq-note">A straight line. \(w\) is the slope — how much the prediction rises per unit of input — and \(b\) is the intercept, the prediction at \(x = 0\). The subscript records the central fact: <b>pick different numbers \(w, b\) and you get a different function</b>. Learning means searching the space of knob settings for the function that fits. Parameters are written collectively as \(\theta\) (theta), so you will see \(h_\theta\) everywhere; here \(\theta = (w, b)\).</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><span>Set the knobs: \(w = 2\), \(b = 1\). The model is now the concrete function \(h(x) = 2x + 1\).</span></div>
+          <div class="x-step"><span class="x-n">02</span><span>Feed it an input: \(h(3) = 2\cdot 3 + 1 = \) <b>7</b>.</span></div>
+          <div class="x-step"><span class="x-n">03</span><span>Now turn the knobs to \(w = -1\), \(b = 5\): same formula, different function. \(h(3) = -1\cdot 3 + 5 = \) <b>2</b>.</span></div>
+          <div class="x-step"><span class="x-n">04</span><span>Same input, two answers — because the pair \((w, b)\) <b>is</b> the model. Learning is choosing between these two (and every other) knob setting.</span></div>
+          <span class="x-result">RESULT: h(3) = 7 under θ = (2, 1) · h(3) = 2 under θ = (−1, 5)</span>
+        </div></div>
         </div>
 
         <p>Hold onto the geometry of that sentence: two knobs define a two-dimensional space of candidate lines, and "learning" is a search through that space. Every model in this encyclopedia is the same object scaled up. A frontier language model is a function with roughly \(10^{12}\) knobs instead of two — harder to search, impossible to visualize, but not a different kind of thing. The vocabulary you are acquiring on this page transfers without modification.</p>
@@ -84,6 +93,18 @@
         <div class="eq"><span class="eq-tag">EQ M1.2 — MEAN SQUARED ERROR</span>
         $$ \mathcal{L}(w, b) \;=\; \frac{1}{n} \sum_{i=1}^{n} \big( h_{w,b}(x_i) - y_i \big)^{2} $$
         <div class="eq-note">\(n\) examples; the \(\Sigma\) just means "add them all up". Squaring does three jobs at once: it kills the sign (overshoot and undershoot both count), it punishes large misses far more than small ones (a residual of 4 costs 16; two residuals of 2 cost 8), and it leaves a smooth bowl-shaped surface with no kinks — which is what makes the automatic tuning of Chapter 02 possible. <b>The loss is a function of the knobs, not of the data</b>: the data is fixed; \(w\) and \(b\) move; \(\mathcal{L}\) reports disagreement at every setting.</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><span>Data: three points \((1,3)\), \((2,5)\), \((3,4)\). Knobs: \(w = 1\), \(b = 2\), so \(h(x) = x + 2\).</span></div>
+          <div class="x-step"><span class="x-n">02</span><span>Predict: \(h(1)=3\), \(h(2)=4\), \(h(3)=5\). Residuals (prediction − truth): \(3-3 = 0\), \(4-5 = -1\), \(5-4 = +1\).</span></div>
+          <div class="x-step"><span class="x-n">03</span><span>Square each: \(0^2 = 0\), \((-1)^2 = 1\), \(1^2 = 1\). The signs are gone; both misses cost the same.</span></div>
+          <div class="x-step"><span class="x-n">04</span><span>Average over \(n = 3\): \((0 + 1 + 1)/3 = 2/3 \approx 0.67\).</span></div>
+          <span class="x-result">RESULT: MSE = 0.67</span>
+          <div class="eq-try">
+            <div class="ctl"><label>SLOPE w <output id="lfdxq-w-out">1.00</output></label><input type="range" id="lfdxq-w" min="0" max="3" step="0.05" value="1"/></div>
+            <div class="ctl"><label>INTERCEPT b <output id="lfdxq-b-out">2.0</output></label><input type="range" id="lfdxq-b" min="-2" max="4" step="0.1" value="2"/></div>
+            <div class="try-out" id="lfdxq-out">h(x) = 1.00x + 2.0 → MSE = 0.67</div>
+          </div>
+        </div></div>
         </div>
 
         <p>Now feel it in your hands. Below are 25 measurements from a noisy linear process. Your job is the machine's job: turn the two knobs and drive the disagreement down. The red stalks are the residuals — the exact quantities EQ M1.2 squares and averages.</p>
@@ -145,6 +166,13 @@ plot_scatter(x, y)
         <div class="eq"><span class="eq-tag">EQ M1.3 — EMPIRICAL RISK STANDS IN FOR TRUE RISK</span>
         $$ \hat{R}(h) \;=\; \frac{1}{n} \sum_{i=1}^{n} \ell\big(h(x_i),\, y_i\big) \qquad\text{approximates}\qquad R(h) \;=\; \mathbb{E}_{(x,y)\sim\mathcal{D}}\Big[\, \ell\big(h(x),\, y\big) \Big] $$
         <div class="eq-note">\(\ell\) is any per-example loss (squared error, here). \(\mathcal{D}\) is the unseen process that generates the data — houses being sold, emails being sent — and \(\mathbb{E}\) means "the average over everything that process will ever produce". We can never compute \(R\), so we minimize \(\hat{R}\) on a sample and <em>hope the sample speaks for the population</em>. <b>Training loss measures fit. Test loss estimates risk. Only the second predicts the future.</b> The gap between them is overfitting, made visible.</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><span>Let \(\ell\) be squared error. A model scores four <b>training</b> examples with per-example losses 1.0, 0.5, 0.3, 0.2.</span></div>
+          <div class="x-step"><span class="x-n">02</span><span>Empirical risk: \(\hat{R} = (1.0 + 0.5 + 0.3 + 0.2)/4 = 2.0/4 = \) <b>0.50</b>.</span></div>
+          <div class="x-step"><span class="x-n">03</span><span>True risk \(R\) averages over everything \(\mathcal{D}\) will ever produce — uncomputable. The four-sample average is our stand-in.</span></div>
+          <div class="x-step"><span class="x-n">04</span><span>A held-out sample of four (never trained on) gives losses 1.2, 0.9, 1.1, 0.8 → test estimate \(4.0/4 = \) <b>1.00</b>. The gap \(1.00 - 0.50 = 0.50\) is the overfitting EQ M1.3 warned about.</span></div>
+          <span class="x-result">RESULT: train R̂ = 0.50 · test estimate of R = 1.00 · gap = 0.50</span>
+        </div></div>
         </div>
 
         <p>To see the gap open wide, give a model too much flexibility. The instrument below fits the same 25 points two ways: a straight line (two knobs), and a degree-9 polynomial (ten knobs — enough to snake through nearly every training point individually). Both are fitted to the same 18 training points; 7 points are held out. Watch what each extra knob buys, and what it costs.</p>
@@ -491,6 +519,27 @@ plot_scatter(x, y, held_out)            # blue = the 3 points the fit never saw
       if (renderSplit) renderSplit();
     }, 120);
   });
+})();
+</script>
+<script>
+(function () {
+  "use strict";
+  /* EQ M1.2 mini-evaluator — MSE on three fixed points */
+  var w = document.getElementById("lfdxq-w"), b = document.getElementById("lfdxq-b");
+  if (!w || !b) return;
+  var wo = document.getElementById("lfdxq-w-out"), bo = document.getElementById("lfdxq-b-out");
+  var out = document.getElementById("lfdxq-out");
+  var xs = [1, 2, 3], ys = [3, 5, 4];
+  function go() {
+    var W = parseFloat(w.value), B = parseFloat(b.value), s = 0, i, r;
+    for (i = 0; i < 3; i++) { r = W * xs[i] + B - ys[i]; s += r * r; }
+    if (wo) wo.textContent = W.toFixed(2);
+    if (bo) bo.textContent = B.toFixed(1);
+    if (out) out.textContent = "h(x) = " + W.toFixed(2) + "x + " + B.toFixed(1) + " → MSE = " + (s / 3).toFixed(2);
+  }
+  w.addEventListener("input", go);
+  b.addEventListener("input", go);
+  go();
 })();
 </script>
 </body>

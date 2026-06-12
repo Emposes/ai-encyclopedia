@@ -5,8 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>08 · Backpropagation &amp; Optimization — AI Encyclopedia</title>
 <meta name="description" content="Backpropagation demystified: the chain rule on a computational graph, reverse-mode autodiff, SGD, momentum and Adam — with a steppable graph, a live optimizer race, and gradients you compute by hand in the page." />
+<link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
+<meta name="theme-color" content="#000000" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-<link rel="stylesheet" href="../assets/css/manual.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=3" />
 </head>
 <body>
 
@@ -61,6 +63,18 @@
         <div class="eq"><span class="eq-tag">EQ M8.1 — THE CHAIN RULE, GRAPH FORM</span>
         $$ \frac{\partial L}{\partial x} = \frac{\partial L}{\partial y}\,\frac{\partial y}{\partial x} \qquad\Longrightarrow\qquad \frac{\partial L}{\partial v} \;=\; \sum_{c \,\in\, \mathrm{children}(v)} \frac{\partial L}{\partial c}\,\frac{\partial c}{\partial v} $$
         <div class="eq-note">Left: the one-step rule — blame flowing into \(x\) is blame at \(y\) times the local edge derivative. Right: the same rule on a graph — a node's gradient is the <b>sum over its outgoing edges of (downstream gradient × local derivative)</b>. Multiply along paths, add across paths. Process nodes from the loss backward and every downstream gradient is already in hand when you need it: <b>each edge is touched exactly once</b>. That single scheduling decision is the entire difference between exponential and linear cost.</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><div>Instrument M8.1's preset A: \(x = 2\), \(w = 0.5\), \(b = -0.5\), \(y = 1\). Forward: \(u = wx = 1.0\), \(z = u + b = 0.5\), \(a = \sigma(0.5) = 0.6225\), \(L = \tfrac{1}{2}(0.6225 - 1)^2 = 0.0713\).</div></div>
+          <div class="x-step"><span class="x-n">02</span><div>Backward, starting at \(\partial L/\partial L = 1\): \(\partial L/\partial a = a - y = -0.3775\).</div></div>
+          <div class="x-step"><span class="x-n">03</span><div>Through the sigmoid edge: \(\partial a/\partial z = a(1-a) = 0.6225 \times 0.3775 = 0.2350\), so \(\partial L/\partial z = -0.3775 \times 0.2350 = -0.0887\).</div></div>
+          <div class="x-step"><span class="x-n">04</span><div>Split at the two parents: \(\partial L/\partial w = -0.0887 \times x = -0.1774\); \(\partial L/\partial b = -0.0887 \times 1 = -0.0887\). Every edge touched exactly once.</div></div>
+          <div class="x-step"><span class="x-n">05</span><div>Both gradients are negative, so the update pushes \(w\) and \(b\) up — \(a\) rises toward \(y = 1\). Drag \(\eta\) below and watch one SGD step pay off.</div></div>
+          <span class="x-result">RESULT: ∂L/∂w = −0.1774 · ∂L/∂b = −0.0887</span>
+          <div class="eq-try">
+            <div class="ctl"><label>LEARNING RATE η <output id="bpxq-eta-out">1.0</output></label><input type="range" id="bpxq-eta" min="0" max="5" step="0.1" value="1"/></div>
+            <div class="try-out" id="bpxq-step-out">—</div>
+          </div>
+        </div></div>
         </div>
 
         <p>Walk it on the smallest model that exercises every move — one weight, one bias, a sigmoid, a squared loss: \( L = \tfrac{1}{2}(\sigma(w x + b) - y)^2 \). The forward pass fills node values left to right <em>and records each edge's local derivative as it goes</em>. The backward pass then starts from \(\partial L / \partial L = 1\) and multiplies its way left, one edge at a time. Step both directions yourself:</p>
@@ -154,6 +168,13 @@
         <div class="eq"><span class="eq-tag">EQ M8.2 — OUTPUT-LAYER GRADIENT</span>
         $$ \delta_2 \;\equiv\; \frac{\partial L}{\partial z_2} \;=\; \hat{y} - y, \qquad\quad \frac{\partial L}{\partial W_2} = \delta_2\, h^{\top}, \qquad \frac{\partial L}{\partial b_2} = \delta_2 $$
         <div class="eq-note">The \(\sigma'\) from the activation and the \(1/\hat{y}(1-\hat{y})\) from the cross-entropy cancel exactly — the same cancellation that made logistic regression's gradient clean in Chapter 03, and the reason this loss–activation pairing is universal. <b>Prediction minus target: the error itself is the gradient signal.</b> A weight's gradient is then (its layer's δ) × (the activation it multiplied) — a weight that fed on a zero activation gets zero blame, which is exactly fair.</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><div>Output \(\hat{y} = 0.8\), target \(y = 1\): \(\delta_2 = \hat{y} - y = -0.2\). No \(\sigma'\), no log derivatives — they cancelled.</div></div>
+          <div class="x-step"><span class="x-n">02</span><div>Hidden activations this step: \(h = (0.5,\, 2.0,\, 0.0)\).</div></div>
+          <div class="x-step"><span class="x-n">03</span><div>\(\partial L/\partial W_2 = \delta_2 h^\top = (-0.2 \times 0.5,\; -0.2 \times 2.0,\; -0.2 \times 0) = (-0.1,\, -0.4,\, 0)\); \(\partial L/\partial b_2 = \delta_2 = -0.2\).</div></div>
+          <div class="x-step"><span class="x-n">04</span><div>Read the fairness: the unit that shouted (\(h = 2.0\)) gets 4× the blame of the quiet one (\(0.5\)); the silent unit gets none. Credit assignment is literally proportional to participation.</div></div>
+          <span class="x-result">RESULT: δ₂ = −0.2 · ∂L/∂W₂ = (−0.1, −0.4, 0)</span>
+        </div></div>
         </div>
 
         <div class="eq"><span class="eq-tag">EQ M8.3 — HIDDEN-LAYER GRADIENT: THE BACKWARD PRODUCT</span>
@@ -272,6 +293,17 @@ print(f"\ncost: backprop = 2 passes total; numerical = {2*12} passes for 12 para
         <div class="eq"><span class="eq-tag">EQ M8.5 — MOMENTUM (HEAVY BALL)</span>
         $$ v_t \;=\; \beta\, v_{t-1} + \hat{g}_t, \qquad\quad \theta_{t+1} \;=\; \theta_t - \eta\, v_t $$
         <div class="eq-note">\(v\) remembers roughly the last \(1/(1-\beta)\) gradients — ten, at the standard \(\beta = 0.9\). Across the ravine, gradients alternate sign and <b>cancel in the average</b>; along the valley floor they agree and <b>accumulate, up to a \(1/(1-\beta)\) ≈ 10× effective speedup</b>. The physics name is honest: \(v\) is velocity, \(\beta\) is friction, and a rolling ball coasts through small bumps and minor noise that stop a memoryless walker cold.</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><div>\(\beta = 0.9\), valley floor — every gradient is \(+1\): \(v_1 = 1\), \(v_2 = 0.9 + 1 = 1.9\), \(v_3 = 0.9 \times 1.9 + 1 = 2.71\), \(v_4 = 3.44\), … \(\rightarrow v_\infty = 1/(1 - 0.9) = 10\). Agreement compounds 10×.</div></div>
+          <div class="x-step"><span class="x-n">02</span><div>Across the ravine gradients alternate \(+1, -1\): \(v_1 = 1\), \(v_2 = 0.9 - 1 = -0.1\), \(v_3 = 0.91\), \(v_4 = -0.181\), … settling at amplitude \(1/(1 + 0.9) = 0.53\).</div></div>
+          <div class="x-step"><span class="x-n">03</span><div>Same gradient magnitude, a 19× different response: momentum is a frequency filter — steady direction amplified, oscillation damped.</div></div>
+          <div class="x-step"><span class="x-n">04</span><div>\(\beta\) also sets memory: roughly the last \(1/(1-\beta)\) gradients matter — 10 at 0.9, 100 at 0.99. Hundred-step memory is also why high \(\beta\) overshoots. Drag it below.</div></div>
+          <span class="x-result">RESULT: ALONG VALLEY ×10 · ACROSS RAVINE ×0.53</span>
+          <div class="eq-try">
+            <div class="ctl"><label>FRICTION β <output id="bpxq-beta-out">0.90</output></label><input type="range" id="bpxq-beta" min="0.5" max="0.99" step="0.01" value="0.9"/></div>
+            <div class="try-out" id="bpxq-mom-out">—</div>
+          </div>
+        </div></div>
         </div>
 
         <p><strong>Adam</strong> keeps momentum's first moment and adds a second: a running average of each coordinate's <em>squared</em> gradient, used to divide the step — so every parameter gets an automatically calibrated per-coordinate learning rate, and rarely-updated or small-gradient directions are not starved. The full update, bias corrections and the decoupled weight decay that makes it <strong>AdamW</strong>, is Vol II · EQ 4.3 — we will not re-derive it here. The standings in practice:</p>
@@ -603,6 +635,51 @@ print(f"\ncost: backprop = 2 passes total; numerical = {2*12} passes for 12 para
     reset();
     setTimeout(draw, 350);  /* re-measure once layout settles */
     window.addEventListener("resize", draw);
+  })();
+})();
+</script>
+<script>
+/* eq-x mini-evaluators — EQ M8.1 and EQ M8.5 */
+(function () {
+  "use strict";
+  /* EQ M8.1 — one SGD step on preset A, loss recomputed live */
+  (function () {
+    var etaIn = document.getElementById("bpxq-eta");
+    if (!etaIn) return;
+    var etaOut = document.getElementById("bpxq-eta-out"), out = document.getElementById("bpxq-step-out");
+    var X = 2, W = 0.5, B = -0.5, Y = 1;
+    function sig(z) { return 1 / (1 + Math.exp(-z)); }
+    /* gradients at the starting point — the worked example's numbers */
+    var a0 = sig(W * X + B);                  /* 0.6225 */
+    var L0 = 0.5 * (a0 - Y) * (a0 - Y);       /* 0.0713 */
+    var dz = (a0 - Y) * a0 * (1 - a0);        /* -0.0887 */
+    var gw = dz * X, gb = dz;                 /* -0.1774, -0.0887 */
+    function render() {
+      var eta = parseFloat(etaIn.value);
+      etaOut.textContent = eta.toFixed(1);
+      var w2 = W - eta * gw, b2 = B - eta * gb;
+      var a2 = sig(w2 * X + b2);
+      var L2 = 0.5 * (a2 - Y) * (a2 - Y);
+      out.textContent = "w′ = " + w2.toFixed(3) + " · b′ = " + b2.toFixed(3) +
+        " · L: " + L0.toFixed(4) + " → " + L2.toFixed(4);
+    }
+    etaIn.addEventListener("input", render);
+    render();
+  })();
+  /* EQ M8.5 — momentum gain along vs across the valley */
+  (function () {
+    var bIn = document.getElementById("bpxq-beta");
+    if (!bIn) return;
+    var bOut = document.getElementById("bpxq-beta-out"), out = document.getElementById("bpxq-mom-out");
+    function render() {
+      var b = parseFloat(bIn.value);
+      bOut.textContent = b.toFixed(2);
+      var agree = 1 / (1 - b), fight = 1 / (1 + b);
+      out.textContent = "agree ×" + agree.toFixed(1) + " · fight ×" + fight.toFixed(2) +
+        " · memory ≈ " + Math.round(agree) + " steps";
+    }
+    bIn.addEventListener("input", render);
+    render();
   })();
 })();
 </script>

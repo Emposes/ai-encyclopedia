@@ -5,8 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>07 · Neural Networks: The MLP — AI Encyclopedia</title>
 <meta name="description" content="Stack linear maps with nonlinear bends and you can fit anything: the perceptron's limit, the MLP, activation functions, universal approximation — and a real neural network you train in the page." />
+<link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
+<meta name="theme-color" content="#000000" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-<link rel="stylesheet" href="../assets/css/manual.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=3" />
 </head>
 <body>
 
@@ -76,6 +78,18 @@
         <div class="eq"><span class="eq-tag">EQ M7.1 — THE TWO-LAYER MLP</span>
         $$ h = \varphi\!\big( W_1 x + b_1 \big), \qquad \hat{y} = W_2\, h + b_2, \qquad W_1 \in \mathbb{R}^{d_h \times d_{\text{in}}},\; W_2 \in \mathbb{R}^{d_{\text{out}} \times d_h} $$
         <div class="eq-note">Each row of \(W_1\) defines one hyperplane; hidden unit \(h_j = \varphi(w_j^\top x + b_j)\) is a squashed signed distance to it — a soft linear feature detector. The output layer is then an ordinary linear model <em>in the feature space the network chose for itself</em>. The bend is load-bearing: <b>without \(\varphi\), the stack collapses — \(W_2(W_1 x + b_1) + b_2\) is just another linear model</b>, no matter how many layers you pile up. We write a network's sizes as d<sub>in</sub>-d<sub>h</sub>-d<sub>out</sub>: the instrument below trains a 2-8-1.</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><div>A hand-set 2-2-1 ReLU net (the working core of §7.2's Python cell): both rows of \(W_1\) are \((1, 1)\), \(b_1 = (0, -1)\), \(W_2 = (1, -2)\), \(b_2 = 0\). So \(h_1 = \mathrm{ReLU}(x_1 + x_2)\), \(h_2 = \mathrm{ReLU}(x_1 + x_2 - 1)\), \(\hat{y} = h_1 - 2h_2\).</div></div>
+          <div class="x-step"><span class="x-n">02</span><div>\(x = (1, 0)\): \(h_1 = \mathrm{ReLU}(1) = 1\), \(h_2 = \mathrm{ReLU}(0) = 0\), \(\hat{y} = 1 - 0 = 1\). ✓</div></div>
+          <div class="x-step"><span class="x-n">03</span><div>\(x = (1, 1)\): \(h_1 = \mathrm{ReLU}(2) = 2\), \(h_2 = \mathrm{ReLU}(1) = 1\), \(\hat{y} = 2 - 2 = 0\). ✓ The hinge in \(h_2\) — silent until \(x_1 + x_2\) exceeds 1 — is what notices "both on".</div></div>
+          <div class="x-step"><span class="x-n">04</span><div>Delete \(\varphi\) and the stack collapses: \(W_2(W_1 x + b_1) + b_2 = 2 - x_1 - x_2\), a plane — and §7.1 proved no plane does XOR. Feed the net yourself below.</div></div>
+          <span class="x-result">RESULT: ŷ = 0, 1, 1, 0 ON THE FOUR CORNERS — XOR EXACT</span>
+          <div class="eq-try">
+            <div class="ctl"><label>INPUT x₁ <output id="nnxq-x1-out">1.00</output></label><input type="range" id="nnxq-x1" min="0" max="1" step="0.05" value="1"/></div>
+            <div class="ctl"><label>INPUT x₂ <output id="nnxq-x2-out">0.00</output></label><input type="range" id="nnxq-x2" min="0" max="1" step="0.05" value="0"/></div>
+            <div class="try-out" id="nnxq-mlp-out">h = (1.00, 0.00) → ŷ = 1.00</div>
+          </div>
+        </div></div>
         </div>
 
         <div class="figure" data-reveal>
@@ -191,6 +205,18 @@ print(H)
         <div class="eq"><span class="eq-tag">EQ M7.2 — WHY GRADIENTS VANISH</span>
         $$ \frac{\partial \mathcal{L}}{\partial h^{(1)}} \;=\; \Bigg( \prod_{\ell=2}^{L} W_{\ell}^{\top}\, \mathrm{diag}\!\big( \varphi'(z^{(\ell)}) \big) \Bigg) \frac{\partial \mathcal{L}}{\partial h^{(L)}} $$
         <div class="eq-note">Every layer multiplies the backward signal by its weight matrix and by \(\varphi'\) evaluated where each unit currently sits. Sigmoid's derivative peaks at \(1/4\) — so through \(L\) sigmoid layers the signal shrinks like \((1/4)^L\) <em>at best</em>, and far faster once units saturate. Ten layers: \(\sim 10^{-6}\) of the gradient survives. <b>ReLU's derivative is exactly 1 on the entire active half — gradients pass through unshrunk</b>, which is most of why deep networks became trainable in 2012.</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><div>A healthy-looking sigmoid unit sitting at \(z = 2.5\): \(a = \sigma(2.5) \approx 0.924\), so its slope is \(\varphi' = a(1-a) \approx 0.924 \times 0.076 \approx 0.070\).</div></div>
+          <div class="x-step"><span class="x-n">02</span><div>Ten layers multiply ten such factors: \(0.070^{10} \approx 3 \times 10^{-12}\) — a trillionth of the loss signal reaches layer 1.</div></div>
+          <div class="x-step"><span class="x-n">03</span><div>Even sigmoid's best case, \(\varphi' = 0.25\) at \(z = 0\): \(0.25^{10} = 1/4^{10} = 1/1{,}048{,}576 \approx 9.5 \times 10^{-7}\). Best case loses 99.9999%.</div></div>
+          <div class="x-step"><span class="x-n">04</span><div>ReLU on its active half: \(\varphi' = 1\) exactly, so \(1^{10} = 1\) — the product that kills sigmoid stacks is neutral for ReLU. Drag the slope and depth below.</div></div>
+          <span class="x-result">RESULT: 10 SIGMOID LAYERS ≤ 9.5e−7 OF SIGNAL · RELU = 1</span>
+          <div class="eq-try">
+            <div class="ctl"><label>PER-LAYER SLOPE φ′ <output id="nnxq-phi-out">0.25</output></label><input type="range" id="nnxq-phi" min="0.05" max="1.2" step="0.05" value="0.25"/></div>
+            <div class="ctl"><label>DEPTH L <output id="nnxq-L-out">10</output></label><input type="range" id="nnxq-L" min="1" max="50" step="1" value="10"/></div>
+            <div class="try-out" id="nnxq-grad-out">—</div>
+          </div>
+        </div></div>
         </div>
 
         <table class="data">
@@ -264,6 +290,13 @@ print(H)
         <div class="eq"><span class="eq-tag">EQ M7.3 — THE BATCHED FORWARD PASS</span>
         $$ \underset{B \times d_h}{H} \;=\; \varphi\!\Big( \underset{B \times d_{\text{in}}}{X} \;\; \underset{d_{\text{in}} \times d_h}{W_1^{\top}} \;+\; \underset{1 \times d_h}{b_1} \Big), \qquad \underset{B \times d_{\text{out}}}{\hat{Y}} \;=\; H\, W_2^{\top} + b_2 $$
         <div class="eq-note">The single rule of shape discipline: <b>inner dimensions must agree, and the batch dimension rides along untouched in the leftmost slot</b>. The bias \(b_1\) is a single row, broadcast down all \(B\) rows. Frameworks store weights as (out, in) — hence the transposes. In Volume II the same ledger gains one axis, (B, T, d<sub>model</sub>), and otherwise nothing changes.</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><div>Batch \(B = 32\) through the 2-8-1: \(X\) is \((32 \times 2)\), \(W_1^\top\) is \((2 \times 8)\) — inner dims \(2 = 2\) agree, so \(Z_1 = X W_1^\top\) is \((32 \times 8)\).</div></div>
+          <div class="x-step"><span class="x-n">02</span><div>\(b_1\) is one row, \((1 \times 8)\), broadcast down all 32 rows; \(\varphi\) is elementwise, so \(H\) stays \((32 \times 8)\).</div></div>
+          <div class="x-step"><span class="x-n">03</span><div>\(H\, (32 \times 8)\) times \(W_2^\top\, (8 \times 1)\) — inner dims \(8 = 8\) — gives \(\hat{Y}\) at \((32 \times 1)\). The batch axis rode through untouched, leftmost the whole way.</div></div>
+          <div class="x-step"><span class="x-n">04</span><div>The bill: \(32 \times 8\) outputs at 2 multiply-adds each \(= 512\), plus \(32 \times 1\) at 8 each \(= 256\) — 768 MACs per batch. Parameters: \(16 + 8 + 8 + 1 = 33\).</div></div>
+          <span class="x-result">RESULT: (32×2) → (32×8) → (32×1) · 33 PARAMS · 768 MACs</span>
+        </div></div>
         </div>
 
         <p>Professionals debug networks by reciting shapes, not by reading values. Build the habit now — run the drill, then change <code>d_h</code> or <code>batch</code> and predict every line before re-running. If you can write the shape ledger of a network from memory, you understand its forward pass; there is nothing else in it.</p>
@@ -643,6 +676,49 @@ print(f"\nReLU zeroed {(H == 0).mean():.0%} of H — sparsity is the default")
     draw();
     setTimeout(draw, 350);  /* re-measure once layout settles */
     window.addEventListener("resize", draw);
+  })();
+})();
+</script>
+<script>
+/* eq-x mini-evaluators — EQ M7.1 and EQ M7.2 */
+(function () {
+  "use strict";
+  /* EQ M7.1 — the hand-set 2-2-1 ReLU net, forward pass live */
+  (function () {
+    var x1In = document.getElementById("nnxq-x1");
+    if (!x1In) return;
+    var x2In = document.getElementById("nnxq-x2");
+    var x1Out = document.getElementById("nnxq-x1-out"), x2Out = document.getElementById("nnxq-x2-out");
+    var out = document.getElementById("nnxq-mlp-out");
+    function relu(z) { return Math.max(0, z); }
+    function render() {
+      var x1 = parseFloat(x1In.value), x2 = parseFloat(x2In.value);
+      x1Out.textContent = x1.toFixed(2); x2Out.textContent = x2.toFixed(2);
+      var h1 = relu(x1 + x2), h2 = relu(x1 + x2 - 1), y = h1 - 2 * h2;
+      out.textContent = "h = (" + h1.toFixed(2) + ", " + h2.toFixed(2) + ") → ŷ = " + y.toFixed(2);
+    }
+    x1In.addEventListener("input", render);
+    x2In.addEventListener("input", render);
+    render();
+  })();
+  /* EQ M7.2 — gradient surviving L layers: φ′^L */
+  (function () {
+    var phiIn = document.getElementById("nnxq-phi");
+    if (!phiIn) return;
+    var LIn = document.getElementById("nnxq-L");
+    var phiOut = document.getElementById("nnxq-phi-out"), LOut = document.getElementById("nnxq-L-out");
+    var out = document.getElementById("nnxq-grad-out");
+    function render() {
+      var phi = parseFloat(phiIn.value), L = parseInt(LIn.value, 10);
+      phiOut.textContent = phi.toFixed(2); LOut.textContent = String(L);
+      var v = Math.pow(phi, L);
+      var s = (v !== 0 && (v < 0.001 || v >= 1000)) ? v.toExponential(1) : v.toFixed(3);
+      var tag = v < 0.001 ? " · VANISHING" : (v > 1000 ? " · EXPLODING" : " · TRAINABLE");
+      out.textContent = phi.toFixed(2) + "^" + L + " = " + s + tag;
+    }
+    phiIn.addEventListener("input", render);
+    LIn.addEventListener("input", render);
+    render();
   })();
 })();
 </script>

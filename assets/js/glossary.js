@@ -263,24 +263,28 @@
     }).join("|") + ")\\b", "i"
   );
 
-  var SKIP = { SCRIPT: 1, STYLE: 1, CODE: 1, PRE: 1, A: 1, H1: 1, H2: 1, H3: 1, BUTTON: 1, SVG: 1, CANVAS: 1, SELECT: 1, INPUT: 1, LABEL: 1, OUTPUT: 1 };
+  var SKIP = { SCRIPT: 1, STYLE: 1, CODE: 1, PRE: 1, A: 1, H1: 1, H2: 1, H3: 1, BUTTON: 1, SVG: 1, CANVAS: 1, SELECT: 1, INPUT: 1, OUTPUT: 1 };
 
-  function skippable(el) {
+  function skippable(el, allowWidget) {
     for (var n = el; n && n !== document.body; n = n.parentElement) {
       if (SKIP[n.tagName]) return true;
       var c = n.className;
-      if (typeof c === "string" && (
-        c.indexOf("katex") !== -1 || c.indexOf("gloss") !== -1 ||
-        c.indexOf("widget") !== -1 || c.indexOf("topbar") !== -1 ||
-        c.indexOf("side-nav") !== -1 || c.indexOf("pager") !== -1 ||
-        c.indexOf("eq") === 0
-      )) return true;
+      if (typeof c === "string") {
+        if (c.indexOf("katex") !== -1 || c.indexOf("gloss") !== -1 ||
+            c.indexOf("topbar") !== -1 || c.indexOf("side-nav") !== -1 ||
+            c.indexOf("pager") !== -1) return true;
+        /* inside widgets, only curated surfaces are glossed */
+        if (!allowWidget && c.indexOf("widget") !== -1) return true;
+        if (allowWidget && (c.indexOf("readout") !== -1 || c.indexOf("tok-") === 0 ||
+            c.indexOf("r-value") !== -1)) return true;
+        if (c.indexOf("eq-tag") !== -1) return true;
+      }
     }
     return false;
   }
 
   var seen = {};   // term (lowercase) -> wrap count on this page
-  var MAX_PER_TERM = 2;
+  var MAX_PER_TERM = 4;
 
   function canonical(raw) {
     var low = raw.toLowerCase().replace(/[- ]+/g, " ");
@@ -293,12 +297,19 @@
   function scan() {
     if (scan.done) return;
     scan.done = true;
-    var roots = document.querySelectorAll("main p, main li, main td, main .fig-cap");
-    roots.forEach(function (root) {
-      if (skippable(root)) return;
+    /* prose surfaces, plus curated widget surfaces (notes + control labels)
+       and hub/landing surfaces — anywhere a reader meets a term cold */
+    var PROSE = "main p, main li, main td, main .fig-cap, .lede, .eq-note, .eq-x-body, .t-desc, .how-card p, .cov-sub, .dr-exp";
+    var WIDGETY = ".w-note, .ctl label, .drill .dr-q";
+    var roots = [];
+    document.querySelectorAll(PROSE).forEach(function (r) { roots.push({ el: r, w: false }); });
+    document.querySelectorAll(WIDGETY).forEach(function (r) { roots.push({ el: r, w: true }); });
+    roots.forEach(function (entry) {
+      var root = entry.el, allowW = entry.w;
+      if (skippable(root, allowW)) return;
       var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
         acceptNode: function (node) {
-          return skippable(node.parentElement) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
+          return skippable(node.parentElement, allowW) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
         }
       });
       var nodes = [];

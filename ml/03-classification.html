@@ -5,8 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>03 · Classification: Logistic &amp; Softmax — AI Encyclopedia</title>
 <meta name="description" content="From numbers to categories: sigmoid, logistic regression, cross-entropy (the loss that trains GPT), linear decision boundaries, softmax, and the metrics that survive class imbalance." />
+<link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
+<meta name="theme-color" content="#000000" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-<link rel="stylesheet" href="../assets/css/manual.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=3" />
 </head>
 <body>
 
@@ -61,6 +63,17 @@
         <div class="eq"><span class="eq-tag">EQ M3.1 — THE SIGMOID</span>
         $$ \sigma(z) \;=\; \frac{1}{1 + e^{-z}}, \qquad \sigma : \mathbb{R} \to (0,1), \qquad \sigma(-z) \;=\; 1 - \sigma(z) $$
         <div class="eq-note">Strong positive evidence \(\to\) probability near 1; strong negative \(\to\) near 0; zero evidence \(\to\) exactly ½. The symmetry means "evidence for class 1" and "evidence against class 0" are the same number with the sign flipped. Its derivative is \(\sigma'(z) = \sigma(z)\,(1 - \sigma(z))\) — largest at the midpoint (¼), vanishing in the tails. <b>The sigmoid is the exchange rate between evidence and probability.</b></div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><span>Take evidence \(z = 2\). First the exponential: \(e^{-2} \approx 0.135\).</span></div>
+          <div class="x-step"><span class="x-n">02</span><span>Then \(\sigma(2) = 1/(1 + 0.135) = 1/1.135 \approx \) <b>0.881</b> — strong belief, not certainty.</span></div>
+          <div class="x-step"><span class="x-n">03</span><span>Symmetry check: \(\sigma(-2) = 1 - 0.881 = 0.119\). And zero evidence: \(\sigma(0) = 1/(1+1) = 0.5\) exactly.</span></div>
+          <div class="x-step"><span class="x-n">04</span><span>Slope at \(z = 2\): \(\sigma'(2) = 0.881 \times 0.119 \approx 0.105\) — well below the midpoint maximum of 0.25. The tails flatten fast, which is where gradients go to die.</span></div>
+          <span class="x-result">RESULT: σ(2) ≈ 0.881</span>
+          <div class="eq-try">
+            <div class="ctl"><label>EVIDENCE z <output id="clxq-z-out">2.0</output></label><input type="range" id="clxq-z" min="-6" max="6" step="0.1" value="2"/></div>
+            <div class="try-out" id="clxq-z-res">σ(2.0) = 0.881 · odds eᶻ = 7.39 : 1</div>
+          </div>
+        </div></div>
         </div>
 
         <p>Bolting the sigmoid onto the linear score gives <strong>logistic regression</strong> — still a linear model, but linear in the right place:</p>
@@ -81,6 +94,17 @@
         <div class="eq"><span class="eq-tag">EQ M3.3 — BINARY CROSS-ENTROPY</span>
         $$ \mathcal{L}(\mathbf{w}, b) \;=\; -\frac{1}{N} \sum_{i=1}^{N} \Big[\, y_i \log p_i \;+\; (1 - y_i) \log (1 - p_i) \,\Big], \qquad p_i = \sigma(\mathbf{w}^{\top}\mathbf{x}_i + b) $$
         <div class="eq-note">Per example, only one term survives: you pay \(-\log(\text{probability you gave the truth})\) — the <b>surprisal</b>. Assign 0.99 to what happens, pay 0.01 nats; assign 0.001, pay 6.9; the bill for confident wrongness is unbounded. Generalized from 2 classes to \(|V| \approx 100\mathrm{K}\) token classes and averaged over positions, <b>this is exactly Vol II · EQ 1.6 — the pre-training loss of GPT.</b> Next-token prediction is this chapter, scaled up.</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><span>Three predictions, three truths: \(p = 0.9\) with \(y = 1\); \(p = 0.6\) with \(y = 1\); \(p = 0.2\) with \(y = 0\).</span></div>
+          <div class="x-step"><span class="x-n">02</span><span>Each example pays −log of the probability given to the truth: \(-\ln 0.9 = 0.105\); \(-\ln 0.6 = 0.511\); \(-\ln(1 - 0.2) = -\ln 0.8 = 0.223\).</span></div>
+          <div class="x-step"><span class="x-n">03</span><span>Average over \(N = 3\): \((0.105 + 0.511 + 0.223)/3 = 0.839/3 \approx \) <b>0.280 nats</b>.</span></div>
+          <div class="x-step"><span class="x-n">04</span><span>The unbounded bill: had the first prediction been \(p = 0.01\) (confidently wrong about a true 1), that single term is \(-\ln 0.01 = 4.61\) — over 16× the entire average above.</span></div>
+          <span class="x-result">RESULT: BCE ≈ 0.28 nats</span>
+          <div class="eq-try">
+            <div class="ctl"><label>PREDICTED p <output id="clxq-p-out">0.90</output></label><input type="range" id="clxq-p" min="0.01" max="0.99" step="0.01" value="0.9"/></div>
+            <div class="try-out" id="clxq-p-res">if y = 1: pay 0.105 nats · if y = 0: pay 2.303 nats</div>
+          </div>
+        </div></div>
         </div>
 
         <p>Why not just use squared error on \(p\)? Two reasons. Through a sigmoid, squared error becomes non-convex — gradient descent can stall in flat regions, and precisely <em>when the model is confidently wrong</em> the \(\sigma'\) factor crushes the gradient toward zero. Cross-entropy's gradient cancels that factor exactly, leaving the cleanest possible signal: \(\nabla_{\mathbf{w}} \mathcal{L} = \tfrac{1}{N}\sum_i (p_i - y_i)\,\mathbf{x}_i\) — <em>error times input</em>, the same form as linear regression's. The worse the miss, the louder the correction.</p>
@@ -169,6 +193,13 @@ plot_scatter(X[:, 0], X[:, 1], (p > 0.5).astype(int))
         <div class="eq"><span class="eq-tag">EQ M3.4 — SOFTMAX</span>
         $$ \mathrm{softmax}(\mathbf{z})_i \;=\; \frac{e^{z_i}}{\sum_{j=1}^{K} e^{z_j}}, \qquad \mathrm{softmax}(\mathbf{z} + c)_i \;=\; \mathrm{softmax}(\mathbf{z})_i \;\;\text{for any constant } c $$
         <div class="eq-note">For \(K = 2\) it collapses to EQ M3.1: \(p_1 = \sigma(z_1 - z_0)\) — sigmoid is softmax for two. The shift invariance says <b>softmax reads differences between scores, not their absolute values</b> — which doubles as the standard numerical-stability trick: subtract \(\max_j z_j\) before exponentiating, for free. The loss generalizes too: pay \(-\log p_{\text{true class}}\). And the gradient stays beautiful: predicted probabilities minus the one-hot truth.</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><span>Three class scores: \(\mathbf{z} = (2, 1, 0)\).</span></div>
+          <div class="x-step"><span class="x-n">02</span><span>Exponentiate: \(e^2 \approx 7.39\), \(e^1 \approx 2.72\), \(e^0 = 1\). Sum \(\approx 11.11\).</span></div>
+          <div class="x-step"><span class="x-n">03</span><span>Divide each by the sum: \(p \approx (7.39/11.11,\; 2.72/11.11,\; 1/11.11) = (0.665,\; 0.245,\; 0.090)\). Adds to 1, as promised.</span></div>
+          <div class="x-step"><span class="x-n">04</span><span>Shift-invariance check: \(\mathbf{z} = (102, 101, 100)\) gives the identical answer — the common factor \(e^{100}\) cancels top and bottom. Only the <b>gaps</b> between scores matter (here 1 and 1).</span></div>
+          <span class="x-result">RESULT: softmax(2, 1, 0) ≈ (0.665, 0.245, 0.090)</span>
+        </div></div>
         </div>
 
         <p>You will meet this exact function three more times in this encyclopedia, doing three different jobs:</p>
@@ -471,6 +502,40 @@ with np.errstate(over="ignore"):               # what the max-trick prevents:
     window.addEventListener("resize", render);
     render();
   })();
+})();
+</script>
+<script>
+(function () {
+  "use strict";
+  /* EQ M3.1 mini-evaluator — sigmoid and odds */
+  var z = document.getElementById("clxq-z");
+  if (z) {
+    var zo = document.getElementById("clxq-z-out");
+    var zres = document.getElementById("clxq-z-res");
+    var sig = function () {
+      var v = parseFloat(z.value);
+      var s = 1 / (1 + Math.exp(-v));
+      if (zo) zo.textContent = v.toFixed(1);
+      if (zres) zres.textContent = "σ(" + v.toFixed(1) + ") = " + s.toFixed(3) +
+        " · odds eᶻ = " + Math.exp(v).toFixed(2) + " : 1";
+    };
+    z.addEventListener("input", sig);
+    sig();
+  }
+  /* EQ M3.3 mini-evaluator — surprisal for one example */
+  var p = document.getElementById("clxq-p");
+  if (p) {
+    var po = document.getElementById("clxq-p-out");
+    var pres = document.getElementById("clxq-p-res");
+    var bce = function () {
+      var v = parseFloat(p.value);
+      if (po) po.textContent = v.toFixed(2);
+      if (pres) pres.textContent = "if y = 1: pay " + (-Math.log(v)).toFixed(3) +
+        " nats · if y = 0: pay " + (-Math.log(1 - v)).toFixed(3) + " nats";
+    };
+    p.addEventListener("input", bce);
+    bce();
+  }
 })();
 </script>
 </body>

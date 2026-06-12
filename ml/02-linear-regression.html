@@ -5,8 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>02 · Linear Regression &amp; Gradient Descent — AI Encyclopedia</title>
 <meta name="description" content="The first complete learning algorithm: the linear model, the MSE bowl, the normal equation, gradient descent, the learning rate, and why feature scaling decides whether the loop converges." />
+<link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
+<meta name="theme-color" content="#000000" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-<link rel="stylesheet" href="../assets/css/manual.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=3" />
 </head>
 <body>
 
@@ -96,11 +98,29 @@
         <div class="eq"><span class="eq-tag">EQ M2.4 — THE GRADIENT OF MSE</span>
         $$ \nabla_w \mathcal{L} \;=\; \frac{2}{n}\, X^\top \left( Xw - y \right) $$
         <div class="eq-note">Read it from the inside out: \(Xw - y\) is the vector of <b>residuals</b> — current prediction minus truth, one per example. \(X^\top(\cdot)\) then credits each feature with the residuals of the examples where it was active. <b>The gradient is the data's errors, projected back onto the features that caused them.</b> That sentence, generalized through many layers by backpropagation, is all of deep learning's credit assignment.</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><span>Two examples with the bias trick: rows \(x_1 = (1, 1)\), \(x_2 = (2, 1)\); targets \(y = (2, 3)\). Current weights \(w = (1, 0)\): predictions \(Xw = (1, 2)\).</span></div>
+          <div class="x-step"><span class="x-n">02</span><span>Residuals \(Xw - y = (1-2,\; 2-3) = (-1, -1)\) — both predictions are too low.</span></div>
+          <div class="x-step"><span class="x-n">03</span><span>Project onto features, \(X^\top r\): feature column \((1, 2)\cdot(-1, -1) = -3\); bias column \((1, 1)\cdot(-1, -1) = -2\).</span></div>
+          <div class="x-step"><span class="x-n">04</span><span>Scale by \(2/n = 2/2 = 1\): \(\nabla \mathcal{L} = (-3, -2)\). Both components negative → both weights should rise. EQ M2.5 does exactly that.</span></div>
+          <span class="x-result">RESULT: ∇𝓛 = (−3, −2)</span>
+        </div></div>
         </div>
 
         <div class="eq"><span class="eq-tag">EQ M2.5 — THE UPDATE RULE</span>
         $$ w \;\leftarrow\; w \;-\; \eta\, \nabla_w \mathcal{L}(w) $$
         <div class="eq-note">\(\eta\) (eta) is the <b>learning rate</b>: how far to step in the downhill direction. This single line — compute the slope, take a step — is the update inside every optimizer in this encyclopedia. Adam, momentum, and friends decorate it; none replace it.</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><span>Continue from EQ M2.4's example: \(w = (1, 0)\), \(\nabla \mathcal{L} = (-3, -2)\), current MSE \(= ((-1)^2 + (-1)^2)/2 = 1.00\). Pick \(\eta = 0.1\).</span></div>
+          <div class="x-step"><span class="x-n">02</span><span>Step: \(w' = (1, 0) - 0.1\,(-3, -2) = (1 + 0.3,\; 0 + 0.2) = (1.3,\; 0.2)\). Subtracting a negative gradient pushes the weights up.</span></div>
+          <div class="x-step"><span class="x-n">03</span><span>Re-score: predictions \(1.3 + 0.2 = 1.5\) and \(2.6 + 0.2 = 2.8\); residuals \(-0.5\) and \(-0.2\).</span></div>
+          <div class="x-step"><span class="x-n">04</span><span>New MSE: \((0.25 + 0.04)/2 = 0.145\). One step cut the loss by 85%. Drag \(\eta\) below — past ≈ 0.29 the same step makes things <b>worse</b>.</span></div>
+          <span class="x-result">RESULT: w′ = (1.3, 0.2) · MSE 1.000 → 0.145</span>
+          <div class="eq-try">
+            <div class="ctl"><label>LEARNING RATE η <output id="gdxq-eta-out">0.10</output></label><input type="range" id="gdxq-eta" min="0.01" max="0.6" step="0.01" value="0.1"/></div>
+            <div class="try-out" id="gdxq-out">w′ = (1.30, 0.20) · MSE 1.000 → 0.145 ↓</div>
+          </div>
+        </div></div>
         </div>
 
         <p>That's the whole algorithm: predict, measure residuals, push the error back through the features, step, repeat. Watch it run on a real (toy) regression below — the left panel shows the bowl from above as loss contours in \((w, b)\) space; the right panel shows what each position <em>means</em>: a candidate line through the data.</p>
@@ -174,6 +194,18 @@ plot_xy(steps, losses)</pre>
         <div class="eq"><span class="eq-tag">EQ M2.6 — THE CONVERGENCE BAND</span>
         $$ w_{t+1} - w^\star \;=\; \left( 1 - \eta\lambda \right) \left( w_t - w^\star \right) \qquad\Longrightarrow\qquad \text{stable} \iff 0 &lt; \eta &lt; \frac{2}{\lambda} $$
         <div class="eq-note">If \(|1-\eta\lambda| &lt; 1\) the error shrinks every step; the moment \(\eta\) exceeds \(2/\lambda\), the factor passes \(-1\) and the error <b>flips sign and grows</b> — the overshooting spiral you saw in Instrument M2.1. Between \(1/\lambda\) and \(2/\lambda\) the factor is negative with magnitude below 1: the iterate converges while hopping from side to side of the minimum. With many dimensions, each direction of the bowl has its own curvature, and <b>η must respect the steepest one</b> — while progress is paced by the shallowest. That tension is the whole story of §2.5.</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><span>One-dimensional bowl \(\mathcal{L}(w) = (w - 3)^2\): curvature \(\lambda = 2\), minimum \(w^\star = 3\), critical rate \(2/\lambda = 1\). Start at \(w_0 = 0\), so the error is \(w_0 - w^\star = -3\).</span></div>
+          <div class="x-step"><span class="x-n">02</span><span>\(\eta = 0.4\): factor \(1 - \eta\lambda = 1 - 0.8 = 0.2\). Error per step: \(-3 \to -0.6 \to -0.12\) — smooth geometric convergence.</span></div>
+          <div class="x-step"><span class="x-n">03</span><span>\(\eta = 0.9\): factor \(1 - 1.8 = -0.8\). Error: \(-3 \to +2.4 \to -1.92\) — converging while hopping sides of the minimum.</span></div>
+          <div class="x-step"><span class="x-n">04</span><span>\(\eta = 1.2\): factor \(-1.4\). Error: \(-3 \to +4.2 \to -5.88\) — every step lands farther away. Divergence.</span></div>
+          <span class="x-result">RESULT: stable here iff η &lt; 1 (= 2/λ)</span>
+          <div class="eq-try">
+            <div class="ctl"><label>RATE η <output id="gdxq-band-eta-out">0.40</output></label><input type="range" id="gdxq-band-eta" min="0.05" max="1.5" step="0.05" value="0.4"/></div>
+            <div class="ctl"><label>CURVATURE λ <output id="gdxq-band-lam-out">2.0</output></label><input type="range" id="gdxq-band-lam" min="0.5" max="4" step="0.1" value="2"/></div>
+            <div class="try-out" id="gdxq-band-out">1 − ηλ = 0.20 · error ×0.20 per step · CONVERGES</div>
+          </div>
+        </div></div>
         </div>
 
         <p>Four learning rates, one problem, eighty steps each — the canonical picture every practitioner carries in their head:</p>
@@ -539,6 +571,47 @@ print("max difference   :", float(np.abs(w_exact - w_gd).max()))
     window.addEventListener("resize", render);
     render();
   })();
+})();
+</script>
+<script>
+(function () {
+  "use strict";
+  /* EQ M2.5 mini-evaluator — one GD step on the 2-point example */
+  var eta = document.getElementById("gdxq-eta");
+  if (eta) {
+    var eo = document.getElementById("gdxq-eta-out");
+    var out = document.getElementById("gdxq-out");
+    var step = function () {
+      var e = parseFloat(eta.value);
+      var w0 = 1 + 3 * e, w1 = 2 * e;                      /* w' = (1,0) − η(−3,−2) */
+      var p1 = w0 + w1, p2 = 2 * w0 + w1;                   /* predictions on x=(1,1),(2,1) */
+      var mse = ((p1 - 2) * (p1 - 2) + (p2 - 3) * (p2 - 3)) / 2;
+      if (eo) eo.textContent = e.toFixed(2);
+      if (out) out.textContent = "w′ = (" + w0.toFixed(2) + ", " + w1.toFixed(2) + ") · MSE 1.000 → " +
+        mse.toFixed(3) + (mse < 1 ? " ↓" : " ↑ past critical η ≈ 0.29");
+    };
+    eta.addEventListener("input", step);
+    step();
+  }
+  /* EQ M2.6 mini-evaluator — the convergence factor 1 − ηλ */
+  var be = document.getElementById("gdxq-band-eta"), bl = document.getElementById("gdxq-band-lam");
+  if (be && bl) {
+    var beo = document.getElementById("gdxq-band-eta-out");
+    var blo = document.getElementById("gdxq-band-lam-out");
+    var bout = document.getElementById("gdxq-band-out");
+    var band = function () {
+      var e = parseFloat(be.value), l = parseFloat(bl.value);
+      var f = 1 - e * l, a = Math.abs(f);
+      var verdict = a < 1 ? (f >= 0 ? "CONVERGES" : "CONVERGES, ZIGZAGGING") :
+        (a === 1 ? "KNIFE EDGE — OSCILLATES FOREVER" : "DIVERGES (η ≥ 2/λ)");
+      if (beo) beo.textContent = e.toFixed(2);
+      if (blo) blo.textContent = l.toFixed(1);
+      if (bout) bout.textContent = "1 − ηλ = " + f.toFixed(2) + " · error ×" + a.toFixed(2) + " per step · " + verdict;
+    };
+    be.addEventListener("input", band);
+    bl.addEventListener("input", band);
+    band();
+  }
 })();
 </script>
 </body>

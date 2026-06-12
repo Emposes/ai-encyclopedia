@@ -4,8 +4,10 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>04 · Pre-training — LLM Field Manual</title>
+<link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
+<meta name="theme-color" content="#000000" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-<link rel="stylesheet" href="../assets/css/manual.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=3" />
 </head>
 <body>
 
@@ -68,11 +70,36 @@
         <div class="eq"><span class="eq-tag">EQ 4.1 — CHINCHILLA LOSS SURFACE</span>
         $$ L(N, D) \;=\; E \;+\; \frac{A}{N^{\alpha}} \;+\; \frac{B}{D^{\beta}} $$
         <div class="eq-note">\(E\) is the irreducible entropy of text; the two power-law terms are the cost of finite capacity and finite data. Corrected fit (Epoch AI's 2024 replication of the paper): \(E = 1.82,\ A = 482.0,\ B = 2085.4,\ \alpha = 0.348,\ \beta = 0.366\) — the values the instrument below uses, which reproduce Chinchilla-70B/1.4T at the paper's own budget.</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE + TRY IT ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><div>Plug in Chinchilla-70B itself: \(N = 7 \times 10^{10}\), \(D = 1.4 \times 10^{12}\), with the refit constants above.</div></div>
+          <div class="x-step"><span class="x-n">02</span><div>Capacity term: \(N^{0.348} \approx 5{,}944\) → \(482/5{,}944 = 0.081\) nats.</div></div>
+          <div class="x-step"><span class="x-n">03</span><div>Data term: \(D^{0.366} \approx 27{,}892\) → \(2{,}085.4/27{,}892 = 0.075\) nats.</div></div>
+          <div class="x-step"><span class="x-n">04</span><div>\(L = 1.82 + 0.081 + 0.075 = 1.976\) nats → PPL \(e^{1.976} \approx 7.2\). The two penalty terms come out nearly equal — the signature of a compute-optimal split. Drag the sliders off-balance and watch the loss climb.</div></div>
+          <span class="x-result">RESULT: L(70B, 1.4T) = 1.976 nats · PPL ≈ 7.2</span>
+          <div class="eq-try">
+            <div class="ctl">
+              <label>PARAMS N <output id="ptxq-n-out">71B</output></label>
+              <input type="range" id="ptxq-n" min="9" max="12" step="0.05" value="10.85"/>
+            </div>
+            <div class="ctl">
+              <label>TOKENS D <output id="ptxq-d-out">1.4T</output></label>
+              <input type="range" id="ptxq-d" min="10" max="13.7" step="0.05" value="12.15"/>
+            </div>
+            <div class="try-out" id="ptxq-out">—</div>
+          </div>
+        </div></div>
         </div>
 
         <div class="eq"><span class="eq-tag">EQ 4.2 — THE BUDGET CONSTRAINT &amp; OPTIMUM</span>
         $$ C \approx 6\,N D \qquad\Longrightarrow\qquad N^{*} \propto C^{\,0.46}, \quad D^{*} \propto C^{\,0.54}, \quad \frac{D^{*}}{N^{*}} \approx 20 \text{ tokens/param} $$
         <div class="eq-note">Each parameter touched by each token costs ≈6 FLOPs (2 forward, 4 backward). Minimizing EQ 4.1 subject to the budget gives the famous rule of thumb: <b>scale data and parameters together, ~20:1</b>. Kaplan et al. (2020) had concluded ~1.7:1 — fixing that error is why Chinchilla-70B beat Gopher-280B with the same compute.</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><div>Take Chinchilla's actual budget — the compute Gopher-280B had already spent: \(C = 5.76 \times 10^{23}\) FLOPs.</div></div>
+          <div class="x-step"><span class="x-n">02</span><div>Combine the two rules: \(C = 6ND\) and \(D = 20N\) ⇒ \(C = 120N^2\).</div></div>
+          <div class="x-step"><span class="x-n">03</span><div>\(N^{*} = \sqrt{C/120} = \sqrt{4.8 \times 10^{21}} = 6.9 \times 10^{10} \approx\) <b>70B</b>; \(D^{*} = 20N^{*} \approx\) <b>1.4T</b> tokens.</div></div>
+          <div class="x-step"><span class="x-n">04</span><div>Check the budget: \(6 \times (6.9 \times 10^{10}) \times (1.4 \times 10^{12}) = 5.8 \times 10^{23}\) ✓. Same compute as Gopher, 4× fewer parameters — and Chinchilla beat it across the benchmark suite.</div></div>
+          <span class="x-result">RESULT: N* ≈ 70B · D* ≈ 1.4T — Chinchilla, derived on a napkin</span>
+        </div></div>
         </div>
 
         <div class="widget" id="scaling-demo" data-reveal>
@@ -226,6 +253,13 @@
         <div class="eq"><span class="eq-tag">EQ 4.5 — TRAINING TIME ESTIMATE</span>
         $$ \text{days} \;=\; \frac{6\,N D}{n_{\text{GPU}} \times \text{FLOPs}_{\text{peak}} \times \text{MFU} \times 86{,}400} $$
         <div class="eq-note">MFU — model FLOPs utilization, the fraction of peak silicon throughput doing useful model math — runs 35–50% in well-tuned large runs. Example: \(N = 405\text{B},\ D = 15\text{T} \Rightarrow C \approx 3.6 \times 10^{25}\) FLOPs; on 16,384 H100s (≈990 TFLOPs BF16 each) at 41% MFU ⇒ ~63 days. At ~$2/GPU-hr that's ~$50M of compute — before the salaries, the failed runs, and the post-training.</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><div>Llama-3.1-405B: \(N = 4.05 \times 10^{11}\), \(D = 1.5 \times 10^{13}\) ⇒ \(C = 6ND = 3.65 \times 10^{25}\) FLOPs.</div></div>
+          <div class="x-step"><span class="x-n">02</span><div>Useful throughput: \(16{,}384 \times 989 \times 10^{12} \times 0.41 = 6.64 \times 10^{18}\) FLOPs/s across the cluster.</div></div>
+          <div class="x-step"><span class="x-n">03</span><div>Wall-clock: \(3.65 \times 10^{25} / 6.64 \times 10^{18} = 5.49 \times 10^{6}\) s; ÷ 86,400 = <b>63.5 days</b>.</div></div>
+          <div class="x-step"><span class="x-n">04</span><div>Cost: 16,384 GPUs × 63.5 days × 24 h × $2/hr ≈ <b>$50M</b>. Meta reported ~54 days of actual pre-training — the napkin lands within 20%.</div></div>
+          <span class="x-result">RESULT: ≈ 63.5 days · ≈ $50M of compute</span>
+        </div></div>
         </div>
 
         <div class="widget" id="bill-demo" data-reveal>
@@ -282,5 +316,39 @@
 <script src="../assets/js/shared.js"></script>
 <script src="../assets/js/search.js"></script>
 <script src="../assets/js/interactives.js"></script>
+<script>
+(function () {
+  "use strict";
+  var n = document.getElementById("ptxq-n");
+  if (!n) return;
+  var d = document.getElementById("ptxq-d");
+  var nOut = document.getElementById("ptxq-n-out");
+  var dOut = document.getElementById("ptxq-d-out");
+  var out = document.getElementById("ptxq-out");
+  var E = 1.82, A = 482, B = 2085.4, AL = 0.348, BE = 0.366; // Epoch AI refit
+  function fmt(x) {
+    var v;
+    if (x >= 1e12) { v = x / 1e12; return (v >= 10 ? Math.round(v) : v.toFixed(1)) + "T"; }
+    if (x >= 1e9)  { v = x / 1e9;  return (v >= 10 ? Math.round(v) : v.toFixed(1)) + "B"; }
+    v = x / 1e6; return (v >= 10 ? Math.round(v) : v.toFixed(1)) + "M";
+  }
+  function upd() {
+    var N = Math.pow(10, parseFloat(n.value));
+    var D = Math.pow(10, parseFloat(d.value));
+    var L = E + A / Math.pow(N, AL) + B / Math.pow(D, BE);
+    var ppl = Math.exp(L);
+    var r = D / N;
+    var rStr = r >= 1000 ? (r / 1000).toFixed(1) + "K"
+             : r >= 100  ? Math.round(r).toString()
+             : r.toFixed(1);
+    nOut.textContent = fmt(N);
+    dOut.textContent = fmt(D);
+    out.textContent = "L = " + L.toFixed(3) + " nats · PPL " + ppl.toFixed(1) + " · " + rStr + " tok/param";
+  }
+  n.addEventListener("input", upd);
+  d.addEventListener("input", upd);
+  upd();
+})();
+</script>
 </body>
 </html>

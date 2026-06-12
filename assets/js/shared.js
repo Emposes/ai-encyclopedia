@@ -231,10 +231,31 @@
     });
   }
 
+  /* ---------- equation worked-example toggles ---------- */
+  function initEqExamples() {
+    document.querySelectorAll(".eq-x-toggle").forEach(function (btn) {
+      var body = btn.parentElement.querySelector(".eq-x-body");
+      if (!body) return;
+      btn.addEventListener("click", function () {
+        var show = body.hidden;
+        body.hidden = !show;
+        btn.textContent = btn.textContent.replace(show ? "▾" : "▴", show ? "▴" : "▾");
+      });
+    });
+  }
+
   /* ---------- boot ---------- */
   function boot() {
     initMotion();
     initSpy();
+    initEqExamples();
+    /* belt-and-braces: fonts, KaTeX and the Lab all shift layout after
+       triggers are measured — one final refresh once everything settles */
+    window.addEventListener("load", function () {
+      if (typeof ScrollTrigger !== "undefined") {
+        setTimeout(function () { ScrollTrigger.refresh(); }, 400);
+      }
+    });
   }
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", boot);

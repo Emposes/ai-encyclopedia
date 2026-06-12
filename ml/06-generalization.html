@@ -5,8 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>06 · Generalization: Bias, Variance &amp; Regularization — AI Encyclopedia</title>
 <meta name="description" content="The bias–variance decomposition, the capacity U-curve and its modern double-descent twist, L1/L2 regularization, validation discipline, and early stopping — with live polynomial-fitting instruments." />
+<link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
+<meta name="theme-color" content="#000000" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-<link rel="stylesheet" href="../assets/css/manual.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=3" />
 </head>
 <body>
 
@@ -51,6 +53,20 @@
         <div class="eq"><span class="eq-tag">EQ M6.1 — BIAS–VARIANCE DECOMPOSITION</span>
         $$ \mathbb{E}_{\mathcal{D},\,\varepsilon}\!\left[\big(y - \hat{f}_{\mathcal{D}}(x)\big)^{2}\right] \;=\; \underbrace{\big(f(x) - \bar{f}(x)\big)^{2}}_{\text{bias}^{2}} \;+\; \underbrace{\mathbb{E}_{\mathcal{D}}\!\left[\big(\hat{f}_{\mathcal{D}}(x) - \bar{f}(x)\big)^{2}\right]}_{\text{variance}} \;+\; \underbrace{\sigma^{2}}_{\text{noise}} \qquad \bar{f}(x) = \mathbb{E}_{\mathcal{D}}\big[\hat{f}_{\mathcal{D}}(x)\big] $$
         <div class="eq-note">\(\bar{f}\) is the <em>average</em> model — what your procedure produces averaged over all training sets it might have been dealt. <b>Bias²</b> is how far that average sits from the truth: the error your model family makes <em>systematically</em>, even with infinite resamples. <b>Variance</b> is how much any single fit scatters around that average: the error of trusting one particular sample. <b>Noise</b> \(\sigma^2\) is the floor — no model, however clever, beats it. <b>Capacity buys down bias by paying in variance</b>; the exchange rate is the subject of this chapter.</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><div>At a probe point, the truth is \(f(x_0) = 2.0\); label noise has \(\sigma = 0.5\), so the floor is \(\sigma^2 = 0.25\).</div></div>
+          <div class="x-step"><span class="x-n">02</span><div>Train the same procedure on three different samples; the fits predict 2.6, 2.9, 2.3. Average model: \(\bar{f}(x_0) = (2.6 + 2.9 + 2.3)/3 = 2.6\).</div></div>
+          <div class="x-step"><span class="x-n">03</span><div><b>Bias²</b> \(= (2.0 - 2.6)^2 = 0.36\). <b>Variance</b> \(= (0^2 + 0.3^2 + (-0.3)^2)/3 = 0.18/3 = 0.06\).</div></div>
+          <div class="x-step"><span class="x-n">04</span><div>Expected error \(= 0.36 + 0.06 + 0.25 = 0.67\) — and the biggest line item is bias: this family needs more capacity, not more data.</div></div>
+          <div class="x-step"><span class="x-n">05</span><div>The dials below run a stylized family with \(\text{bias}^2 = 1/d^2\) and \(\text{variance} = \sigma^2 d / n\): drag capacity \(d\) and watch the budget rebalance into a U.</div></div>
+          <span class="x-result">RESULT: ERROR = 0.36 + 0.06 + 0.25 = 0.67</span>
+          <div class="eq-try">
+            <div class="ctl"><label>CAPACITY d <output id="gnxq-d-out">3</output></label><input type="range" id="gnxq-d" min="1" max="15" step="1" value="3"/></div>
+            <div class="ctl"><label>SAMPLES n <output id="gnxq-n-out">20</output></label><input type="range" id="gnxq-n" min="10" max="200" step="10" value="20"/></div>
+            <div class="ctl"><label>NOISE σ <output id="gnxq-sig-out">0.50</output></label><input type="range" id="gnxq-sig" min="0.1" max="1" step="0.05" value="0.5"/></div>
+            <div class="try-out" id="gnxq-bv-out">—</div>
+          </div>
+        </div></div>
         </div>
 
         <p>The archery reading: bias is your sights being misaligned — every arrow lands off-center the same way. Variance is an unsteady hand — arrows scatter, even though they center on the bullseye. A degree-1 polynomial fit to a cubic has misaligned sights: resample the data all you like, the average line is still a line, still wrong. A degree-12 polynomial has a violently unsteady hand: each resample produces a different contortion, and only their unreachable average is close to the truth.</p>
@@ -133,11 +149,29 @@ print(f"\nirreducible noise floor sigma^2 = {0.18**2:.4f}")
         <div class="eq"><span class="eq-tag">EQ M6.2 — RIDGE (L2)</span>
         $$ \hat{w}_{\text{ridge}} \;=\; \arg\min_{w}\; \lVert y - Xw \rVert_2^2 \;+\; \lambda \lVert w \rVert_2^2 \;=\; \big(X^{\top}X + \lambda I\big)^{-1} X^{\top} y $$
         <div class="eq-note">Still closed-form — the penalty just fattens the diagonal of \(X^\top X\), which is also why it cures the numerical singularity of high-degree fits. In the SVD picture, the component of the solution along a singular direction with singular value \(\sigma_i\) gets multiplied by \(\sigma_i^2 / (\sigma_i^2 + \lambda)\): strong, well-supported directions pass almost untouched while weak, noise-amplifying directions are crushed. <b>Ridge shrinks every weight toward zero but never exactly to zero.</b></div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><div>One feature, so everything is scalar: \(X^\top X = \sum x_i^2 = 10\) and \(X^\top y = \sum x_i y_i = 8\). OLS: \(\hat{w} = 8/10 = 0.8\).</div></div>
+          <div class="x-step"><span class="x-n">02</span><div>Ridge just fattens the denominator: \(\hat{w} = 8/(10 + \lambda)\). At \(\lambda = 1\): \(8/11 = 0.727\).</div></div>
+          <div class="x-step"><span class="x-n">03</span><div>At \(\lambda = 10\): \(8/20 = 0.40\) — exactly half the OLS weight, because the penalty now equals the evidence \(\sum x_i^2 = 10\).</div></div>
+          <div class="x-step"><span class="x-n">04</span><div>At \(\lambda = 90\): \(8/100 = 0.08\) — crushed but alive. No finite \(\lambda\) reaches zero: shrinkage, never selection. Drag \(\lambda\) and watch.</div></div>
+          <span class="x-result">RESULT: ŵ = 0.80 → 0.73 → 0.40 → 0.08 AS λ = 0, 1, 10, 90</span>
+          <div class="eq-try">
+            <div class="ctl"><label>PENALTY λ (LOG) <output id="gnxq-lam-out">1.0</output></label><input type="range" id="gnxq-lam" min="-2" max="2" step="0.05" value="0"/></div>
+            <div class="try-out" id="gnxq-ridge-out">ŵ = 0.727 · ×0.909 of OLS</div>
+          </div>
+        </div></div>
         </div>
 
         <div class="eq"><span class="eq-tag">EQ M6.3 — LASSO (L1)</span>
         $$ \hat{w}_{\text{lasso}} \;=\; \arg\min_{w}\; \lVert y - Xw \rVert_2^2 \;+\; \lambda \lVert w \rVert_1 \qquad \lVert w \rVert_1 = \textstyle\sum_{j} \lvert w_j \rvert $$
         <div class="eq-note">No closed form — the kink of \(\lvert \cdot \rvert\) at zero breaks the calculus, so lasso is solved by coordinate descent or proximal methods, whose core operation is the soft threshold \(S(z, \lambda) = \mathrm{sign}(z)\max(\lvert z \rvert - \lambda,\, 0)\). That \(\max\) is the point: weights whose evidence is weaker than \(\lambda\) are set to <b>exactly zero</b>. Lasso doesn't just shrink — it <b>selects features</b>, and the surviving support is often the deliverable.</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><div>Apply the soft threshold \(S(z, \lambda) = \mathrm{sign}(z)\max(\lvert z \rvert - \lambda, 0)\) with \(\lambda = 0.3\) to three candidate weights \(z = (0.9,\, -0.4,\, 0.05)\).</div></div>
+          <div class="x-step"><span class="x-n">02</span><div>\(S(0.9) = 0.9 - 0.3 = 0.6\). &nbsp; \(S(-0.4) = -(0.4 - 0.3) = -0.1\). Both survive, each pulled 0.3 toward zero.</div></div>
+          <div class="x-step"><span class="x-n">03</span><div>\(S(0.05)\): the evidence \(0.05\) is weaker than the price \(0.3\), so \(\max(0.05 - 0.3,\, 0) = 0\) — <b>exactly zero</b>, not small.</div></div>
+          <div class="x-step"><span class="x-n">04</span><div>Ridge at comparable strength multiplies all three by \(1/(1 + 0.3) \approx 0.77\) — everything survives, smaller. Lasso instead deleted the weak feature outright: a 2-feature model, not three shrunken ones.</div></div>
+          <span class="x-result">RESULT: w = (0.6, −0.1, 0) — FEATURE 3 SELECTED OUT</span>
+        </div></div>
         </div>
 
         <div class="figure" data-reveal>
@@ -582,6 +616,43 @@ plot_xy(np.log10(lams), np.array(mses))   # the regularization U-curve
       });
     }, 140);
   });
+})();
+</script>
+<script>
+/* eq-x mini-evaluators — EQ M6.1 and EQ M6.2 */
+(function () {
+  "use strict";
+  /* EQ M6.1 — stylized bias/variance/noise budget */
+  (function () {
+    var dIn = document.getElementById("gnxq-d");
+    if (!dIn) return;
+    var nIn = document.getElementById("gnxq-n"), sIn = document.getElementById("gnxq-sig");
+    var dOut = document.getElementById("gnxq-d-out"), nOut = document.getElementById("gnxq-n-out");
+    var sOut = document.getElementById("gnxq-sig-out"), out = document.getElementById("gnxq-bv-out");
+    function render() {
+      var d = parseInt(dIn.value, 10), n = parseInt(nIn.value, 10), s = parseFloat(sIn.value);
+      dOut.textContent = String(d); nOut.textContent = String(n); sOut.textContent = s.toFixed(2);
+      var b2 = 1 / (d * d), va = s * s * d / n, tot = b2 + va + s * s;
+      out.textContent = "bias² " + b2.toFixed(3) + " + var " + va.toFixed(3) + " + σ² " + (s * s).toFixed(3) +
+        " = " + tot.toFixed(3) + (b2 > va ? " · BIAS-DOMINATED" : " · VARIANCE-DOMINATED");
+    }
+    [dIn, nIn, sIn].forEach(function (el) { el.addEventListener("input", render); });
+    render();
+  })();
+  /* EQ M6.2 — scalar ridge: w = 8/(10 + λ) */
+  (function () {
+    var lamIn = document.getElementById("gnxq-lam");
+    if (!lamIn) return;
+    var lamOut = document.getElementById("gnxq-lam-out"), out = document.getElementById("gnxq-ridge-out");
+    function render() {
+      var lam = Math.pow(10, parseFloat(lamIn.value));
+      lamOut.textContent = lam >= 10 ? lam.toFixed(0) : lam >= 1 ? lam.toFixed(1) : lam.toFixed(2);
+      var w = 8 / (10 + lam), shrink = 10 / (10 + lam);
+      out.textContent = "ŵ = " + w.toFixed(3) + " · ×" + shrink.toFixed(3) + " of OLS";
+    }
+    lamIn.addEventListener("input", render);
+    render();
+  })();
 })();
 </script>
 </body>

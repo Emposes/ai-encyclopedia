@@ -4,8 +4,10 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>03 · Attention — LLM Field Manual</title>
+<link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
+<meta name="theme-color" content="#000000" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-<link rel="stylesheet" href="../assets/css/manual.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=3" />
 </head>
 <body>
 
@@ -51,6 +53,13 @@
         <div class="eq"><span class="eq-tag">EQ 3.1 — THE EQUATION OF THE DECADE</span>
         $$ \mathrm{Attention}(Q, K, V) \;=\; \mathrm{softmax}\!\left( \frac{Q K^{\top}}{\sqrt{d_k}} + M \right) V $$
         <div class="eq-note">\(QK^\top\) is a \(T \times T\) matrix of relevance scores. \(M\) is the causal mask (§3.4). Each output row is a <b>convex combination of value vectors</b> — attention never invents content, it routes and blends what positions already offer. Computational cost: \(O(T^2 d)\) — the quadratic that drives an entire sub-industry of optimizations.</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><div>One query, three cached keys, \(d_k = 4\): \(q = (1,0,1,0)\); \(k_1 = (1,0,1,0)\), \(k_2 = (0,1,0,1)\), \(k_3 = (1,1,0,0)\).</div></div>
+          <div class="x-step"><span class="x-n">02</span><div>Dot products: \(q \cdot k_1 = 2\), \(q \cdot k_2 = 0\), \(q \cdot k_3 = 1\). Divide by \(\sqrt{4} = 2\) → scaled scores \((1,\ 0,\ 0.5)\).</div></div>
+          <div class="x-step"><span class="x-n">03</span><div>Softmax: \(e^1 = 2.72\), \(e^0 = 1.00\), \(e^{0.5} = 1.65\); sum = 5.37 → weights \((0.51,\ 0.19,\ 0.31)\).</div></div>
+          <div class="x-step"><span class="x-n">04</span><div>Output row = \(0.51\, v_1 + 0.19\, v_2 + 0.31\, v_3\) — dominated by the matching key, but always a blend, never a hard pick. That softness is what makes it differentiable.</div></div>
+          <span class="x-result">RESULT: attention weights = (0.51, 0.19, 0.31)</span>
+        </div></div>
         </div>
 
         <div class="widget" id="attn-demo" data-reveal>
@@ -77,6 +86,12 @@
         <div class="eq"><span class="eq-tag">EQ 3.2 — SCORE VARIANCE</span>
         $$ \mathrm{Var}\!\left( q \cdot k \right) = \sum_{i=1}^{d_k} \mathrm{Var}(q_i k_i) = d_k \quad\Longrightarrow\quad \mathrm{Var}\!\left( \frac{q \cdot k}{\sqrt{d_k}} \right) = 1 $$
         <div class="eq-note">Unscaled, scores grow like \(\sqrt{d_k}\) in magnitude, the softmax saturates to near one-hot, and gradients through it vanish. Dividing by \(\sqrt{d_k}\) keeps the score distribution in softmax's responsive regime — the same role temperature plays at sampling time.</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><div>Take \(d_k = 64\) with unit-variance components: \(\mathrm{Var}(q \cdot k) = 64\), so a typical raw score sits near \(\pm\sqrt{64} = \pm 8\).</div></div>
+          <div class="x-step"><span class="x-n">02</span><div>Two-key softmax at raw scores \((8,\ 0)\): \(e^8/(e^8 + 1) = 2981/2982 = 0.99966\) — saturated. Its gradient \(p(1-p) \approx 0.0003\): almost no learning signal.</div></div>
+          <div class="x-step"><span class="x-n">03</span><div>After scaling, scores are \((1,\ 0)\): weight \(= 2.72/3.72 = 0.731\), gradient \(\approx 0.20\) — roughly 600× more signal flows back.</div></div>
+          <span class="x-result">RESULT: unscaled → 0.9997 (stuck) · scaled → 0.731 (trainable)</span>
+        </div></div>
         </div>
 
         <p>Softmax with temperature \(\tau\) interpolates between two regimes you just explored in the instrument above: \(\tau \to 0\) recovers a hard \(\arg\max\) lookup (a dictionary); \(\tau \to \infty\) gives uniform averaging (a bag of words). Trained attention lives between — sharp enough to bind, soft enough to be differentiable.</p>
@@ -114,6 +129,24 @@
         <div class="eq"><span class="eq-tag">EQ 3.5 — KV-CACHE SIZE</span>
         $$ \mathrm{bytes} \;=\; 2 \times L \times h_{kv} \times d_k \times T \times b \times (\text{bytes/elem}) $$
         <div class="eq-note">2 for K and V; \(L\) layers; \(h_{kv}\) key-value heads; \(d_k\) head dim; \(T\) sequence length; \(b\) batch size. This buffer — not the weights — is what limits how many concurrent users fit on a GPU, which is exactly why §3.6 exists.</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE + TRY IT ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><div>Llama-3-70B geometry: \(L = 80\), \(h_{kv} = 8\) (GQA), \(d_k = 128\), FP16 → 2 bytes per element.</div></div>
+          <div class="x-step"><span class="x-n">02</span><div>Per token: \(2 \times 80 \times 8 \times 128 = 163{,}840\) numbers × 2 bytes = 327,680 B = <b>320 KB</b>.</div></div>
+          <div class="x-step"><span class="x-n">03</span><div>One user at \(T = 8{,}192\): 320 KB × 8,192 = <b>2.5 GB</b> of cache — before a single weight is counted.</div></div>
+          <div class="x-step"><span class="x-n">04</span><div>Counterfactual full MHA (\(h_{kv} = 64\)): 8× more — 20 GB <em>per user</em>. Four users would fill an 80 GB H100 with no room left for the model. That is why GQA won.</div></div>
+          <span class="x-result">RESULT: 320 KB/token → 2.5 GB per 8K-context user</span>
+          <div class="eq-try">
+            <div class="ctl">
+              <label>CONTEXT T <output id="atxq-t-out">8K</output></label>
+              <input type="range" id="atxq-t" min="10" max="17" step="1" value="13"/>
+            </div>
+            <div class="ctl">
+              <label>KV HEADS h_kv <output id="atxq-hkv-out">8</output></label>
+              <input type="range" id="atxq-hkv" min="0" max="6" step="1" value="3"/>
+            </div>
+            <div class="try-out" id="atxq-out">—</div>
+          </div>
+        </div></div>
         </div>
 
         <div class="widget" id="kv-calc" data-reveal>
@@ -238,5 +271,34 @@
 <script src="../assets/js/shared.js"></script>
 <script src="../assets/js/search.js"></script>
 <script src="../assets/js/interactives.js"></script>
+<script>
+(function () {
+  "use strict";
+  var t = document.getElementById("atxq-t");
+  if (!t) return;
+  var hk = document.getElementById("atxq-hkv");
+  var tOut = document.getElementById("atxq-t-out");
+  var hkOut = document.getElementById("atxq-hkv-out");
+  var out = document.getElementById("atxq-out");
+  function upd() {
+    var T = Math.pow(2, parseInt(t.value, 10));
+    var H = Math.pow(2, parseInt(hk.value, 10));
+    var perTok = 2 * 80 * H * 128 * 2;             // bytes, L=80, d_k=128, FP16
+    var total = perTok * T;                        // bytes per user (b = 1)
+    var kb = perTok / 1024;
+    var gb = total / 1073741824;
+    var perStr = kb >= 1024 ? (kb / 1024).toFixed(1) + " MB" : kb + " KB";
+    var totStr = gb >= 100 ? gb.toFixed(0) + " GB"
+               : gb >= 1   ? gb.toFixed(2) + " GB"
+               : (gb * 1024).toFixed(0) + " MB";
+    tOut.textContent = T >= 1024 ? (T / 1024) + "K" : T;
+    hkOut.textContent = H;
+    out.textContent = perStr + "/token → " + totStr + "/user";
+  }
+  t.addEventListener("input", upd);
+  hk.addEventListener("input", upd);
+  upd();
+})();
+</script>
 </body>
 </html>

@@ -4,8 +4,10 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>01 · Foundations — LLM Field Manual</title>
+<link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
+<meta name="theme-color" content="#000000" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-<link rel="stylesheet" href="../assets/css/manual.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=3" />
 </head>
 <body>
 
@@ -56,6 +58,13 @@
         <div class="eq"><span class="eq-tag">EQ 1.2 — FROM LOGITS TO PROBABILITIES</span>
         $$ p_\theta(x_t = i \mid x_{&lt;t}) \;=\; \mathrm{softmax}\big(f_\theta(x_{&lt;t})\big)_i \;=\; \frac{e^{z_i}}{\sum_{j=1}^{|V|} e^{z_j}} $$
         <div class="eq-note">The raw network outputs \(z \in \mathbb{R}^{|V|}\) are called <b>logits</b> — one real number per vocabulary entry. Softmax exponentiates and normalizes them into a proper distribution. Note the softmax is shift-invariant: adding a constant to every logit changes nothing.</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><div>Toy vocabulary of 3 tokens; the network emits logits \(z = (2,\ 1,\ 0)\).</div></div>
+          <div class="x-step"><span class="x-n">02</span><div>Exponentiate: \(e^2 = 7.39\), \(e^1 = 2.72\), \(e^0 = 1.00\). Sum = 11.11.</div></div>
+          <div class="x-step"><span class="x-n">03</span><div>Normalize: \(p = (7.39,\ 2.72,\ 1.00)/11.11 = (0.665,\ 0.245,\ 0.090)\) — sums to 1.000.</div></div>
+          <div class="x-step"><span class="x-n">04</span><div>Shift-invariance check: logits \((102,\ 101,\ 100)\) give the <b>same</b> \(p\) — the common factor \(e^{100}\) cancels top and bottom. Only logit <em>gaps</em> carry information.</div></div>
+          <span class="x-result">RESULT: p = (0.665, 0.245, 0.090)</span>
+        </div></div>
         </div>
 
         <p>Generation is just repeated application: feed the context in, get a distribution out, pick a token (Chapter 08 covers <em>how</em> to pick), append it, repeat. This loop — one forward pass per emitted token — is why inference economics are dominated by the cost of a single forward pass, and why so much of Chapter 08 is about amortizing it.</p>
@@ -183,6 +192,20 @@
         <div class="eq"><span class="eq-tag">EQ 1.6 — THE PRE-TRAINING LOSS</span>
         $$ \mathcal{L}(\theta) \;=\; -\,\mathbb{E}_{x \sim \mathcal{D}} \left[ \frac{1}{T} \sum_{t=1}^{T} \log p_\theta\!\left(x_t \mid x_{&lt;t}\right) \right] $$
         <div class="eq-note">Every token position contributes a loss term <em>in parallel</em> during training (teacher forcing): the model predicts position \(t\) from the true prefix, not from its own samples. One sequence of length 4,096 yields 4,096 supervised examples in a single forward pass — the second reason web-scale training is feasible.</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE + TRY IT ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><div>Four positions; the model's probability on each <em>true</em> next token: 0.50, 0.25, 0.80, 0.10.</div></div>
+          <div class="x-step"><span class="x-n">02</span><div>Per-position loss \(-\ln p\): 0.693, 1.386, 0.223, 2.303 nats.</div></div>
+          <div class="x-step"><span class="x-n">03</span><div>Average: \((0.693 + 1.386 + 0.223 + 2.303)/4 = 4.605/4 = 1.151\) nats. The single bad miss (\(p = 0.10\)) contributes half the total — the log punishes confident wrongness hardest.</div></div>
+          <div class="x-step"><span class="x-n">04</span><div>Cross-check via EQ 1.7: \(e^{1.151} = 3.16 = 1/0.316\), and \(0.316\) is exactly the geometric mean of the four probabilities.</div></div>
+          <span class="x-result">RESULT: L = 1.151 nats · PPL = 3.16</span>
+          <div class="eq-try">
+            <div class="ctl">
+              <label>P(TRUE TOKEN) <output id="fdxq-p-out">0.30</output></label>
+              <input type="range" id="fdxq-p" min="0.01" max="0.99" step="0.01" value="0.30"/>
+            </div>
+            <div class="try-out" id="fdxq-out">—</div>
+          </div>
+        </div></div>
         </div>
 
         <p>The human-readable form of this loss is <strong>perplexity</strong> — the effective branching factor, “how many equally likely tokens is the model choosing among?”:</p>
@@ -190,6 +213,13 @@
         <div class="eq"><span class="eq-tag">EQ 1.7 — PERPLEXITY</span>
         $$ \mathrm{PPL} \;=\; \exp\big(\mathcal{L}\big) $$
         <div class="eq-note">A uniform guesser over a 128K vocabulary has PPL = 128,000. Strong frontier models reach single-digit perplexities on held-out web text. Loss differences that look tiny — 2.30 vs 2.25 nats — represent large capability gaps, which is why scaling-law plots (Chapter 04) are drawn in loss space.</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><div>Uniform guessing over \(|V| = 128{,}000\): \(L = \ln 128{,}000 = 11.76\) nats → PPL = 128,000. That is the top of the dial below.</div></div>
+          <div class="x-step"><span class="x-n">02</span><div>GPT-2-era web-text loss ≈ 3.0 nats → PPL \(= e^{3.0} = 20.1\): every token is a 20-way choice.</div></div>
+          <div class="x-step"><span class="x-n">03</span><div>Frontier-class loss ≈ 1.8 nats → PPL \(= e^{1.8} = 6.05\).</div></div>
+          <div class="x-step"><span class="x-n">04</span><div>Shaving 0.05 nats (1.80 → 1.75) drops PPL to \(e^{1.75} = 5.75\) — a 5% cut in effective choices, typically bought with a multi-fold compute increase (Chapter 04).</div></div>
+          <span class="x-result">RESULT: 11.76 nats → PPL 128,000 · 1.80 nats → PPL 6.05</span>
+        </div></div>
         </div>
 
         <div class="widget" id="ppl-demo" data-reveal>
@@ -257,5 +287,24 @@
 <script src="../assets/js/shared.js"></script>
 <script src="../assets/js/search.js"></script>
 <script src="../assets/js/interactives.js"></script>
+<script>
+(function () {
+  "use strict";
+  var p = document.getElementById("fdxq-p");
+  if (!p) return;
+  var pOut = document.getElementById("fdxq-p-out");
+  var out = document.getElementById("fdxq-out");
+  function upd() {
+    var v = parseFloat(p.value);
+    var L = -Math.log(v);
+    var bits = L / Math.LN2;
+    var ppl = 1 / v;
+    pOut.textContent = v.toFixed(2);
+    out.textContent = "loss " + L.toFixed(2) + " nats · " + bits.toFixed(2) + " bits · PPL " + ppl.toFixed(2);
+  }
+  p.addEventListener("input", upd);
+  upd();
+})();
+</script>
 </body>
 </html>

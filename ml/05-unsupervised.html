@@ -5,8 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>05 · Clustering &amp; Dimensionality — AI Encyclopedia</title>
 <meta name="description" content="Learning without labels: k-means stepped one Lloyd iteration at a time, PCA as organized variance-hunting, and the road from compression to the embeddings that power modern AI." />
+<link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
+<meta name="theme-color" content="#000000" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-<link rel="stylesheet" href="../assets/css/manual.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=3" />
 </head>
 <body>
 
@@ -68,6 +70,18 @@
         <div class="eq"><span class="eq-tag">EQ M5.1 — THE K-MEANS OBJECTIVE (INERTIA)</span>
         $$ J\big(c_{1..n},\, \mu_{1..k}\big) \;=\; \sum_{i=1}^{n} \big\lVert x_i - \mu_{c_i} \big\rVert^{2}, \qquad c_i \in \{1, \dots, k\} $$
         <div class="eq-note">\(\mu_j\) are the \(k\) <b>centroids</b>; \(c_i\) names the cluster point \(i\) is assigned to; \(J\) — called <b>inertia</b>, or within-cluster sum of squares — totals every point's squared distance to its own centroid. Minimizing \(J\) jointly over assignments <em>and</em> centroids is NP-hard even for \(k = 2\). Nobody minimizes it exactly; everybody uses the 1957 heuristic below.</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><div>Six points on a line: 1, 2, 3, 8, 9, 10. Set \(k = 2\) and place the centroids badly: \(\mu_1 = 4\), \(\mu_2 = 10\).</div></div>
+          <div class="x-step"><span class="x-n">02</span><div><b>ASSIGN</b>: point 8 is 4 away from \(\mu_1\) but only 2 from \(\mu_2\), so \(S_1 = \{1,2,3\}\), \(S_2 = \{8,9,10\}\). Inertia: \(J = (1{-}4)^2 + (2{-}4)^2 + (3{-}4)^2 + (8{-}10)^2 + (9{-}10)^2 + 0 = 9{+}4{+}1{+}4{+}1 = 19\).</div></div>
+          <div class="x-step"><span class="x-n">03</span><div><b>UPDATE</b>: \(\mu_1 \leftarrow \mathrm{mean}(1,2,3) = 2\), \(\mu_2 \leftarrow \mathrm{mean}(8,9,10) = 9\). New \(J = 1{+}0{+}1{+}1{+}0{+}1 = 4\).</div></div>
+          <div class="x-step"><span class="x-n">04</span><div>Re-ASSIGN moves nothing — converged. One Lloyd sweep cut \(J\) from 19 to 4, this data's global optimum. Now drag the centroids yourself and try to beat it.</div></div>
+          <span class="x-result">RESULT: J = 19 → 4 IN ONE SWEEP</span>
+          <div class="eq-try">
+            <div class="ctl"><label>CENTROID μ₁ <output id="usxq-mu1-out">4.0</output></label><input type="range" id="usxq-mu1" min="0" max="6" step="0.1" value="4"/></div>
+            <div class="ctl"><label>CENTROID μ₂ <output id="usxq-mu2-out">10.0</output></label><input type="range" id="usxq-mu2" min="5" max="12" step="0.1" value="10"/></div>
+            <div class="try-out" id="usxq-km-out">J = 19.00</div>
+          </div>
+        </div></div>
         </div>
 
         <p><strong>Lloyd's algorithm</strong> attacks \(J\) the way you would untangle any two-variable problem: freeze one variable, optimize the other, alternate. Both half-steps have closed forms, and both can only push \(J\) down:</p>
@@ -159,6 +173,17 @@ plot_scatter(X[:, 0], X[:, 1], c)
         <div class="eq"><span class="eq-tag">EQ M5.3 — PCA AS VARIANCE MAXIMIZATION</span>
         $$ u_1 \;=\; \arg\max_{\lVert u \rVert = 1} \; u^{\top} \Sigma\, u, \qquad \Sigma \;=\; \frac{1}{n} \sum_{i=1}^{n} \big(x_i - \bar{x}\big)\big(x_i - \bar{x}\big)^{\top} $$
         <div class="eq-note">\(\Sigma\) is the covariance matrix; \(u^\top \Sigma u\) is exactly the variance of the data projected onto \(u\). The maximizer is the <b>top eigenvector of \(\Sigma\)</b>, and the variance it captures is its eigenvalue \(\lambda_1\); the second component is the best direction orthogonal to the first, and so on down the spectrum. The twin reading matters just as much: by Pythagoras, variance kept + variance lost = total, so <b>the direction that captures the most variance is the same direction that minimizes squared perpendicular reconstruction error</b>. Maximal information and minimal distortion are one criterion, not two.</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><div>A centered 2-D cloud whose covariance has variances \(\Sigma_{11} = \Sigma_{22} = 2\) and covariance \(\Sigma_{12} = 1\). Total variance = trace = \(2 + 2 = 4\).</div></div>
+          <div class="x-step"><span class="x-n">02</span><div>Axis-aligned guess \(u = (1, 0)\): \(u^\top \Sigma u = \Sigma_{11} = 2\) — keeps \(2/4 = 50\%\).</div></div>
+          <div class="x-step"><span class="x-n">03</span><div>Diagonal guess \(u = (1,1)/\sqrt{2}\): \(u^\top \Sigma u = (2 + 1 + 1 + 2)/2 = 3\) — keeps \(3/4 = 75\%\). The cross-term \(\Sigma_{12}\) pays out when the axis follows the correlation.</div></div>
+          <div class="x-step"><span class="x-n">04</span><div>No direction beats it: for \(u = (\cos\theta, \sin\theta)\), \(u^\top \Sigma u = 2 + \sin 2\theta \le 3\), with equality at \(\theta = 45°\) — the top eigenvector, eigenvalue \(\lambda_1 = 3\). Sweep \(\theta\) below.</div></div>
+          <span class="x-result">RESULT: PC1 AT 45° CAPTURES 3/4 = 75%</span>
+          <div class="eq-try">
+            <div class="ctl"><label>ANGLE θ <output id="usxq-theta-out">0°</output></label><input type="range" id="usxq-theta" min="0" max="180" step="1" value="0"/></div>
+            <div class="try-out" id="usxq-pca-out">uᵀΣu = 2.00 · 50.0% of total 4</div>
+          </div>
+        </div></div>
         </div>
 
         <p>Hunt the direction yourself before the eigensolver does. Below is a centered, correlated cloud; the slider aims a candidate axis, the red stalks are what projection onto that axis throws away, and the lower chart sweeps EQ M5.3's objective across every angle:</p>
@@ -187,6 +212,13 @@ plot_scatter(X[:, 0], X[:, 1], c)
         <div class="eq"><span class="eq-tag">EQ M5.4 — THE BUDGET SHEET</span>
         $$ \text{variance kept by } d \text{ of } D \text{ components} \;=\; \frac{\sum_{j=1}^{d} \lambda_j}{\sum_{j=1}^{D} \lambda_j}, \qquad \frac{1}{n}\sum_{i=1}^{n} \big\lVert x_i - \hat{x}_i \big\rVert^{2} \;=\; \sum_{j=d+1}^{D} \lambda_j $$
         <div class="eq-note">\(\hat{x}_i\) is the reconstruction from the kept \(d\) components. The right-hand identity is the Eckart–Young theorem in its friendliest costume: <b>among all linear projections to \(d\) dimensions, PCA's is the one with the smallest possible reconstruction error, and that error equals the sum of the eigenvalues you dropped</b>. Practitioners keep enough components for 90–99% of variance, or cut where the spectrum visibly cliffs.</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><div>A 3-D dataset with eigenvalue spectrum \(\lambda = (4.5,\, 0.4,\, 0.1)\). Total variance \(= 4.5 + 0.4 + 0.1 = 5.0\).</div></div>
+          <div class="x-step"><span class="x-n">02</span><div>Keep \(d = 1\): variance kept \(= 4.5 / 5.0 = 90\%\). Reconstruction MSE = sum of dropped eigenvalues \(= 0.4 + 0.1 = 0.5\).</div></div>
+          <div class="x-step"><span class="x-n">03</span><div>Keep \(d = 2\): kept \(= (4.5 + 0.4)/5.0 = 98\%\). MSE \(= \lambda_3 = 0.1\) — exactly, not approximately.</div></div>
+          <div class="x-step"><span class="x-n">04</span><div>Read the cliff: the first coordinate buys 90 points of variance, the second buys 8, the third buys 2. The budget sheet says where to stop — here, \(d = 2\).</div></div>
+          <span class="x-result">RESULT: d = 2 → 98% KEPT · MSE = 0.1</span>
+        </div></div>
         </div>
 
         <div class="pycell" data-py>
@@ -595,6 +627,49 @@ print("dropped eigenvalue/2 :", round(lam[1]/2, 4), "  <- EQ M5.4, per entry")
       for (var i = 0; i < RENDERS.length; i++) RENDERS[i]();
     }, 150);
   });
+})();
+</script>
+<script>
+/* eq-x mini-evaluators — EQ M5.1 and EQ M5.3 */
+(function () {
+  "use strict";
+  /* EQ M5.1 — inertia J for two draggable 1-D centroids */
+  (function () {
+    var m1 = document.getElementById("usxq-mu1");
+    if (!m1) return;
+    var m2 = document.getElementById("usxq-mu2");
+    var o1 = document.getElementById("usxq-mu1-out"), o2 = document.getElementById("usxq-mu2-out");
+    var out = document.getElementById("usxq-km-out");
+    var PTS = [1, 2, 3, 8, 9, 10];
+    function render() {
+      var a = parseFloat(m1.value), b = parseFloat(m2.value);
+      o1.textContent = a.toFixed(1); o2.textContent = b.toFixed(1);
+      var J = 0, s1 = [], i, d1, d2;
+      for (i = 0; i < PTS.length; i++) {
+        d1 = (PTS[i] - a) * (PTS[i] - a); d2 = (PTS[i] - b) * (PTS[i] - b);
+        if (d1 <= d2) { J += d1; s1.push(PTS[i]); } else J += d2;
+      }
+      out.textContent = "J = " + J.toFixed(2) + " · S₁ = {" + s1.join(",") + "} · best J = 4 at (2, 9)";
+    }
+    m1.addEventListener("input", render);
+    m2.addEventListener("input", render);
+    render();
+  })();
+  /* EQ M5.3 — variance captured along u(θ) for Σ = [[2,1],[1,2]] */
+  (function () {
+    var th = document.getElementById("usxq-theta");
+    if (!th) return;
+    var to = document.getElementById("usxq-theta-out");
+    var out = document.getElementById("usxq-pca-out");
+    function render() {
+      var deg = parseFloat(th.value);
+      to.textContent = deg.toFixed(0) + "°";
+      var v = 2 + Math.sin(2 * deg * Math.PI / 180);
+      out.textContent = "uᵀΣu = " + v.toFixed(2) + " · " + (100 * v / 4).toFixed(1) + "% of total 4";
+    }
+    th.addEventListener("input", render);
+    render();
+  })();
 })();
 </script>
 </body>

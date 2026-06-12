@@ -5,8 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>04 · Trees, Forests &amp; Neighbors — AI Encyclopedia</title>
 <meta name="description" content="k-NN, decision trees, random forests and gradient boosting — the non-parametric family that still wins on tabular data, with a live CART depth dial and a k-NN smoother." />
+<link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
+<meta name="theme-color" content="#000000" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-<link rel="stylesheet" href="../assets/css/manual.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=3" />
 </head>
 <body>
 
@@ -52,6 +54,13 @@
         <div class="eq"><span class="eq-tag">EQ M4.1 — MAJORITY VOTE OF THE k NEAREST</span>
         $$ \hat{y}(x) \;=\; \operatorname*{arg\,max}_{c}\; \sum_{i \,\in\, N_k(x)} \mathbf{1}\!\left[\, y_i = c \,\right] $$
         <div class="eq-note">\(N_k(x)\) is the set of the \(k\) training points nearest to \(x\) — usually under Euclidean distance — and \(\mathbf{1}[\cdot]\) counts a vote when neighbor \(i\) carries label \(c\). All the cost moves to query time: \(O(nd)\) distance computations per prediction against \(n\) stored examples in \(d\) dimensions. <b>Every modeling assumption hides inside the distance function</b> — if one feature is measured in millimeters and another in kilometers, the millimeters decide everything, which is why k-NN demands scaled features while trees (§4.2) do not.</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><span>Query point \(x\); set \(k = 5\). The five nearest training points carry labels ●, ●, ○, ●, ○.</span></div>
+          <div class="x-step"><span class="x-n">02</span><span>Count the votes — that is all \(\mathbf{1}[y_i = c]\) does: class ● gets \(1+1+0+1+0 = 3\); class ○ gets \(2\).</span></div>
+          <div class="x-step"><span class="x-n">03</span><span>\(\operatorname{arg\,max}\): predict <b>●</b>. (Odd \(k\) guarantees no tie in a two-class problem.)</span></div>
+          <div class="x-step"><span class="x-n">04</span><span>The hidden assumption: "nearest" used Euclidean distance. If feature 1 were in kilometers and feature 2 in millimeters, the vote would be decided by feature 1 alone — rescale first.</span></div>
+          <span class="x-result">RESULT: ŷ(x) = ● by 3 votes to 2</span>
+        </div></div>
         </div>
 
         <p>For something this naive, k-NN is theoretically respectable: a classic result (Cover &amp; Hart, 1967) shows that with unlimited data, the humble 1-NN rule's error is at most <em>twice</em> the best achievable error of any classifier. Memory is a legitimate model. And it scaled further than anyone guessed: vector search over learned embeddings — the retrieval step inside every RAG system and vector database — is k-NN run at billion-document scale. The algorithm never died; it just changed feature spaces.</p>
@@ -101,6 +110,18 @@ plot_scatter(X[:, 0], X[:, 1], y)</pre>
         <div class="eq"><span class="eq-tag">EQ M4.2 — GINI IMPURITY AND SPLIT GAIN</span>
         $$ G(S) \;=\; 1 - \sum_{c} p_c^{\,2}, \qquad \Delta \;=\; G(S) \;-\; \frac{|S_L|}{|S|}\,G(S_L) \;-\; \frac{|S_R|}{|S|}\,G(S_R) $$
         <div class="eq-note">\(p_c\) is the fraction of class \(c\) among the samples \(S\) at the node; \(G\) is the probability that two random draws from the node disagree — 0 when pure, 0.5 at a two-class coin flip. The split \(s\) sends samples to children \(S_L, S_R\), and CART picks the feature–threshold pair maximizing the gain \(\Delta\). The entropy alternative \(H(S) = -\sum_c p_c \log_2 p_c\) ("information gain") <b>almost never produces a different tree</b> — Gini wins on speed, not principle.</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><span>Parent node \(S\): 8 samples, 4 ● and 4 ○. So \(p = (0.5, 0.5)\) and \(G(S) = 1 - (0.25 + 0.25) = 0.5\) — maximal two-class impurity.</span></div>
+          <div class="x-step"><span class="x-n">02</span><span>A candidate split sends 5 samples left (4 ●, 1 ○) and 3 right (0 ●, 3 ○).</span></div>
+          <div class="x-step"><span class="x-n">03</span><span>\(G(S_L) = 1 - (0.8^2 + 0.2^2) = 1 - 0.68 = 0.32\). \(G(S_R) = 1 - (0 + 1) = 0\) — perfectly pure.</span></div>
+          <div class="x-step"><span class="x-n">04</span><span>Gain: \(\Delta = 0.5 - \tfrac{5}{8}(0.32) - \tfrac{3}{8}(0) = 0.5 - 0.2 = 0.3\). CART runs this arithmetic for every feature–threshold pair and keeps the winner.</span></div>
+          <span class="x-result">RESULT: Δ = 0.30</span>
+          <div class="eq-try">
+            <div class="ctl"><label>● SENT LEFT (OF 10) <output id="tnxq-a-out">8</output></label><input type="range" id="tnxq-a" min="0" max="10" step="1" value="8"/></div>
+            <div class="ctl"><label>○ SENT LEFT (OF 10) <output id="tnxq-b-out">2</output></label><input type="range" id="tnxq-b" min="0" max="10" step="1" value="2"/></div>
+            <div class="try-out" id="tnxq-out">G_L = 0.320 · G_R = 0.320 · Δ = 0.180</div>
+          </div>
+        </div></div>
         </div>
 
         <figure class="figure" data-reveal>
@@ -249,6 +270,13 @@ print(f"stump accuracy : {(pred == y).mean():.3f}   (noise ceiling ≈ 0.90)")</
         <div class="eq"><span class="eq-tag">EQ M4.4 — THE BOOSTING UPDATE</span>
         $$ F_m(x) \;=\; F_{m-1}(x) \;+\; \eta\, h_m(x), \qquad h_m \;\text{ fit to the residuals }\; r_i = y_i - F_{m-1}(x_i) $$
         <div class="eq-note">For squared loss, the residuals \(r_i\) literally are the errors left over. The general recipe — fit \(h_m\) to the <em>negative gradient</em> of any differentiable loss, evaluated at the current predictions — is what makes it <b>gradient</b> boosting: the same descent idea as Chapter 02, except each "step" is an entire tree, taken in function space rather than parameter space. The shrinkage \(\eta\) (typically 0.01–0.3) deliberately under-commits to each tree; small \(\eta\) plus more rounds almost always generalizes better. Unlike bagging, boosting <b>will</b> overfit as rounds accumulate — early stopping on a validation set is part of the algorithm, not an optional extra.</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><span>Targets \(y = (3, 5, 10)\). Round 0: \(F_0 = \) the mean \(= 18/3 = 6\) for every input.</span></div>
+          <div class="x-step"><span class="x-n">02</span><span>Residuals \(r = y - F_0 = (-3, -1, 4)\). Fit tree \(h_1\) to these; suppose it nails them exactly.</span></div>
+          <div class="x-step"><span class="x-n">03</span><span>With shrinkage \(\eta = 0.3\): \(F_1 = 6 + 0.3\,(-3, -1, 4) = (5.1,\; 5.7,\; 7.2)\).</span></div>
+          <div class="x-step"><span class="x-n">04</span><span>New residuals: \((3 - 5.1,\; 5 - 5.7,\; 10 - 7.2) = (-2.1,\; -0.7,\; 2.8)\) — each exactly \(0.7\times\) the old. Every round multiplies what's left by \((1 - \eta)\): deliberate under-commitment, many rounds.</span></div>
+          <span class="x-result">RESULT: residuals shrink ×0.70 per round at η = 0.3</span>
+        </div></div>
         </div>
 
         <p>The modern implementations are the tabular kings. <strong>XGBoost</strong> (2016) added second-order gradients and explicit regularization on leaf weights; <strong>LightGBM</strong> made training fast at scale with histogram-binned splits and leaf-wise growth; <strong>CatBoost</strong> specializes in categorical columns via ordered target statistics. A decade of Kaggle tabular leaderboards is, to a first approximation, a history of these three libraries.</p>
@@ -565,6 +593,35 @@ print(f"stump accuracy : {(pred == y).mean():.3f}   (noise ceiling ≈ 0.90)")</
       for (var i = 0; i < RENDERS.length; i++) RENDERS[i]();
     }, 160);
   });
+})();
+</script>
+<script>
+(function () {
+  "use strict";
+  /* EQ M4.2 mini-evaluator — Gini gain on a 10● + 10○ parent */
+  var a = document.getElementById("tnxq-a"), b = document.getElementById("tnxq-b");
+  if (!a || !b) return;
+  var ao = document.getElementById("tnxq-a-out"), bo = document.getElementById("tnxq-b-out");
+  var out = document.getElementById("tnxq-out");
+  function gini(dot, circ) {
+    var n = dot + circ;
+    if (n === 0) return 0;
+    var p = dot / n;
+    return 1 - (p * p + (1 - p) * (1 - p));
+  }
+  function go() {
+    var A = parseInt(a.value, 10), B = parseInt(b.value, 10);
+    var nL = A + B, nR = 20 - nL;
+    var gL = gini(A, B), gR = gini(10 - A, 10 - B);
+    var gain = 0.5 - (nL / 20) * gL - (nR / 20) * gR;
+    if (ao) ao.textContent = String(A);
+    if (bo) bo.textContent = String(B);
+    if (out) out.textContent = "G_L = " + gL.toFixed(3) + " · G_R = " + gR.toFixed(3) +
+      " · Δ = " + gain.toFixed(3) + (gain > 0.499 ? " — perfect split" : "");
+  }
+  a.addEventListener("input", go);
+  b.addEventListener("input", go);
+  go();
 })();
 </script>
 </body>
