@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>04 · Reasoning Controls: CoT to Effort Dials — AI Encyclopedia</title>
+<meta name="description" content="Chain of thought, decomposition patterns, self-consistency voting, and the shift from magic words to effort dials and thinking budgets in reasoning-class models." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css" />
+</head>
+<body>
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ VOL III / PROMPTING / 04 / REASONING CONTROLS</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="05-structured-output.html">NEXT: STRUCTURED OUTPUT →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">VOLUME III — PROMPTING · CHAPTER 04 / 07</div>
+    <h1>Reasoning Controls: CoT to Effort Dials</h1>
+    <p class="lede">For two years, five words — “let's think step by step” — were the highest-leverage edit in applied AI. Then models trained with reinforcement learning on verifiable rewards internalized the trick, and the magic words became a no-op. This chapter covers both eras: <strong>reasoning tokens are compute, and the only real question is who controls how many get spent</strong> — your prompt, your sampler, or an API dial.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 24 MIN</b></span>
+      <span>BUILDS ON<b>VOL III CH 02–03 · VOL II CH 05</b></span>
+      <span>INSTRUMENTS<b>SELF-CONSISTENCY SIM · PATHS VISUALIZER</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">4.1</span>Chain of thought</a>
+      <a href="#s2"><span class="n">4.2</span>Decomposition patterns</a>
+      <a href="#s3"><span class="n">4.3</span>Self-consistency</a>
+      <a href="#s4"><span class="n">4.4</span>The reasoning-model plot twist</a>
+      <a href="#s5"><span class="n">4.5</span>When to still prompt for reasoning</a>
+      <a href="#s6"><span class="n">4.6</span>Verification prompts</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 4.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">4.1</span><h2>Chain of thought: the original magic words</h2></div>
+        <p>In 2022 two papers changed how everyone prompted. Wei et al. showed that putting <em>worked reasoning</em> inside few-shot examples — not just question → answer, but question → derivation → answer — lifted large models from near-chance to strong performance on math word problems. Months later, Kojima et al. showed you didn't even need the examples: appending <strong>“Let's think step by step”</strong> to a bare question triggered the same behavior zero-shot. The effect was strongly scale-dependent — small models produced fluent nonsense chains; large models produced chains that actually landed on answers.</p>
+        <p>Why does emitting intermediate text help a fixed network? Two complementary explanations, both load-bearing.</p>
+        <p><strong>1. Tokens are compute.</strong> A transformer performs a fixed amount of serial computation per emitted token: one pass through \(L\) layers. Whatever can't be computed in \(L\) sequential steps can't be computed in one token. Theory makes this sharp: constant-depth transformers (under realistic precision assumptions) sit in a weak circuit class and provably cannot solve certain iterative problems — multi-step arithmetic, graph reachability — in a single forward pass. But a model that writes \(T\) intermediate tokens gets \(O(T \cdot L)\) serial steps, and each written token becomes <em>readable working memory</em> for every later step. With a polynomially long chain, transformers can express polynomial-time computation (Merrill &amp; Sabharwal; Feng et al., 2023). The scratchpad is not commentary — it is the computation.</p>
+        <p><strong>2. The chain is a latent variable.</strong> Statistically, a reasoning path \(z\) is an unobserved route from question to answer, and the model's true answer distribution marginalizes over all of them:</p>
+
+        <div class="eq"><span class="eq-tag">EQ P4.1 — REASONING AS A LATENT VARIABLE</span>
+        $$ p(a \mid q) \;=\; \sum_{z \,\in\, \mathcal{Z}} p(z \mid q)\; p(a \mid q, z) $$
+        <div class="eq-note">\(q\) the question, \(a\) the final answer, \(z\) a reasoning path — a token sequence the model may emit between them. Direct answering forces the model to compress this entire sum into one forward pass. CoT prompting instead <b>samples one \(z\) explicitly and conditions on it</b>: regions of \(\mathcal{Z}\) where \(p(a \mid q, z)\) is sharp and accurate get visited rather than averaged away. Any single sampled chain is one draw from the posterior over paths — which is exactly the loose thread §4.3 pulls: why settle for one draw?</div>
+        </div>
+
+        <p class="note"><strong>Honesty clause.</strong> The emitted chain is a <em>sample from a distribution over plausible rationales</em>, not a printout of the model's internal circuitry. Faithfulness studies (Turpin et al., 2023; Anthropic's 2025 reasoning-faithfulness evals) show models can produce clean-looking chains while their answer was actually driven by a bias planted in the prompt — and the chain never mentions it. CoT reliably buys accuracy; it only <em>sometimes</em> buys a true explanation. Keep the two claims separate.</p>
+      </section>
+
+      <!-- ====================== 4.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">4.2</span><h2>Decomposition patterns</h2></div>
+        <p>“Think step by step” leaves the shape of the thinking entirely to the model. The second-generation patterns impose structure on \(z\) — and each one targets a specific failure mode of free-form chains:</p>
+        <table class="data">
+          <thead><tr><th>Pattern</th><th>The move</th><th>Fixes</th><th>Shines when…</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Least-to-most</strong> (Zhou et al., 2022)</td><td class="m">decompose into subquestions, solve easiest → hardest, feed each answer forward</td><td>chains that tackle the hard part first and collapse</td><td>the test problem is <em>harder</em> than any example — compositional generalization</td></tr>
+            <tr><td><strong>Plan-then-solve</strong> (Wang et al., 2023)</td><td class="m">“first devise a plan, then carry it out step by step”</td><td>diving in mid-problem and skipping steps</td><td>multi-constraint tasks where missed requirements, not bad arithmetic, kill you</td></tr>
+            <tr><td><strong>Step-back</strong> (Zheng et al., 2023)</td><td class="m">ask the abstraction first (“what principle governs this?”), then apply it</td><td>retrieving the wrong fact or formula and reasoning flawlessly from it</td><td>knowledge-heavy domains — physics, law, history — where the bottleneck is recall, not logic</td></tr>
+          </tbody>
+        </table>
+        <p>All three are the same bet placed differently: a chain conditioned on a good <em>skeleton</em> spends its probability mass in a better region of \(\mathcal{Z}\) than a chain improvising its own structure. Least-to-most reorders the work; plan-then-solve separates deciding-what-to-do from doing it; step-back inserts a retrieval step before inference.</p>
+        <p class="note"><strong>One call or many?</strong> Every pattern above runs either inside a single prompt or as a <em>chain of calls</em> — decompose in call one, solve subproblems in calls two through five. Splitting costs latency and plumbing but buys per-step inspection, retries, and the ability to bolt a tool or a retrieval pass between steps. The single-prompt version is the cheap prototype; the multi-call version is what ships in pipelines (Chapter 06 returns to this as context orchestration).</p>
+      </section>
+
+      <!-- ====================== 4.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">4.3</span><h2>Self-consistency: vote over the paths</h2></div>
+        <p>EQ P4.1 says the model's real answer distribution is a marginal over reasoning paths — yet greedy CoT decoding samples exactly <em>one</em> path and trusts wherever it lands. <strong>Self-consistency</strong> (Wang et al., 2022) does the obvious-in-hindsight thing: sample \(N\) chains at nonzero temperature, extract each final answer, and take the plurality:</p>
+
+        <div class="eq"><span class="eq-tag">EQ P4.2 — MAJORITY VOTE OVER SAMPLED CHAINS</span>
+        $$ \hat{a}_{\mathrm{SC}} \;=\; \arg\max_{a} \sum_{i=1}^{N} \mathbb{1}\!\left[\, a_i = a \,\right], \qquad z_i \sim p(z \mid q), \quad a_i \sim p(a \mid q, z_i) $$
+        <div class="eq-note">A Monte-Carlo estimate of \(\arg\max_a p(a \mid q)\) from EQ P4.1: paths that derail scatter their answers across many wrong values, while correct paths — however different their routes — <b>agree on the same \(a\)</b>. Voting integrates out the path. It only works where answers are short and extractable (a number, a choice, a name); free-form prose has no vote to count.</div>
+        </div>
+
+        <p>The classical intuition is Condorcet's jury theorem: if each chain is independently correct with probability \(p\) and errors were a single binary alternative, the vote would be right with probability \( \sum_{k=\lceil N/2 \rceil}^{N} \binom{N}{k}\, p^{k} (1-p)^{N-k} \) — which races to 1 as \(N\) grows whenever \(p &gt; 0.5\), and to 0 when \(p &lt; 0.5\). Reality is kinder than the binary case: wrong chains rarely coordinate on one wrong answer, so the correct answer needs only a <em>plurality</em>, and voting can help even when \(p\) is somewhat below one half. Reality is also crueler: chains come from the same model reading the same prompt, so their errors correlate, and the independence the theorem assumes is exactly what you don't have. Both effects are visible in the instrument below.</p>
+
+        <div class="widget" id="rc-sc-sim" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT P4.1 — SELF-CONSISTENCY SIM</span><span class="w-sub">SEEDED MONTE CARLO · 2,500 TRIALS PER POINT · EQ P4.2</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>PER-CHAIN ACCURACY p <output id="rc-sc-p-out">0.70</output></label><input type="range" id="rc-sc-p" min="0.4" max="0.9" step="0.05" value="0.7"/></div>
+              <div class="ctl"><label>SAMPLED CHAINS N <output id="rc-sc-n-out">9</output></label><input type="range" id="rc-sc-n" min="1" max="25" step="1" value="9"/></div>
+            </div>
+            <canvas class="w-canvas" id="rc-sc-canvas" height="260"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">VOTE ACCURACY @ N</div><div class="r-value" id="rc-sc-acc">—</div></div>
+              <div class="readout"><div class="r-label">Δ VS SINGLE CHAIN</div><div class="r-value" id="rc-sc-gain">—</div></div>
+              <div class="readout"><div class="r-label">OUTPUT TOKENS (≈180/CHAIN)</div><div class="r-value" id="rc-sc-tok">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Each chain is correct with probability p; wrong chains scatter over six distractor answers (weighted — some wrong answers are more attractive than others); the plurality wins, ties broken at random. Watch three things: the steep early climb (most of the gain arrives by N ≈ 5–9), the saw-tooth (even N invites ties — papers sample odd N for a reason), and p = 0.40: <em>below</em> the Condorcet threshold, yet voting still helps, because errors disperse while truth concentrates. The token readout is the bill — accuracy saturates, cost stays linear.</div>
+        </div>
+
+        <p>What the simulator's independence assumption hides, the next instrument shows: five concrete chains for one problem, including <em>where</em> the wrong ones leave the road.</p>
+
+        <div class="widget" id="rc-paths" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT P4.2 — PATHS VISUALIZER</span><span class="w-sub">5 SAMPLED CHAINS · ONE WORD PROBLEM · CLICK A CHAIN</span></div>
+          <div class="w-body">
+            <div style="border:1px solid var(--hairline);border-radius:4px;padding:12px 14px;margin-bottom:14px;">
+              <div style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.16em;color:#636363;margin-bottom:6px;">PROBLEM q</div>
+              <div style="font-size:13.5px;color:#e5e5e5;line-height:1.55;">A bakery packs muffins six to a box. On Monday it bakes 7 boxes and sells all but 5 muffins. On Tuesday it bakes twice as many muffins as it <em>sold</em> on Monday. How many muffins does it bake on Tuesday?</div>
+            </div>
+            <div id="rc-paths-tree"></div>
+            <div style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.16em;color:#636363;margin:14px 0 6px;">VOTE TALLY — EQ P4.2 AT N = 5</div>
+            <div id="rc-paths-tally"></div>
+            <div id="rc-paths-note" style="margin-top:12px;padding:10px 12px;border-left:2px solid #2b5945;font-size:12.5px;line-height:1.55;color:#9b9b9b;"></div>
+          </div>
+          <div class="w-note">Three chains reach 74 by different routes — distinct z, same a, the agreement EQ P4.2 counts on. The two failures derail at <em>marked</em> steps and scatter (10 and 84), so 74 wins 3–1–1. The fragility is visible too: had both wrong chains made the <em>same</em> misreading — a correlated error — the vote would stand 3–2 and one more bad sample flips it. Voting fixes scattered errors, not shared ones.</div>
+        </div>
+
+        <p class="note"><strong>Where this sits in 2026.</strong> Self-consistency is the verifier-free baseline of a whole family: best-of-\(N\) with a reward model or verifier picking instead of counting, weighted votes, and tree search over partial chains (Tree-of-Thoughts) all spend parallel samples to buy accuracy. Frontier evals still report <code>cons@64</code> for exactly this reason. The economics never change, though: gains saturate around \(N \approx 10\)–\(20\) while cost stays linear in \(N\) — past the knee you are buying noise.</p>
+      </section>
+
+      <!-- ====================== 4.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">4.4</span><h2>The reasoning-model plot twist</h2></div>
+        <p>September 2024: OpenAI's o1 ships with accuracy that climbs as it is allowed to think longer. January 2025: DeepSeek-R1 publishes the recipe — <strong>reinforcement learning with verifiable rewards</strong> (Vol II · Ch 05): sample chains, grade only the final answer against a checkable target, and reinforce whatever reasoning led there. Out of pure outcome pressure, the models <em>learned</em> to emit long internal chains — with backtracking, self-checks, and “wait, let me reconsider” moves nobody wrote into a prompt. Chain of thought stopped being a prompting trick and became a trained behavior, usually hidden inside think-tags or a private reasoning channel.</p>
+        <p>The consequence for prompt engineers was abrupt: <strong>“think step by step” became redundant</strong> on reasoning-class models — the model was going to think anyway — and vendor guidance now explicitly advises <em>against</em> manual CoT instructions for them. At best you pay twice for the same behavior; at worst your hand-rolled procedure fights the reasoning policy RL actually optimized, and quality drops. What replaced the magic words is a control surface in the API, not the prompt:</p>
+        <table class="data">
+          <thead><tr><th>Surface</th><th>Where</th><th>Shape</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Effort dial</strong></td><td class="m">OpenAI o-series / GPT-5: reasoning_effort</td><td>categorical — minimal · low · medium · high; the model budgets its own tokens per tier</td></tr>
+            <tr><td><strong>Thinking budget</strong></td><td class="m">Anthropic: budget_tokens · Gemini: thinking_budget</td><td class="hl">explicit token ceiling for the thinking block; 0 ≈ off, or dynamic</td></tr>
+            <tr><td><strong>Hybrid toggle</strong></td><td class="m">open models (Qwen3, R1 distills): enable_thinking, /think</td><td>template-level switch — one checkpoint serves both fast and thinking modes</td></tr>
+          </tbody>
+        </table>
+        <p class="note">Parameter names drift across providers and versions; the shape is stable — <strong>a scalar dial trading thinking tokens for accuracy</strong>. On verifiable domains the published curves rise roughly log-linearly with thinking tokens (illustrative shape, not a law): each doubling of budget buys a similar increment, until the task's ceiling. This is <em>serial</em> test-time compute; self-consistency (§4.3) is <em>parallel</em> test-time compute. They compose — R1-style evals vote over 64 long-thinking chains — and the dial is almost always the cheaper first lever, because one chain of \(2T\) tokens shares state across its whole length while two chains of \(T\) start from scratch.</p>
+        <p>The deeper reframe: EQ P4.1's latent sum did not go away — RLVR <em>reshaped</em> \(p(z \mid q)\) so that high-probability paths are the productive ones, and the dial controls how far into \(\mathcal{Z}\) the model is allowed to wander before committing. You stopped steering the path and started budgeting it.</p>
+      </section>
+
+      <!-- ====================== 4.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">4.5</span><h2>Modern guidance: when to still prompt for reasoning</h2></div>
+        <p>“CoT prompting is dead” overshoots. What died is the <em>incantation</em> — content-free instructions to think. Four situations still reward explicit reasoning prompts:</p>
+        <table class="data">
+          <thead><tr><th>Situation</th><th>Reach for</th><th>Why it still works</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Non-reasoning models</strong></td><td class="m">zero/few-shot CoT · §4.2 decomposition</td><td>Small, cheap, and most open instruct models never internalized the behavior — the 2022 results still hold for them, often worth double-digit points</td></tr>
+            <tr><td><strong>Structured intermediate outputs</strong></td><td class="m">quote → analysis → answer field ordering</td><td>You want the intermediate work <em>as an artifact</em>: cited spans for extraction, per-criterion notes for rubric scoring. The reasoning is product, not just compute — and ordering analysis before answer forces computation before commitment (Chapter 05)</td></tr>
+            <tr><td><strong>Audits &amp; review</strong></td><td class="m">“show the derivation” + human-legible format</td><td>Reviewers, regulators, and graders need a rationale they can read — with §4.1's faithfulness caveat attached in writing, not assumed away</td></tr>
+            <tr><td><strong>Domain checklists</strong></td><td class="m">content-specific checks, even on reasoning models</td><td>“Verify the units; check n = 0; reconcile the dates against the calendar” steers <em>what</em> gets verified. Generic “think carefully” adds nothing; specific checklists still move accuracy because they carry information the model lacks</td></tr>
+          </tbody>
+        </table>
+        <p>The operating rule: on a reasoning model, <strong>prompt the outcome, dial the effort</strong>. Describe the task, the constraints, and what a correct answer must satisfy; let the trained policy choose the path; raise <code>effort</code> or the thinking budget when the task is hard and verifiable. Reserve procedural reasoning instructions for models that need them or outputs where the procedure itself is the deliverable.</p>
+      </section>
+
+      <!-- ====================== 4.6 ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">4.6</span><h2>Verification prompts: ask for the check, not just the answer</h2></div>
+        <p>Generating a solution and checking one are different computations — and checking is usually the cheaper, more reliable of the two. A model that confidently mis-multiplies will often catch the error when asked to substitute the result back. The pattern is to make the check an explicit, <em>separate</em> demand:</p>
+        <pre><code><span class="c"># Verification skeleton — works on reasoning and non-reasoning models</span>
+<span class="k">solve</span>:    produce the answer with whatever reasoning the task needs
+<span class="k">verify</span>:   substitute the answer back into the original constraints;
+          recompute the key quantity by an independent route;
+          state PASS or FAIL per check, with the arithmetic shown
+<span class="k">revise</span>:   if any check fails, fix the answer and re-run the checks
+<span class="k">emit</span>:     final answer + the completed check log (machine-parseable)</code></pre>
+        <p><strong>Chain-of-Verification</strong> (Dhuliawala et al., 2023) hardens this for factual claims: draft an answer, generate verification questions about it, answer those questions <em>independently — without the draft in context</em> — then revise. The independence is the load-bearing detail: a model shown its own draft tends to confirm it; a fresh context answers the sub-questions on their merits.</p>
+        <div class="callout warn">
+          <span class="co-icon">CAVEAT</span>
+          <p><strong>Self-correction without an external signal is weak.</strong> Asking a model to “review your answer and fix any mistakes,” with no new information, frequently flips correct answers to wrong ones (Huang et al., 2024). Verification prompts earn their keep when the check is <em>grounded</em>: substitute-back arithmetic the model can actually compute, code that gets executed, a schema that gets validated, a retrieval pass that confronts the claim with a source. The best verification prompt produces a machine-checkable artifact — which is precisely where this volume goes next.</p>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>A verified answer still has to arrive in a shape software can consume.</strong> Chapter 05: structured output — schemas and constrained decoding, why field order is a reasoning control in disguise, and how to design outputs that feed tools without a parsing layer of duct tape.</p>
+        </div>
+      </section>
+
+      <nav class="pager">
+        <a href="03-few-shot.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">03</span> Show, Don't Tell: Few-Shot &amp; Examples</div></a>
+        <a class="next" href="05-structured-output.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">05</span> Structured Output &amp; Tool-Ready Prompts</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — VOL III · CH 04</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/glossary.js"></script>
+<script src="../assets/js/shared.js"></script>
+<script>
+/* chapter instruments — single IIFE, no globals */
+(function () {
+  "use strict";
+  var FM = window.FM;
+
+  /* ============================================================
+     INSTRUMENT P4.1 — SELF-CONSISTENCY SIM
+     Seeded Monte Carlo of plurality voting (EQ P4.2).
+     Per chain: correct w.p. p, else one of 6 weighted distractors.
+     Curve over N is re-simulated only when p changes.
+     ============================================================ */
+  (function () {
+    var root = document.getElementById("rc-sc-sim");
+    if (!root) return;
+    var pIn = document.getElementById("rc-sc-p");
+    var pOut = document.getElementById("rc-sc-p-out");
+    var nIn = document.getElementById("rc-sc-n");
+    var nOut = document.getElementById("rc-sc-n-out");
+    var canvas = document.getElementById("rc-sc-canvas");
+    var accEl = document.getElementById("rc-sc-acc");
+    var gainEl = document.getElementById("rc-sc-gain");
+    var tokEl = document.getElementById("rc-sc-tok");
+    if (!pIn || !nIn || !canvas) return;
+
+    var NMAX = 25, TRIALS = 2500, TOK = 180;
+    /* wrong answers scatter unevenly — some mistakes are more attractive */
+    var DIST = [0.34, 0.24, 0.16, 0.11, 0.09, 0.06];
+    var curve = []; /* curve[N] = vote accuracy, N = 1..NMAX */
+
+    function simulate(p) {
+      var rng = FM.mulberry32(0xC0FFEE ^ Math.round(p * 1000));
+      curve = new Array(NMAX + 1);
+      for (var N = 1; N <= NMAX; N++) {
+        var wins = 0;
+        for (var t = 0; t < TRIALS; t++) {
+          var counts = [0, 0, 0, 0, 0, 0, 0]; /* [correct, d1..d6] */
+          for (var i = 0; i < N; i++) {
+            if (rng() < p) { counts[0]++; }
+            else {
+              var u = rng(), acc = 0, j = 0;
+              for (j = 0; j < 6; j++) { acc += DIST[j]; if (u < acc) break; }
+              counts[Math.min(j, 5) + 1]++;
+            }
+          }
+          var best = -1, tied = [];
+          for (var k = 0; k < 7; k++) {
+            if (counts[k] > best) { best = counts[k]; tied = [k]; }
+            else if (counts[k] === best) { tied.push(k); }
+          }
+          if (tied[Math.floor(rng() * tied.length)] === 0) wins++;
+        }
+        curve[N] = wins / TRIALS;
+      }
+    }
+
+    function draw() {
+      var s = FM.setupCanvas(canvas, 260);
+      var ctx = s.ctx, W = s.w, H = s.h;
+      var p = parseFloat(pIn.value), N = parseInt(nIn.value, 10);
+      ctx.clearRect(0, 0, W, H);
+      var mL = 46, mR = 16, mT = 16, mB = 30;
+      var pw = W - mL - mR, ph = H - mT - mB;
+      var yMin = 0.3, yMax = 1.0;
+      function X(n) { return mL + (n - 1) / (NMAX - 1) * pw; }
+      function Y(v) { return mT + (yMax - v) / (yMax - yMin) * ph; }
+
+      ctx.font = FM.C.MONO;
+      /* horizontal grid */
+      for (var g = 3; g <= 10; g++) {
+        var v = g / 10;
+        ctx.strokeStyle = "rgba(47,50,52,.7)";
+        ctx.beginPath(); ctx.moveTo(mL, Y(v)); ctx.lineTo(W - mR, Y(v)); ctx.stroke();
+        ctx.fillStyle = FM.C.MUT;
+        ctx.textAlign = "right";
+        ctx.fillText((v * 100).toFixed(0) + "%", mL - 8, Y(v) + 3);
+      }
+      /* x ticks */
+      ctx.textAlign = "center";
+      var ticks = [1, 5, 10, 15, 20, 25];
+      for (var x = 0; x < ticks.length; x++) {
+        ctx.fillStyle = FM.C.MUT;
+        ctx.fillText(String(ticks[x]), X(ticks[x]), H - mB + 16);
+      }
+      ctx.fillStyle = FM.C.SEC;
+      ctx.fillText("N SAMPLED CHAINS", mL + pw / 2, H - 4);
+
+      /* single-chain baseline at p */
+      ctx.strokeStyle = "rgba(155,155,155,.55)";
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath(); ctx.moveTo(mL, Y(p)); ctx.lineTo(W - mR, Y(p)); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = FM.C.SEC;
+      ctx.textAlign = "left";
+      ctx.fillText("SINGLE CHAIN " + (p * 100).toFixed(0) + "%", mL + 4, Y(p) - 5);
+
+      /* vote-accuracy curve */
+      ctx.strokeStyle = FM.C.MINT;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (var n = 1; n <= NMAX; n++) {
+        if (n === 1) ctx.moveTo(X(n), Y(curve[n]));
+        else ctx.lineTo(X(n), Y(curve[n]));
+      }
+      ctx.stroke();
+      ctx.lineWidth = 1;
+
+      /* marker at chosen N */
+      ctx.fillStyle = FM.C.BRIGHT;
+      ctx.beginPath(); ctx.arc(X(N), Y(curve[N]), 4, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = FM.C.MINT;
+      ctx.textAlign = N > 18 ? "right" : "left";
+      ctx.fillText("N=" + N + " · " + (curve[N] * 100).toFixed(1) + "%",
+        X(N) + (N > 18 ? -8 : 8), Y(curve[N]) - 8);
+    }
+
+    function fmtTok(n) { return n >= 1000 ? FM.siFormat(n, 1) : String(n); }
+
+    function readouts() {
+      var N = parseInt(nIn.value, 10);
+      var acc = curve[N], gain = acc - curve[1];
+      accEl.textContent = (acc * 100).toFixed(1) + "%";
+      gainEl.textContent = (gain >= 0 ? "+" : "") + (gain * 100).toFixed(1) + " PTS";
+      tokEl.textContent = "≈ " + fmtTok(N * TOK) + " · ×" + N + " COST";
+    }
+
+    function onP() {
+      pOut.textContent = parseFloat(pIn.value).toFixed(2);
+      simulate(parseFloat(pIn.value));
+      draw(); readouts();
+    }
+    function onN() {
+      nOut.textContent = nIn.value;
+      draw(); readouts();
+    }
+    pIn.addEventListener("input", onP);
+    nIn.addEventListener("input", onN);
+    window.addEventListener("resize", draw);
+    onP();
+  })();
+
+  /* ============================================================
+     INSTRUMENT P4.2 — PATHS VISUALIZER
+     Five hand-written chains for one problem; 3 agree on 74,
+     2 derail at marked steps; plurality computed from data.
+     ============================================================ */
+  (function () {
+    var tree = document.getElementById("rc-paths-tree");
+    var tallyEl = document.getElementById("rc-paths-tally");
+    var noteEl = document.getElementById("rc-paths-note");
+    if (!tree || !tallyEl || !noteEl) return;
+
+    var CORRECT = "74";
+    var chains = [
+      { id: "z₁", ans: "74",
+        steps: [{ t: "7 boxes × 6 = 42 baked Monday" }, { t: "sold all but 5 → 42 − 5 = 37" }, { t: "Tuesday: 2 × 37 = 74" }],
+        note: "z₁ — a clean path: parse the boxes, apply “all but 5”, double the sales. Every step conditions on the previous one; one slip anywhere would have propagated to the end." },
+      { id: "z₂", ans: "74",
+        steps: [{ t: "sold = baked − left = 7·6 − 5 = 37" }, { t: "Tuesday bakes twice Monday's SALES" }, { t: "2 × 37 = 74" }],
+        note: "z₂ — a different route (one fused arithmetic step, explicit flag on the operand) landing on the same answer. Distinct z, identical a: this agreement-across-routes is the entire signal EQ P4.2 counts." },
+      { id: "z₃", ans: "10",
+        steps: [{ t: "7 × 6 = 42 baked Monday" }, { t: "reads “all but 5” as “sold 5”", bad: true }, { t: "Tuesday: 2 × 5 = 10" }],
+        note: "z₃ — derails at step 2: a language error, not an arithmetic one. “All but 5” becomes “sold 5”, and everything downstream is flawlessly wrong. Note the answer lands far from 74 — scattering is what makes it harmless under a vote." },
+      { id: "z₄", ans: "74",
+        steps: [{ t: "Monday: 42 muffins baked" }, { t: "42 − 5 = 37 sold" }, { t: "twice what it sold → 74" }],
+        note: "z₄ — third independent arrival at 74. With three routes agreeing, the posterior over answers is concentrating exactly as the marginal in EQ P4.1 predicts." },
+      { id: "z₅", ans: "84",
+        steps: [{ t: "7 × 6 = 42; sold 42 − 5 = 37" }, { t: "doubles the BAKED count, not sales", bad: true }, { t: "2 × 42 = 84" }],
+        note: "z₅ — derails at step 2: perfect arithmetic, wrong operand. It even computed 37 first, then doubled 42 anyway. Had z₃ made this same slip, the vote would be 3–2 — correlated errors are the failure mode voting cannot fix." }
+    ];
+
+    var rows = [];
+    function select(idx) {
+      for (var r = 0; r < rows.length; r++) {
+        var on = r === idx;
+        rows[r].style.borderColor = on ? "rgba(166,242,204,.45)" : "var(--hairline)";
+        rows[r].style.background = on ? "rgba(166,242,204,.04)" : "transparent";
+      }
+      noteEl.textContent = chains[idx].note;
+    }
+
+    for (var i = 0; i < chains.length; i++) {
+      (function (idx) {
+        var c = chains[idx];
+        var row = document.createElement("div");
+        row.style.cssText = "display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:10px;border:1px solid var(--hairline);border-radius:4px;margin-bottom:8px;cursor:pointer;transition:border-color .2s,background .2s;";
+        var lab = document.createElement("span");
+        lab.style.cssText = "font-family:ui-monospace,Menlo,monospace;font-size:10px;letter-spacing:.1em;color:#9b9b9b;min-width:22px;";
+        lab.textContent = c.id;
+        row.appendChild(lab);
+        for (var s = 0; s < c.steps.length; s++) {
+          var st = c.steps[s];
+          var pill = document.createElement("span");
+          pill.style.cssText = "font-size:11.5px;line-height:1.4;padding:4px 8px;border:1px solid " +
+            (st.bad ? "rgba(255,65,54,.55)" : "var(--hairline)") + ";border-radius:3px;color:" +
+            (st.bad ? "#ff4136" : "#e5e5e5") + ";";
+          pill.textContent = st.t;
+          if (st.bad) {
+            var tag = document.createElement("b");
+            tag.style.cssText = "font-family:ui-monospace,Menlo,monospace;font-size:8.5px;letter-spacing:.14em;color:#ff4136;margin-left:6px;";
+            tag.textContent = "DERAILS";
+            pill.appendChild(tag);
+          }
+          row.appendChild(pill);
+          if (s < c.steps.length - 1) {
+            var ar = document.createElement("span");
+            ar.style.cssText = "color:#636363;font-size:11px;";
+            ar.textContent = "→";
+            row.appendChild(ar);
+          }
+        }
+        var ansChip = document.createElement("span");
+        var ok = c.ans === CORRECT;
+        ansChip.style.cssText = "font-family:ui-monospace,Menlo,monospace;font-size:11.5px;padding:4px 9px;border-radius:3px;margin-left:auto;border:1px solid " +
+          (ok ? "rgba(166,242,204,.6)" : "rgba(255,65,54,.6)") + ";color:" + (ok ? "#a6f2cc" : "#ff4136") + ";";
+        ansChip.textContent = "a = " + c.ans;
+        row.appendChild(ansChip);
+        row.addEventListener("click", function () { select(idx); });
+        tree.appendChild(row);
+        rows.push(row);
+      })(i);
+    }
+
+    /* tally computed from the chain data */
+    var counts = {};
+    for (var t = 0; t < chains.length; t++) counts[chains[t].ans] = (counts[chains[t].ans] || 0) + 1;
+    var entries = [];
+    for (var key in counts) if (counts.hasOwnProperty(key)) entries.push([key, counts[key]]);
+    entries.sort(function (a, b) { return b[1] - a[1]; });
+    var maxC = entries[0][1];
+    for (var e = 0; e < entries.length; e++) {
+      var win = e === 0;
+      var line = document.createElement("div");
+      line.style.cssText = "display:flex;align-items:center;gap:10px;margin-bottom:6px;";
+      line.innerHTML =
+        "<span style='font-family:ui-monospace,Menlo,monospace;font-size:11.5px;min-width:64px;color:" + (win ? "#a6f2cc" : "#9b9b9b") + ";'>a = " + entries[e][0] + (win ? " ★" : "") + "</span>" +
+        "<span style='flex:1;height:12px;background:rgba(47,50,52,.4);border-radius:2px;overflow:hidden;display:block;'>" +
+        "<span style='display:block;height:100%;width:" + (entries[e][1] / maxC * 100) + "%;background:" + (win ? "#a6f2cc" : "rgba(255,65,54,.5)") + ";'></span></span>" +
+        "<span style='font-family:ui-monospace,Menlo,monospace;font-size:10.5px;color:#636363;'>" + entries[e][1] + " / " + chains.length + "</span>";
+      tallyEl.appendChild(line);
+    }
+
+    select(2); /* open on a derailment — the interesting case */
+  })();
+})();
+</script>
+</body>
+</html>

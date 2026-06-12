@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>01 · Foundations — LLM Field Manual</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css" />
+</head>
+<body>
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ VOL II / 01 / FOUNDATIONS</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="02-transformer.html">NEXT: TRANSFORMER →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">CHAPTER 01 / 10</div>
+    <h1>Foundations</h1>
+    <p class="lede">Strip away the scale and the engineering, and a large language model is <strong>one function</strong>: given a sequence of tokens, output a probability distribution over the next token. Everything in this manual — attention, RLHF, quantization, speculative decoding — exists to compute that function well, shape what it prefers, or evaluate it fast.</p>
+    <div class="ch-meta">
+      <span>READING TIME<b>≈ 20 MIN</b></span>
+      <span>PREREQUISITES<b>LINEAR ALGEBRA · PROBABILITY</b></span>
+      <span>INSTRUMENTS<b>TOKENIZER · PERPLEXITY DIAL</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">1.1</span>The single trick</a>
+      <a href="#s2"><span class="n">1.2</span>Tokens &amp; BPE</a>
+      <a href="#s3"><span class="n">1.3</span>Embeddings</a>
+      <a href="#s4"><span class="n">1.4</span>The objective</a>
+      <a href="#s5"><span class="n">1.5</span>What emerges</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 1.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">1.1</span><h2>The single trick: next-token prediction</h2></div>
+        <p>A language model defines a probability distribution over sequences of tokens. The defining move of <strong>autoregressive</strong> models — every modern LLM from GPT-2 to the current frontier — is to factor that joint distribution with the chain rule of probability, one token at a time:</p>
+
+        <div class="eq"><span class="eq-tag">EQ 1.1 — AUTOREGRESSIVE FACTORIZATION</span>
+        $$ p_\theta(x_1, x_2, \ldots, x_T) \;=\; \prod_{t=1}^{T} p_\theta\!\left(x_t \mid x_1, \ldots, x_{t-1}\right) $$
+        <div class="eq-note">The model never has to score a whole sentence at once. It only ever answers one question: <em>given everything so far, what comes next?</em> The product of those answers is the probability of the full sequence.</div>
+        </div>
+
+        <p>Each conditional is a categorical distribution over the vocabulary, produced by a neural network \( f_\theta \) (the transformer of Chapter 02) followed by a softmax:</p>
+
+        <div class="eq"><span class="eq-tag">EQ 1.2 — FROM LOGITS TO PROBABILITIES</span>
+        $$ p_\theta(x_t = i \mid x_{&lt;t}) \;=\; \mathrm{softmax}\big(f_\theta(x_{&lt;t})\big)_i \;=\; \frac{e^{z_i}}{\sum_{j=1}^{|V|} e^{z_j}} $$
+        <div class="eq-note">The raw network outputs \(z \in \mathbb{R}^{|V|}\) are called <b>logits</b> — one real number per vocabulary entry. Softmax exponentiates and normalizes them into a proper distribution. Note the softmax is shift-invariant: adding a constant to every logit changes nothing.</div>
+        </div>
+
+        <p>Generation is just repeated application: feed the context in, get a distribution out, pick a token (Chapter 08 covers <em>how</em> to pick), append it, repeat. This loop — one forward pass per emitted token — is why inference economics are dominated by the cost of a single forward pass, and why so much of Chapter 08 is about amortizing it.</p>
+
+        <div class="callout">
+          <span class="co-icon">KEY IDEA</span>
+          <p><strong>The objective is unsupervised but the supervision is free.</strong> Any text is its own training signal: position \(t\)'s label is simply the token at position \(t\). This is what lets LLMs train on trillions of tokens without human labeling — and it is also why a base model imitates the internet rather than answering questions helpfully (fixed in Chapter 05).</p>
+        </div>
+
+        <figure class="figure" data-reveal>
+          <div class="fig-head"><span class="fig-id">FIG 1.A</span><span class="fig-title">END-TO-END PIPELINE — TEXT IN, DISTRIBUTION OUT</span></div>
+          <div class="fig-body">
+            <svg viewBox="0 0 920 190" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Pipeline from text to next-token distribution">
+              <rect class="dg-box" x="8" y="64" width="118" height="56" rx="4" data-pop/>
+              <text class="dg-label" x="67" y="88" text-anchor="middle">“The cat sat”</text>
+              <text class="dg-label-mut" x="67" y="104" text-anchor="middle">RAW TEXT</text>
+
+              <path class="dg-line" d="M126 92 H162" data-draw/><path class="dg-line" d="M156 87 l8 5 -8 5" data-draw/>
+
+              <rect class="dg-box" x="166" y="64" width="118" height="56" rx="4" data-pop/>
+              <text class="dg-label" x="225" y="88" text-anchor="middle">[791, 5176, 7731]</text>
+              <text class="dg-label-mut" x="225" y="104" text-anchor="middle">TOKEN IDS</text>
+
+              <path class="dg-line" d="M284 92 H320" data-draw/><path class="dg-line" d="M314 87 l8 5 -8 5" data-draw/>
+
+              <rect class="dg-box" x="324" y="64" width="118" height="56" rx="4" data-pop/>
+              <text class="dg-label" x="383" y="88" text-anchor="middle">3 × d_model</text>
+              <text class="dg-label-mut" x="383" y="104" text-anchor="middle">EMBEDDINGS</text>
+
+              <path class="dg-line" d="M442 92 H478" data-draw/><path class="dg-line" d="M472 87 l8 5 -8 5" data-draw/>
+
+              <rect class="dg-box-accent" x="482" y="48" width="150" height="88" rx="4" data-pop/>
+              <text class="dg-label" x="557" y="84" text-anchor="middle" fill="#a6f2cc">TRANSFORMER</text>
+              <text class="dg-label-sm" x="557" y="102" text-anchor="middle">L blocks · CH 02–03</text>
+
+              <path class="dg-line" d="M632 92 H668" data-draw/><path class="dg-line" d="M662 87 l8 5 -8 5" data-draw/>
+
+              <rect class="dg-box" x="672" y="64" width="108" height="56" rx="4" data-pop/>
+              <text class="dg-label" x="726" y="88" text-anchor="middle">z ∈ ℝ^|V|</text>
+              <text class="dg-label-mut" x="726" y="104" text-anchor="middle">LOGITS</text>
+
+              <path class="dg-line" d="M780 92 H816" data-draw/><path class="dg-line" d="M810 87 l8 5 -8 5" data-draw/>
+
+              <g data-pop>
+                <rect class="dg-box-ghost" x="820" y="40" width="92" height="108" rx="4"/>
+                <rect x="832" y="118" width="10" height="22" fill="#a6f2cc"/>
+                <rect x="846" y="92" width="10" height="48" fill="#a6f2cc" opacity="0.75"/>
+                <rect x="860" y="124" width="10" height="16" fill="#2b5945"/>
+                <rect x="874" y="130" width="10" height="10" fill="#2b5945"/>
+                <rect x="888" y="108" width="10" height="32" fill="#a6f2cc" opacity="0.45"/>
+                <text class="dg-label-mut" x="866" y="60" text-anchor="middle">p(next)</text>
+                <text class="dg-label-acc" x="866" y="74" text-anchor="middle">softmax(z)</text>
+              </g>
+            </svg>
+          </div>
+          <div class="fig-cap"><b>One pass, one distribution.</b> The entire stack exists to map a prefix of token IDs to a distribution over what comes next. During generation this pipeline runs once per output token.</div>
+        </figure>
+      </section>
+
+      <!-- ====================== 1.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">1.2</span><h2>Tokens &amp; byte-pair encoding</h2></div>
+        <p>Models do not read characters or words — they read <strong>tokens</strong>: entries of a fixed vocabulary \(V\) learned from data before training begins. Modern vocabularies run from 32K (Llama 2) through 128K (Llama 3, GPT-4 class) to 256K+ (Gemini class). Tokenization is a compression decision: a bigger vocabulary means fewer, more semantically loaded tokens per sentence, at the cost of a larger embedding table and a more expensive softmax.</p>
+        <p>The dominant algorithm is <strong>byte-pair encoding (BPE)</strong>, usually applied at the byte level (GPT-2 style) so that <em>any</em> string — emoji, Korean, malformed UTF-8 — is representable with zero out-of-vocabulary failures. Training a BPE tokenizer is greedy agglomeration:</p>
+        <ol>
+          <li>Initialize the vocabulary with all 256 bytes.</li>
+          <li>Count every adjacent symbol pair in the corpus. Find the most frequent pair \((a, b)\).</li>
+          <li>Add the merged symbol \(ab\) to the vocabulary; replace every occurrence.</li>
+          <li>Repeat until the vocabulary reaches the target size. The ordered merge list <em>is</em> the tokenizer.</li>
+        </ol>
+
+        <div class="eq"><span class="eq-tag">EQ 1.3 — BPE MERGE RULE</span>
+        $$ (a^\*, b^\*) \;=\; \underset{(a,b)}{\arg\max}\; \mathrm{count}\big(a \circ b\big) $$
+        <div class="eq-note">At every step, merge the most frequent adjacent pair. SentencePiece's <b>unigram-LM</b> alternative instead starts from a large candidate set and prunes pieces to maximize corpus likelihood under a mixture model — same goal, top-down instead of bottom-up.</div>
+        </div>
+
+        <div class="widget" id="tok-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT 1.1 — BPE-STYLE TOKENIZER</span><span class="w-sub">GREEDY LONGEST-MATCH · TOY VOCAB</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl" style="flex:3;">
+                <label>INPUT TEXT</label>
+                <input id="tok-input" class="w-input" type="text" value="The transformer is a self-attention language model." spellcheck="false"/>
+              </div>
+            </div>
+            <div class="tok-stream" id="tok-out"></div>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">TOKENS</div><div class="r-value" id="tok-count">—</div></div>
+              <div class="readout"><div class="r-label">CHARACTERS</div><div class="r-value" id="tok-chars">—</div></div>
+              <div class="readout"><div class="r-label">CHARS / TOKEN</div><div class="r-value" id="tok-ratio">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">␣ marks a leading space — real BPE vocabularies treat “ the” and “the” as different tokens. Note how common morphemes (“train”, “ing”, “tion”) survive as units while rare words shatter.</div>
+        </div>
+
+        <div class="callout warn">
+          <span class="co-icon">FAILURE MODE</span>
+          <p><strong>Tokenization explains many famous LLM blind spots.</strong> Counting the r's in “strawberry”, reversing strings, arithmetic on long numbers — these are hard partly because the model never sees characters, only opaque token IDs whose internal spelling it must infer statistically. Number tokenization (1–3 digit chunks, right-to-left in modern tokenizers) measurably affects arithmetic accuracy.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 1.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">1.3</span><h2>Embeddings: tokens become geometry</h2></div>
+        <p>A token ID is just an index. The first learned operation gives it coordinates: row \(i\) of an <strong>embedding matrix</strong> \(E \in \mathbb{R}^{|V| \times d_{\text{model}}}\) is the vector for token \(i\). For a 128K vocabulary and \(d_{\text{model}} = 8192\) (Llama-3-70B scale) that single matrix holds ≈1B parameters.</p>
+
+        <div class="eq"><span class="eq-tag">EQ 1.4 — EMBEDDING LOOKUP &amp; UNEMBEDDING</span>
+        $$ h_t^{(0)} = E_{x_t} \in \mathbb{R}^{d_{\text{model}}}, \qquad z = W_U\, h_T^{(L)} \quad \text{with } W_U \in \mathbb{R}^{|V| \times d_{\text{model}}} $$
+        <div class="eq-note">At the output end, an <b>unembedding</b> (LM head) \(W_U\) maps the final hidden state back to logits. Many models <b>tie</b> \(W_U = E\) — the same geometry encodes and decodes — saving parameters; most recent large models untie them for quality.</div>
+        </div>
+
+        <p>Because embeddings are trained by gradient descent against the prediction objective, tokens that are interchangeable in context converge to nearby vectors. Direction in this space becomes meaning: similarity is measured with the cosine,</p>
+
+        <div class="eq"><span class="eq-tag">EQ 1.5 — COSINE SIMILARITY</span>
+        $$ \cos(u, v) \;=\; \frac{u \cdot v}{\lVert u \rVert\, \lVert v \rVert} \in [-1, 1] $$
+        <div class="eq-note">The classic <em>king − man + woman ≈ queen</em> arithmetic of word2vec survives in LLM embedding spaces, but the deeper story is downstream: the residual stream (Chapter 02) keeps refining these vectors layer by layer into contextual representations — “bank” drifts toward river or finance depending on its neighbors.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 1.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">1.4</span><h2>The objective: cross-entropy &amp; perplexity</h2></div>
+        <p>Training minimizes the <strong>negative log-likelihood</strong> of the data — equivalently, the cross-entropy between the data's “one-hot” next-token distribution and the model's prediction, averaged over every position of every sequence:</p>
+
+        <div class="eq"><span class="eq-tag">EQ 1.6 — THE PRE-TRAINING LOSS</span>
+        $$ \mathcal{L}(\theta) \;=\; -\,\mathbb{E}_{x \sim \mathcal{D}} \left[ \frac{1}{T} \sum_{t=1}^{T} \log p_\theta\!\left(x_t \mid x_{&lt;t}\right) \right] $$
+        <div class="eq-note">Every token position contributes a loss term <em>in parallel</em> during training (teacher forcing): the model predicts position \(t\) from the true prefix, not from its own samples. One sequence of length 4,096 yields 4,096 supervised examples in a single forward pass — the second reason web-scale training is feasible.</div>
+        </div>
+
+        <p>The human-readable form of this loss is <strong>perplexity</strong> — the effective branching factor, “how many equally likely tokens is the model choosing among?”:</p>
+
+        <div class="eq"><span class="eq-tag">EQ 1.7 — PERPLEXITY</span>
+        $$ \mathrm{PPL} \;=\; \exp\big(\mathcal{L}\big) $$
+        <div class="eq-note">A uniform guesser over a 128K vocabulary has PPL = 128,000. Strong frontier models reach single-digit perplexities on held-out web text. Loss differences that look tiny — 2.30 vs 2.25 nats — represent large capability gaps, which is why scaling-law plots (Chapter 04) are drawn in loss space.</div>
+        </div>
+
+        <div class="widget" id="ppl-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT 1.2 — PERPLEXITY DIAL</span><span class="w-sub">EQ 1.7 · LIVE</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl">
+                <label>CROSS-ENTROPY LOSS <output id="ppl-loss-out">2.30 nats</output></label>
+                <input type="range" id="ppl-loss" min="1.6" max="11.8" step="0.02" value="2.3"/>
+              </div>
+            </div>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">PERPLEXITY e^L</div><div class="r-value" id="ppl-val">—</div></div>
+              <div class="readout"><div class="r-label">BITS / TOKEN</div><div class="r-value" id="ppl-bits">—</div></div>
+              <div class="readout"><div class="r-label">HISTORICAL EQUIVALENT</div><div class="r-value" id="ppl-note" style="font-size:12px;line-height:1.5;">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Slide from random guessing (11.8 nats over 128K tokens) down to the frontier. The exponential means a 0.05-nat improvement near the floor is worth more than a full nat was in 2015.</div>
+        </div>
+
+        <table class="data">
+          <thead><tr><th>Quantity</th><th>Units</th><th>Reading</th></tr></thead>
+          <tbody>
+            <tr><td>Loss \( \mathcal{L} \)</td><td class="m">nats / token</td><td>What the optimizer sees. 1 nat = 1.443 bits.</td></tr>
+            <tr><td>Bits-per-byte</td><td class="m">bits / byte</td><td>Tokenizer-independent compression metric — lets you compare models with different vocabularies.</td></tr>
+            <tr><td>Perplexity</td><td class="m">dimensionless</td><td>\( e^{\mathcal{L}} \). Effective number of choices per token.</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <!-- ====================== 1.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">1.5</span><h2>What emerges from a “simple” objective</h2></div>
+        <p>Next-token prediction looks shallow and is not. To keep lowering loss on the entire internet, a model is forced to acquire whatever machinery predicts text: syntax, then facts, then style, then — at sufficient scale — multi-step structure. Three observations anchor the rest of this manual:</p>
+        <ul>
+          <li><strong>Compression ⇒ understanding.</strong> The optimal next-token predictor for a corpus must internalize the regularities that generated it. Predicting the last word of “The capital of Mongolia is …” requires storing geography; predicting the next move in a chess transcript requires a board model.</li>
+          <li><strong>In-context learning.</strong> A trained LLM can be “programmed” at inference time: show it input→output examples inside the prompt and it continues the pattern, with no weight updates. This emergent property — essentially free few-shot learning — reshaped the field after GPT-3 demonstrated it at scale.</li>
+          <li><strong>Capability ≠ behavior.</strong> The base model is a simulator of its training distribution. It will complete a question with another question if that's the likeliest continuation. Turning capability into reliable, helpful, safe <em>behavior</em> is the entire subject of post-training (Chapter 05).</li>
+        </ul>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>We have a contract</strong> — prefix of tokens in, next-token distribution out — but \(f_\theta\) is still a black box. Chapter 02 opens it: the transformer, the residual stream, and where its billions of parameters actually sit.</p>
+        </div>
+      </section>
+
+      <nav class="pager">
+        <a class="disabled" href="../index.html"><div class="p-dir">← PREVIOUS</div><div class="p-title">Cover / Index</div></a>
+        <a class="next" href="02-transformer.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">02</span> The Transformer</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — VOL II · CH 01</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/glossary.js"></script>
+<script src="../assets/js/shared.js"></script>
+<script src="../assets/js/search.js"></script>
+<script src="../assets/js/interactives.js"></script>
+</body>
+</html>

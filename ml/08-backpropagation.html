@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>08 · Backpropagation &amp; Optimization — AI Encyclopedia</title>
+<meta name="description" content="Backpropagation demystified: the chain rule on a computational graph, reverse-mode autodiff, SGD, momentum and Adam — with a steppable graph, a live optimizer race, and gradients you compute by hand in the page." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css" />
+</head>
+<body>
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ VOL I / ML FOUNDATIONS / 08 / BACKPROPAGATION</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../chapters/01-foundations.html">NEXT: VOL II · FOUNDATIONS →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">VOLUME I — FOUNDATIONS OF ML · CHAPTER 08 / 08</div>
+    <h1>Backpropagation &amp; Optimization</h1>
+    <p class="lede">Chapter 07 left a network with thirty-three knobs and one number telling it how wrong it is. This chapter is the algorithm that turns that one number into thirty-three precise instructions — or a trillion. <strong>Backpropagation is nothing more than the chain rule, organized on a graph so that one backward sweep prices every parameter's share of the blame.</strong> Then the optimizers: SGD, momentum, Adam — the machinery that turns raw gradients into progress.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 28 MIN</b></span>
+      <span>BUILDS ON<b>CH 02 · 03 · 07</b></span>
+      <span>INSTRUMENTS<b>GRAPH STEPPER · OPTIMIZER RACE</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">8.1</span>Credit assignment</a>
+      <a href="#s2"><span class="n">8.2</span>Chain rule on a graph</a>
+      <a href="#s3"><span class="n">8.3</span>Backprop, worked</a>
+      <a href="#s4"><span class="n">8.4</span>Autodiff</a>
+      <a href="#s5"><span class="n">8.5</span>SGD &amp; minibatches</a>
+      <a href="#s6"><span class="n">8.6</span>Momentum &amp; Adam</a>
+      <a href="#s7"><span class="n">8.7</span>Vanishing &amp; exploding</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 8.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">8.1</span><h2>The credit-assignment problem</h2></div>
+        <p>A network maps inputs through millions of weights to a single scalar loss. When that loss is bad, <em>which</em> weights are at fault, and by how much? That is <strong>credit assignment</strong>, and it is the whole problem of learning. The output layer's culpability is easy to see — it touched the answer directly. But a weight three layers deep influenced the loss only through everything stacked above it; its blame arrives diluted, rerouted, and mixed with everyone else's.</p>
+        <p>The brute-force answer exists and is worth respecting: nudge one weight by \(\varepsilon\), re-run the network, and watch the loss move — \(\partial L / \partial \theta_i \approx (L(\theta_i + \varepsilon) - L(\theta_i - \varepsilon)) / 2\varepsilon\). It is exactly correct in the limit and catastrophically expensive: <strong>two full forward passes per parameter, per step</strong>. For GPT-class models that is trillions of forward passes to compute what backpropagation delivers in roughly the cost of <em>one</em>. The brute-force method survives in one honorable role — as the referee that checks backprop implementations (§8.4) — and nowhere else.</p>
+        <p>Backpropagation was applied to neural networks and popularized by Rumelhart, Hinton and Williams in 1986 (the underlying reverse-mode differentiation is older — Linnainmaa, 1970). It ended the seventeen-year winter that Chapter 07's perceptron proof began. The insight is not deep math; it is deep <em>bookkeeping</em>: the chain rule, applied once per node of a graph, in the right order, sharing every intermediate result.</p>
+      </section>
+
+      <!-- ====================== 8.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">8.2</span><h2>The chain rule on a computational graph</h2></div>
+        <p>Stop thinking of a network as a formula and start thinking of it as a <strong>computational graph</strong>: a directed graph in which every node is a primitive operation (multiply, add, \(\sigma\), square) and every edge carries a value forward. The crucial move is to label each edge with its <strong>local derivative</strong> — not a symbolic expression but a <em>number</em>, evaluated at the values that just flowed through. The edge from \(z\) into \(a = \sigma(z)\) is labeled \(\partial a / \partial z = a(1-a)\): one number, known the moment the forward pass computes \(a\).</p>
+
+        <div class="eq"><span class="eq-tag">EQ M8.1 — THE CHAIN RULE, GRAPH FORM</span>
+        $$ \frac{\partial L}{\partial x} = \frac{\partial L}{\partial y}\,\frac{\partial y}{\partial x} \qquad\Longrightarrow\qquad \frac{\partial L}{\partial v} \;=\; \sum_{c \,\in\, \mathrm{children}(v)} \frac{\partial L}{\partial c}\,\frac{\partial c}{\partial v} $$
+        <div class="eq-note">Left: the one-step rule — blame flowing into \(x\) is blame at \(y\) times the local edge derivative. Right: the same rule on a graph — a node's gradient is the <b>sum over its outgoing edges of (downstream gradient × local derivative)</b>. Multiply along paths, add across paths. Process nodes from the loss backward and every downstream gradient is already in hand when you need it: <b>each edge is touched exactly once</b>. That single scheduling decision is the entire difference between exponential and linear cost.</div>
+        </div>
+
+        <p>Walk it on the smallest model that exercises every move — one weight, one bias, a sigmoid, a squared loss: \( L = \tfrac{1}{2}(\sigma(w x + b) - y)^2 \). The forward pass fills node values left to right <em>and records each edge's local derivative as it goes</em>. The backward pass then starts from \(\partial L / \partial L = 1\) and multiplies its way left, one edge at a time. Step both directions yourself:</p>
+
+        <div class="widget" id="bp-graph" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT M8.1 — GRAPH STEPPER</span><span class="w-sub">L = ½(σ(w·x + b) − y)² · EVERY NUMBER COMPUTED LIVE</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>PRESET</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-bp-preset="A">A — x=2.0 · y=1</button>
+                  <button class="w-btn ghost" data-bp-preset="B">B — x=−1.0 · y=0</button>
+                </div>
+              </div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>PASS</label>
+                <div class="seg-row">
+                  <button class="w-btn" id="bp-fwd">FORWARD ▶</button>
+                  <button class="w-btn" id="bp-bwd">◀ BACKWARD</button>
+                </div>
+              </div>
+            </div>
+            <style>
+              #bp-graph .bps-name{font:9.5px ui-monospace,Menlo,monospace;fill:#9b9b9b;letter-spacing:.06em;}
+              #bp-graph .bps-val{font:11px ui-monospace,Menlo,monospace;fill:#ffffff;}
+              #bp-graph .bps-grad{font:10px ui-monospace,Menlo,monospace;fill:#636363;}
+              #bp-graph .bps-edge{font:9.5px ui-monospace,Menlo,monospace;fill:#636363;}
+              #bp-graph .bps-node{fill:#1e2124;stroke:#565656;stroke-width:1;rx:4;}
+              #bp-graph .bps-line{stroke:#2f3234;stroke-width:1.2;}
+              #bp-graph .bps-lane{font:9px ui-monospace,Menlo,monospace;letter-spacing:.2em;}
+            </style>
+            <svg viewBox="0 0 760 340" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Computational graph of a one-unit network with live forward values and backward gradients" style="width:100%;height:auto;display:block;">
+              <text class="bps-lane" x="380" y="16" text-anchor="middle" fill="#636363">FORWARD: VALUES + LOCAL DERIVATIVES →</text>
+              <text class="bps-lane" x="380" y="334" text-anchor="middle" fill="#a6f2cc">← BACKWARD: ∂L/∂(EVERYTHING), ONE SWEEP</text>
+              <line class="bps-line" x1="108" y1="59"  x2="180" y2="93"/>
+              <line class="bps-line" x1="108" y1="157" x2="180" y2="113"/>
+              <line class="bps-line" x1="280" y1="108" x2="330" y2="172"/>
+              <line class="bps-line" x1="108" y1="255" x2="330" y2="196"/>
+              <line class="bps-line" x1="430" y1="179" x2="478" y2="179"/>
+              <line class="bps-line" x1="578" y1="179" x2="622" y2="179"/>
+              <line class="bps-line" x1="668" y1="266" x2="676" y2="202" stroke-dasharray="3 4"/>
+              <text class="bps-edge" id="bp-e-uw" x="146" y="60"  text-anchor="middle">∂u/∂w = x</text>
+              <text class="bps-edge" id="bp-e-ux" x="146" y="156" text-anchor="middle">∂u/∂x = w</text>
+              <text class="bps-edge" id="bp-e-zu" x="308" y="152" text-anchor="middle">∂z/∂u = 1</text>
+              <text class="bps-edge" id="bp-e-zb" x="219" y="242" text-anchor="middle">∂z/∂b = 1</text>
+              <text class="bps-edge" id="bp-e-az" x="454" y="146" text-anchor="middle">∂a/∂z = a(1−a)</text>
+              <text class="bps-edge" id="bp-e-la" x="600" y="146" text-anchor="middle">∂L/∂a = a−y</text>
+              <rect class="bps-node" id="bp-n-w" x="16"  y="36"  width="92"  height="46" rx="4"/>
+              <rect class="bps-node" id="bp-n-x" x="16"  y="134" width="92"  height="46" rx="4"/>
+              <rect class="bps-node" id="bp-n-b" x="16"  y="232" width="92"  height="46" rx="4"/>
+              <rect class="bps-node" id="bp-n-u" x="180" y="80"  width="100" height="46" rx="4"/>
+              <rect class="bps-node" id="bp-n-z" x="330" y="156" width="100" height="46" rx="4"/>
+              <rect class="bps-node" id="bp-n-a" x="478" y="156" width="100" height="46" rx="4"/>
+              <rect class="bps-node" id="bp-n-L" x="622" y="156" width="122" height="46" rx="4"/>
+              <rect class="bps-node" id="bp-n-y" x="622" y="266" width="92"  height="40" rx="4" stroke-dasharray="3 3"/>
+              <text class="bps-name" x="62"  y="53"  text-anchor="middle">w · weight</text><text class="bps-val" id="bp-v-w" x="62"  y="72"  text-anchor="middle">—</text>
+              <text class="bps-name" x="62"  y="151" text-anchor="middle">x · input</text> <text class="bps-val" id="bp-v-x" x="62"  y="170" text-anchor="middle">—</text>
+              <text class="bps-name" x="62"  y="249" text-anchor="middle">b · bias</text>  <text class="bps-val" id="bp-v-b" x="62"  y="268" text-anchor="middle">—</text>
+              <text class="bps-name" x="230" y="97"  text-anchor="middle">u = w·x</text>   <text class="bps-val" id="bp-v-u" x="230" y="116" text-anchor="middle">—</text>
+              <text class="bps-name" x="380" y="173" text-anchor="middle">z = u + b</text> <text class="bps-val" id="bp-v-z" x="380" y="192" text-anchor="middle">—</text>
+              <text class="bps-name" x="528" y="173" text-anchor="middle">a = σ(z)</text>  <text class="bps-val" id="bp-v-a" x="528" y="192" text-anchor="middle">—</text>
+              <text class="bps-name" x="683" y="173" text-anchor="middle">L = ½(a−y)²</text><text class="bps-val" id="bp-v-L" x="683" y="192" text-anchor="middle">—</text>
+              <text class="bps-name" x="668" y="282" text-anchor="middle">y · target</text><text class="bps-val" id="bp-v-y" x="668" y="299" text-anchor="middle">—</text>
+              <text class="bps-grad" id="bp-g-w" x="62"  y="98"  text-anchor="middle">∂L/∂w = —</text>
+              <text class="bps-grad" id="bp-g-x" x="62"  y="196" text-anchor="middle">∂L/∂x = —</text>
+              <text class="bps-grad" id="bp-g-b" x="62"  y="294" text-anchor="middle">∂L/∂b = —</text>
+              <text class="bps-grad" id="bp-g-u" x="230" y="142" text-anchor="middle">∂L/∂u = —</text>
+              <text class="bps-grad" id="bp-g-z" x="380" y="218" text-anchor="middle">∂L/∂z = —</text>
+              <text class="bps-grad" id="bp-g-a" x="528" y="218" text-anchor="middle">∂L/∂a = —</text>
+              <text class="bps-grad" id="bp-g-L" x="683" y="218" text-anchor="middle">∂L/∂L = —</text>
+            </svg>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">LOSS L</div><div class="r-value" id="bp-r-loss">—</div></div>
+              <div class="readout acc"><div class="r-label">∂L/∂w</div><div class="r-value" id="bp-r-gw">—</div></div>
+              <div class="readout acc"><div class="r-label">∂L/∂b</div><div class="r-value" id="bp-r-gb">—</div></div>
+              <div class="readout"><div class="r-label">LOSS AFTER 1 SGD STEP (η = 1)</div><div class="r-value" id="bp-r-next">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Press FORWARD: values fill left to right, and each edge's local derivative (blue) is recorded the moment its node computes — exactly what an autodiff tape stores. Press BACKWARD: gradients flow right to left in mint, each one the product of the downstream gradient and one blue edge label. On preset A you should land on ∂L/∂w = −0.1774; apply the η = 1 update to w and b and the last readout shows the loss genuinely drops. Preset B flips the target to 0 — watch ∂L/∂b change sign and every gradient shrink (the unit is already nearly right).</div>
+        </div>
+
+        <p>Notice what the instrument makes obvious: the backward pass never recomputes anything. Local derivatives were priced during the forward pass; backward just multiplies and adds them in reverse topological order. And the node \(z\) — with one input from \(u\) and one from \(b\) — shows EQ M8.1's sum degenerating to single terms, while the inputs \(w\) and \(x\) each receive their gradient through one path. In a real network a hidden unit feeds <em>many</em> downstream nodes, and the sum over children is doing real work: that is the backward product of §8.3.</p>
+      </section>
+
+      <!-- ====================== 8.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">8.3</span><h2>Backprop through a two-layer net, worked</h2></div>
+        <p>Now the classic: Chapter 07's MLP, \( h = \varphi(W_1 x + b_1) \), \( \hat{y} = \sigma(W_2 h + b_2) \), binary cross-entropy loss. Define \(\delta_\ell\) as the gradient of the loss with respect to layer \(\ell\)'s <em>pre-activation</em> — the quantity backprop actually ferries between layers. At the output, sigmoid and cross-entropy collapse into the cleanest result in the field:</p>
+
+        <div class="eq"><span class="eq-tag">EQ M8.2 — OUTPUT-LAYER GRADIENT</span>
+        $$ \delta_2 \;\equiv\; \frac{\partial L}{\partial z_2} \;=\; \hat{y} - y, \qquad\quad \frac{\partial L}{\partial W_2} = \delta_2\, h^{\top}, \qquad \frac{\partial L}{\partial b_2} = \delta_2 $$
+        <div class="eq-note">The \(\sigma'\) from the activation and the \(1/\hat{y}(1-\hat{y})\) from the cross-entropy cancel exactly — the same cancellation that made logistic regression's gradient clean in Chapter 03, and the reason this loss–activation pairing is universal. <b>Prediction minus target: the error itself is the gradient signal.</b> A weight's gradient is then (its layer's δ) × (the activation it multiplied) — a weight that fed on a zero activation gets zero blame, which is exactly fair.</div>
+        </div>
+
+        <div class="eq"><span class="eq-tag">EQ M8.3 — HIDDEN-LAYER GRADIENT: THE BACKWARD PRODUCT</span>
+        $$ \delta_1 \;=\; \big( W_2^{\top}\, \delta_2 \big) \,\odot\, \varphi'(z_1), \qquad\quad \frac{\partial L}{\partial W_1} = \delta_1\, x^{\top}, \qquad \frac{\partial L}{\partial b_1} = \delta_1 $$
+        <div class="eq-note">Read \(W_2^{\top} \delta_2\) as EQ M8.1's sum-over-children done for every hidden unit at once: <b>the same weights that carried activations forward carry blame backward, transposed</b>. Then \(\odot\, \varphi'(z_1)\) gates the blame through each unit's local slope — a saturated unit (\(\varphi' \approx 0\)) absorbs no gradient. Deeper nets just iterate this line: \(\delta_{\ell} = (W_{\ell+1}^{\top} \delta_{\ell+1}) \odot \varphi'(z_{\ell})\). One matrix multiply per layer, backward — the mirror image of the forward pass, at roughly twice its FLOPs.</div>
+        </div>
+
+        <p>That is the entire algorithm. Forward to get values, EQ M8.2 to start the blame, EQ M8.3 once per hidden layer to pass it down, then step every parameter against its gradient. The cell below is the complete loop — a 2-4-1 network learning XOR from eight points, every gradient written by hand. Two hundred epochs, loss printed and plotted; the predictions at the end are the proof Chapter 07 promised:</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false">import numpy as np
+rng = np.random.default_rng(3)
+
+# 8 points on the XOR pattern -- the dataset Ch07 proved no linear model can fit
+X = np.array([[0,0],[0,1],[1,0],[1,1],[.1,.1],[.1,.9],[.9,.1],[.9,.9]], float)
+y = np.array([0,1,1,0,0,1,1,0], float).reshape(-1,1)
+
+W1 = rng.normal(0, 1.0, (4,2)); b1 = np.zeros(4)        # a 2-4-1 net, tanh hidden
+W2 = rng.normal(0, 1.0, (1,4)); b2 = np.zeros(1)
+lr, losses = 2.0, []
+
+for epoch in range(201):
+    H = np.tanh(X @ W1.T + b1)                          # forward
+    p = 1/(1 + np.exp(-(H @ W2.T + b2)))
+    L = -np.mean(y*np.log(p+1e-9) + (1-y)*np.log(1-p+1e-9))
+    losses.append(L)
+    dZ2 = (p - y)/len(X)                                # EQ M8.2: error IS the gradient
+    dW2 = dZ2.T @ H;  db2 = dZ2.sum(0)
+    dZ1 = (dZ2 @ W2) * (1 - H**2)                       # EQ M8.3: backward product, tanh gate
+    dW1 = dZ1.T @ X;  db1 = dZ1.sum(0)
+    W1 -= lr*dW1; b1 -= lr*db1; W2 -= lr*dW2; b2 -= lr*db2   # gradient step
+    if epoch % 25 == 0: print(f"epoch {epoch:3d}   loss {L:.4f}")
+
+print("\npredictions:", np.round(p.ravel(), 2))
+print("targets:    ", y.ravel())
+plot_xy(list(range(len(losses))), losses)
+</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">change lr to 8.0 or the seed to 1 — watch the curve, not the code</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <p class="note">Sixteen lines of algorithm, and they are the <em>same</em> sixteen lines that train a frontier model — more layers in the loop, attention and normalization among the ops, ~10¹³ parameters instead of 17, but EQ M8.2 and M8.3 are doing all the work either way.</p>
+      </section>
+
+      <!-- ====================== 8.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">8.4</span><h2>Autodiff: you never write gradients</h2></div>
+        <p>You just hand-derived a network's gradients for the last time. Every framework implements <strong>automatic differentiation</strong>: as your code runs the forward pass, each primitive operation appends a node to a tape (in PyTorch, the <code>grad_fn</code> chain) recording <em>which tensors fed it</em> and <em>how to compute its local derivative</em> — precisely the blue edge labels of Instrument M8.1. Calling <code>loss.backward()</code> walks that tape in reverse topological order, applying EQ M8.1 at every node. This is <strong>reverse-mode</strong> autodiff, and its defining property is the one that built deep learning:</p>
+        <table class="data">
+          <thead><tr><th>Mode</th><th>One pass computes</th><th>Cost for n params → 1 scalar loss</th><th>Right when</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Forward-mode</strong></td><td class="m">∂(everything)/∂(one input)</td><td class="m">n passes</td><td>Few inputs, many outputs</td></tr>
+            <tr><td><strong>Reverse-mode</strong></td><td class="hl">∂(loss)/∂(everything)</td><td class="hl">1 backward pass ≈ 2× forward FLOPs</td><td>Many params, one loss — i.e. all of ML</td></tr>
+            <tr><td><strong>Numerical</strong></td><td class="m">one ∂L/∂θᵢ, approximately</td><td class="m">2n forward passes</td><td>Testing the other two</td></tr>
+          </tbody>
+        </table>
+        <p>Reverse mode's bill arrives in <strong>memory</strong>, not time: every activation must be kept alive from the forward pass until the backward pass consumes it. That is why training a model needs several times the memory of running it, and why <em>activation checkpointing</em> (recompute instead of store — Vol II · CH 04) exists. Three practical PyTorch facts complete the picture: gradients <em>accumulate</em> into <code>.grad</code> (hence <code>zero_grad()</code> every step — forgetting it is the classic silent bug); the tape is rebuilt every forward pass, so Python control flow is differentiated for free; and anything inside <code>torch.no_grad()</code> records nothing, which is what makes inference cheap.</p>
+        <p>And the referee from §8.1 gets its one honorable job. Whenever a gradient is written by hand — a custom op, a new layer, a paper reimplementation — it is checked against central differences. The contract: analytic and numerical agree to ~10⁻⁷ in float64, or the backward pass is wrong. Run the audit on §8.3's network:</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false">import numpy as np
+rng = np.random.default_rng(0)
+
+X = rng.normal(size=(8,2)); y = rng.integers(0,2,(8,1)).astype(float)
+theta = rng.normal(0, 0.6, size=12)        # 2-4-1 net, MSE loss, params flattened
+
+def unpack(t): return t[:8].reshape(4,2), t[8:].reshape(1,4)
+def loss(t):
+    W1, W2 = unpack(t)
+    p = 1/(1 + np.exp(-(np.tanh(X @ W1.T) @ W2.T)))
+    return np.mean((p - y)**2)
+
+def grad_backprop(t):                      # analytic: one forward + one backward
+    W1, W2 = unpack(t)
+    H = np.tanh(X @ W1.T); p = 1/(1 + np.exp(-(H @ W2.T)))
+    dZ2 = 2*(p - y)/y.size * p*(1 - p)     # chain: MSE then sigmoid
+    dW1 = ((dZ2 @ W2)*(1 - H**2)).T @ X    # EQ M8.3 again
+    return np.concatenate([dW1.ravel(), (dZ2.T @ H).ravel()])
+
+eps  = 1e-5                                # numerical: 2 forwards PER parameter
+g_bp = grad_backprop(theta)
+g_num = np.array([(loss(theta + eps*np.eye(12)[i]) -
+                   loss(theta - eps*np.eye(12)[i]))/(2*eps) for i in range(12)])
+
+print("max |analytic - numerical| =", f"{np.abs(g_bp - g_num).max():.2e}")
+print("np.allclose verdict:", np.allclose(g_bp, g_num, rtol=1e-5, atol=1e-7))
+print(f"\ncost: backprop = 2 passes total; numerical = {2*12} passes for 12 params")
+</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">sabotage grad_backprop — drop the (1 − H**2) — and watch the verdict flip</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 8.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">8.5</span><h2>SGD and minibatches</h2></div>
+        <p>The loss that matters is an average over the whole dataset, so the true gradient is too — and on a trillion tokens, computing it once would cost more than most entire training runs. <strong>Stochastic gradient descent</strong> declines to pay: sample a <strong>minibatch</strong> \(\mathcal{B}\), average its per-example gradients, and step on that estimate:</p>
+
+        <div class="eq"><span class="eq-tag">EQ M8.4 — THE NOISY GRADIENT ESTIMATOR</span>
+        $$ \hat{g} \;=\; \frac{1}{|\mathcal{B}|} \sum_{i \in \mathcal{B}} \nabla_{\theta}\, \ell_i(\theta), \qquad \mathbb{E}\big[\hat{g}\big] = \nabla_{\theta} L(\theta), \qquad \mathrm{Var}\big[\hat{g}\big] \;\propto\; \frac{1}{|\mathcal{B}|} $$
+        <div class="eq-note">The estimator is <b>unbiased</b> — on average it points exactly downhill — and its noise shrinks only as \(1/|\mathcal{B}|\) in variance (\(1/\sqrt{|\mathcal{B}|}\) in magnitude): quadrupling the batch halves the noise. The decisive property: <b>the cost of a step is independent of the dataset size</b>. That one fact is why training on internet-scale data is possible at all.</div>
+        </div>
+
+        <p>Batch size is then an engineering trade, not a statistical one. Larger batches use accelerators efficiently and parallelize across devices (Vol II · CH 04), but past a <em>critical batch size</em> the extra averaging buys almost nothing — the noise is no longer the limiting factor, and you are spending more compute per unit of progress. A common heuristic when scaling the batch is to scale the learning rate with it, which works until it abruptly doesn't. And the noise itself is not purely a tax: it helps escape saddle points, and there is evidence — genuinely contested — that it biases training toward flatter minima that generalize better (Chapter 06's themes). What is not contested: <strong>the learning rate \(\eta\) is the single most important hyperparameter in deep learning</strong>. Too low wastes compute; ~3× too high diverges; the usable window is often well under one order of magnitude, which is why Vol II · EQ 4.4's warmup-and-decay schedules exist.</p>
+      </section>
+
+      <!-- ====================== 8.6 ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">8.6</span><h2>Momentum and Adam</h2></div>
+        <p>Real loss surfaces are <em>ravines</em>: curvature differs wildly by direction (recall Chapter 02's elongated bowls). Plain SGD must keep \(\eta\) small enough not to explode along the steepest direction — and at that \(\eta\) it crawls along the shallow one, zigzagging across the valley while barely advancing down it. <strong>Momentum</strong> fixes this with one extra vector — an exponential moving average of gradients:</p>
+
+        <div class="eq"><span class="eq-tag">EQ M8.5 — MOMENTUM (HEAVY BALL)</span>
+        $$ v_t \;=\; \beta\, v_{t-1} + \hat{g}_t, \qquad\quad \theta_{t+1} \;=\; \theta_t - \eta\, v_t $$
+        <div class="eq-note">\(v\) remembers roughly the last \(1/(1-\beta)\) gradients — ten, at the standard \(\beta = 0.9\). Across the ravine, gradients alternate sign and <b>cancel in the average</b>; along the valley floor they agree and <b>accumulate, up to a \(1/(1-\beta)\) ≈ 10× effective speedup</b>. The physics name is honest: \(v\) is velocity, \(\beta\) is friction, and a rolling ball coasts through small bumps and minor noise that stop a memoryless walker cold.</div>
+        </div>
+
+        <p><strong>Adam</strong> keeps momentum's first moment and adds a second: a running average of each coordinate's <em>squared</em> gradient, used to divide the step — so every parameter gets an automatically calibrated per-coordinate learning rate, and rarely-updated or small-gradient directions are not starved. The full update, bias corrections and the decoupled weight decay that makes it <strong>AdamW</strong>, is Vol II · EQ 4.3 — we will not re-derive it here. The standings in practice:</p>
+        <table class="data">
+          <thead><tr><th>Optimizer</th><th>State per param</th><th>Character</th><th>Where it rules</th></tr></thead>
+          <tbody>
+            <tr><td><strong>SGD</strong></td><td class="m">none</td><td>Honest, noisy, ravine-bound</td><td>Theory; small problems</td></tr>
+            <tr><td><strong>SGD + momentum</strong></td><td class="m">+1 (v)</td><td>Coasts valleys, rolls over bumps, overshoots</td><td>The CNN/vision era; still competitive there</td></tr>
+            <tr><td><strong>Adam / AdamW</strong></td><td class="hl">+2 (m, v)</td><td>Per-coordinate scaling; robust to bad conditioning</td><td class="hl">Every LLM you have heard of</td></tr>
+          </tbody>
+        </table>
+        <p class="note">The state column is real money at scale: weights + gradients + fp32 master copy + Adam's two moments is where Vol II · CH 06's "≈16 bytes per parameter to train" comes from — a 70B model wants ~1.1 TB of optimizer-laden memory before a single activation is stored.</p>
+
+        <div class="widget" id="bp-race" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT M8.2 — OPTIMIZER RACE</span><span class="w-sub">ELONGATED VALLEY + BUMP · 3 LIVE UPDATE RULES · SEEDED NOISE</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>CONTROL</label>
+                <div class="seg-row">
+                  <button class="w-btn" id="bp-race-step">STEP +1</button>
+                  <button class="w-btn" id="bp-race-auto">AUTO ▶</button>
+                  <button class="w-btn ghost" id="bp-race-reset">RESET</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="bp-race-canvas" height="340"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">STEP</div><div class="r-value" id="bp-r-step">0</div></div>
+              <div class="readout"><div class="r-label">SGD LOSS (η=1.6)</div><div class="r-value" id="bp-r-sgd" style="color:#4e8af7;">—</div></div>
+              <div class="readout"><div class="r-label">MOMENTUM LOSS (η=.22 β=.9)</div><div class="r-value" id="bp-r-mom" style="color:#ff4136;">—</div></div>
+              <div class="readout acc"><div class="r-label">ADAM LOSS (η=.30)</div><div class="r-value" id="bp-r-adam">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">A synthetic two-parameter loss — 10:1 curvature ratio plus a Gaussian bump squarely in the path — but every trajectory is its real update rule run live, all three fed identical seeded gradient noise. Run AUTO: SGD zigzags across the valley, then <em>parks</em> — the bump carves a shallow local minimum in front of itself, and a memoryless stepper has no way out. Momentum's stored velocity carries it straight over (and then past — watch the red overshoot swing back). Adam's per-coordinate normalization takes the bump as a detour and settles cleanly. Around step 120 the scoreboard reads ≈1.34 / 0.03 / 0.02 — same surface, same noise, three different fates.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 8.7 ====================== -->
+      <section class="section" id="s7">
+        <div class="sec-head"><span class="sec-num">8.7</span><h2>Vanishing, exploding, and the fixes that built deep learning</h2></div>
+        <p>Iterate EQ M8.3 through \(L\) layers and the gradient reaching layer 1 is a product of \(L\) matrices and \(L\) activation slopes. Products compound geometrically: if each factor shrinks the signal by 0.9, a hundred layers leave \(0.9^{100} \approx 3 \times 10^{-5}\) of it; if each grows it by 1.1, the same hundred layers amplify ~14,000×. <strong>Vanishing gradients</strong> mean the early layers stop learning while the late ones overfit; <strong>exploding gradients</strong> mean a single step flings the weights to infinity. For two decades this product was the practical wall — "deep networks don't train" — and the modern stack is, to a first approximation, the list of fixes:</p>
+        <ul>
+          <li><strong>Initialization that respects the product.</strong> Xavier/Glorot and He initialization choose weight variance (≈ \(2/d_{\text{in}}\) for ReLU) so each layer's factor starts with norm ≈ 1 — the product begins neutral instead of doomed. One line of code; it is the difference between training and not.</li>
+          <li><strong>Activations that pass gradient.</strong> EQ M7.2's argument: sigmoid contributes at most 0.25 per layer; ReLU contributes exactly 1 wherever active. The 2012 switch to ReLU is most of why "deep" stopped being a euphemism for "broken".</li>
+          <li><strong>Residual connections.</strong> Reformulate each layer as \( h_{\ell+1} = h_\ell + F(h_\ell) \). The backward Jacobian becomes \( I + \partial F / \partial h_\ell \): <b>the identity term gives gradients a multiplication-free expressway from the loss to every layer</b>, and the product of \((I + \text{small})\) terms stays tame where a product of raw matrices would not. He et al. (2015) used it to train 152 layers the year 20 was hard.</li>
+          <li><strong>Normalization and clipping.</strong> LayerNorm/RMSNorm re-standardize activations so the slopes stay in their responsive range; gradient clipping caps the global gradient norm as a circuit breaker against the exploding side — still standard in every LLM pretraining run (Vol II · CH 04).</li>
+        </ul>
+        <p>Carry the third fix with you across the volume boundary: a transformer is a residual network through and through, and what Volume II calls the <strong>residual stream</strong> (Vol II · §2.2) is exactly this gradient expressway, promoted from a training trick to the architecture's central data structure — every attention head and MLP reads from it and adds back into it, and gradients ride it undamped through a hundred layers.</p>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>You now know everything GPT knows about learning — Volume II shows what happens at a trillion times the scale.</strong> The forward pass of Chapter 07, this chapter's backward pass, AdamW on EQ M8.4's noisy gradients: that is, literally and completely, the training loop of a frontier model. Volume II begins where the loop meets reality — tokens, embeddings, attention, and the engineering of running it across tens of thousands of GPUs.</p>
+        </div>
+      </section>
+
+      <nav class="pager">
+        <a href="07-neural-networks.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">07</span> Neural Networks: The MLP</div></a>
+        <a class="next" href="../chapters/01-foundations.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">01</span> Vol II · Foundations</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — VOL I · CH 08</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/glossary.js"></script>
+<script src="../assets/js/shared.js"></script>
+<script src="../assets/js/pyrunner.js"></script>
+<script>
+/* chapter instruments — single IIFE, no globals */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+
+  /* ============ INSTRUMENT M8.1 — GRAPH STEPPER ============ */
+  (function () {
+    var root = document.getElementById("bp-graph");
+    if (!root) return;
+    var fwdBtn = document.getElementById("bp-fwd");
+    var bwdBtn = document.getElementById("bp-bwd");
+    var presetBtns = root.querySelectorAll("[data-bp-preset]");
+    var PRESETS = { A: { x: 2.0, w: 0.5, b: -0.5, y: 1.0 }, B: { x: -1.0, w: 1.5, b: 0.5, y: 0.0 } };
+    var cur = "A", timers = [], V = null;
+
+    function el(id) { return document.getElementById(id); }
+    function txt(id, s) { el(id).textContent = s; }
+    function paint(id, c) { el(id).style.fill = c; }
+    function flash(rectId) {
+      var r = el(rectId);
+      r.style.stroke = FM.C.MINT;
+      timers.push(setTimeout(function () { r.style.stroke = "#565656"; }, 700));
+    }
+    function f4(v) { return (v < 0 ? "" : "") + v.toFixed(4); }
+    function compute(p) {
+      var u = p.w * p.x, z = u + p.b, a = 1 / (1 + Math.exp(-z));
+      var L = 0.5 * (a - p.y) * (a - p.y);
+      var dLda = a - p.y, dadz = a * (1 - a), dLdz = dLda * dadz;
+      var gw = dLdz * p.x, gx = dLdz * p.w, gb = dLdz;
+      /* loss after one SGD step (η = 1) on w and b */
+      var w2 = p.w - gw, b2 = p.b - gb;
+      var a2 = 1 / (1 + Math.exp(-(w2 * p.x + b2)));
+      var L2 = 0.5 * (a2 - p.y) * (a2 - p.y);
+      return { u: u, z: z, a: a, L: L, dLda: dLda, dadz: dadz, dLdz: dLdz, gw: gw, gx: gx, gb: gb, L2: L2 };
+    }
+    function clearTimers() { timers.forEach(clearTimeout); timers = []; }
+
+    function fillForward() {
+      var p = PRESETS[cur];
+      txt("bp-v-w", p.w.toFixed(2)); txt("bp-v-x", p.x.toFixed(2));
+      txt("bp-v-b", p.b.toFixed(2)); txt("bp-v-y", p.y.toFixed(1));
+      txt("bp-v-u", f4(V.u)); txt("bp-v-z", f4(V.z));
+      txt("bp-v-a", f4(V.a)); txt("bp-v-L", f4(V.L));
+      txt("bp-e-uw", "∂u/∂w = " + p.x.toFixed(2)); txt("bp-e-ux", "∂u/∂x = " + p.w.toFixed(2));
+      txt("bp-e-zu", "∂z/∂u = 1"); txt("bp-e-zb", "∂z/∂b = 1");
+      txt("bp-e-az", "∂a/∂z = " + f4(V.dadz)); txt("bp-e-la", "∂L/∂a = " + f4(V.dLda));
+      ["uw", "ux", "zu", "zb", "az", "la"].forEach(function (k) { paint("bp-e-" + k, FM.C.BLUE); });
+      txt("bp-r-loss", V.L.toFixed(4));
+    }
+    function clearGrads() {
+      ["w", "x", "b", "u", "z", "a", "L"].forEach(function (k) {
+        txt("bp-g-" + k, "∂L/∂" + (k === "L" ? "L" : k) + " = —");
+        paint("bp-g-" + k, FM.C.MUT);
+      });
+      txt("bp-r-gw", "—"); txt("bp-r-gb", "—"); txt("bp-r-next", "—");
+    }
+    function setGrad(k, v) {
+      txt("bp-g-" + k, "∂L/∂" + k + " = " + (typeof v === "number" ? f4(v) : v));
+      paint("bp-g-" + k, FM.C.MINT);
+    }
+    function resetTo(name) {
+      clearTimers();
+      cur = name;
+      V = compute(PRESETS[cur]);
+      /* sensible initial state: forward values filled instantly, grads pending */
+      ["uw", "ux", "zu", "zb", "az", "la"].forEach(function (k) { paint("bp-e-" + k, FM.C.MUT); });
+      fillForward();
+      clearGrads();
+    }
+    function stage(delay, fn) { timers.push(setTimeout(fn, delay)); }
+
+    fwdBtn.addEventListener("click", function () {
+      clearTimers();
+      /* blank, then animate left-to-right */
+      ["u", "z", "a", "L"].forEach(function (k) { txt("bp-v-" + k, "—"); });
+      ["uw", "ux", "zu", "zb", "az", "la"].forEach(function (k) { txt("bp-e-" + k, "…"); paint("bp-e-" + k, FM.C.MUT); });
+      clearGrads();
+      var p = PRESETS[cur];
+      stage(50, function () { flash("bp-n-w"); flash("bp-n-x"); flash("bp-n-b"); flash("bp-n-y"); });
+      stage(430, function () {
+        txt("bp-v-u", f4(V.u)); flash("bp-n-u");
+        txt("bp-e-uw", "∂u/∂w = " + p.x.toFixed(2)); txt("bp-e-ux", "∂u/∂x = " + p.w.toFixed(2));
+        paint("bp-e-uw", FM.C.BLUE); paint("bp-e-ux", FM.C.BLUE);
+      });
+      stage(810, function () {
+        txt("bp-v-z", f4(V.z)); flash("bp-n-z");
+        txt("bp-e-zu", "∂z/∂u = 1"); txt("bp-e-zb", "∂z/∂b = 1");
+        paint("bp-e-zu", FM.C.BLUE); paint("bp-e-zb", FM.C.BLUE);
+      });
+      stage(1190, function () {
+        txt("bp-v-a", f4(V.a)); flash("bp-n-a");
+        txt("bp-e-az", "∂a/∂z = " + f4(V.dadz)); paint("bp-e-az", FM.C.BLUE);
+      });
+      stage(1570, function () {
+        txt("bp-v-L", f4(V.L)); flash("bp-n-L");
+        txt("bp-e-la", "∂L/∂a = " + f4(V.dLda)); paint("bp-e-la", FM.C.BLUE);
+        txt("bp-r-loss", V.L.toFixed(4));
+      });
+    });
+
+    bwdBtn.addEventListener("click", function () {
+      clearTimers();
+      fillForward();  /* ensure forward state is complete */
+      clearGrads();
+      stage(50, function () { setGrad("L", "1"); flash("bp-n-L"); });
+      stage(430, function () { setGrad("a", V.dLda); paint("bp-e-la", FM.C.MINT); flash("bp-n-a"); });
+      stage(810, function () { setGrad("z", V.dLdz); paint("bp-e-az", FM.C.MINT); flash("bp-n-z"); });
+      stage(1190, function () {
+        setGrad("u", V.dLdz); setGrad("b", V.gb);
+        paint("bp-e-zu", FM.C.MINT); paint("bp-e-zb", FM.C.MINT);
+        flash("bp-n-u"); flash("bp-n-b");
+      });
+      stage(1570, function () {
+        setGrad("w", V.gw); setGrad("x", V.gx);
+        paint("bp-e-uw", FM.C.MINT); paint("bp-e-ux", FM.C.MINT);
+        flash("bp-n-w"); flash("bp-n-x");
+        txt("bp-r-gw", f4(V.gw)); txt("bp-r-gb", f4(V.gb));
+        txt("bp-r-next", V.L2.toFixed(4) + " ↓");
+      });
+    });
+
+    presetBtns.forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        presetBtns.forEach(function (b) { b.classList.toggle("on", b === btn); });
+        resetTo(btn.getAttribute("data-bp-preset"));
+      });
+    });
+
+    resetTo("A");
+  })();
+
+  /* ============ INSTRUMENT M8.2 — OPTIMIZER RACE ============ */
+  (function () {
+    var root = document.getElementById("bp-race");
+    if (!root) return;
+    var cv = document.getElementById("bp-race-canvas");
+    var stepBtn = document.getElementById("bp-race-step");
+    var autoBtn = document.getElementById("bp-race-auto");
+    var resetBtn = document.getElementById("bp-race-reset");
+    var stepEl = document.getElementById("bp-r-step");
+    var lossEls = { sgd: document.getElementById("bp-r-sgd"), mom: document.getElementById("bp-r-mom"), adam: document.getElementById("bp-r-adam") };
+
+    /* L(x,y) = 0.05x² + 0.5y² + bump — 10:1 curvature ratio, Gaussian bump in the path */
+    var B = 1.1, BX = -3.0, BY = 0.35, S = 2.0;
+    function L(x, y) { return 0.05 * x * x + 0.5 * y * y + B * Math.exp(-((x - BX) * (x - BX) + (y - BY) * (y - BY)) / S); }
+    function grad(x, y) {
+      var e = B * Math.exp(-((x - BX) * (x - BX) + (y - BY) * (y - BY)) / S);
+      return [0.1 * x - e * 2 * (x - BX) / S, y - e * 2 * (y - BY) / S];
+    }
+    var X0 = -9, Y0 = 3, MAXST = 400, NOISE = 0.06;
+    var WX0 = -10.8, WX1 = 5.2, WY0 = -3.8, WY1 = 3.8;
+    var opts, step, noiseArr, auto = null;
+
+    function gauss(r) {
+      var u = Math.max(r(), 1e-12);
+      return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * r());
+    }
+    function reset() {
+      stopAuto();
+      var rn = FM.mulberry32(20260613);
+      noiseArr = [];
+      for (var i = 0; i < MAXST; i++) noiseArr.push([gauss(rn), gauss(rn)]);
+      opts = [
+        { key: "sgd",  col: FM.C.BLUE, x: X0, y: Y0, traj: [[X0, Y0]], vx: 0, vy: 0 },
+        { key: "mom",  col: FM.C.RED,  x: X0, y: Y0, traj: [[X0, Y0]], vx: 0, vy: 0 },
+        { key: "adam", col: FM.C.MINT, x: X0, y: Y0, traj: [[X0, Y0]], mx: 0, my: 0, sx: 0, sy: 0, t: 0 }
+      ];
+      step = 0;
+      draw(); readouts();
+    }
+    function advance() {
+      if (step >= MAXST) { stopAuto(); return; }
+      var nz = noiseArr[step];
+      opts.forEach(function (o) {
+        var g = grad(o.x, o.y);
+        var gx = g[0] + NOISE * nz[0], gy = g[1] + NOISE * nz[1];
+        if (o.key === "sgd") { o.x -= 1.6 * gx; o.y -= 1.6 * gy; }
+        else if (o.key === "mom") {
+          o.vx = 0.9 * o.vx + gx; o.vy = 0.9 * o.vy + gy;
+          o.x -= 0.22 * o.vx; o.y -= 0.22 * o.vy;
+        } else {
+          o.t++;
+          o.mx = 0.9 * o.mx + 0.1 * gx; o.my = 0.9 * o.my + 0.1 * gy;
+          o.sx = 0.999 * o.sx + 0.001 * gx * gx; o.sy = 0.999 * o.sy + 0.001 * gy * gy;
+          var c1 = 1 - Math.pow(0.9, o.t), c2 = 1 - Math.pow(0.999, o.t);
+          o.x -= 0.30 * (o.mx / c1) / (Math.sqrt(o.sx / c2) + 1e-8);
+          o.y -= 0.30 * (o.my / c1) / (Math.sqrt(o.sy / c2) + 1e-8);
+        }
+        o.traj.push([o.x, o.y]);
+      });
+      step++;
+      draw(); readouts();
+    }
+    function readouts() {
+      stepEl.textContent = String(step);
+      opts.forEach(function (o) { lossEls[o.key].textContent = L(o.x, o.y).toFixed(3); });
+    }
+    function draw() {
+      var sc = FM.setupCanvas(cv, 340), ctx = sc.ctx, W = sc.w, Hh = 340;
+      function PX(wx) { return (wx - WX0) / (WX1 - WX0) * W; }
+      function PY(wy) { return (WY1 - wy) / (WY1 - WY0) * Hh; }
+      ctx.clearRect(0, 0, W, Hh);
+      /* quantized loss shading — bands read as contours; valley glows */
+      var cell = 6;
+      for (var px = 0; px < W; px += cell) {
+        for (var py = 0; py < Hh; py += cell) {
+          var wx = WX0 + (px + cell / 2) / W * (WX1 - WX0);
+          var wy = WY1 - (py + cell / 2) / Hh * (WY1 - WY0);
+          var q = Math.floor(Math.log(1 + L(wx, wy)) / 0.22);
+          var a = Math.max(0, 0.14 - 0.0155 * q);
+          if (a > 0.004) { ctx.fillStyle = "rgba(255,255,255," + a.toFixed(3) + ")"; ctx.fillRect(px, py, cell, cell); }
+        }
+      }
+      /* global minimum + start markers */
+      ctx.strokeStyle = FM.C.BRIGHT; ctx.lineWidth = 1.2;
+      var mx = PX(0.2), my = PY(0.02);
+      ctx.beginPath(); ctx.moveTo(mx - 5, my - 5); ctx.lineTo(mx + 5, my + 5); ctx.moveTo(mx + 5, my - 5); ctx.lineTo(mx - 5, my + 5); ctx.stroke();
+      ctx.font = FM.C.MONO; ctx.fillStyle = FM.C.SEC;
+      ctx.fillText("MIN", mx + 8, my - 6);
+      ctx.fillStyle = FM.C.MUT;
+      ctx.fillText("START", PX(X0) - 16, PY(Y0) - 10);
+      ctx.fillText("BUMP", PX(BX) - 14, PY(BY) + 24);
+      /* trajectories */
+      opts.forEach(function (o) {
+        ctx.strokeStyle = o.col; ctx.lineWidth = 1.4; ctx.globalAlpha = 0.85;
+        ctx.beginPath();
+        for (var i = 0; i < o.traj.length; i++) {
+          var p = o.traj[i];
+          if (i === 0) ctx.moveTo(PX(p[0]), PY(p[1])); else ctx.lineTo(PX(p[0]), PY(p[1]));
+        }
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = o.col;
+        ctx.beginPath(); ctx.arc(PX(o.x), PY(o.y), 4, 0, Math.PI * 2); ctx.fill();
+      });
+      /* legend */
+      ctx.fillStyle = FM.C.BLUE; ctx.fillText("SGD", 12, 18);
+      ctx.fillStyle = FM.C.RED;  ctx.fillText("MOMENTUM", 48, 18);
+      ctx.fillStyle = FM.C.MINT; ctx.fillText("ADAM", 126, 18);
+      ctx.fillStyle = FM.C.MUT;  ctx.fillText("L = 0.05x² + 0.5y² + bump", 12, Hh - 10);
+    }
+    function stopAuto() { if (auto) { clearInterval(auto); auto = null; autoBtn.textContent = "AUTO ▶"; } }
+    autoBtn.addEventListener("click", function () {
+      if (auto) { stopAuto(); return; }
+      autoBtn.textContent = "PAUSE ❚❚";
+      auto = setInterval(advance, 110);
+    });
+    stepBtn.addEventListener("click", function () { stopAuto(); advance(); });
+    resetBtn.addEventListener("click", reset);
+
+    reset();
+    setTimeout(draw, 350);  /* re-measure once layout settles */
+    window.addEventListener("resize", draw);
+  })();
+})();
+</script>
+</body>
+</html>

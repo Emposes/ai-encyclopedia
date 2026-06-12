@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>03 · Show, Don't Tell: Few-Shot &amp; Examples — AI Encyclopedia</title>
+<meta name="description" content="Few-shot prompting as the strongest single lever: why examples work mechanically, how many shots to use, selection and ordering, format leakage, contrastive pairs — and when examples backfire." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css" />
+</head>
+<body>
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ VOL III / PROMPTING / 03 / FEW-SHOT &amp; EXAMPLES</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="04-reasoning.html">NEXT: REASONING CONTROLS →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">VOLUME III — PROMPTING · CHAPTER 03 / 07</div>
+    <h1>Show, Don't Tell: Few-Shot &amp; Examples</h1>
+    <p class="lede">Instructions describe a task; examples <em>demonstrate</em> it — and the model was trained on demonstration, not description. Across nearly every prompting study since GPT-3, <strong>a handful of well-chosen examples moves behavior more than any paragraph of instructions</strong>. This chapter covers the mechanics of why, the saturation curve of how many, the craft of which and in what order, and the cases — increasingly common with strong instruct and reasoning models — where examples quietly make things worse.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 24 MIN</b></span>
+      <span>BUILDS ON<b>VOL III CH 01–02 · VOL II CH 03</b></span>
+      <span>INSTRUMENTS<b>SHOT-COUNT · ORDER SHUFFLER</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">3.1</span>Why examples work</a>
+      <a href="#s2"><span class="n">3.2</span>How many shots</a>
+      <a href="#s3"><span class="n">3.3</span>Example selection</a>
+      <a href="#s4"><span class="n">3.4</span>Ordering &amp; recency bias</a>
+      <a href="#s5"><span class="n">3.5</span>Format leakage as a feature</a>
+      <a href="#s6"><span class="n">3.6</span>Contrastive examples</a>
+      <a href="#s7"><span class="n">3.7</span>When few-shot hurts</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 3.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">3.1</span><h2>Why examples work: in-context learning, mechanically</h2></div>
+        <p>Chapter 01 framed a prompt as <em>conditioning</em>: every token you place in context reshapes the distribution over what comes next. Examples are the most aggressive form of conditioning available, because they exploit a circuit the model already runs on every forward pass. Vol II · Chapter 03 introduced <strong>induction heads</strong> — attention heads that find an earlier occurrence of the current pattern and copy what followed it. A few-shot prompt is, structurally, bait for exactly that circuit: <code>input → output, input → output, input → ?</code> is the repeated-pattern format induction heads were discovered completing. No weights change. The "learning" in in-context learning is pattern-matching over the residual stream, executed fresh on every call.</p>
+        <p>Two findings sharpen the picture, and both should change how you write prompts:</p>
+        <ul>
+          <li><strong>Examples mostly tell the model <em>which</em> task, not <em>how</em> to do it.</strong> Min et al. (2022) showed that on many classification benchmarks, replacing the gold labels in few-shot examples with <em>random</em> labels barely dents accuracy. What carried the performance was the input distribution, the label space, and the format — the demonstration's <em>shape</em>. The model already knew how to classify sentiment; the examples told it that sentiment classification, in this exact format, is what's happening here. This is often called <strong>task recognition</strong> as opposed to task learning.</li>
+          <li><strong>But bigger models do read the labels.</strong> Wei et al. (2023) found that as scale grows, models increasingly override their semantic priors and follow flipped or arbitrary label mappings in the examples. Frontier models genuinely extract input→output rules from context — a capability some theoretical work models as implicit regression or gradient-descent-like updating inside the forward pass. That account remains contested; the empirical part is not.</li>
+        </ul>
+        <div class="callout">
+          <span class="co-icon">CONSEQUENCE</span>
+          <p>Both regimes reward the same practice: examples are doing <strong>format and task-boundary work first</strong>, rule-induction work second. So you optimize examples for coverage, consistency, and format fidelity (§3.3, §3.5) before you optimize them for cleverness — and you never assume the model "understood the rule" just because it matched three demonstrations.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 3.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">3.2</span><h2>How many shots: the saturation curve</h2></div>
+        <p>Since the GPT-3 paper plotted accuracy against shot count in 2020, the same shape has recurred across tasks and model generations: a steep rise that flattens fast. The single biggest jump is <strong>zero → one</strong> — the first example resolves the format, the label space, and most of the task ambiguity at once. Each additional example refines boundaries with diminishing returns. A saturating exponential captures the shape well enough to reason with:</p>
+
+        <div class="eq"><span class="eq-tag">EQ P3.1 — THE SHOT-COUNT CURVE (CONCEPTUAL)</span>
+        $$ \mathrm{acc}(k) \;\approx\; a_{\infty} - \left( a_{\infty} - a_{0} \right) e^{-k/\kappa} $$
+        <div class="eq-note">\(a_0\) is zero-shot accuracy, \(a_\infty\) the few-shot ceiling, and \(\kappa\) the task's saturation constant — how many examples it takes to close \(63\%\) of the remaining gap. <b>This is a shape, not a law</b>: it summarizes the typical empirical curve, it is not derived from anything. Its useful predictions: the marginal value of example \(k{+}1\) decays geometrically, and the gap \(a_\infty - a_0\) — how much examples can help at all — varies enormously by task type.</div>
+        </div>
+
+        <p>The parameters cluster by task family. <strong>Format-following</strong> tasks (emit this JSON, this tag style, this report skeleton) have a huge \(a_\infty - a_0\) gap and tiny \(\kappa\): one or two examples and you're done, because format is precisely what demonstrations transmit best. <strong>Classification and extraction</strong> saturate more slowly — around 4–8 shots — since later examples still sharpen category boundaries. <strong>Reasoning-heavy</strong> tasks barely move: a worked example changes the <em>style</em> of the solution trace, not the model's ability to solve (Chapter 04 picks up that thread). Explore the three regimes:</p>
+
+        <div class="widget" id="fs-shots" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT P3.1 — SHOT-COUNT EXPLORER</span><span class="w-sub">HAND-BUILT CURVES · ILLUSTRATIVE · EQ P3.1</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>SHOTS k <output id="fs-k-out">4</output></label><input type="range" id="fs-k" min="0" max="16" step="1" value="4"/></div>
+              <div class="ctl"><label>TOKENS PER EXAMPLE <output id="fs-tpe-out">120</output></label><input type="range" id="fs-tpe" min="40" max="400" step="20" value="120"/></div>
+            </div>
+            <canvas class="w-canvas" id="fs-curve-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">FORMAT-FOLLOWING</div><div class="r-value" id="fs-acc-fmt">—</div></div>
+              <div class="readout"><div class="r-label">CLASSIFICATION</div><div class="r-value" id="fs-acc-cls">—</div></div>
+              <div class="readout"><div class="r-label">REASONING</div><div class="r-value" id="fs-acc-rsn">—</div></div>
+              <div class="readout"><div class="r-label">PROMPT OVERHEAD</div><div class="r-value" id="fs-cost" style="font-size:13px;line-height:1.5;">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Curves are hand-built to match the shapes reported across the few-shot literature — they are illustrative, not measurements. Slide k from 0 to 1 and watch where each curve makes its largest jump; then note that by k = 2 the format curve has nothing left to gain, while every added example keeps costing tokens on every single call. Cost readout assumes an indicative $3 / 1M input tokens.</div>
+        </div>
+
+        <p class="note"><strong>The long-context caveat.</strong> "Many-shot" in-context learning (Agarwal et al., 2024) showed that with hundreds to thousands of examples — feasible once contexts crossed 100K tokens — some tasks keep improving well past where the classic curve flattens, occasionally approaching fine-tuning quality. The exponential above describes the 0–32 shot regime where almost all practical prompting lives; treat the far tail as a separate tool with fine-tuning-like economics (Vol II · Chapter 06), amortized only if you cache the prefix.</p>
+      </section>
+
+      <!-- ====================== 3.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">3.3</span><h2>Example selection: cover the edges, not the center</h2></div>
+        <p>The instinct is to pick your prettiest, most typical examples — three clean inputs with three clean outputs. That teaches the model a task narrower than yours. Production inputs are mostly edge cases wearing a trench coat: the empty field, the two-languages-in-one-sentence ticket, the review that praises the product while demanding a refund. Since examples define task boundaries (§3.1), <strong>an example spent on the happy path is a wasted boundary</strong> — the model already assumed the happy path.</p>
+        <table class="data">
+          <thead><tr><th>Principle</th><th>Practice</th><th>Failure it prevents</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Edge cases over prototypes</strong></td><td class="m">1 typical case, rest spent on boundaries: ambiguous, malformed, "none of the above"</td><td>Confident misclassification of anything atypical</td></tr>
+            <tr><td><strong>Diversity beats quantity</strong></td><td class="m">8 examples spanning input clusters &gt; 16 near-duplicates</td><td>Redundant shots that buy tokens, not coverage</td></tr>
+            <tr><td><strong>Show the null action</strong></td><td class="m">include an input where the right output is "no match" / empty list / escalate</td><td>The model inventing an answer because every demo had one</td></tr>
+            <tr><td><strong>Balance the label space</strong></td><td class="m">roughly even labels across shots (classification)</td><td>Majority-label bias — skew toward whichever label dominates the demos</td></tr>
+            <tr><td><strong>Real over idealized</strong></td><td class="m">lightly cleaned production inputs, typos intact</td><td>A model calibrated to inputs that never occur</td></tr>
+          </tbody>
+        </table>
+        <p><strong>Dynamic selection.</strong> When you have a pool of candidate examples, retrieving the nearest neighbors of the <em>current</em> input — embed the query, embed the pool, take top-\(k\) by cosine similarity — reliably beats a fixed example set (the KATE result, Liu et al. 2021, since reproduced broadly). It is the same move as RAG, aimed at demonstrations instead of facts. Two cautions. First, similarity retrieval quietly destroys diversity: five neighbors of an unambiguous input are five near-identical demos, so production systems usually blend retrieved neighbors with a fixed diverse core. Second, retrieval changes the prompt prefix per request, which invalidates prefix caching (Vol II · Chapter 08) — at scale, the static-set discount is real money.</p>
+      </section>
+
+      <!-- ====================== 3.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">3.4</span><h2>Ordering and recency bias</h2></div>
+        <p>Few-shot prompts are not sets; they are sequences, and the model reads them with position-dependent attention. Zhao et al. (2021) measured the damage on GPT-3: across permutations of the <em>same</em> four examples, SST-2 sentiment accuracy ranged from near-chance to state-of-the-art. They isolated three biases — <strong>majority-label bias</strong> (predictions drift toward the most frequent label in the demos), <strong>recency bias</strong> (the last example's label bleeds into the prediction most), and common-token bias. Recency is the one ordering controls. A minimal model of the skew:</p>
+
+        <div class="eq"><span class="eq-tag">EQ P3.2 — RECENCY-WEIGHTED LABEL PRIOR (TOY MODEL)</span>
+        $$ \tilde{p}(y) \;=\; \frac{\sum_{i=1}^{k} w_i \,\mathbb{1}\!\left[ y_i = y \right]}{\sum_{i=1}^{k} w_i}, \qquad w_i = e^{\beta i},\quad \beta > 0 $$
+        <div class="eq-note">Position \(i\) runs from the earliest demo (1) to the last (\(k\)); \(\beta\) sets how steeply late examples dominate. \(\beta = 0\) recovers pure majority-label bias; \(\beta > 0\) adds recency. <b>On an ambiguous input, this prior — not the input — decides the prediction.</b> A toy, but it reproduces the qualitative finding: with perfectly balanced labels, ordering alone manufactures a skewed prior.</div>
+        </div>
+
+        <div class="widget" id="fs-order" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT P3.2 — ORDER SHUFFLER</span><span class="w-sub">4 DEMOS · 2 LABELS · TOY MODEL (EQ P3.2, β = 0.65) · ILLUSTRATIVE</span></div>
+          <div class="w-body">
+            <div style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.16em;color:#636363;margin-bottom:8px;">FEW-SHOT BLOCK (POSITION 1 → 4)</div>
+            <div id="fs-cards" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;"></div>
+            <div style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.16em;color:#636363;margin-bottom:6px;">TEST INPUT (DELIBERATELY AMBIGUOUS)</div>
+            <div style="border:1px solid var(--hairline);border-radius:4px;padding:10px 12px;font-size:13px;color:#e5e5e5;margin-bottom:14px;">"It's fine, I guess."</div>
+            <div style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.16em;color:#636363;margin-bottom:6px;">PREDICTED-LABEL PRIOR ON THE TEST INPUT</div>
+            <div style="display:flex;height:16px;border-radius:2px;overflow:hidden;border:1px solid var(--hairline);margin-bottom:12px;">
+              <div id="fs-bar-pos" style="background:#a6f2cc;transition:width .35s ease;"></div>
+              <div id="fs-bar-neg" style="background:#4e8af7;transition:width .35s ease;"></div>
+            </div>
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>PERMUTE THE SAME FOUR EXAMPLES</label>
+                <div class="seg-row">
+                  <button class="w-btn" id="fs-shuffle">SHUFFLE ⤨</button>
+                  <button class="w-btn ghost" id="fs-reset">RESET</button>
+                </div>
+              </div>
+            </div>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">P(POSITIVE)</div><div class="r-value" id="fs-p-pos">—</div></div>
+              <div class="readout"><div class="r-label">P(NEGATIVE)</div><div class="r-value" id="fs-p-neg">—</div></div>
+              <div class="readout"><div class="r-label">FINAL EXAMPLE'S LABEL</div><div class="r-value" id="fs-last">—</div></div>
+              <div class="readout"><div class="r-label">SKEW TOWARD FINAL LABEL</div><div class="r-value" id="fs-skew">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The labels are perfectly balanced — two POSITIVE, two NEGATIVE — yet every shuffle produces a skewed prior, always toward the final example's class, strongest when the last two demos share a label. The numbers come from EQ P3.2, not from a model, but the phenomenon is the one Zhao et al. measured: same examples, different order, different answer.</div>
+        </div>
+
+        <p><strong>What to do about it.</strong> Four mitigations, in increasing order of effort: (1) balance labels <em>and</em> end on the most representative example, since the last slot leaks hardest; (2) never sort examples by label — alternate or randomize within the balanced set; (3) for evaluation, average over several orders rather than trusting one (Chapter 07); (4) contextual calibration — measure the model's output on a content-free input like "N/A" and divide it out — recovers most of the lost accuracy when you control the decoding stack. Modern instruct models are meaningfully better calibrated than the GPT-3 these biases were measured on, but the bleed has not gone to zero — it has gone subtle, which is worse for debugging.</p>
+      </section>
+
+      <!-- ====================== 3.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">3.5</span><h2>Format leakage as a feature</h2></div>
+        <p>Everything in your examples leaks into the output: the casing of keys, the order of fields, trailing punctuation, whether lists end with a period, the average response length. Most discussions treat this as a hazard. It is also <strong>the most reliable format-specification mechanism that exists</strong> — more reliable than describing the format in prose, because a description must be parsed and interpreted while a demonstration is simply continued. Compare:</p>
+        <pre><code><span class="c"># DESCRIBED — the model must translate prose into structure</span>
+<span class="k">Return JSON with keys</span> "sentiment" <span class="k">(one of</span> positive|negative|mixed<span class="k">),</span>
+"confidence" <span class="k">(a float between 0 and 1, two decimals), and</span> "evidence"
+<span class="k">(an array of verbatim quotes, at most two).</span>
+
+<span class="c"># DEMONSTRATED — the model continues the pattern</span>
+<span class="k">Input:</span>  "Battery life is superb but the hinge broke in a week."
+<span class="k">Output:</span> {<span class="v">"sentiment"</span>: <span class="v">"mixed"</span>, <span class="v">"confidence"</span>: <span class="v">0.86</span>, <span class="v">"evidence"</span>: [<span class="v">"superb"</span>, <span class="v">"broke in a week"</span>]}</code></pre>
+        <p>One example pins down a dozen micro-decisions the description left open: key order, float precision, quote style, whether evidence is verbatim or paraphrased. The production pattern is <strong>describe once, demonstrate twice</strong> — a short prose spec for the rules that examples can't carry (ranges, enums, fallbacks), then two examples that settle everything else. Chapter 05 replaces this with constrained decoding where available; few-shot formatting remains the portable fallback that works on every model.</p>
+        <div class="callout warn">
+          <span class="co-icon">LEAK</span>
+          <p><strong>The leak does not discriminate.</strong> The model copies your examples' flaws with the same fidelity as their format: one demo with a trailing comma teaches trailing commas; demos that are all ~40 tokens teach 40-token answers even when the right answer needs 400; an inconsistent pair of examples teaches that the format is negotiable. Audit examples the way you audit code — they are executable.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 3.6 ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">3.6</span><h2>Contrastive examples: good vs bad, with the why</h2></div>
+        <p>Positive examples define the target; they say nothing about the boundary. When the failure mode is the model doing something <em>almost</em> right — summaries that editorialize, refusals that over-trigger, SQL that works but scans the whole table — the fastest fix is a <strong>contrastive pair</strong>: the same input with a good output, a bad output, and an explicit label on each saying <em>why</em>. The WHY annotation is what separates this from merely doubling your shot count: it converts an instance into a rule the model can apply to unseen cases.</p>
+        <pre><code><span class="c"># Contrastive pair for a support-summary task</span>
+<span class="k">Input:</span> [47-message thread about a delayed refund]
+
+<span class="k">GOOD:</span>  "Customer requested refund 12 May; agent escalated 19 May;
+       refund pending finance approval. Customer contacted support 4×."
+<span class="c">// WHY GOOD: only verifiable facts, dates preserved, no sentiment language</span>
+
+<span class="k">BAD:</span>   "Frustrated customer has been chasing an overdue refund for weeks
+       while support repeatedly dropped the ball."
+<span class="c">// WHY BAD: editorializes ("dropped the ball"), drops dates, asserts blame</span></code></pre>
+        <p>Three rules keep contrastive prompts from backfiring. <strong>Label loudly</strong> — the GOOD/BAD markers must be unmissable, because an unlabeled bad output is just another demonstration and will be imitated. <strong>Make the why specific</strong> — "too informal" teaches less than "uses sentiment adjectives instead of dates". And <strong>end on good</strong>: §3.4's recency bias applies to quality exactly as it applies to labels, so the last thing in the example block should always be behavior you want continued. Contrastive pairs are also the natural home for near-misses harvested from production — every bad output your evals catch (Chapter 07) is a free BAD half waiting for its annotation.</p>
+      </section>
+
+      <!-- ====================== 3.7 ====================== -->
+      <section class="section" id="s7">
+        <div class="sec-head"><span class="sec-num">3.7</span><h2>When few-shot hurts</h2></div>
+        <p>Examples are a lever, not a ritual. Three situations where adding them subtracts value:</p>
+        <table class="data">
+          <thead><tr><th>Situation</th><th>What goes wrong</th><th>Do instead</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Strong instruct model, simple task</strong></td><td>Zero-shot is already near ceiling; your examples drag the model off its native — often better — style, and anchor length, tone, and structure to your demos</td><td class="m">Start zero-shot; add examples only when evals show a gap they would close</td></tr>
+            <tr><td><strong>Reasoning models</strong></td><td>Few-shot CoT exemplars interfere with the model's own reasoning trace; vendor guidance (o1-class onward) is explicit that minimal prompts often beat shot-heavy ones</td><td class="m">State the task and constraints; control effort with dials, not demos (Chapter 04)</td></tr>
+            <tr><td><strong>Example overfitting</strong></td><td>The model latches onto surface artifacts — your demos' entities reappear in outputs, answer lengths mimic demo lengths, one weird demo skews everything</td><td class="m">Diversify demos (§3.3), check outputs for demo-bleed, rotate example sets in evals</td></tr>
+          </tbody>
+        </table>
+        <p>And always, the unglamorous one: <strong>cost</strong>. Every shot is paid on every call, forever. Eight 120-token examples are ~960 tokens of overhead — per request, that is rounding error; at ten million requests a month it is ten billion input tokens spent re-teaching a model the same four boundary cases. Prefix caching (Vol II · Chapter 08) discounts a static example block substantially, which is a real argument for fixed sets over per-query retrieval at high volume — and when the example block stops fitting the budget at all, the escalation path is the one Vol II · Chapter 06 opened: distill the behavior into the weights and delete the demos.</p>
+        <div class="callout warn">
+          <span class="co-icon">PITFALLS</span>
+          <p><strong>The four classic few-shot failures:</strong> (1) happy-path demos — every example typical, every edge case unguarded; (2) sorted labels — all positives then all negatives, manufacturing both majority and recency bias at once; (3) the inconsistent demo — one example formatted differently, teaching that format is optional; (4) fossilized examples — the demo set written on day one, never revisited after the task, the model, or the traffic changed.</p>
+        </div>
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>Examples shape what the model produces; the next lever shapes how long it thinks before producing it.</strong> Chapter 04: chain of thought and its descendants — decomposition, self-consistency, effort dials — and an honest account of which of those techniques reasoning models quietly made obsolete.</p>
+        </div>
+      </section>
+
+      <nav class="pager">
+        <a href="02-the-scaffold.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">02</span> The Scaffold: Role · Task · Context · Format · Constraints</div></a>
+        <a class="next" href="04-reasoning.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">04</span> Reasoning Controls: CoT to Effort Dials</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — VOL III · CH 03</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/glossary.js"></script>
+<script src="../assets/js/shared.js"></script>
+<script>
+/* chapter instruments — single IIFE, no globals */
+(function () {
+  "use strict";
+  var FM = window.FM;
+
+  /* ============================================================
+     INSTRUMENT P3.1 — SHOT-COUNT EXPLORER
+     acc(k) = a_inf - (a_inf - a0) * exp(-k / kappa)   (EQ P3.1)
+     Hand-built, illustrative parameterizations per task family.
+     ============================================================ */
+  (function () {
+    var canvas = document.getElementById("fs-curve-canvas");
+    if (!canvas) return;
+
+    var kIn = document.getElementById("fs-k");
+    var kOut = document.getElementById("fs-k-out");
+    var tpeIn = document.getElementById("fs-tpe");
+    var tpeOut = document.getElementById("fs-tpe-out");
+    var roFmt = document.getElementById("fs-acc-fmt");
+    var roCls = document.getElementById("fs-acc-cls");
+    var roRsn = document.getElementById("fs-acc-rsn");
+    var roCost = document.getElementById("fs-cost");
+
+    var KMAX = 16;
+    var TASKS = [
+      { name: "FORMAT-FOLLOWING", a0: 0.42, ainf: 0.97, kappa: 0.7, col: FM.C.MINT },
+      { name: "CLASSIFICATION",   a0: 0.55, ainf: 0.88, kappa: 3.2, col: FM.C.BLUE },
+      { name: "REASONING",        a0: 0.61, ainf: 0.66, kappa: 4.0, col: FM.C.SEC  }
+    ];
+
+    function acc(t, k) { return t.ainf - (t.ainf - t.a0) * Math.exp(-k / t.kappa); }
+
+    function render() {
+      var k = parseInt(kIn.value, 10);
+      var tpe = parseInt(tpeIn.value, 10);
+      var sc = FM.setupCanvas(canvas, 300);
+      var ctx = sc.ctx;
+      ctx.clearRect(0, 0, sc.w, 300);
+      ctx.font = FM.C.MONO;
+
+      var px = 46, py = 16, pw = sc.w - px - 16, ph = 300 - py - 40;
+      var YLO = 0.3, YHI = 1.0;
+      function X(kk) { return px + (kk / KMAX) * pw; }
+      function Y(a) { return py + (1 - (a - YLO) / (YHI - YLO)) * ph; }
+
+      // frame + gridlines
+      ctx.strokeStyle = FM.C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(px, py, pw, ph);
+      ctx.fillStyle = FM.C.MUT;
+      var g, kk;
+      ctx.textAlign = "right";
+      for (g = 0.3; g <= 1.001; g += 0.1) {
+        var yy = Y(g);
+        ctx.fillText((g * 100).toFixed(0) + "%", px - 6, yy + 3);
+        if (g > 0.301 && g < 0.999) {
+          ctx.strokeStyle = "rgba(47,50,52,0.45)";
+          ctx.beginPath(); ctx.moveTo(px, yy); ctx.lineTo(px + pw, yy); ctx.stroke();
+        }
+      }
+      ctx.textAlign = "center";
+      for (kk = 0; kk <= KMAX; kk += 2) ctx.fillText(String(kk), X(kk), py + ph + 16);
+      ctx.fillText("SHOTS k →", px + pw / 2, py + ph + 32);
+
+      // illustrative stamp (bottom-right of plot, clear of all curves)
+      ctx.textAlign = "right";
+      ctx.fillStyle = "rgba(99,99,99,0.9)";
+      ctx.fillText("ILLUSTRATIVE — HAND-BUILT, NOT MEASURED", px + pw - 6, py + ph - 8);
+
+      // highlight column at selected k
+      ctx.strokeStyle = "rgba(229,229,229,0.25)";
+      ctx.setLineDash([3, 4]);
+      ctx.beginPath(); ctx.moveTo(X(k), py); ctx.lineTo(X(k), py + ph); ctx.stroke();
+      ctx.setLineDash([]);
+
+      // curves (fine-sampled) + integer-k ticks
+      TASKS.forEach(function (t) {
+        ctx.strokeStyle = t.col; ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        var s, steps = 160;
+        for (s = 0; s <= steps; s++) {
+          var kx = (s / steps) * KMAX;
+          var yv = Y(acc(t, kx));
+          if (s === 0) ctx.moveTo(X(kx), yv); else ctx.lineTo(X(kx), yv);
+        }
+        ctx.stroke();
+        ctx.fillStyle = t.col;
+        for (s = 0; s <= KMAX; s++) {
+          ctx.beginPath(); ctx.arc(X(s), Y(acc(t, s)), 1.6, 0, Math.PI * 2); ctx.fill();
+        }
+        // marker at selected k
+        ctx.beginPath(); ctx.arc(X(k), Y(acc(t, k)), 3.4, 0, Math.PI * 2); ctx.fill();
+      });
+
+      // legend
+      ctx.textAlign = "left";
+      var lx = px + 12, ly = py + 18;
+      TASKS.forEach(function (t, i) {
+        ctx.strokeStyle = t.col; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(lx, ly + i * 15); ctx.lineTo(lx + 16, ly + i * 15); ctx.stroke();
+        ctx.fillStyle = t.col;
+        ctx.fillText(t.name, lx + 22, ly + i * 15 + 3);
+      });
+
+      // readouts
+      function fmtAcc(t) {
+        var a = acc(t, k), d = Math.max(0, a - t.a0);
+        return (a * 100).toFixed(1) + "%  (+" + (d * 100).toFixed(1) + ")";
+      }
+      roFmt.textContent = fmtAcc(TASKS[0]);
+      roCls.textContent = fmtAcc(TASKS[1]);
+      roRsn.textContent = fmtAcc(TASKS[2]);
+      var tok = k * tpe;
+      var usd = (tok * 0.003).toFixed(2); // $3 per 1M input tok → per 1K calls
+      var tokTxt = tok >= 1000 ? FM.siFormat(tok, 2) : String(tok);
+      roCost.textContent = tokTxt + " TOK / CALL · $" + usd + " PER 1K CALLS";
+
+      kOut.textContent = String(k);
+      tpeOut.textContent = String(tpe);
+    }
+
+    kIn.addEventListener("input", render);
+    tpeIn.addEventListener("input", render);
+    window.addEventListener("resize", render);
+    render();
+  })();
+
+  /* ============================================================
+     INSTRUMENT P3.2 — ORDER SHUFFLER
+     Recency-weighted label prior (EQ P3.2), beta = 0.65.
+     Permutes 4 fixed demos; prior always skews to final label.
+     ============================================================ */
+  (function () {
+    var cardsEl = document.getElementById("fs-cards");
+    if (!cardsEl) return;
+
+    var barPos = document.getElementById("fs-bar-pos");
+    var barNeg = document.getElementById("fs-bar-neg");
+    var roPos = document.getElementById("fs-p-pos");
+    var roNeg = document.getElementById("fs-p-neg");
+    var roLast = document.getElementById("fs-last");
+    var roSkew = document.getElementById("fs-skew");
+    var btnShuffle = document.getElementById("fs-shuffle");
+    var btnReset = document.getElementById("fs-reset");
+
+    var BETA = 0.65;
+    var DEMOS = [
+      { text: "“Best purchase I’ve made all year.”", label: "POSITIVE" },
+      { text: "“Broke after two days. Avoid.”", label: "NEGATIVE" },
+      { text: "“Exactly as described — works perfectly.”", label: "POSITIVE" },
+      { text: "“Support never answered my emails.”", label: "NEGATIVE" }
+    ];
+    var order = [0, 1, 2, 3];
+    var seed = 7;
+    var rng = FM.mulberry32(seed);
+
+    function shuffle() {
+      var next = order.slice(), i, j, tmp, tries = 0;
+      do {
+        for (i = next.length - 1; i > 0; i--) {
+          j = Math.floor(rng() * (i + 1));
+          tmp = next[i]; next[i] = next[j]; next[j] = tmp;
+        }
+        tries++;
+      } while (tries < 8 && next.join() === order.join()); // force a visible change
+      order = next;
+    }
+
+    function render() {
+      // cards
+      cardsEl.innerHTML = "";
+      order.forEach(function (idx, pos) {
+        var d = DEMOS[idx];
+        var isPos = d.label === "POSITIVE";
+        var card = document.createElement("div");
+        card.style.cssText =
+          "flex:1 1 150px;min-width:150px;border:1px solid " +
+          (pos === 3 ? "rgba(229,229,229,0.45)" : "var(--hairline)") +
+          ";border-radius:4px;padding:10px 12px;background:rgba(30,33,36,0.5);";
+        card.innerHTML =
+          "<div style='font-family:ui-monospace,Menlo,monospace;font-size:9px;letter-spacing:.16em;color:#636363;margin-bottom:6px;'>POSITION " +
+          (pos + 1) + (pos === 3 ? " · LAST" : "") + "</div>" +
+          "<div style='font-size:12px;color:#e5e5e5;line-height:1.45;margin-bottom:8px;'>" + d.text + "</div>" +
+          "<span style='font-family:ui-monospace,Menlo,monospace;font-size:9px;letter-spacing:.14em;padding:2px 7px;border-radius:2px;border:1px solid;" +
+          (isPos
+            ? "color:#a6f2cc;border-color:rgba(166,242,204,0.4);background:rgba(166,242,204,0.07);"
+            : "color:#4e8af7;border-color:rgba(78,138,247,0.4);background:rgba(78,138,247,0.07);") +
+          "'>" + d.label + "</span>";
+        cardsEl.appendChild(card);
+      });
+
+      // EQ P3.2: recency-weighted label prior
+      var wsum = 0, wpos = 0;
+      order.forEach(function (idx, pos) {
+        var w = Math.exp(BETA * (pos + 1));
+        wsum += w;
+        if (DEMOS[idx].label === "POSITIVE") wpos += w;
+      });
+      var pPos = wpos / wsum, pNeg = 1 - pPos;
+      var lastLabel = DEMOS[order[3]].label;
+      var pLast = lastLabel === "POSITIVE" ? pPos : pNeg;
+      var skewPts = (pLast - (1 - pLast)) * 100;
+
+      barPos.style.width = (pPos * 100).toFixed(1) + "%";
+      barNeg.style.width = (pNeg * 100).toFixed(1) + "%";
+      roPos.textContent = (pPos * 100).toFixed(1) + "%";
+      roNeg.textContent = (pNeg * 100).toFixed(1) + "%";
+      roLast.textContent = lastLabel;
+      roSkew.textContent = "+" + skewPts.toFixed(1) + " PTS";
+    }
+
+    btnShuffle.addEventListener("click", function () { shuffle(); render(); });
+    btnReset.addEventListener("click", function () {
+      order = [0, 1, 2, 3];
+      rng = FM.mulberry32(seed);
+      render();
+    });
+    render();
+  })();
+})();
+</script>
+</body>
+</html>

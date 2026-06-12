@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>04 · Trees, Forests &amp; Neighbors — AI Encyclopedia</title>
+<meta name="description" content="k-NN, decision trees, random forests and gradient boosting — the non-parametric family that still wins on tabular data, with a live CART depth dial and a k-NN smoother." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css" />
+</head>
+<body>
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ VOL I / ML FOUNDATIONS / 04 / TREES, FORESTS &amp; NEIGHBORS</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="05-unsupervised.html">NEXT: CLUSTERING &amp; PCA →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">VOLUME I — FOUNDATIONS OF ML · CHAPTER 04 / 08</div>
+    <h1>Trees, Forests &amp; Neighbors</h1>
+    <p class="lede">Not every model is a curve bent by gradient descent. This chapter is about methods that <strong>keep the training data instead of compressing it away</strong> — k-NN, which literally is its training set plus a voting rule, and decision trees, which carve the input space into rectangles by asking greedy yes/no questions. Ensembled into random forests and gradient-boosted stacks, these remain, in 2026, the methods to beat on tabular data.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>INTRO</b></span>
+      <span>READING TIME<b>≈ 25 MIN</b></span>
+      <span>BUILDS ON<b>VOL I · CH 01–03</b></span>
+      <span>INSTRUMENTS<b>DEPTH DIAL · k-NN k-SLIDER</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">4.1</span>k-NN: memory as a model</a>
+      <a href="#s2"><span class="n">4.2</span>Decision trees</a>
+      <a href="#s3"><span class="n">4.3</span>Overfitting a tree</a>
+      <a href="#s4"><span class="n">4.4</span>Bagging &amp; random forests</a>
+      <a href="#s5"><span class="n">4.5</span>Gradient boosting</a>
+      <a href="#s6"><span class="n">4.6</span>Trees vs deep learning</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 4.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">4.1</span><h2>k-NN: memory as a model</h2></div>
+        <p>The k-nearest-neighbors classifier has no training step, no parameters, and no loss function. The "model" is the training set itself, a distance function, and one integer. To classify a new point \(x\): find the \(k\) training points closest to it, and let them vote.</p>
+
+        <div class="eq"><span class="eq-tag">EQ M4.1 — MAJORITY VOTE OF THE k NEAREST</span>
+        $$ \hat{y}(x) \;=\; \operatorname*{arg\,max}_{c}\; \sum_{i \,\in\, N_k(x)} \mathbf{1}\!\left[\, y_i = c \,\right] $$
+        <div class="eq-note">\(N_k(x)\) is the set of the \(k\) training points nearest to \(x\) — usually under Euclidean distance — and \(\mathbf{1}[\cdot]\) counts a vote when neighbor \(i\) carries label \(c\). All the cost moves to query time: \(O(nd)\) distance computations per prediction against \(n\) stored examples in \(d\) dimensions. <b>Every modeling assumption hides inside the distance function</b> — if one feature is measured in millimeters and another in kilometers, the millimeters decide everything, which is why k-NN demands scaled features while trees (§4.2) do not.</div>
+        </div>
+
+        <p>For something this naive, k-NN is theoretically respectable: a classic result (Cover &amp; Hart, 1967) shows that with unlimited data, the humble 1-NN rule's error is at most <em>twice</em> the best achievable error of any classifier. Memory is a legitimate model. And it scaled further than anyone guessed: vector search over learned embeddings — the retrieval step inside every RAG system and vector database — is k-NN run at billion-document scale. The algorithm never died; it just changed feature spaces.</p>
+
+        <div class="callout warn">
+          <span class="co-icon">CURSE</span>
+          <p><strong>The curse of dimensionality.</strong> "Nearest" degrades as dimensions grow. In a 100-dimensional unit cube, a sub-cube that wants to capture just 1% of uniformly spread points needs edge length \(0.01^{1/100} \approx 0.955\) — it must span 95% of <em>every</em> axis to hold 1% of the data. Worse, pairwise distances concentrate: the gap between the nearest and farthest neighbor shrinks toward nothing, and the vote becomes noise. The honest footnote: real high-dimensional data (images, text embeddings) usually lies near much lower-dimensional structure, which is why k-NN on a good embedding still works — a thread picked up in Chapter 05.</p>
+        </div>
+
+        <p>Run it from scratch. The cell below builds two overlapping Gaussian blobs, classifies with brute-force distance + vote, and scores \(k=1\) against \(k=15\). Note the signature of memorization: \(k=1\) is perfect on the training set (every point is its own nearest neighbor) and the worst of the pair on the test set.</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false">import numpy as np
+rng = np.random.default_rng(7)
+
+# two overlapping Gaussian blobs — 240 points, 160 train / 80 test
+n = 120
+X0 = rng.normal([-0.9, -0.6], 1.1, (n, 2))
+X1 = rng.normal([ 0.9,  0.7], 1.1, (n, 2))
+X = np.vstack([X0, X1]); y = np.r_[np.zeros(n, int), np.ones(n, int)]
+idx = rng.permutation(2 * n)
+Xtr, ytr = X[idx[:160]], y[idx[:160]]
+Xte, yte = X[idx[160:]], y[idx[160:]]
+
+def knn_predict(Xq, k):
+    d = ((Xq[:, None, :] - Xtr[None, :, :]) ** 2).sum(-1)  # all pairwise dist²
+    votes = ytr[np.argsort(d, axis=1)[:, :k]]              # labels of k nearest
+    return (votes.mean(axis=1) &gt; 0.5).astype(int)          # majority (k is odd)
+
+for k in (1, 15):
+    print(f"k={k:2d}   train acc = {(knn_predict(Xtr, k) == ytr).mean():.3f}"
+          f"   test acc = {(knn_predict(Xte, k) == yte).mean():.3f}")
+plot_scatter(X[:, 0], X[:, 1], y)</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — try k = 75, or shrink the blob spread to 0.5</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 4.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">4.2</span><h2>Decision trees: greedy questions, rectangular answers</h2></div>
+        <p>A decision tree classifies by interrogation: <em>is feature 2 below 0.21? yes → left, no → right</em>, repeated until a leaf, where the majority class of the training points that landed there becomes the prediction. Geometrically, every internal node slices the space with an axis-aligned cut, so every leaf is a rectangle (a box, in higher dimensions). The model is a partition.</p>
+        <p>Which question to ask first? Finding the globally optimal tree is NP-complete (Hyafil &amp; Rivest, 1976), so CART — the algorithm running live in Instrument M4.1 — is <strong>greedy</strong>: at each node, try every feature and every threshold, keep the single split that most purifies the two children, and recurse. Purity is measured by Gini impurity or entropy:</p>
+
+        <div class="eq"><span class="eq-tag">EQ M4.2 — GINI IMPURITY AND SPLIT GAIN</span>
+        $$ G(S) \;=\; 1 - \sum_{c} p_c^{\,2}, \qquad \Delta \;=\; G(S) \;-\; \frac{|S_L|}{|S|}\,G(S_L) \;-\; \frac{|S_R|}{|S|}\,G(S_R) $$
+        <div class="eq-note">\(p_c\) is the fraction of class \(c\) among the samples \(S\) at the node; \(G\) is the probability that two random draws from the node disagree — 0 when pure, 0.5 at a two-class coin flip. The split \(s\) sends samples to children \(S_L, S_R\), and CART picks the feature–threshold pair maximizing the gain \(\Delta\). The entropy alternative \(H(S) = -\sum_c p_c \log_2 p_c\) ("information gain") <b>almost never produces a different tree</b> — Gini wins on speed, not principle.</div>
+        </div>
+
+        <figure class="figure" data-reveal>
+          <div class="fig-head"><span class="fig-id">FIG M4.A</span><span class="fig-title">A DEPTH-2 TREE IS A PARTITION INTO THREE RECTANGLES</span></div>
+          <div class="fig-body">
+            <svg viewBox="0 0 920 300" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="A depth-2 decision tree and the rectangular partition of 2-D space it induces">
+              <rect class="dg-box" x="60" y="20" width="180" height="40" rx="4" data-pop/>
+              <text class="dg-label" x="150" y="45" text-anchor="middle">x₂ &lt; 0.21 ?</text>
+              <path class="dg-line" d="M150 60 L90 120" data-draw/>
+              <path class="dg-line" d="M150 60 L290 120" data-draw/>
+              <text class="dg-label-mut" x="102" y="92">T</text>
+              <text class="dg-label-mut" x="232" y="92">F</text>
+              <rect class="dg-box-accent" x="20" y="120" width="140" height="40" rx="4" data-pop/>
+              <text class="dg-label-acc" x="90" y="145" text-anchor="middle">R1 · PREDICT ●</text>
+              <rect class="dg-box" x="200" y="120" width="180" height="40" rx="4" data-pop/>
+              <text class="dg-label" x="290" y="145" text-anchor="middle">x₁ &lt; 1.04 ?</text>
+              <path class="dg-line" d="M290 160 L250 224" data-draw/>
+              <path class="dg-line" d="M290 160 L430 224" data-draw/>
+              <text class="dg-label-mut" x="252" y="196">T</text>
+              <text class="dg-label-mut" x="374" y="196">F</text>
+              <rect class="dg-box" x="180" y="224" width="140" height="40" rx="4" data-pop/>
+              <text class="dg-label-sm" x="250" y="249" text-anchor="middle" style="fill:#4e8af7;">R2 · PREDICT ○</text>
+              <rect class="dg-box-accent" x="360" y="224" width="140" height="40" rx="4" data-pop/>
+              <text class="dg-label-acc" x="430" y="249" text-anchor="middle">R3 · PREDICT ●</text>
+
+              <rect x="600" y="190" width="280" height="80" fill="rgba(166,242,204,0.08)" data-pop/>
+              <rect x="600" y="30" width="160" height="160" fill="rgba(78,138,247,0.08)" data-pop/>
+              <rect x="760" y="30" width="120" height="160" fill="rgba(166,242,204,0.08)" data-pop/>
+              <rect class="dg-box-ghost" x="600" y="30" width="280" height="240"/>
+              <path class="dg-line-acc" d="M600 190 H880" data-draw/>
+              <path class="dg-line-acc" d="M760 30 V190" data-draw/>
+              <text class="dg-label-acc" x="648" y="184">x₂ = 0.21</text>
+              <text class="dg-label-acc" x="766" y="24">x₁ = 1.04</text>
+              <text class="dg-label-sm" x="734" y="235" data-pop>R1 · ●</text>
+              <text class="dg-label-sm" x="664" y="115" style="fill:#4e8af7;" data-pop>R2 · ○</text>
+              <text class="dg-label-sm" x="796" y="115" data-pop>R3 · ●</text>
+              <text class="dg-label-mut" x="726" y="292">x₁ →</text>
+              <text class="dg-label-mut" x="566" y="155">x₂</text>
+            </svg>
+          </div>
+          <div class="fig-cap"><b>Same object, two views.</b> The tree (left) and the partition (right) are identical. Note that class ● already owns a non-convex region — two splits suffice — and that the boundaries are axis-parallel by construction: a tree can only approximate a diagonal frontier with a staircase.</div>
+        </figure>
+
+        <p>Trees buy three practical superpowers that gradient-trained models lack. They are invariant to any monotone rescaling of a feature (only the <em>ordering</em> of values matters, so no normalization, ever); they ingest mixed numeric and categorical columns without ceremony; and a small tree is genuinely readable — you can print it as a flowchart and hand it to an auditor. Their weakness is the same as their strength: predictions are piecewise-constant, so a lone tree is jagged, unstable, and cannot extrapolate a trend beyond the data it saw.</p>
+        <p>The atomic unit is the <strong>decision stump</strong> — a depth-1 tree, one question, two answers. The cell below performs the exact inner-loop search that CART runs at every node: scan every threshold, score every split by Gini gain, keep the best. Boosting (§4.5) will assemble hundreds of barely-better-than-chance learners like this one into a precision instrument.</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false">import numpy as np
+rng = np.random.default_rng(3)
+
+# 1-D labels with a true step at x = 0.35, plus 10% label noise
+n = 200
+x = rng.uniform(0, 1, n)
+y = (x &gt; 0.35).astype(int)
+flip = rng.random(n) &lt; 0.10
+y[flip] = 1 - y[flip]
+
+def gini(labels):
+    if len(labels) == 0: return 0.0
+    p = labels.mean()
+    return 2 * p * (1 - p)        # = 1 - p² - (1-p)² for two classes
+
+parent = gini(y)
+best_gain, best_t = -1.0, None
+for t in np.sort(x)[1:]:          # candidate threshold between each pair
+    L, R = y[x &lt; t], y[x &gt;= t]
+    w = len(L) / n
+    gain = parent - (w * gini(L) + (1 - w) * gini(R))
+    if gain &gt; best_gain:
+        best_gain, best_t = gain, t
+
+pred = (x &gt;= best_t).astype(int)
+print(f"parent Gini    : {parent:.4f}")
+print(f"best threshold : x = {best_t:.4f}   (true step at 0.35)")
+print(f"Gini gain      : {best_gain:.4f}")
+print(f"stump accuracy : {(pred == y).mean():.3f}   (noise ceiling ≈ 0.90)")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">raise the label noise to 0.3 and watch the gain — and the recovered threshold — degrade</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 4.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">4.3</span><h2>Overfitting a tree: depth is capacity</h2></div>
+        <p>Nothing in CART tells it when to stop. Left alone, it splits until every leaf is pure — and a tree of depth \(d\) can carve up to \(2^d\) rectangles, so by depth 20 it has a private box for every training point, noise included. Train accuracy climbs monotonically with depth; test accuracy rises, peaks where the tree has captured the signal, then falls as additional splits start chiseling the noise. That divergence is the whole concept of overfitting, and you can watch it happen below: the instrument fits a <em>real</em> CART (the exact greedy Gini search of EQ M4.2) on 160 seeded "two-moons" points, paints its decision regions, and scores it against 80 held-out test points.</p>
+
+        <div class="widget" id="tn-depth" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT M4.1 — DEPTH DIAL</span><span class="w-sub">REAL CART · REFIT LIVE IN JS · EQ M4.2</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>MAX DEPTH <output id="tn-depth-out">3</output></label><input type="range" id="tn-depth-slider" min="1" max="10" step="1" value="3"/></div>
+            </div>
+            <canvas class="w-canvas" id="tn-depth-canvas" height="320"></canvas>
+            <div style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.16em;color:#636363;margin:14px 0 6px;">ACCURACY VS DEPTH — <span style="color:#a6f2cc;">TRAIN</span> · <span style="color:#4e8af7;">TEST</span></div>
+            <canvas class="w-canvas" id="tn-depth-curve" height="130"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">TRAIN ACC</div><div class="r-value" id="tn-depth-train">—</div></div>
+              <div class="readout acc"><div class="r-label">TEST ACC</div><div class="r-value" id="tn-depth-test">—</div></div>
+              <div class="readout"><div class="r-label">GENERALIZATION GAP</div><div class="r-value" id="tn-depth-gap">—</div></div>
+              <div class="readout"><div class="r-label">LEAVES</div><div class="r-value" id="tn-depth-leaves">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Solid dots are training points, hollow rings are the held-out test set; the painted regions are the tree's verdict at every pixel block. Depth 1–2 underfits — one axis cut cannot bend around a moon. Depth 3–4 is honest. By depth 9 the tree is perfect on train and busy fencing off single noisy points; on this seed, test accuracy slides from 85% back to 80% while train hits 100%. The curves below the map plot the full sweep — the widening mint–blue scissors after depth ~3 is overfitting, drawn live.</div>
+        </div>
+
+        <p>Production practice caps capacity directly — maximum depth, minimum samples per leaf, minimum gain to split, or post-hoc pruning — and Chapter 06 treats this trade-off in its full generality as bias versus variance. But the idea is bigger than trees, and k-NN makes the point beautifully because its capacity dial runs <em>backwards</em>: small \(k\) means high capacity. At \(k=1\) the model memorizes — every training point wins its own private island of space — while large \(k\) averages over wide neighborhoods and the boundary relaxes into something smooth. Same data below; watch the islands dissolve.</p>
+
+        <div class="widget" id="tn-knn" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT M4.2 — k-NN k-SLIDER</span><span class="w-sub">BRUTE-FORCE VOTE · SAME DATA · EQ M4.1</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>NEIGHBORS k <output id="tn-knn-out">7</output></label><input type="range" id="tn-knn-slider" min="0" max="4" step="1" value="2"/></div>
+            </div>
+            <canvas class="w-canvas" id="tn-knn-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">TRAIN ACC (SELF-VOTE)</div><div class="r-value" id="tn-knn-train">—</div></div>
+              <div class="readout acc"><div class="r-label">TEST ACC</div><div class="r-value" id="tn-knn-test">—</div></div>
+              <div class="readout"><div class="r-label">REGIME</div><div class="r-value" id="tn-knn-regime" style="font-size:13px;line-height:1.5;">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Every painted block is a genuine brute-force vote over all 160 training points. At k = 1 train accuracy reads 100% — each point votes for itself, which is exactly how memorization flatters itself — yet test accuracy is the worst on the dial (81% on this seed vs 89% at k = 7). Slide right and the speckled islands vanish; push to k = 31 and watch the thin tails of each moon get annexed by the opposing majority — global accuracy holds steady here, but the local geometry is visibly wrong.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 4.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">4.4</span><h2>Ensembles I: bagging and random forests</h2></div>
+        <p>A deep tree is a low-bias, high-variance learner: it can represent almost anything, but refit it on a slightly different sample and you get a visibly different partition. <strong>Bagging</strong> (bootstrap aggregating, Breiman 1996) exploits that instability instead of fighting it: draw \(B\) bootstrap samples (sample \(n\) points <em>with replacement</em> — each bag contains about \(1 - 1/e \approx 63.2\%\) of the unique points), grow a deep, deliberately unpruned tree on each, and average their votes. Why averaging helps is one line of statistics:</p>
+
+        <div class="eq"><span class="eq-tag">EQ M4.3 — VARIANCE OF AN AVERAGE</span>
+        $$ \mathrm{Var}\!\left( \frac{1}{n} \sum_{i=1}^{n} \hat{f}_i(x) \right) \;=\; \frac{\sigma^2}{n} \qquad \text{(uncorrelated predictors)} $$
+        <div class="eq-note">Each tree's prediction errs with variance \(\sigma^2\); averaging \(n\) <em>independent</em> errors divides the variance by \(n\). The catch: trees grown on overlapping bootstrap samples are correlated, and with pairwise correlation \(\rho\) the variance is \(\rho\sigma^2 + \tfrac{1-\rho}{n}\sigma^2\). Averaging annihilates the second term but <b>the \(\rho\sigma^2\) floor survives no matter how many trees you add</b> — so the entire engineering problem becomes: decorrelate the trees.</div>
+        </div>
+
+        <p>A <strong>random forest</strong> is bagging plus one decorrelation trick: at every split, the tree may only consider a random subset of the features (classically \(\sqrt{p}\) of \(p\) for classification). Strong features stop dominating every tree, \(\rho\) drops, and the variance floor drops with it. Two free gifts follow. Because each tree never saw ~37% of the data, scoring each point with only the trees that missed it yields <strong>out-of-bag error</strong> — an honest validation estimate with no held-out split. And since trees are independent, training parallelizes perfectly.</p>
+        <p class="note">The honest ledger: random forests are astonishingly hard to break — near-default hyperparameters land within a few percent of optimal on most tabular tasks — but they pay in memory and latency (hundreds of deep trees), their predictions remain step functions, and like all trees they cannot extrapolate beyond the convex hull of what they saw: a forest trained on 2019 prices will never predict a 2026 price above the 2019 maximum.</p>
+      </section>
+
+      <!-- ====================== 4.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">4.5</span><h2>Ensembles II: gradient boosting</h2></div>
+        <p>Bagging builds strong learners in parallel and averages away variance. <strong>Boosting</strong> does the opposite: build <em>weak</em> learners — shallow trees, depth 4–8 — in sequence, each one trained on what the ensemble so far still gets wrong, attacking bias instead. After \(m-1\) rounds the model is \(F_{m-1}\); the next tree fits its mistakes:</p>
+
+        <div class="eq"><span class="eq-tag">EQ M4.4 — THE BOOSTING UPDATE</span>
+        $$ F_m(x) \;=\; F_{m-1}(x) \;+\; \eta\, h_m(x), \qquad h_m \;\text{ fit to the residuals }\; r_i = y_i - F_{m-1}(x_i) $$
+        <div class="eq-note">For squared loss, the residuals \(r_i\) literally are the errors left over. The general recipe — fit \(h_m\) to the <em>negative gradient</em> of any differentiable loss, evaluated at the current predictions — is what makes it <b>gradient</b> boosting: the same descent idea as Chapter 02, except each "step" is an entire tree, taken in function space rather than parameter space. The shrinkage \(\eta\) (typically 0.01–0.3) deliberately under-commits to each tree; small \(\eta\) plus more rounds almost always generalizes better. Unlike bagging, boosting <b>will</b> overfit as rounds accumulate — early stopping on a validation set is part of the algorithm, not an optional extra.</div>
+        </div>
+
+        <p>The modern implementations are the tabular kings. <strong>XGBoost</strong> (2016) added second-order gradients and explicit regularization on leaf weights; <strong>LightGBM</strong> made training fast at scale with histogram-binned splits and leaf-wise growth; <strong>CatBoost</strong> specializes in categorical columns via ordered target statistics. A decade of Kaggle tabular leaderboards is, to a first approximation, a history of these three libraries.</p>
+
+        <table class="data">
+          <thead><tr><th>Property</th><th>Random forest</th><th>Gradient boosting</th></tr></thead>
+          <tbody>
+            <tr><td>Trees built</td><td class="m">in parallel, independent</td><td class="m">in sequence, each fixing the last</td></tr>
+            <tr><td>Error attacked</td><td class="m">variance (EQ M4.3)</td><td class="m">bias (EQ M4.4)</td></tr>
+            <tr><td>Tree shape</td><td class="m">deep, unpruned</td><td class="m">shallow (depth 4–8 / 31–255 leaves)</td></tr>
+            <tr><td>Tuning sensitivity</td><td class="hl">low — defaults nearly optimal</td><td class="m">moderate — η, rounds, depth interact</td></tr>
+            <tr><td>Overfits with more trees?</td><td class="m">no (variance floor, never worse)</td><td class="m">yes — early stopping required</td></tr>
+            <tr><td>Typical accuracy on tables</td><td class="m">strong</td><td class="hl">strongest — the default to beat</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <!-- ====================== 4.6 ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">4.6</span><h2>When trees beat deep learning</h2></div>
+        <p>This encyclopedia spends three volumes on neural networks, so honesty demands this section. On medium-sized tables — the ~1K-to-1M-row, heterogeneous-column datasets that constitute most of applied machine learning in industry — <strong>tuned gradient-boosted trees have beaten tuned deep models for most of the past decade</strong>. The careful benchmark of Grinsztajn et&nbsp;al. (NeurIPS 2022) compared XGBoost and random forests against MLPs, ResNets, and tabular transformers across ~45 datasets with equal tuning budgets, and the trees won outright on most of them. Three reasons survive scrutiny:</p>
+        <ul>
+          <li><strong>Tabular targets are irregular.</strong> Neural networks carry a smoothness prior; real-world table columns (thresholded business rules, saturation effects, encoded categories) produce jagged, discontinuous target functions that piecewise-constant trees fit natively.</li>
+          <li><strong>Uninformative features are everywhere.</strong> A tree simply never splits on a useless column. An MLP must spend capacity learning to ignore it, and in low-data regimes it often fails to.</li>
+          <li><strong>Axis alignment is the right prior.</strong> Table columns are individually meaningful — "age", "income" — and the correct decision boundaries really do tend to run parallel to them. The rotation invariance that serves vision models is exactly the wrong inductive bias here.</li>
+        </ul>
+        <p>The frontier is genuinely moving, and the honest 2026 picture is contested at the edges: <strong>TabPFN-style models</strong> — transformers pre-trained on millions of synthetic tables that "fit" a new dataset by in-context learning, no gradient steps at all — now beat tuned GBDTs on many <em>small</em> tables (roughly ≤10K rows), as published in Nature in 2025. Deep models also win wherever the table stops being a table: text or image columns, massive row counts, transfer from pretrained representations, or the need for embeddings that feed a larger system. But the default has not changed: faced with a fresh tabular problem, the strong move is still a LightGBM or XGBoost baseline, trained in minutes on a CPU. Anything more exotic must beat that number to earn its complexity — and most of the time, it doesn't.</p>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>Every method so far was handed labels.</strong> Chapter 05 takes them away: k-means clustering stepped one Lloyd iteration at a time, PCA as organized variance-hunting, and the idea that data can describe itself — the first step toward the embeddings that power everything in Volumes II and beyond.</p>
+        </div>
+      </section>
+
+      <nav class="pager">
+        <a href="03-classification.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">03</span> Classification: Logistic &amp; Softmax</div></a>
+        <a class="next" href="05-unsupervised.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">05</span> Clustering &amp; Dimensionality</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — VOL I · CH 04</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/glossary.js"></script>
+<script src="../assets/js/shared.js"></script>
+<script src="../assets/js/pyrunner.js"></script>
+<script>
+/* chapter instruments — Trees, Forests & Neighbors */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+
+  /* ---------- shared seeded dataset: two interleaved moons ---------- */
+  var DOM = { x0: -1.65, x1: 3.2, y0: -1.4, y1: 1.7 };
+
+  function makeMoons(n, noise, seed) {
+    var rnd = FM.mulberry32(seed);
+    function gauss() {
+      var u = Math.max(rnd(), 1e-9), v = rnd();
+      return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+    }
+    var pts = [], i, t;
+    for (i = 0; i < n; i++) {
+      t = Math.PI * rnd();
+      if (i % 2 === 0) pts.push({ x: Math.cos(t) + noise * gauss(), y: Math.sin(t) + noise * gauss(), c: 0 });
+      else pts.push({ x: 1 - Math.cos(t) + noise * gauss(), y: 0.5 - Math.sin(t) + noise * gauss(), c: 1 });
+    }
+    for (var j = pts.length - 1; j > 0; j--) {           /* deterministic shuffle */
+      var k = Math.floor(rnd() * (j + 1));
+      var tmp = pts[j]; pts[j] = pts[k]; pts[k] = tmp;
+    }
+    return pts;
+  }
+
+  var PTS = makeMoons(240, 0.30, 77);
+  var TRAIN = PTS.slice(0, 160), TEST = PTS.slice(160);
+  var RENDERS = [];
+
+  function mapper(w, h) {
+    return {
+      X: function (x) { return (x - DOM.x0) / (DOM.x1 - DOM.x0) * w; },
+      Y: function (y) { return (1 - (y - DOM.y0) / (DOM.y1 - DOM.y0)) * h; },
+      invX: function (px) { return DOM.x0 + px / w * (DOM.x1 - DOM.x0); },
+      invY: function (py) { return DOM.y0 + (1 - py / h) * (DOM.y1 - DOM.y0); }
+    };
+  }
+
+  function drawPoints(ctx, m) {
+    var i, p;
+    for (i = 0; i < TRAIN.length; i++) {
+      p = TRAIN[i];
+      ctx.fillStyle = p.c ? FM.C.MINT : FM.C.BLUE;
+      ctx.globalAlpha = 0.9;
+      ctx.beginPath(); ctx.arc(m.X(p.x), m.Y(p.y), 3, 0, Math.PI * 2); ctx.fill();
+    }
+    for (i = 0; i < TEST.length; i++) {
+      p = TEST[i];
+      ctx.strokeStyle = p.c ? FM.C.MINT : FM.C.BLUE;
+      ctx.lineWidth = 1.2;
+      ctx.globalAlpha = 0.75;
+      ctx.beginPath(); ctx.arc(m.X(p.x), m.Y(p.y), 3.2, 0, Math.PI * 2); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function pct(v) { return (100 * v).toFixed(1) + "%"; }
+
+  /* ---------- CART: greedy Gini splits (EQ M4.2) ---------- */
+  function gini2(a, b) {
+    var n = a + b;
+    if (!n) return 0;
+    var pa = a / n, pb = b / n;
+    return 1 - pa * pa - pb * pb;
+  }
+
+  function findSplit(idx, c0, c1) {
+    var n = idx.length, parent = gini2(c0, c1), best = null, bestGain = 1e-9;
+    for (var f = 0; f < 2; f++) {
+      var s = idx.slice().sort(function (a, b) {
+        return f === 0 ? TRAIN[a].x - TRAIN[b].x : TRAIN[a].y - TRAIN[b].y;
+      });
+      var l0 = 0, l1 = 0;
+      for (var i = 0; i < n - 1; i++) {
+        if (TRAIN[s[i]].c === 1) l1++; else l0++;
+        var v0 = f === 0 ? TRAIN[s[i]].x : TRAIN[s[i]].y;
+        var v1 = f === 0 ? TRAIN[s[i + 1]].x : TRAIN[s[i + 1]].y;
+        if (v0 === v1) continue;
+        var nl = i + 1, nr = n - nl;
+        var gain = parent - (nl / n) * gini2(l0, l1) - (nr / n) * gini2(c0 - l0, c1 - l1);
+        if (gain > bestGain) { bestGain = gain; best = { f: f, t: (v0 + v1) / 2 }; }
+      }
+    }
+    return best;
+  }
+
+  function buildTree(idx, depth) {
+    var n = idx.length, c1 = 0, i;
+    for (i = 0; i < n; i++) c1 += TRAIN[idx[i]].c;
+    var c0 = n - c1, maj = c1 > c0 ? 1 : 0;
+    if (depth <= 0 || c0 === 0 || c1 === 0 || n < 2) return { leaf: true, c: maj };
+    var best = findSplit(idx, c0, c1);
+    if (!best) return { leaf: true, c: maj };
+    var L = [], R = [];
+    for (i = 0; i < n; i++) {
+      var p = TRAIN[idx[i]];
+      if ((best.f === 0 ? p.x : p.y) < best.t) L.push(idx[i]); else R.push(idx[i]);
+    }
+    return { leaf: false, f: best.f, t: best.t, L: buildTree(L, depth - 1), R: buildTree(R, depth - 1) };
+  }
+
+  function predictTree(nd, x, y) {
+    while (!nd.leaf) nd = ((nd.f === 0 ? x : y) < nd.t) ? nd.L : nd.R;
+    return nd.c;
+  }
+  function countLeaves(nd) { return nd.leaf ? 1 : countLeaves(nd.L) + countLeaves(nd.R); }
+  function accTree(tree, pts) {
+    var c = 0;
+    for (var i = 0; i < pts.length; i++) if (predictTree(tree, pts[i].x, pts[i].y) === pts[i].c) c++;
+    return c / pts.length;
+  }
+
+  /* ---------- INSTRUMENT M4.1 — DEPTH DIAL ---------- */
+  (function depthDial() {
+    var rootEl = document.getElementById("tn-depth");
+    if (!rootEl) return;
+    var slider = document.getElementById("tn-depth-slider");
+    var out = document.getElementById("tn-depth-out");
+    var canvas = document.getElementById("tn-depth-canvas");
+    var curveCv = document.getElementById("tn-depth-curve");
+    var roTrain = document.getElementById("tn-depth-train");
+    var roTest = document.getElementById("tn-depth-test");
+    var roGap = document.getElementById("tn-depth-gap");
+    var roLeaves = document.getElementById("tn-depth-leaves");
+
+    var allIdx = [], i;
+    for (i = 0; i < TRAIN.length; i++) allIdx.push(i);
+    var trees = [null], trainA = [], testA = [];
+    for (var d = 1; d <= 10; d++) {                       /* full sweep, precomputed once */
+      var tr = buildTree(allIdx, d);
+      trees.push(tr);
+      trainA.push(accTree(tr, TRAIN));
+      testA.push(accTree(tr, TEST));
+    }
+
+    function drawCurve(cur) {
+      var sc = FM.setupCanvas(curveCv, 130), ctx = sc.ctx;
+      ctx.clearRect(0, 0, sc.w, 130);
+      var padL = 44, padR = 14, padT = 10, padB = 24;
+      var W = sc.w - padL - padR, H = 130 - padT - padB;
+      var ymin = 0.7, ymax = 1.0;
+      function X(dd) { return padL + (dd - 1) / 9 * W; }
+      function Y(a) { return padT + (1 - (a - ymin) / (ymax - ymin)) * H; }
+      ctx.strokeStyle = FM.C.HAIR; ctx.lineWidth = 1; ctx.strokeRect(padL, padT, W, H);
+      ctx.font = FM.C.MONO; ctx.fillStyle = FM.C.MUT;
+      [0.7, 0.8, 0.9, 1.0].forEach(function (a) {
+        ctx.textAlign = "right";
+        ctx.fillText((a * 100).toFixed(0) + "%", padL - 6, Y(a) + 3);
+        if (a > ymin && a < ymax) {
+          ctx.strokeStyle = "rgba(47,50,52,0.5)";
+          ctx.beginPath(); ctx.moveTo(padL, Y(a)); ctx.lineTo(padL + W, Y(a)); ctx.stroke();
+        }
+      });
+      ctx.fillStyle = FM.C.MUT; ctx.textAlign = "center";
+      for (var dd = 1; dd <= 10; dd++) ctx.fillText(String(dd), X(dd), padT + H + 16);
+      ctx.strokeStyle = "rgba(255,255,255,0.28)";
+      ctx.beginPath(); ctx.moveTo(X(cur), padT); ctx.lineTo(X(cur), padT + H); ctx.stroke();
+      [[trainA, FM.C.MINT], [testA, FM.C.BLUE]].forEach(function (s) {
+        ctx.strokeStyle = s[1]; ctx.lineWidth = 1.6; ctx.beginPath();
+        for (var d2 = 1; d2 <= 10; d2++) {
+          if (d2 === 1) ctx.moveTo(X(d2), Y(s[0][d2 - 1])); else ctx.lineTo(X(d2), Y(s[0][d2 - 1]));
+        }
+        ctx.stroke();
+        ctx.fillStyle = s[1];
+        ctx.beginPath(); ctx.arc(X(cur), Y(s[0][cur - 1]), 3, 0, Math.PI * 2); ctx.fill();
+      });
+      ctx.lineWidth = 1;
+    }
+
+    function render() {
+      var d = parseInt(slider.value, 10);
+      out.textContent = d;
+      var tree = trees[d];
+      var sc = FM.setupCanvas(canvas, 320), ctx = sc.ctx, m = mapper(sc.w, 320);
+      ctx.clearRect(0, 0, sc.w, 320);
+      var B = 5;
+      for (var py = 0; py < 320; py += B) {
+        for (var px = 0; px < sc.w; px += B) {
+          var c = predictTree(tree, m.invX(px + B / 2), m.invY(py + B / 2));
+          ctx.fillStyle = c ? "rgba(166,242,204,0.14)" : "rgba(78,138,247,0.14)";
+          ctx.fillRect(px, py, B, B);
+        }
+      }
+      drawPoints(ctx, m);
+      roTrain.textContent = pct(trainA[d - 1]);
+      roTest.textContent = pct(testA[d - 1]);
+      roGap.textContent = "+" + ((trainA[d - 1] - testA[d - 1]) * 100).toFixed(1) + " pt";
+      roLeaves.textContent = String(countLeaves(tree));
+      drawCurve(d);
+    }
+
+    slider.addEventListener("input", render);
+    RENDERS.push(render);
+    render();
+  })();
+
+  /* ---------- INSTRUMENT M4.2 — k-NN k-SLIDER ---------- */
+  (function knnSlider() {
+    var rootEl = document.getElementById("tn-knn");
+    if (!rootEl) return;
+    var slider = document.getElementById("tn-knn-slider");
+    var out = document.getElementById("tn-knn-out");
+    var canvas = document.getElementById("tn-knn-canvas");
+    var roTrain = document.getElementById("tn-knn-train");
+    var roTest = document.getElementById("tn-knn-test");
+    var roRegime = document.getElementById("tn-knn-regime");
+    var KS = [1, 3, 7, 15, 31];
+    var REGIME = ["MEMORIZATION", "SHARP", "BALANCED", "SMOOTH", "SMOOTHEST"];
+
+    function knnVote(x, y, k) {
+      var ds = [], i;
+      for (i = 0; i < TRAIN.length; i++) {
+        var dx = TRAIN[i].x - x, dy = TRAIN[i].y - y;
+        ds.push([dx * dx + dy * dy, TRAIN[i].c]);
+      }
+      ds.sort(function (a, b) { return a[0] - b[0]; });
+      var v = 0;
+      for (var j = 0; j < k; j++) v += ds[j][1];
+      return v * 2 > k ? 1 : 0;                            /* k odd: no ties */
+    }
+    function kacc(pts, k) {
+      var c = 0;
+      for (var i = 0; i < pts.length; i++) if (knnVote(pts[i].x, pts[i].y, k) === pts[i].c) c++;
+      return c / pts.length;
+    }
+
+    function render() {
+      var ki = parseInt(slider.value, 10), k = KS[ki];
+      out.textContent = k;
+      var sc = FM.setupCanvas(canvas, 320), ctx = sc.ctx, m = mapper(sc.w, 320);
+      ctx.clearRect(0, 0, sc.w, 320);
+      var B = 6;                                           /* coarse grid: every block is a real vote */
+      for (var py = 0; py < 320; py += B) {
+        for (var px = 0; px < sc.w; px += B) {
+          var c = knnVote(m.invX(px + B / 2), m.invY(py + B / 2), k);
+          ctx.fillStyle = c ? "rgba(166,242,204,0.13)" : "rgba(78,138,247,0.13)";
+          ctx.fillRect(px, py, B, B);
+        }
+      }
+      drawPoints(ctx, m);
+      roTrain.textContent = pct(kacc(TRAIN, k));
+      roTest.textContent = pct(kacc(TEST, k));
+      roRegime.textContent = REGIME[ki];
+    }
+
+    slider.addEventListener("input", render);
+    RENDERS.push(render);
+    render();
+  })();
+
+  /* ---------- re-render on resize ---------- */
+  var rsT = null;
+  window.addEventListener("resize", function () {
+    if (rsT) clearTimeout(rsT);
+    rsT = setTimeout(function () {
+      for (var i = 0; i < RENDERS.length; i++) RENDERS[i]();
+    }, 160);
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>02 · Linear Regression &amp; Gradient Descent — AI Encyclopedia</title>
+<meta name="description" content="The first complete learning algorithm: the linear model, the MSE bowl, the normal equation, gradient descent, the learning rate, and why feature scaling decides whether the loop converges." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css" />
+</head>
+<body>
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ VOL I / ML FOUNDATIONS / 02 / LINEAR REGRESSION</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="03-classification.html">NEXT: CLASSIFICATION →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">VOLUME I — FOUNDATIONS OF ML · CHAPTER 02 / 08</div>
+    <h1>Linear Regression &amp; Gradient Descent</h1>
+    <p class="lede">One model — a weighted sum. One loss — squared error. One algorithm — step downhill. Linear regression is the smallest machine on which the entire ritual of modern machine learning runs end to end, and <strong>the training loop you learn here is, line for line, the loop that trains GPT</strong> — every later model just swaps in a fancier function and a different error.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>INTRO</b></span>
+      <span>READING TIME<b>≈ 24 MIN</b></span>
+      <span>BUILDS ON<b>CH 01</b></span>
+      <span>INSTRUMENTS<b>DESCENT STEPPER · LR SWEEP</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">2.1</span>The model &amp; the loss surface</a>
+      <a href="#s2"><span class="n">2.2</span>The closed form</a>
+      <a href="#s3"><span class="n">2.3</span>Gradient descent</a>
+      <a href="#s4"><span class="n">2.4</span>The learning rate</a>
+      <a href="#s5"><span class="n">2.5</span>Features &amp; scaling</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 2.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">2.1</span><h2>The model and the loss surface</h2></div>
+        <p>A linear model predicts by taking a <strong>weighted sum</strong> of the input features: each feature gets one learned number saying how much it matters and in which direction. Stack all \(n\) training examples as rows of a matrix \(X\), and the whole dataset's predictions become a single matrix–vector product. One bookkeeping trick makes the intercept disappear as a special case: append a constant feature of 1 to every example, and the bias \(b\) becomes just another weight.</p>
+
+        <div class="eq"><span class="eq-tag">EQ M2.1 — THE MODEL, VECTORIZED</span>
+        $$ \hat{y} \;=\; X w, \qquad X \in \mathbb{R}^{n \times (d+1)}, \quad w \in \mathbb{R}^{d+1} $$
+        <div class="eq-note">Row \(i\) of \(X\) is example \(i\)'s features plus the appended 1; \(\hat{y}_i = x_i^\top w\) is its prediction. <b>The entire model is \(d+1\) numbers.</b> Everything this volume builds — and everything Volume II builds — replaces this product with a richer function \(h(x; w)\), but the surrounding machinery never changes.</div>
+        </div>
+
+        <p>How wrong is a given \(w\)? Chapter 01's answer was a loss function; here the natural one is <strong>mean squared error</strong> — average the squared miss over the dataset. Squaring does three jobs at once: misses in both directions count, large misses count disproportionately, and the result is smooth everywhere, so it has a well-defined slope we can follow.</p>
+
+        <div class="eq"><span class="eq-tag">EQ M2.2 — MSE: THE LOSS IS A BOWL</span>
+        $$ \mathcal{L}(w) \;=\; \frac{1}{n}\,\lVert Xw - y \rVert^2 \;=\; \frac{1}{n}\sum_{i=1}^{n} \left( x_i^\top w - y_i \right)^2 $$
+        <div class="eq-note">Because \(\hat{y}\) is linear in \(w\) and the error is squared, \(\mathcal{L}\) is a <b>quadratic bowl</b> in weight space: slice it at any height and you get nested ellipses. The bowl may be stretched, squashed, or tilted — that shape decides everything in §2.4 and §2.5 — but it has no ripples and no false valleys.</div>
+        </div>
+
+        <p><strong>Convexity, in words.</strong> A loss surface is convex when the straight line between any two points on it never dips below the surface — no hidden dimples for an optimizer to fall into. The practical guarantee is the one that matters: <em>every downhill path leads to the same lowest point</em>. Wherever you start and however clumsily you descend, if you keep going down, you arrive. Linear regression with MSE is convex; deep networks are emphatically not — which makes this chapter the one place you can watch optimization work with the guarantee switched on, before later chapters take it away.</p>
+        <p class="note">One honest wrinkle: if two features are exact copies of each other (or one is a linear combination of others), the bowl's floor becomes a flat trench — infinitely many \(w\) achieve the same minimum loss. Convexity still holds; uniqueness doesn't. Real pipelines hit this with duplicated columns and one-hot encodings more often than you'd think.</p>
+      </section>
+
+      <!-- ====================== 2.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">2.2</span><h2>The closed form — and why we don't use it at scale</h2></div>
+        <p>A smooth bowl has exactly one flat point: the bottom. Setting the gradient of EQ M2.2 to zero and solving gives the minimizer outright — no iteration, no hyperparameters, no luck. This is the <strong>normal equation</strong>, and linear regression is nearly alone among learning algorithms in having one:</p>
+
+        <div class="eq"><span class="eq-tag">EQ M2.3 — THE NORMAL EQUATION</span>
+        $$ \nabla \mathcal{L}(w^\star) = 0 \quad\Longrightarrow\quad w^\star \;=\; \left( X^\top X \right)^{-1} X^\top y $$
+        <div class="eq-note">\(X^\top X\) is the \((d{+}1)\times(d{+}1)\) matrix of feature co-occurrences; \(X^\top y\) measures how each feature co-varies with the target. <b>In one matrix solve, the exact bottom of the bowl.</b> In practice you never form the inverse — <code>np.linalg.solve</code> or QR-based <code>lstsq</code> do the same job with far better numerical behavior.</div>
+        </div>
+
+        <p>So why does the rest of machine learning iterate instead? Three reasons, in increasing order of importance:</p>
+        <table class="data">
+          <thead><tr><th>Concern</th><th class="m">Normal equation</th><th class="m">Gradient descent</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Compute</strong></td><td class="m">O(nd² + d³) — the d³ solve is fatal once d hits 10⁵+</td><td class="hl">O(nd) per pass; scales to billions of parameters</td></tr>
+            <tr><td><strong>Memory</strong></td><td class="m">must hold the d×d matrix XᵀX</td><td class="hl">only w and one gradient</td></tr>
+            <tr><td><strong>Numerics</strong></td><td class="m">conditioning of XᵀX is the square of X's — correlated features amplify rounding error</td><td class="m">tolerant; error shrinks geometrically</td></tr>
+            <tr><td><strong>Data access</strong></td><td class="m">needs all data at once</td><td class="hl">works on streams and mini-batches</td></tr>
+            <tr><td><strong>Generality</strong></td><td class="m">exists only because h is linear and the loss quadratic</td><td class="hl">works for any differentiable h — including a transformer</td></tr>
+          </tbody>
+        </table>
+        <p>The last row is the real verdict. The normal equation is a one-off gift of linear algebra: change the model to anything nonlinear — a logistic curve, a two-layer network — and the closed form vanishes forever. Gradient descent asks only that the loss have a slope. <strong>We learn the closed form not to use it, but to keep it as an oracle</strong>: in §2.5 we'll let it grade gradient descent's answer.</p>
+      </section>
+
+      <!-- ====================== 2.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">2.3</span><h2>Gradient descent: feel the slope, step downhill</h2></div>
+        <p>Imagine standing on the bowl blindfolded. You can't see the bottom, but at your feet you can feel which way is steepest. The <strong>gradient</strong> \(\nabla \mathcal{L}\) is that feeling, made precise: the vector of partial derivatives, pointing in the direction of steepest <em>increase</em>. So walk the other way. For MSE the gradient comes out of the chain rule in one line, and it has a shape worth memorizing:</p>
+
+        <div class="eq"><span class="eq-tag">EQ M2.4 — THE GRADIENT OF MSE</span>
+        $$ \nabla_w \mathcal{L} \;=\; \frac{2}{n}\, X^\top \left( Xw - y \right) $$
+        <div class="eq-note">Read it from the inside out: \(Xw - y\) is the vector of <b>residuals</b> — current prediction minus truth, one per example. \(X^\top(\cdot)\) then credits each feature with the residuals of the examples where it was active. <b>The gradient is the data's errors, projected back onto the features that caused them.</b> That sentence, generalized through many layers by backpropagation, is all of deep learning's credit assignment.</div>
+        </div>
+
+        <div class="eq"><span class="eq-tag">EQ M2.5 — THE UPDATE RULE</span>
+        $$ w \;\leftarrow\; w \;-\; \eta\, \nabla_w \mathcal{L}(w) $$
+        <div class="eq-note">\(\eta\) (eta) is the <b>learning rate</b>: how far to step in the downhill direction. This single line — compute the slope, take a step — is the update inside every optimizer in this encyclopedia. Adam, momentum, and friends decorate it; none replace it.</div>
+        </div>
+
+        <p>That's the whole algorithm: predict, measure residuals, push the error back through the features, step, repeat. Watch it run on a real (toy) regression below — the left panel shows the bowl from above as loss contours in \((w, b)\) space; the right panel shows what each position <em>means</em>: a candidate line through the data.</p>
+
+        <div class="widget" id="gd-stepper" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT M2.1 — DESCENT STEPPER</span><span class="w-sub">EQ M2.4 + M2.5 · LIVE ON 60 POINTS</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl">
+                <label>LEARNING RATE η <output id="gd-eta-out">0.120</output></label>
+                <input type="range" id="gd-eta" min="0.001" max="1.2" step="0.001" value="0.12"/>
+              </div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>CONTROL</label>
+                <div class="seg-row">
+                  <button class="w-btn" id="gd-step">STEP</button>
+                  <button class="w-btn" id="gd-auto">AUTO ▶</button>
+                  <button class="w-btn ghost" id="gd-reset">RESET</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="gd-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">STEP</div><div class="r-value" id="gd-steps">0</div></div>
+              <div class="readout acc"><div class="r-label">MSE</div><div class="r-value" id="gd-mse">—</div></div>
+              <div class="readout"><div class="r-label">η STATUS</div><div class="r-value" id="gd-status">—</div></div>
+              <div class="readout"><div class="r-label">η CRITICAL (THIS DATA)</div><div class="r-value" id="gd-etacrit">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">STEP applies EQ M2.5 once; AUTO loops it. At the default η the path makes an L: it drops fast down the steep wall, then crawls along the valley floor. Raise η toward the critical value and the path starts ricocheting across the valley; push past it and every step lands <em>higher</em> than the last — divergence, live. The critical value isn't a constant of nature: it is computed from this dataset's curvature (§2.4).</div>
+        </div>
+
+        <p>The same loop in real code — numpy, no libraries, nothing hidden. Run it, then break it: try <code>eta = 0.9</code>, or delete the <code>2.0 / n</code> and watch the effective step size change.</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false">import numpy as np
+
+rng = np.random.default_rng(0)
+n = 80
+x = rng.uniform(-2, 2, n)
+y = 1.7 * x - 0.4 + rng.normal(0, 0.5, n)     # truth: slope 1.7, intercept -0.4
+
+X = np.column_stack([x, np.ones(n)])          # bias trick: w = [slope, intercept]
+w = np.zeros(2)
+eta = 0.1
+
+steps, losses = [], []
+for t in range(201):
+    r = X @ w - y                             # residuals
+    mse = (r @ r) / n
+    steps.append(t); losses.append(mse)
+    if t % 20 == 0:
+        print(f"step {t:3d}   mse {mse:7.4f}   w = {np.round(w, 3)}")
+    grad = 2.0 / n * (X.T @ r)                # EQ M2.4
+    w = w - eta * grad                        # EQ M2.5
+
+plot_xy(steps, losses)</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+        <p class="note">The loss curve you just plotted has the signature shape of healthy gradient descent on a convex problem: steep early progress, then a long geometric glide toward the noise floor — it never reaches zero, because the data contains genuine noise no line can explain. A training curve that <em>does</em> hit zero should make you suspicious (Chapter 01: memorization).</p>
+      </section>
+
+      <!-- ====================== 2.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">2.4</span><h2>The learning rate: the most important hyperparameter</h2></div>
+        <p>Everything about gradient descent's behavior is decided by one number. Too small, and you inch downhill for geological time. Too large, and each step overshoots the bottom, lands on the far wall <em>higher than it started</em>, and the loss explodes exponentially. The boundary between those fates is sharp, and on a quadratic bowl you can compute it exactly. Take the one-dimensional case: a parabola with curvature \(\lambda\) (its second derivative). One algebra step shows each update multiplies the remaining error by a fixed factor:</p>
+
+        <div class="eq"><span class="eq-tag">EQ M2.6 — THE CONVERGENCE BAND</span>
+        $$ w_{t+1} - w^\star \;=\; \left( 1 - \eta\lambda \right) \left( w_t - w^\star \right) \qquad\Longrightarrow\qquad \text{stable} \iff 0 &lt; \eta &lt; \frac{2}{\lambda} $$
+        <div class="eq-note">If \(|1-\eta\lambda| &lt; 1\) the error shrinks every step; the moment \(\eta\) exceeds \(2/\lambda\), the factor passes \(-1\) and the error <b>flips sign and grows</b> — the overshooting spiral you saw in Instrument M2.1. Between \(1/\lambda\) and \(2/\lambda\) the factor is negative with magnitude below 1: the iterate converges while hopping from side to side of the minimum. With many dimensions, each direction of the bowl has its own curvature, and <b>η must respect the steepest one</b> — while progress is paced by the shallowest. That tension is the whole story of §2.5.</div>
+        </div>
+
+        <p>Four learning rates, one problem, eighty steps each — the canonical picture every practitioner carries in their head:</p>
+
+        <div class="widget" id="gd-sweep" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT M2.2 — LR SWEEP</span><span class="w-sub">SAME DATA AS M2.1 · 80 GD STEPS PER η · LOG SCALE</span></div>
+          <div class="w-body">
+            <canvas class="w-canvas" id="gd-sweep-canvas" height="280"></canvas>
+          </div>
+          <div class="w-note">Each curve is gradient descent actually run in your browser on the M2.1 dataset, from the same starting point. η = 0.01 descends — but after 80 steps it still sits an order of magnitude above the noise floor. η = 0.1 glides down and settles on it. η = 0.5 lives in EQ M2.6's zigzag band: on this perfectly quadratic bowl its loss still falls every step (fast, even), but its parameter path in M2.1 ricochets wall to wall — and on real, non-convex surfaces that ricochet turns into loss spikes. η = 1.1 is past critical: every step multiplies the error, and the curve exits the chart within ten steps.</div>
+        </div>
+
+        <p class="note"><strong>Beyond the bowl.</strong> On a deep network's non-convex surface no single \(\lambda\) exists — curvature varies wildly across the landscape and across training time. That's why real recipes use learning-rate <em>schedules</em> (a gentle warmup so early chaotic gradients don't launch the weights, then a long decay) and per-coordinate adaptive optimizers like Adam, which effectively give every weight its own η. The full machinery appears with pre-training at scale in Vol II · Chapter 04. But every schedule and every optimizer is still negotiating with EQ M2.6's constraint — they never escape it.</p>
+      </section>
+
+      <!-- ====================== 2.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">2.5</span><h2>Features and preprocessing: why scale decides convergence</h2></div>
+        <p>Here is the trap every beginner falls into once. Suppose one feature is "number of rooms" (range 1–10) and another is "square footage" (range 500–5,000). The loss bowl in those two weight directions has wildly different curvatures — the square-footage direction is roughly \((500)^2\) times steeper, because curvature scales with the <em>square</em> of the feature's magnitude. EQ M2.6 says η must stay below \(2/\lambda\) for the steepest direction; at that η, the shallow direction's error shrinks by a factor so close to 1 that convergence takes millions of steps. <strong>One η, shared by all weights, can only be as brave as the steepest direction allows.</strong> Geometrically: the bowl is a canyon, and gradient descent ping-pongs between its walls while drifting imperceptibly along its floor.</p>
+        <p>The fix is almost embarrassingly simple — <strong>standardization</strong>: shift each feature to zero mean and rescale to unit variance, \(x' = (x - \mu)/\sigma\). All directions of the bowl now have comparable curvature, the contours become near-circles, and a single η serves every weight. For gradient descent this is not a nicety; it is frequently the difference between converging in a hundred steps and not converging at all. (Its descendants — BatchNorm, LayerNorm — apply the same idea <em>inside</em> deep networks, and Volume II leans on them constantly.)</p>
+        <p class="note"><strong>The leakage rule, again.</strong> Compute \(\mu\) and \(\sigma\) on the training set only, then apply those frozen values to validation and test data. Estimating them on the full dataset leaks test-set statistics into training — Chapter 01's cardinal sin, in its most common disguise.</p>
+        <p>Proof, in code: the normal equation and gradient descent — run on standardized features, then un-standardized back — agree to four decimals. The oracle approves of the iterator. Then sabotage it: set <code>eta = 0.1</code> on the <em>raw</em> features instead of the standardized ones, and watch the explosion EQ M2.6 predicts (the raw feature's curvature puts critical η near 0.03).</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false">import numpy as np
+
+rng = np.random.default_rng(1)
+n = 60
+x = rng.uniform(0, 10, n)                     # raw, unscaled feature
+y = 3.0 * x + 7.0 + rng.normal(0, 2.0, n)     # truth: slope 3, intercept 7
+
+X = np.column_stack([x, np.ones(n)])
+
+# --- oracle: normal equation (EQ M2.3), via solve, never the inverse ---
+w_exact = np.linalg.solve(X.T @ X, X.T @ y)
+
+# --- iterator: GD on standardized x, then map weights back ---
+mu, sd = x.mean(), x.std()
+Xs = np.column_stack([(x - mu) / sd, np.ones(n)])
+w = np.zeros(2)
+for t in range(500):
+    grad = 2.0 / n * (Xs.T @ (Xs @ w - y))
+    w = w - 0.1 * grad
+w_gd = np.array([w[0] / sd, w[1] - w[0] * mu / sd])   # un-standardize
+
+print("normal equation  :", np.round(w_exact, 4))
+print("gradient descent :", np.round(w_gd, 4))
+print("max difference   :", float(np.abs(w_exact - w_gd).max()))
+# now try GD with eta=0.1 directly on raw X — it diverges. that gap is this section.</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>You now own the loop: predict with \(h\), measure the loss, follow the gradient, repeat.</strong> Every model for the rest of this encyclopedia — logistic regression next chapter, neural networks after that, GPT in Volume II — is exactly this loop with a fancier \(h\) and a loss to match. Chapter 03 makes the first swap: when the target is a category instead of a number, the line becomes a sigmoid, squared error becomes cross-entropy, and the gradient — remarkably — keeps the same residual-times-features shape you memorized in EQ M2.4.</p>
+        </div>
+      </section>
+
+      <nav class="pager">
+        <a href="01-learning-from-data.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">01</span> Learning from Data</div></a>
+        <a class="next" href="03-classification.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">03</span> Classification: Logistic &amp; Softmax</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — VOL I · CH 02</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/glossary.js"></script>
+<script src="../assets/js/shared.js"></script>
+<script src="../assets/js/pyrunner.js"></script>
+<script>
+/* chapter instruments — single IIFE, no globals */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+
+  /* ============================================================
+     Shared toy dataset (deterministic) + exact quadratic geometry
+     MSE(w,b) = A w^2 + b^2 + 2C wb - 2D w - 2E b + F   (per EQ M2.2)
+     ============================================================ */
+  var rnd = FM.mulberry32(42);
+  function gauss() { return (rnd() + rnd() + rnd() + rnd() - 2) * 0.7; } // ~N(0, 0.4^2)
+
+  var N = 60, XS = [], YS = [], i;
+  for (i = 0; i < N; i++) {
+    var xv = -0.5 + 2.5 * rnd();                 // x in [-0.5, 2.0] — off-center on purpose
+    XS.push(xv);
+    YS.push(1.6 * xv - 0.9 + gauss());
+  }
+  var sx = 0, sy = 0, sxx = 0, sxy = 0, syy = 0;
+  for (i = 0; i < N; i++) { sx += XS[i]; sy += YS[i]; sxx += XS[i] * XS[i]; sxy += XS[i] * YS[i]; syy += YS[i] * YS[i]; }
+  var A = sxx / N, C = sx / N, D = sxy / N, E = sy / N, F = syy / N;
+
+  // minimum of the bowl: [[A,C],[C,1]] [w;b] = [D;E]
+  var det = A - C * C;
+  var WST = (D - C * E) / det, BST = (A * E - C * D) / det;
+
+  function mse(w, b) { return A * w * w + b * b + 2 * C * w * b - 2 * D * w - 2 * E * b + F; }
+  function grad(w, b) { return [2 * (A * w + C * b - D), 2 * (C * w + b - E)]; }
+  var LMIN = mse(WST, BST);
+
+  // eigenvalues of H = [[A,C],[C,1]]; Hessian of MSE is 2H → eta_crit = 1/λmax(H)
+  var lmax = (A + 1) / 2 + Math.sqrt(((A - 1) / 2) * ((A - 1) / 2) + C * C);
+  var ETA_CRIT = 1 / lmax;          // divergence boundary (= 2 / hessian λmax)
+  var ETA_ZIG = 0.5 / lmax;         // above this: oscillating-but-converging band
+
+  var START = [WST - 2.6, BST - 1.8];
+
+  /* ============================================================
+     INSTRUMENT M2.1 — DESCENT STEPPER
+     ============================================================ */
+  (function () {
+    var canvas = document.getElementById("gd-canvas");
+    if (!canvas) return;
+    var etaIn = document.getElementById("gd-eta"),
+        etaOut = document.getElementById("gd-eta-out"),
+        stepBtn = document.getElementById("gd-step"),
+        autoBtn = document.getElementById("gd-auto"),
+        resetBtn = document.getElementById("gd-reset"),
+        roSteps = document.getElementById("gd-steps"),
+        roMse = document.getElementById("gd-mse"),
+        roStatus = document.getElementById("gd-status"),
+        roCrit = document.getElementById("gd-etacrit");
+
+    var eta = parseFloat(etaIn.value);
+    var path = [START.slice()], nsteps = 0, timer = null;
+    var R = 3.4;                                  // half-width of (w,b) view around the minimum
+    var LEVELS = [0.05, 0.18, 0.55, 1.5, 3.6, 8, 16];
+
+    roCrit.textContent = ETA_CRIT.toFixed(3);
+
+    function fmtMse(v) {
+      if (!isFinite(v)) return "∞";
+      return v >= 1e5 ? v.toExponential(1) : v.toFixed(4);
+    }
+
+    function status() {
+      if (eta < ETA_ZIG) { roStatus.textContent = "CONVERGING"; roStatus.style.color = FM.C.MINT; }
+      else if (eta < ETA_CRIT) { roStatus.textContent = "ZIGZAG · CONV."; roStatus.style.color = FM.C.BLUE; }
+      else { roStatus.textContent = "DIVERGING"; roStatus.style.color = FM.C.RED; }
+    }
+
+    function doStep() {
+      var p = path[path.length - 1];
+      var g = grad(p[0], p[1]);
+      var nw = p[0] - eta * g[0], nb = p[1] - eta * g[1];
+      nsteps++;
+      path.push([nw, nb]);
+      if (path.length > 600) path.shift();
+      if (!isFinite(nw) || Math.abs(nw) > 1e8) stopAuto();
+      render();
+    }
+
+    function stopAuto() {
+      if (timer) { clearInterval(timer); timer = null; autoBtn.textContent = "AUTO ▶"; autoBtn.classList.remove("on"); }
+    }
+
+    function render() {
+      var sc = FM.setupCanvas(canvas, 320);
+      var ctx = sc.ctx;
+      ctx.clearRect(0, 0, sc.w, 320);
+      ctx.font = FM.C.MONO;
+
+      // panel rects
+      var cpx = 40, cpy = 30, cph = 252;
+      var cpw = Math.max(140, sc.w * 0.5 - 64);
+      var rpx = cpx + cpw + 44, rpy = 30, rph = 252;
+      var rpw = Math.max(120, sc.w - rpx - 14);
+
+      ctx.fillStyle = FM.C.MUT;
+      ctx.textAlign = "left";
+      ctx.fillText("LOSS SURFACE  (w, b) — CONTOURS OF EQ M2.2", cpx, 18);
+      ctx.fillText("DATA + CURRENT FIT  ŷ = wx + b", rpx, 18);
+
+      /* ---- left: contour panel ---- */
+      function PX(w) { return cpx + ((w - (WST - R)) / (2 * R)) * cpw; }
+      function PY(b) { return cpy + (1 - (b - (BST - R)) / (2 * R)) * cph; }
+      ctx.strokeStyle = FM.C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(cpx, cpy, cpw, cph);
+
+      var li, t, th, q, rr;
+      for (li = 0; li < LEVELS.length; li++) {
+        ctx.beginPath();
+        for (t = 0; t <= 72; t++) {
+          th = (t / 72) * Math.PI * 2;
+          q = A * Math.cos(th) * Math.cos(th) + 2 * C * Math.cos(th) * Math.sin(th) + Math.sin(th) * Math.sin(th);
+          rr = Math.sqrt(LEVELS[li] / q);
+          var px = PX(WST + rr * Math.cos(th)), py = PY(BST + rr * Math.sin(th));
+          if (t === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+        }
+        ctx.strokeStyle = li === 0 ? "rgba(166,242,204,0.45)" : "rgba(47,50,52,0.95)";
+        ctx.stroke();
+      }
+
+      // axis hints + minimum marker
+      ctx.fillStyle = FM.C.MUT;
+      ctx.textAlign = "right"; ctx.fillText("w →", cpx + cpw - 4, cpy + cph + 16);
+      ctx.textAlign = "left"; ctx.fillText("b ↑", cpx + 4, cpy + cph + 16);
+      ctx.fillStyle = FM.C.MINT;
+      ctx.beginPath(); ctx.arc(PX(WST), PY(BST), 3, 0, Math.PI * 2); ctx.fill();
+      ctx.fillText("w★", PX(WST) + 6, PY(BST) - 6);
+
+      // GD path (clipped to panel)
+      ctx.save();
+      ctx.beginPath(); ctx.rect(cpx, cpy, cpw, cph); ctx.clip();
+      ctx.strokeStyle = "rgba(78,138,247,0.8)"; ctx.lineWidth = 1.3;
+      ctx.beginPath();
+      for (i = 0; i < path.length; i++) {
+        if (i === 0) ctx.moveTo(PX(path[i][0]), PY(path[i][1]));
+        else ctx.lineTo(PX(path[i][0]), PY(path[i][1]));
+      }
+      ctx.stroke();
+      ctx.fillStyle = FM.C.BLUE;
+      for (i = 0; i < path.length - 1; i++) {
+        ctx.beginPath(); ctx.arc(PX(path[i][0]), PY(path[i][1]), 1.8, 0, Math.PI * 2); ctx.fill();
+      }
+      var cur = path[path.length - 1];
+      ctx.fillStyle = FM.C.BRIGHT;
+      ctx.beginPath(); ctx.arc(PX(cur[0]), PY(cur[1]), 3.2, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+
+      /* ---- right: data-fit panel ---- */
+      var xlo = -0.7, xhi = 2.2, ylo = Infinity, yhi = -Infinity;
+      for (i = 0; i < N; i++) { ylo = Math.min(ylo, YS[i]); yhi = Math.max(yhi, YS[i]); }
+      ylo -= 0.6; yhi += 0.6;
+      function QX(x) { return rpx + ((x - xlo) / (xhi - xlo)) * rpw; }
+      function QY(y) { return rpy + (1 - (y - ylo) / (yhi - ylo)) * rph; }
+      ctx.strokeStyle = FM.C.HAIR; ctx.strokeRect(rpx, rpy, rpw, rph);
+
+      ctx.save();
+      ctx.beginPath(); ctx.rect(rpx, rpy, rpw, rph); ctx.clip();
+      ctx.fillStyle = "rgba(155,155,155,0.75)";
+      for (i = 0; i < N; i++) { ctx.beginPath(); ctx.arc(QX(XS[i]), QY(YS[i]), 2, 0, Math.PI * 2); ctx.fill(); }
+      // oracle fit (normal equation), dashed
+      ctx.setLineDash([4, 4]); ctx.strokeStyle = FM.C.DEEP; ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.moveTo(QX(xlo), QY(WST * xlo + BST)); ctx.lineTo(QX(xhi), QY(WST * xhi + BST)); ctx.stroke();
+      ctx.setLineDash([]);
+      // current GD fit
+      ctx.strokeStyle = FM.C.MINT; ctx.lineWidth = 1.7;
+      ctx.beginPath(); ctx.moveTo(QX(xlo), QY(cur[0] * xlo + cur[1])); ctx.lineTo(QX(xhi), QY(cur[0] * xhi + cur[1])); ctx.stroke();
+      ctx.restore();
+      ctx.fillStyle = FM.C.MUT; ctx.textAlign = "right";
+      ctx.fillText("DASHED = NORMAL-EQUATION FIT", rpx + rpw - 4, rpy + rph + 16);
+
+      roSteps.textContent = String(nsteps);
+      roMse.textContent = fmtMse(mse(cur[0], cur[1]));
+      status();
+    }
+
+    etaIn.addEventListener("input", function () {
+      eta = parseFloat(etaIn.value);
+      etaOut.textContent = eta.toFixed(3);
+      status();
+    });
+    stepBtn.addEventListener("click", doStep);
+    autoBtn.addEventListener("click", function () {
+      if (timer) { stopAuto(); return; }
+      autoBtn.textContent = "STOP ■"; autoBtn.classList.add("on");
+      timer = setInterval(function () {
+        var p = path[path.length - 1];
+        if (nsteps >= 500 || !isFinite(p[0]) || Math.abs(p[0]) > 1e8) { stopAuto(); return; }
+        doStep();
+      }, 85);
+    });
+    resetBtn.addEventListener("click", function () {
+      stopAuto(); path = [START.slice()]; nsteps = 0; render();
+    });
+    window.addEventListener("resize", render);
+    render();
+  })();
+
+  /* ============================================================
+     INSTRUMENT M2.2 — LR SWEEP (precomputed GD, log-scale loss)
+     ============================================================ */
+  (function () {
+    var canvas = document.getElementById("gd-sweep-canvas");
+    if (!canvas) return;
+
+    var ETAS = [0.01, 0.1, 0.5, 1.1];
+    var TAGS = ["η = 0.01 — TOO SLOW", "η = 0.10 — HEALTHY", "η = 0.50 — ZIGZAG", "η = 1.10 — DIVERGES"];
+    var COLS = [FM.C.SEC, FM.C.MINT, FM.C.BLUE, FM.C.RED];
+    var STEPS = 80, YCAP = 8;
+
+    // run GD once per eta, record log10(MSE)
+    var curves = ETAS.map(function (e) {
+      var w = START[0], b = START[1], out = [], s;
+      for (s = 0; s <= STEPS; s++) {
+        var v = mse(w, b);
+        out.push(Math.min(YCAP, Math.log10(Math.max(v, 1e-8))));
+        var g = grad(w, b);
+        w -= e * g[0]; b -= e * g[1];
+        if (!isFinite(w)) { while (out.length <= STEPS) out.push(YCAP); break; }
+      }
+      return out;
+    });
+
+    var yFloor = Math.log10(LMIN) - 0.5;
+
+    function render() {
+      var sc = FM.setupCanvas(canvas, 280);
+      var ctx = sc.ctx;
+      ctx.clearRect(0, 0, sc.w, 280);
+      ctx.font = FM.C.MONO;
+
+      var px = 52, py = 16, pw = sc.w - px - 16, ph = 280 - py - 36;
+      function X(s) { return px + (s / STEPS) * pw; }
+      function Y(v) { return py + (1 - (v - yFloor) / (YCAP - yFloor)) * ph; }
+
+      ctx.strokeStyle = FM.C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(px, py, pw, ph);
+
+      // axes ticks
+      ctx.fillStyle = FM.C.MUT; ctx.textAlign = "center";
+      var s, k;
+      for (s = 0; s <= STEPS; s += 20) ctx.fillText(String(s), X(s), py + ph + 16);
+      ctx.fillText("STEP →", px + pw / 2, py + ph + 30);
+      ctx.textAlign = "right";
+      for (k = Math.ceil(yFloor); k <= YCAP; k += 2) ctx.fillText("1e" + k, px - 6, Y(k) + 3);
+      ctx.save();
+      ctx.translate(14, py + ph / 2); ctx.rotate(-Math.PI / 2);
+      ctx.textAlign = "center"; ctx.fillText("MSE (LOG)", 0, 0);
+      ctx.restore();
+
+      // noise floor
+      ctx.setLineDash([4, 4]); ctx.strokeStyle = "rgba(166,242,204,0.35)";
+      ctx.beginPath(); ctx.moveTo(px, Y(Math.log10(LMIN))); ctx.lineTo(px + pw, Y(Math.log10(LMIN))); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = "rgba(166,242,204,0.6)"; ctx.textAlign = "left";
+      ctx.fillText("NOISE FLOOR (BEST POSSIBLE MSE)", px + 6, Y(Math.log10(LMIN)) - 5);
+
+      // curves
+      curves.forEach(function (cv, ci) {
+        ctx.strokeStyle = COLS[ci]; ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        cv.forEach(function (v, si) {
+          if (si === 0) ctx.moveTo(X(si), Y(v)); else ctx.lineTo(X(si), Y(v));
+        });
+        ctx.stroke();
+      });
+
+      // legend
+      var lx = px + pw - 198, ly = py + 14;
+      ETAS.forEach(function (e, ci) {
+        ctx.strokeStyle = COLS[ci]; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(lx, ly + ci * 16); ctx.lineTo(lx + 18, ly + ci * 16); ctx.stroke();
+        ctx.fillStyle = COLS[ci]; ctx.textAlign = "left";
+        ctx.fillText(TAGS[ci], lx + 26, ly + ci * 16 + 3);
+      });
+    }
+
+    window.addEventListener("resize", render);
+    render();
+  })();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>02 · Context Engineering — AI Encyclopedia</title>
+<meta name="description" content="Context engineering for agents: the window as a budget, curation, retrieval vs long context, memory architectures, compaction, cache-aware design, and sub-agents as context partitions." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css" />
+</head>
+<body>
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ VOL IV / AGENT ENGINEERING / 02 / CONTEXT ENGINEERING</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="03-tools-and-mcp.html">NEXT: TOOL DESIGN &amp; MCP →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">VOLUME IV — AGENT ENGINEERING · CHAPTER 02 / 06</div>
+    <h1>Context Engineering</h1>
+    <p class="lede">Prompt engineering optimized one string for one call. Agents broke that frame: across a fifty-step loop, the question is no longer how to phrase a request but what state — instructions, tools, memory, retrieved evidence, history, notes — each call gets to see at all. The window is not a hard drive; it is working memory, scarce and contended. <strong>The quality of an agent is bounded by the quality of its context, and context is a budget you spend, not a bucket you fill.</strong></p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 26 MIN</b></span>
+      <span>BUILDS ON<b>VOL IV · CH 01 · VOL II · CH 08–09</b></span>
+      <span>INSTRUMENTS<b>BUDGET COMPOSER · COMPACTION SIM</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">2.1</span>The window is a budget</a>
+      <a href="#s2"><span class="n">2.2</span>What earns its place</a>
+      <a href="#s3"><span class="n">2.3</span>Retrieval vs long context</a>
+      <a href="#s4"><span class="n">2.4</span>Memory architectures</a>
+      <a href="#s5"><span class="n">2.5</span>Compaction</a>
+      <a href="#s6"><span class="n">2.6</span>Cache-aware design</a>
+      <a href="#s7"><span class="n">2.7</span>Sub-agents as partitions</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 2.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">2.1</span><h2>The window is a budget</h2></div>
+        <p>Every call an agent makes is assembled from the same six components, and they all draw on one account. The system prompt establishes identity and invariants. Tool definitions describe what the agent can do — schemas the model must re-read on every single call. Memory carries what previous sessions learned. Retrieval injects evidence for the current question. History is the transcript so far — turns, tool calls, tool results. The scratchpad holds the agent's own working notes. Their sum must fit the window, and in practice it must fit well under it:</p>
+
+        <div class="eq"><span class="eq-tag">EQ A2.1 — THE CONTEXT BUDGET</span>
+        $$ \underbrace{T_{\text{sys}} + T_{\text{tool}} + T_{\text{mem}}}_{\text{stable prefix}} \;+\; \underbrace{T_{\text{ret}} + T_{\text{hist}} + T_{\text{pad}}}_{\text{per-step dynamics}} \;\le\; \rho \, L_{\max}, \qquad \rho \approx 0.5\text{–}0.7 $$
+        <div class="eq-note">The six terms are system prompt, tool definitions, memory, retrieval, history, and scratchpad; \(L_{\max}\) is the advertised window. The factor \(\rho\) is the honest part: you budget against an <b>effective</b> limit well below the advertised one, partly to leave headroom for the next tool result, partly because attention quality degrades long before the hard wall. The grouping into stable prefix and per-step dynamics is not cosmetic — it is the entire basis of §2.6.</div>
+        </div>
+
+        <p>Why \(\rho \ll 1\)? Because the window is a physical limit but attention is a budget of its own. A transformer relates \(T\) tokens through \(T^2\) pairwise scores (Vol II · EQ 3.1), softmax spreads a fixed unit of probability mass over an ever-longer row, and training data contains far fewer million-token dependency patterns than thousand-token ones. The result is <strong>context rot</strong>: needle-in-a-haystack benchmarks saturate near 100%, while realistic tasks — multi-fact reasoning, instructions stated once at turn 3 and needed at turn 47, relevant passages buried mid-window among plausible distractors — degrade measurably as the window fills. Frontier models in 2026 hold up far better than the 2023 generation that made &ldquo;lost in the middle&rdquo; a famous phrase, but none are flat, and the degradation profile varies by model, by task, and by where the needle sits (Vol II · Ch 09). Treat the advertised window as an engineering maximum, not an operating point.</p>
+
+        <div class="widget" id="ce-budget" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT A2.1 — CONTEXT BUDGET COMPOSER</span><span class="w-sub">EQ A2.1 · 200K WINDOW · ILLUSTRATIVE PRICES</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl" style="flex:1 1 100%;min-width:auto;">
+                <label>PRESET</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost" data-ce-preset="chatbot">CHATBOT</button>
+                  <button class="w-btn ghost" data-ce-preset="rag">RAG APP</button>
+                  <button class="w-btn ghost on" data-ce-preset="coding">CODING AGENT</button>
+                  <button class="w-btn ghost" data-ce-preset="research">DEEP RESEARCH</button>
+                </div>
+              </div>
+            </div>
+            <div id="ce-bud-ctls"></div>
+            <canvas class="w-canvas" id="ce-bud-canvas" height="150"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">TOTAL CONTEXT</div><div class="r-value" id="ce-bud-total">—</div></div>
+              <div class="readout"><div class="r-label">COST / REQUEST</div><div class="r-value" id="ce-bud-cost">—</div></div>
+              <div class="readout"><div class="r-label">TIME-TO-FIRST-TOKEN</div><div class="r-value" id="ce-bud-ttft">—</div></div>
+              <div class="readout"><div class="r-label">ATTENTION QUALITY</div><div class="r-value" id="ce-bud-qual">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Cycle the presets, then drag HISTORY toward its maximum and watch all three readouts move against you. Honest footnote: the attention-quality dial is an <strong>illustrative curve</strong>, not a measurement — real degradation depends on model, task, and where the relevant facts sit. Prices and prefill rate are illustrative too ($3/MTok input, 10× cache-read discount on the stable prefix, 8K tok/s prefill). The lesson survives the caveats: cost and latency grow linearly with what you stuff into the window; quality does not.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 2.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">2.2</span><h2>What earns its place</h2></div>
+        <p>Adding context is never free, even far from the limit. Every token competes for the same attention mass; every irrelevant passage is a distractor the model must actively rule out at every subsequent step. The working metric is <strong>signal-to-token ratio</strong>: of the tokens you are about to add, what fraction changes what the model will do? A 3,000-token file dump whose only relevant content is one function signature has a signal-to-token ratio near zero — and unlike money, badly spent context keeps charging you, because it rides along in all future calls until something removes it.</p>
+        <p>Curation has a characteristic failure on each side. System prompts drift <em>too rigid</em>: after every incident someone appends another if-then rule, until the prompt is a brittle 4,000-token legal code the model follows to the letter and the spirit of nothing. Or they stay <em>too vague</em>: &ldquo;be helpful and thorough&rdquo; — a row of zeros that assumes shared context the model does not have. The right altitude is in between: identity, hard invariants, heuristics with reasons, and a small number of canonical examples that show rather than enumerate.</p>
+        <table class="data">
+          <thead><tr><th>Component</th><th>Earns its place when…</th><th>Typical bloat</th></tr></thead>
+          <tbody>
+            <tr><td><strong>System</strong></td><td class="m">identity · invariants · heuristics</td><td>Edge-case rules patched in after every incident</td></tr>
+            <tr><td><strong>Tools</strong></td><td class="m">each tool distinct &amp; necessary</td><td>40 overlapping tools whose schemas ride along on every call</td></tr>
+            <tr><td><strong>Memory</strong></td><td class="m">distilled decisions &amp; preferences</td><td>Raw transcripts pasted forward as &ldquo;memory&rdquo;</td></tr>
+            <tr><td><strong>Retrieval</strong></td><td class="m">passages that answer the live question</td><td>Top-k padding; whole files when one signature suffices</td></tr>
+            <tr><td><strong>History</strong></td><td class="m">recent turns verbatim, older compacted</td><td>Every raw tool dump since turn 1</td></tr>
+            <tr><td><strong>Scratchpad</strong></td><td class="m">plans &amp; notes the agent actually rereads</td><td>Stale reasoning that no later step ever reads</td></tr>
+          </tbody>
+        </table>
+        <p class="note">A useful discipline: before any component is added, name the future step that will read it. If you cannot, it is not context — it is sediment.</p>
+      </section>
+
+      <!-- ====================== 2.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">2.3</span><h2>Retrieval vs long context</h2></div>
+        <p>When the corpus is much larger than the window, there is no debate. A 10-million-document knowledge base at ~500 tokens each is 5B tokens against a 200K window — a factor of 25,000. Retrieval-augmented generation exists because selection is forced: an index (embeddings, BM25, or both) narrows the corpus to a handful of candidates, and only those candidates spend context. The engineering then lives in retrieval quality — chunking, hybrid lexical + semantic search (embeddings famously miss exact identifiers like error codes and function names that keyword search catches trivially), and reranking.</p>
+        <p>When the corpus <em>fits</em>, the trade is genuinely contested. Stuffing the full corpus into context often beats RAG on answer quality — no retriever to miss the relevant passage — and for one-shot questions over a small document set it is frequently the right call. But the costs recur on every request: you pay tokens and prefill latency for the whole corpus each time (softened, not eliminated, by caching — §2.6), and you spend the very attention budget that §2.1 showed degrading past half-fill. Long context and retrieval are not rivals; they are a price curve, and the crossover moves with corpus size, query volume, and how often the corpus changes.</p>
+        <p>The agentic turn added a third option that has largely won for tool-rich domains: <strong>just-in-time retrieval</strong>. Instead of front-loading top-k passages, keep lightweight references in context — file paths, schema names, document titles — and give the agent tools to fetch full content on demand: <code>grep</code>, <code>open_file</code>, a search API. A coding agent that navigates with search-and-open routinely beats one fed pre-embedded chunks of the same repository, because each fetch is targeted by the agent's <em>current</em> hypothesis rather than by a similarity score computed before the task began. This is progressive disclosure: context holds the map, tools fetch the territory. The honest cost is latency — every just-in-time fetch is a round trip — so production systems hybridize: pre-load what is almost certainly needed (the map, the conventions file), fetch the rest as the task reveals it.</p>
+      </section>
+
+      <!-- ====================== 2.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">2.4</span><h2>Memory architectures</h2></div>
+        <p>Everything in the window dies when the session ends. Memory is the set of structures that survive — and agents use three tiers, distinguished by scope and lifetime. The <strong>scratchpad</strong> is task-scoped: a todo list, a running plan, intermediate results, maintained <em>inside or alongside</em> the current context so the agent can re-anchor after long tool outputs push the original goal thousands of tokens upstream. The <strong>persistent memory file</strong> is project-scoped: a curated document (the <code>CLAUDE.md</code> / <code>MEMORY.md</code> pattern) of conventions, decisions, and preferences, loaded into the stable prefix of every session. <strong>Episodic summaries</strong> are history-scoped: compressed records of what previous sessions did, retrievable when relevant rather than always loaded.</p>
+        <table class="data">
+          <thead><tr><th>Tier</th><th>Scope · lifetime</th><th>Written</th><th>Characteristic failure</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Scratchpad</strong></td><td class="m">one task · minutes–hours</td><td>continuously, by the agent</td><td>Notes written but never reread; plan drift</td></tr>
+            <tr><td><strong>Memory file</strong></td><td class="m">one project · weeks–months</td><td>on decision, with review</td><td>Stale facts treated as live truth</td></tr>
+            <tr><td><strong>Episodic summaries</strong></td><td class="m">across sessions · indefinite</td><td>at session boundaries</td><td>Summary-of-summary blur; contamination</td></tr>
+          </tbody>
+        </table>
+        <p>What separates working memory systems from decorative ones is <strong>write-back discipline</strong>. Memory that is only ever read decays into fiction: the project migrated databases in March, the memory file still says Postgres, and the agent confidently writes against the wrong schema. The rules that hold up in practice: write on <em>decisions and constraints</em>, not on chatter (&ldquo;user prefers tabs&rdquo; earns a write; a transcript of the debate about tabs does not); keep entries small, structured, and dated; and route writes through review — either a human glance or a separate validation pass — because an agent that can write its own memory can also poison it, persisting a hallucination that every future session will inherit as ground truth. Memory is the one context component with compound interest, in both directions.</p>
+      </section>
+
+      <!-- ====================== 2.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">2.5</span><h2>Compaction: summarize and continue</h2></div>
+        <p>A long-running agent will hit the budget no matter how disciplined the curation. <strong>Compaction</strong> is the standard escape: when fill crosses a threshold (typically 70–90% of the effective budget), replace the oldest span of history with a structured summary and keep the recent tail verbatim. The session continues; the transcript does not.</p>
+        <p>Compaction is a lossy codec, and the entire craft is choosing the loss function. The loss is brutally asymmetric: dropping a pleasantry costs nothing; dropping a constraint costs the task. What must survive, in rough priority order: the <strong>goal</strong> as currently understood; every <strong>constraint</strong>, stated once and never repeated; <strong>decisions with their reasons</strong> (so they are not silently relitigated); exact <strong>identifiers</strong> — file paths, function names, ids, commands; and <strong>unresolved state</strong> — what failed, what was tried, what is pending. What can die: greetings and acknowledgments, superseded drafts, and raw tool payloads whose conclusions have already been distilled into a decision. A summary that reads like a friendly recap and tests like amnesia is the most common failure in production agents — which is exactly what the instrument below lets you reproduce.</p>
+
+        <div class="widget" id="ce-compact" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT A2.2 — COMPACTION SIM</span><span class="w-sub">12-MESSAGE TRANSCRIPT · TWO SUMMARY POLICIES</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>ACTION</label>
+                <div class="seg-row">
+                  <button class="w-btn" id="ce-cs-good">COMPACT ▸</button>
+                  <button class="w-btn ghost" id="ce-cs-bad">BAD COMPACT ▸</button>
+                  <button class="w-btn ghost" id="ce-cs-reset">RESET</button>
+                </div>
+              </div>
+            </div>
+            <div id="ce-cs-transcript" style="margin-top:4px;"></div>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">CONTEXT TOKENS</div><div class="r-value" id="ce-cs-tok">—</div></div>
+              <div class="readout"><div class="r-label">FACTS PRESERVED</div><div class="r-value" id="ce-cs-score">—</div></div>
+              <div class="readout"><div class="r-label">VERDICT</div><div class="r-value" id="ce-cs-verdict" style="font-size:13px;line-height:1.5;">—</div></div>
+            </div>
+            <div style="border:1px solid var(--hairline);border-radius:4px;padding:12px 14px;margin-top:14px;">
+              <div style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.16em;color:#636363;margin-bottom:8px;" id="ce-cs-facts-label">FACTS CHECKLIST</div>
+              <div id="ce-cs-facts"></div>
+            </div>
+            <div id="ce-cs-warn" hidden style="border:1px solid rgba(255,65,54,.45);border-left:3px solid #ff4136;border-radius:3px;padding:10px 14px;margin-top:12px;font-size:12.5px;color:#9b9b9b;line-height:1.55;"></div>
+          </div>
+          <div class="w-note">COMPACT replaces the nine oldest messages with a structured summary — tokens fall 77%, all five facts survive. BAD COMPACT compresses just as hard (78%) while preserving the mood and losing the constraints. <strong>Compression ratio is not the metric; retention of decisions and constraints is.</strong> Both summaries would look fine to a casual reader — that is the trap.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 2.6 ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">2.6</span><h2>Cache-aware context design</h2></div>
+        <p>Prompt caching (Vol II · Ch 08) stores the computed KV state of a prompt prefix so the next request that shares it skips that prefill entirely. Two consequences define how agent context must be laid out. First, matching is <strong>exact-prefix</strong>: one changed byte at position \(i\) invalidates everything from \(i\) onward — there is no partial credit. Second, the savings are large enough to dominate architecture: cache reads are billed at roughly a tenth of fresh input across the major providers, and the skipped prefill is most of your time-to-first-token on long contexts.</p>
+
+        <div class="eq"><span class="eq-tag">EQ A2.2 — CACHED VS UNCACHED COST</span>
+        $$ \frac{\$_{\text{warm}}}{\$_{\text{cold}}} \;=\; \frac{\kappa P + D}{P + D}, \qquad \kappa \approx 0.1 $$
+        <div class="eq-note">\(P\) = tokens in the stable, cache-hit prefix; \(D\) = dynamic tokens after the first changed byte; \(\kappa\) = cache-read discount. A coding agent at 100K context with a 90K stable prefix pays \((0.1 \times 90 + 10)/100 = 0.19\) of the cold price — <b>5.3× cheaper per step</b>, with proportionally faster prefill. The fine print: the first request pays a small write surcharge (≈1.25× on the cached span), so caching breaks even after roughly one subsequent hit. The entire equation collapses to this rule: <b>order context by stability, and never touch what you've already sent.</b></div>
+        </div>
+
+        <p>In a fifty-step loop the same prefix is replayed fifty times, so the layout rules are unforgiving:</p>
+        <pre><code><span class="c"># cache-aware assembly — most stable first</span>
+<span class="k">1 system</span>:   identity, invariants — changes never
+<span class="k">2 tools</span>:    full schemas — changes per deploy, not per step
+<span class="k">3 memory</span>:   project file — changes per session
+<span class="c">─── cache breakpoint ───</span>
+<span class="k">4 history</span>:  append-only — new turns go at the END; never rewrite,
+            reorder, or re-render earlier turns
+<span class="k">5 dynamics</span>: fresh retrieval &amp; scratchpad — changes every step
+<span class="c"># cache killers: a timestamp in the system prompt · mutating the
+#   tool list mid-session · non-deterministic JSON serialization</span></code></pre>
+        <p class="note">Append-only history is why compaction (§2.5) is scheduled, not casual: a compaction necessarily rewrites the transcript and takes the cold-prefill hit once, on purpose, at a moment of your choosing — instead of a timestamp doing it silently on every single call.</p>
+      </section>
+
+      <!-- ====================== 2.7 ====================== -->
+      <section class="section" id="s7">
+        <div class="sec-head"><span class="sec-num">2.7</span><h2>Sub-agents as context partitioning</h2></div>
+        <p>The final tool is architectural: when one window cannot hold a task, split the task, not the window. A <strong>sub-agent</strong> is a fresh context dedicated to one concern — search this codebase, audit this contract, verify this claim — spawned with a self-contained brief, run to completion, and discarded. The orchestrator's window holds the plan and the results; each worker's window absorbs the noise of its own exploration and dies with it. The contract that makes this work: <strong>results flow back, never transcripts.</strong> A sub-agent that reads forty files and burns 80K tokens doing it returns a 300-token report; the orchestrator pays 300, not 80,000. Each spawn is a deliberate compression boundary — sharper than compaction, because the summary is written while the full evidence is still in (the sub-agent's) context.</p>
+
+        <figure class="figure" data-reveal>
+          <div class="fig-head"><span class="fig-id">FIG A2.1</span><span class="fig-title">RESULTS FLOW BACK — TRANSCRIPTS DON'T</span></div>
+          <div class="fig-body">
+            <svg viewBox="0 0 720 280" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="An orchestrator agent dispatches briefs to three sub-agents with fresh context windows; each returns a compressed result, not its transcript.">
+              <rect x="28" y="92" width="180" height="96" rx="3" class="dg-box-accent"></rect>
+              <text x="118" y="120" text-anchor="middle" class="dg-label">ORCHESTRATOR</text>
+              <text x="118" y="140" text-anchor="middle" class="dg-label-sm">window: plan + briefs</text>
+              <text x="118" y="156" text-anchor="middle" class="dg-label-sm">+ results only</text>
+              <text x="118" y="174" text-anchor="middle" class="dg-label-acc">~12K tok total</text>
+
+              <rect x="452" y="16" width="240" height="64" rx="3" class="dg-box-ghost"></rect>
+              <rect x="460" y="24" width="224" height="48" rx="3" class="dg-box"></rect>
+              <text x="572" y="44" text-anchor="middle" class="dg-label">SUB-AGENT — SEARCH</text>
+              <text x="572" y="60" text-anchor="middle" class="dg-label-mut">burns 80K privately · window dies</text>
+
+              <rect x="452" y="108" width="240" height="64" rx="3" class="dg-box-ghost"></rect>
+              <rect x="460" y="116" width="224" height="48" rx="3" class="dg-box"></rect>
+              <text x="572" y="136" text-anchor="middle" class="dg-label">SUB-AGENT — AUDIT</text>
+              <text x="572" y="152" text-anchor="middle" class="dg-label-mut">burns 45K privately · window dies</text>
+
+              <rect x="452" y="200" width="240" height="64" rx="3" class="dg-box-ghost"></rect>
+              <rect x="460" y="208" width="224" height="48" rx="3" class="dg-box"></rect>
+              <text x="572" y="228" text-anchor="middle" class="dg-label">SUB-AGENT — VERIFY</text>
+              <text x="572" y="244" text-anchor="middle" class="dg-label-mut">burns 60K privately · window dies</text>
+
+              <path d="M 208 112 C 320 70, 380 52, 456 44" class="dg-line" data-draw></path>
+              <path d="M 208 138 L 456 138" class="dg-line" data-draw></path>
+              <path d="M 208 166 C 320 212, 380 228, 456 234" class="dg-line" data-draw></path>
+              <polygon points="456,44 447,40 448,49" fill="#565656"></polygon>
+              <polygon points="456,138 447,134 447,142" fill="#565656"></polygon>
+              <polygon points="456,234 447,229 448,238" fill="#565656"></polygon>
+
+              <path d="M 456 60 C 380 78, 330 96, 212 122" class="dg-line-acc" data-draw></path>
+              <path d="M 456 152 L 212 152" class="dg-line-acc" data-draw></path>
+              <path d="M 456 250 C 370 248, 320 200, 212 176" class="dg-line-acc" data-draw></path>
+              <polygon points="212,122 221,118 221,126" fill="#a6f2cc"></polygon>
+              <polygon points="212,152 221,148 221,156" fill="#a6f2cc"></polygon>
+              <polygon points="212,176 221,172 221,180" fill="#a6f2cc"></polygon>
+
+              <text x="330" y="84" class="dg-label-mut">brief → ~300 tok</text>
+              <text x="300" y="130" class="dg-label-mut">brief →</text>
+              <text x="300" y="168" class="dg-label-acc">← result ~300 tok</text>
+              <text x="560" y="277" text-anchor="middle" class="dg-label-mut">dashed = fresh 200K window per concern</text>
+            </svg>
+          </div>
+          <div class="fig-cap">Three concerns, three fresh windows. The orchestrator's context grows by the size of three <b>reports</b>, not three explorations — each spawn is a compression boundary enforced by architecture rather than discipline.</div>
+        </figure>
+
+        <p>The honest ledger, because sub-agents are currently fashionable enough to be over-applied. They multiply total token spend — multi-agent research systems burn several times the tokens of a single-agent run on the same task, which only pays off when the work is read-heavy and parallelizable. They add latency per spawn. And they reintroduce the oldest distributed-systems bug as a prompt problem: the telephone game. A sub-agent only knows what its brief says — it cannot see the conversation that produced the brief — so an under-specified brief yields a confident answer to the wrong question. Worse, two sub-agents editing shared state will collide, which is why the stable pattern is read-heavy fan-out (search, audit, verify in parallel) feeding a single writer that holds the plan. Partition concerns, not sentences.</p>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>Context decides what the agent sees; tools decide what it can do.</strong> Chapter 03: designing tool interfaces a model can actually wield — naming, schemas, error surfaces, token-efficient outputs — and MCP, the protocol that turned tool integration from an N×M matrix into a standard.</p>
+        </div>
+      </section>
+
+      <nav class="pager">
+        <a href="01-the-agentic-loop.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">01</span> From Chat to Agents: The Loop</div></a>
+        <a class="next" href="03-tools-and-mcp.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">03</span> Tool Design &amp; MCP</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — VOL IV · CH 02</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/glossary.js"></script>
+<script src="../assets/js/shared.js"></script>
+<script>
+/* chapter instruments — single IIFE, no globals */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  function fmtTok(n) {
+    if (n >= 1000) {
+      var k = n / 1000;
+      return (k >= 100 ? k.toFixed(0) : k.toFixed(1).replace(/\.0$/, "")) + "K";
+    }
+    return String(n);
+  }
+  function fmtInt(n) {
+    return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  }
+
+  /* ============ INSTRUMENT A2.1 — CONTEXT BUDGET COMPOSER ============ */
+  (function () {
+    var root = document.getElementById("ce-budget");
+    if (!root) return;
+
+    var LIMIT = 200000;
+    var PRICE_IN = 3.0;      /* $/MTok, illustrative */
+    var PRICE_CACHED = 0.30; /* $/MTok cache read, illustrative */
+    var PREFILL = 8000;      /* tok/s, illustrative */
+    var TTFT_BASE = 0.3;     /* s */
+
+    var COMP = [
+      { key: "sys",  name: "SYSTEM",     max: 8000,   step: 100,  color: C.MINT },
+      { key: "tool", name: "TOOLS",      max: 30000,  step: 250,  color: C.DEEP },
+      { key: "mem",  name: "MEMORY",     max: 16000,  step: 250,  color: "rgba(166,242,204,.40)" },
+      { key: "ret",  name: "RETRIEVAL",  max: 100000, step: 1000, color: C.BLUE },
+      { key: "hist", name: "HISTORY",    max: 160000, step: 1000, color: "rgba(78,138,247,.40)" },
+      { key: "pad",  name: "SCRATCHPAD", max: 30000,  step: 250,  color: C.SEC }
+    ];
+    var PRESETS = {
+      chatbot:  [1200, 800,   600,  0,     6000,  0],
+      rag:      [2000, 1500,  500,  24000, 8000,  500],
+      coding:   [4000, 12000, 2000, 30000, 60000, 8000],
+      research: [3000, 9000,  4000, 80000, 70000, 12000]
+    };
+
+    var ctlBox = document.getElementById("ce-bud-ctls");
+    var cv = document.getElementById("ce-bud-canvas");
+    var elTotal = document.getElementById("ce-bud-total");
+    var elCost = document.getElementById("ce-bud-cost");
+    var elTtft = document.getElementById("ce-bud-ttft");
+    var elQual = document.getElementById("ce-bud-qual");
+    var presetBtns = root.querySelectorAll("[data-ce-preset]");
+
+    var val = {};
+    var inputs = {};
+    var outputs = {};
+
+    /* build slider rows: 3 + 3 */
+    var row = null;
+    COMP.forEach(function (c, i) {
+      if (i % 3 === 0) {
+        row = document.createElement("div");
+        row.className = "ctl-row";
+        ctlBox.appendChild(row);
+      }
+      var ctl = document.createElement("div");
+      ctl.className = "ctl";
+      ctl.innerHTML =
+        '<label><span style="display:inline-block;width:8px;height:8px;border-radius:1px;background:' + c.color + ';margin-right:7px;"></span>' +
+        c.name + ' <output id="ce-bud-o-' + c.key + '">0</output></label>' +
+        '<input type="range" id="ce-bud-i-' + c.key + '" min="0" max="' + c.max + '" step="' + c.step + '" value="0"/>';
+      row.appendChild(ctl);
+      inputs[c.key] = ctl.querySelector("input");
+      outputs[c.key] = ctl.querySelector("output");
+      inputs[c.key].addEventListener("input", function () {
+        val[c.key] = +inputs[c.key].value;
+        clearPresetHighlight();
+        render();
+      });
+    });
+
+    function clearPresetHighlight() {
+      presetBtns.forEach(function (b) { b.classList.remove("on"); });
+    }
+    function applyPreset(name) {
+      var p = PRESETS[name];
+      COMP.forEach(function (c, i) {
+        val[c.key] = p[i];
+        inputs[c.key].value = p[i];
+      });
+      presetBtns.forEach(function (b) {
+        b.classList.toggle("on", b.getAttribute("data-ce-preset") === name);
+      });
+      render();
+    }
+    presetBtns.forEach(function (b) {
+      b.addEventListener("click", function () { applyPreset(b.getAttribute("data-ce-preset")); });
+    });
+
+    function totals() {
+      var t = 0;
+      COMP.forEach(function (c) { t += val[c.key]; });
+      return t;
+    }
+
+    function draw(total) {
+      var s = FM.setupCanvas(cv, 150);
+      var ctx = s.ctx, W = s.w;
+      ctx.clearRect(0, 0, W, s.h);
+      var padL = 8, padR = 8, span = W - padL - padR;
+      var scaleMax = Math.max(LIMIT, total);
+      var y = 46, bh = 30;
+
+      /* empty track up to the limit */
+      ctx.fillStyle = "rgba(47,50,52,.35)";
+      ctx.fillRect(padL, y, span * (LIMIT / scaleMax), bh);
+
+      /* stacked segments */
+      var x = padL;
+      COMP.forEach(function (c) {
+        var w = span * (val[c.key] / scaleMax);
+        if (w > 0.5) {
+          ctx.fillStyle = c.color;
+          ctx.fillRect(x, y, w, bh);
+          x += w;
+        }
+      });
+
+      /* overflow overlay */
+      var lx = padL + span * (LIMIT / scaleMax);
+      if (total > LIMIT) {
+        ctx.fillStyle = "rgba(255,65,54,.30)";
+        ctx.fillRect(lx, y - 4, x - lx, bh + 8);
+      }
+
+      /* 50% guide */
+      var gx = padL + span * (LIMIT * 0.5 / scaleMax);
+      ctx.strokeStyle = "rgba(155,155,155,.55)";
+      ctx.setLineDash([3, 4]);
+      ctx.beginPath();
+      ctx.moveTo(gx, y - 18);
+      ctx.lineTo(gx, y + bh + 10);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      /* limit line */
+      ctx.strokeStyle = total > LIMIT ? C.RED : "rgba(229,229,229,.7)";
+      ctx.beginPath();
+      ctx.moveTo(lx, y - 18);
+      ctx.lineTo(lx, y + bh + 10);
+      ctx.stroke();
+
+      /* labels */
+      ctx.font = C.MONO;
+      ctx.textAlign = "left";
+      ctx.fillStyle = C.SEC;
+      ctx.fillText("┄ 50% — ATTENTION TAX BEGINS (ILLUSTRATIVE CURVE)", padL, y + bh + 44);
+      ctx.textAlign = "right";
+      ctx.fillStyle = total > LIMIT ? C.RED : C.SEC;
+      ctx.fillText(total > LIMIT ? "OVER LIMIT +" + fmtTok(total - LIMIT) : "200K LIMIT", lx - 4, y - 24);
+
+      /* ticks */
+      ctx.textAlign = "left";
+      ctx.fillStyle = C.MUT;
+      [0, 50000, 100000, 150000, 200000].forEach(function (t) {
+        var tx = padL + span * (t / scaleMax);
+        ctx.fillText(fmtTok(t), Math.min(tx + 2, W - 30), y + bh + 26);
+      });
+    }
+
+    function render() {
+      COMP.forEach(function (c) { outputs[c.key].textContent = fmtTok(val[c.key]) + " tok"; });
+
+      var total = totals();
+      var prefix = val.sys + val.tool + val.mem;
+      var dyn = total - prefix;
+      var fill = total / LIMIT;
+
+      draw(total);
+
+      elTotal.innerHTML = fmtTok(total) + " <small>· " + Math.round(fill * 100) + "% OF 200K</small>";
+
+      var warm = (prefix * PRICE_CACHED + dyn * PRICE_IN) / 1e6;
+      var cold = (total * PRICE_IN) / 1e6;
+      elCost.innerHTML = "$" + (warm < 0.1 ? warm.toFixed(3) : warm.toFixed(2)) +
+        " <small>WARM · $" + (cold < 0.1 ? cold.toFixed(3) : cold.toFixed(2)) + " COLD</small>";
+
+      var ttft = TTFT_BASE + dyn / PREFILL;
+      elTtft.innerHTML = "≈ " + ttft.toFixed(1) + " s <small>WARM CACHE</small>";
+
+      if (total > LIMIT) {
+        elQual.textContent = "OVERFLOW";
+        elQual.style.color = C.RED;
+      } else {
+        var q = fill <= 0.5 ? 98 : Math.max(35, 98 - 60 * Math.pow((fill - 0.5) / 0.5, 1.4));
+        elQual.textContent = q.toFixed(0) + "%";
+        elQual.style.color = q >= 90 ? C.MINT : (q >= 70 ? C.SEC : C.RED);
+      }
+    }
+
+    window.addEventListener("resize", function () { draw(totals()); });
+    applyPreset("coding");
+  })();
+
+  /* ============ INSTRUMENT A2.2 — COMPACTION SIM ============ */
+  (function () {
+    var root = document.getElementById("ce-compact");
+    if (!root) return;
+
+    var MSGS = [
+      { r: "USER",  t: "Migrate our session auth to JWT. Hard constraint: the server still runs Python 3.8 — no 3.9+ syntax.", k: 46 },
+      { r: "AGENT", t: "Plan: add a JWT handler, keep session.py alive during migration. One question — desired token lifetimes?", k: 210 },
+      { r: "USER",  t: "15-min access / 7-day refresh. And use RS256, not HS256 — that's been security-reviewed.", k: 38 },
+      { r: "AGENT", t: "Reading auth/session.py before touching anything.", k: 95 },
+      { r: "TOOL",  t: "auth/session.py — 412 lines: cookie store, SessionMiddleware, refresh logic… [full file]", k: 1800 },
+      { r: "AGENT", t: "Drafted auth/jwt_handler.py: RS256 keypair load, issue/verify, refresh flow. Walkthrough of choices…", k: 420 },
+      { r: "AGENT", t: "Running pytest tests/auth/ to exercise the refresh path.", k: 60 },
+      { r: "TOOL",  t: "FAILED tests/auth/test_refresh_rotation.py — token reuse accepted after rotation. [full traceback]", k: 1400 },
+      { r: "AGENT", t: "Diagnosis: rotation race — refresh ids must be single-use. Patching the verify path.", k: 300 },
+      { r: "USER",  t: "Also — keep the old session endpoint live until mobile app v3 ships.", k: 33 },
+      { r: "AGENT", t: "Patched. Re-running the auth suite now.", k: 240 },
+      { r: "TOOL",  t: "24 passed, 0 failed — full pytest output…", k: 700 }
+    ];
+    var KEEP_FROM = 9; /* messages [9..11] kept verbatim */
+    var BEFORE = MSGS.reduce(function (a, m) { return a + m.k; }, 0); /* 5342 */
+    var OLD_TOK = MSGS.slice(0, KEEP_FROM).reduce(function (a, m) { return a + m.k; }, 0); /* 4369 */
+
+    var FACTS = [
+      { f: "GOAL — migrate session auth to JWT",                       good: true, bad: true  },
+      { f: "CONSTRAINT — Python 3.8 runtime · no 3.9+ syntax",          good: true, bad: false },
+      { f: "CONSTRAINT — RS256, not HS256 (security-reviewed)",         good: true, bad: false },
+      { f: "DECISION — 15-min access / 7-day refresh",                  good: true, bad: false },
+      { f: "STATE — rotation race found · fix applied · rerun pending", good: true, bad: true  }
+    ];
+
+    var GOOD_SUM = {
+      k: 240,
+      lines: [
+        ["GOAL",       "migrate session auth → JWT (auth/session.py → auth/jwt_handler.py)"],
+        ["CONSTRAINT", "Python 3.8 runtime — no 3.9+ syntax"],
+        ["CONSTRAINT", "RS256, not HS256 — security-reviewed"],
+        ["DECISION",   "access 15 min · refresh 7 d · refresh ids single-use (race fix)"],
+        ["STATE",      "test_refresh_rotation failed once → fix applied · rerun pending"]
+      ]
+    };
+    var BAD_SUM = {
+      k: 210,
+      text: "We're making great progress on the auth migration! I read through the session code and wrote a shiny new JWT handler — really happy with how it came out. One test failed but I tracked down the bug (classic race condition!). We discussed token lifetimes and the user likes the direction. Onwards!"
+    };
+
+    var box = document.getElementById("ce-cs-transcript");
+    var elTok = document.getElementById("ce-cs-tok");
+    var elScore = document.getElementById("ce-cs-score");
+    var elVerdict = document.getElementById("ce-cs-verdict");
+    var factsBox = document.getElementById("ce-cs-facts");
+    var factsLabel = document.getElementById("ce-cs-facts-label");
+    var warnBox = document.getElementById("ce-cs-warn");
+    var btnGood = document.getElementById("ce-cs-good");
+    var btnBad = document.getElementById("ce-cs-bad");
+    var btnReset = document.getElementById("ce-cs-reset");
+
+    var state = null; /* null | "good" | "bad" */
+
+    function roleColor(r) {
+      return r === "USER" ? C.MINT : (r === "TOOL" ? C.BLUE : "#e5e5e5");
+    }
+    function rowHTML(m) {
+      return '<div class="ce-msg" style="display:flex;gap:10px;align-items:baseline;padding:7px 10px;border:1px solid var(--hairline);border-radius:3px;margin-bottom:4px;background:rgba(30,33,36,.45);transition:opacity .25s;">' +
+        '<span style="flex:0 0 48px;font-family:ui-monospace,Menlo,monospace;font-size:9px;letter-spacing:.12em;color:' + roleColor(m.r) + ';">' + m.r + '</span>' +
+        '<span style="flex:1;font-size:12px;color:#9b9b9b;line-height:1.45;">' + m.t + '</span>' +
+        '<span style="flex:0 0 auto;font-family:ui-monospace,Menlo,monospace;font-size:9.5px;color:#636363;">' + fmtInt(m.k) + ' tok</span></div>';
+    }
+    function goodSumHTML() {
+      var h = '<div style="border:1px solid rgba(166,242,204,.5);border-left:3px solid #a6f2cc;border-radius:3px;padding:10px 12px;margin-bottom:6px;background:rgba(166,242,204,.05);">' +
+        '<div style="font-family:ui-monospace,Menlo,monospace;font-size:9px;letter-spacing:.14em;color:#a6f2cc;margin-bottom:7px;">COMPACTED — 9 MSGS · ' + fmtInt(OLD_TOK) + ' TOK → ' + GOOD_SUM.k + ' TOK</div>';
+      GOOD_SUM.lines.forEach(function (l) {
+        h += '<div style="display:flex;gap:8px;font-family:ui-monospace,Menlo,monospace;font-size:10.5px;line-height:1.7;"><span style="flex:0 0 92px;color:#636363;">' + l[0] + '</span><span style="color:#e5e5e5;">' + l[1] + '</span></div>';
+      });
+      return h + '</div>';
+    }
+    function badSumHTML() {
+      return '<div style="border:1px solid rgba(255,65,54,.45);border-left:3px solid #ff4136;border-radius:3px;padding:10px 12px;margin-bottom:6px;background:rgba(255,65,54,.04);">' +
+        '<div style="font-family:ui-monospace,Menlo,monospace;font-size:9px;letter-spacing:.14em;color:#ff4136;margin-bottom:7px;">COMPACTED — 9 MSGS · ' + fmtInt(OLD_TOK) + ' TOK → ' + BAD_SUM.k + ' TOK</div>' +
+        '<div style="font-size:12px;color:#9b9b9b;line-height:1.55;">' + BAD_SUM.text + '</div></div>';
+    }
+
+    function render() {
+      var h = "";
+      var after = BEFORE;
+      if (state === null) {
+        MSGS.forEach(function (m) { h += rowHTML(m); });
+      } else {
+        h += state === "good" ? goodSumHTML() : badSumHTML();
+        MSGS.slice(KEEP_FROM).forEach(function (m) { h += rowHTML(m); });
+        var sumK = state === "good" ? GOOD_SUM.k : BAD_SUM.k;
+        after = BEFORE - OLD_TOK + sumK;
+      }
+      box.innerHTML = h;
+
+      /* readouts */
+      if (state === null) {
+        elTok.innerHTML = fmtInt(BEFORE);
+        elScore.textContent = "5 / 5";
+        elScore.style.color = C.MINT;
+        elVerdict.textContent = "RAW TRANSCRIPT";
+        elVerdict.style.color = C.SEC;
+        factsLabel.textContent = "FACTS CHECKLIST — ALL PRESENT IN RAW TRANSCRIPT";
+        warnBox.hidden = true;
+      } else {
+        var drop = Math.round(100 * (1 - after / BEFORE));
+        elTok.innerHTML = fmtInt(after) + " <small>WAS " + fmtInt(BEFORE) + " · −" + drop + "%</small>";
+        var kept = FACTS.filter(function (f) { return state === "good" ? f.good : f.bad; }).length;
+        elScore.textContent = kept + " / 5";
+        elScore.style.color = kept === 5 ? C.MINT : C.RED;
+        if (state === "good") {
+          elVerdict.textContent = "SAFE TO CONTINUE";
+          elVerdict.style.color = C.MINT;
+          factsLabel.textContent = "FACTS CHECKLIST — AFTER STRUCTURED COMPACTION";
+          warnBox.hidden = true;
+        } else {
+          elVerdict.textContent = "CONSTRAINTS LOST";
+          elVerdict.style.color = C.RED;
+          factsLabel.textContent = "FACTS CHECKLIST — AFTER CHATTY COMPACTION";
+          warnBox.innerHTML = "<strong style=\"color:#e5e5e5;\">The failure is silent.</strong> Three tool calls from now the agent writes <code>if (n := len(keys)) &gt; 0:</code> — a Python 3.9 walrus on a 3.8 server — and re-issues tokens with HS256, because nothing left in context says otherwise. A lost constraint doesn't raise an error; it simply stops existing.";
+          warnBox.hidden = false;
+        }
+      }
+
+      /* facts checklist */
+      var fh = "";
+      FACTS.forEach(function (f) {
+        var ok = state === null ? true : (state === "good" ? f.good : f.bad);
+        fh += '<div style="display:flex;gap:9px;align-items:baseline;font-family:ui-monospace,Menlo,monospace;font-size:10.5px;line-height:1.9;">' +
+          '<span style="color:' + (ok ? C.MINT : C.RED) + ';">' + (ok ? "✓" : "✕") + '</span>' +
+          '<span style="color:' + (ok ? "#9b9b9b" : "#ff4136") + ';">' + f.f + (ok ? "" : " — LOST") + '</span></div>';
+      });
+      factsBox.innerHTML = fh;
+    }
+
+    function compact(mode) {
+      if (state === mode) return;
+      if (state !== null) { state = mode; render(); return; }
+      /* stagger-fade the doomed rows, then re-render (setTimeout only) */
+      var rows = box.querySelectorAll(".ce-msg");
+      for (var i = 0; i < KEEP_FROM && i < rows.length; i++) {
+        (function (el, d) {
+          setTimeout(function () { el.style.opacity = "0.12"; }, d);
+        })(rows[i], i * 45);
+      }
+      setTimeout(function () { state = mode; render(); }, KEEP_FROM * 45 + 230);
+    }
+
+    btnGood.addEventListener("click", function () { compact("good"); });
+    btnBad.addEventListener("click", function () { compact("bad"); });
+    btnReset.addEventListener("click", function () { state = null; render(); });
+
+    render();
+  })();
+})();
+</script>
+</body>
+</html>

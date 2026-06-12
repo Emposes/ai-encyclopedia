@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>08 · Inference &amp; Deployment — LLM Field Manual</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css" />
+</head>
+<body>
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ VOL II / 08 / INFERENCE &amp; DEPLOYMENT</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="09-frontier.html">NEXT: FRONTIER →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">CHAPTER 08 / 10</div>
+    <h1>Inference &amp;<br/>Deployment</h1>
+    <p class="lede">Serving is its own discipline with its own physics: a <strong>compute-bound prefill</strong> followed by a <strong>memory-bound decode</strong>, billions of dollars riding on cache management, batching policy and the willingness to guess. This chapter is the request's-eye view — from sampling parameters to the modern serving stack.</p>
+    <div class="ch-meta">
+      <span>READING TIME<b>≈ 30 MIN</b></span>
+      <span>BUILDS ON<b>CH 03, 07</b></span>
+      <span>INSTRUMENTS<b>ROOFLINE · SAMPLING · SPEC-DECODE</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">8.1</span>Prefill vs decode</a>
+      <a href="#s2"><span class="n">8.2</span>Sampling</a>
+      <a href="#s3"><span class="n">8.3</span>PagedAttention</a>
+      <a href="#s4"><span class="n">8.4</span>Continuous batching</a>
+      <a href="#s5"><span class="n">8.5</span>Speculative decoding</a>
+      <a href="#s6"><span class="n">8.6</span>The serving stack</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 8.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">8.1</span><h2>Two phases, two physics</h2></div>
+        <p>A request lives twice. <strong>Prefill</strong> processes the whole prompt in one parallel pass — big matmuls, compute-bound, the GPU happy. <strong>Decode</strong> then emits one token at a time — each step reads all weights and the entire KV cache to produce a single vector of logits. The diagnostic quantity is <strong>arithmetic intensity</strong>:</p>
+
+        <div class="eq"><span class="eq-tag">EQ 8.1 — ARITHMETIC INTENSITY &amp; THE ROOFLINE</span>
+        $$ I = \frac{\text{FLOPs}}{\text{bytes moved}}, \qquad I_{\text{prefill}} \sim O(T) \gg I^{*} \quad\text{vs}\quad I_{\text{decode}} \sim O(b) \ll I^{*} $$
+        <div class="eq-note">An H100 needs \(I^* \approx 300\) FLOPs/byte to keep its tensor cores fed. Prefill clears it easily; single-stream decode manages ~2. Consequences: <b>TTFT</b> (time to first token) is set by prefill compute, <b>TPOT</b> (time per output token) by memory bandwidth, and every serving trick below is an attempt to raise decode's intensity — batching raises \(b\), speculation amortizes reads over several tokens, quantization shrinks the bytes.</div>
+        </div>
+
+        <div class="widget" id="roofline-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT 8.1 — RIDE THE ROOFLINE</span><span class="w-sub">70B BF16 · H100 · DECODE</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl">
+                <label>CONCURRENT SEQUENCES <output id="roof-b-out">batch = 16</output></label>
+                <input type="range" id="roof-b" min="0" max="10" step="1" value="4"/>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="roof-canvas" height="240"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">REGIME</div><div class="r-value" id="roof-regime">—</div></div>
+              <div class="readout acc"><div class="r-label">AGGREGATE THROUGHPUT</div><div class="r-value" id="roof-agg">—</div></div>
+              <div class="readout"><div class="r-label">PER-USER TPOT</div><div class="r-value" id="roof-tpot">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Each doubling of batch doubles aggregate tokens/s for free — until the operating point hits the compute ceiling near I* ≈ 295, where per-user latency starts paying for further batching. This single picture is the economics of every LLM API.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 8.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">8.2</span><h2>Sampling: from distribution to token</h2></div>
+        <p>The model hands you \(p(x_t \mid x_{&lt;t})\); the sampler decides. Greedy argmax loops and degenerates on open-ended text; pure sampling wanders into the distribution's noisy tail. Production decoding shapes the distribution first:</p>
+
+        <div class="eq"><span class="eq-tag">EQ 8.2 — TEMPERATURE, TOP-K, TOP-P</span>
+        $$ p_i^{(\tau)} = \frac{e^{z_i / \tau}}{\sum_j e^{z_j / \tau}}, \qquad \text{keep } S = \text{smallest set with} \sum_{i \in S} p_i \ge p_{\text{top}} \;\text{ (∩ top-}k\text{)}, \;\text{ renormalize} $$
+        <div class="eq-note">\(\tau &lt; 1\) sharpens (factual/code), \(\tau &gt; 1\) flattens (brainstorming). Top-p (“nucleus”) adapts the cutoff to the model's confidence — wide when uncertain, narrow when sure; top-k caps the candidate count outright; <b>min-p</b> (keep tokens above a fraction of the max probability) is the newer favorite for high-temperature creativity without nonsense. Repetition/frequency/presence penalties damp loops. Reasoning models usually want gentle settings (τ ≈ 0.6–1.0) and <em>no</em> aggressive truncation on thinking tokens.</div>
+        </div>
+
+        <div class="widget" id="samp-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT 8.2 — SAMPLING PLAYGROUND</span><span class="w-sub">“The capital of France is ___”</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>TEMPERATURE τ <output id="samp-temp-out">1.00</output></label><input type="range" id="samp-temp" min="0.1" max="2.5" step="0.05" value="1"/></div>
+              <div class="ctl"><label>TOP-P <output id="samp-topp-out">0.95</output></label><input type="range" id="samp-topp" min="0.1" max="1" step="0.01" value="0.95"/></div>
+              <div class="ctl"><label>TOP-K <output id="samp-topk-out">12</output></label><input type="range" id="samp-topk" min="1" max="12" step="1" value="12"/></div>
+            </div>
+            <div id="samp-bars" style="margin:16px 0;"></div>
+            <div class="ctl-row" style="align-items:center;">
+              <button class="w-btn" id="samp-btn">SAMPLE A TOKEN</button>
+              <div class="tok-stream" id="samp-out" style="flex:1;"></div>
+            </div>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">ENTROPY OF FINAL DISTRIBUTION</div><div class="r-value" id="samp-entropy">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Grey ghost bars: raw model probabilities. Mint: after temperature + truncation + renormalization. Drop τ to 0.1 — sampling collapses to greedy “Paris”. Raise τ to 2.5 with top-p = 1 and “Berlin” enters the lottery: that is how hallucinations get sampled into existence.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 8.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">8.3</span><h2>PagedAttention: virtual memory for the KV cache</h2></div>
+        <p>Early servers reserved one contiguous KV buffer per request at <em>maximum</em> possible length — internal fragmentation wasted 60–80% of cache memory. <strong>vLLM's PagedAttention</strong> imported the operating-system playbook: carve the cache into fixed-size <strong>blocks</strong> (~16 tokens), allocate on demand, and let a block table map each sequence's logical positions to scattered physical blocks.</p>
+        <ul>
+          <li><strong>Near-zero fragmentation</strong> ⇒ 2–4× more concurrent sequences on the same GPU — the single largest throughput win in serving history.</li>
+          <li><strong>Copy-on-write sharing:</strong> parallel samples and beams share their common prefix physically; only divergent blocks are copied.</li>
+          <li><strong>Prefix caching:</strong> system prompts, few-shot preambles and conversation history persist as shared blocks across requests — long-system-prompt apps see prefill drop by 10× (this is the mechanism behind API “prompt caching” discounts).</li>
+        </ul>
+        <p class="note">Same idea, next level: <strong>RadixAttention</strong> (SGLang) organizes cached prefixes in a radix tree for automatic reuse across arbitrary branching conversations and agent trees.</p>
+      </section>
+
+      <!-- ====================== 8.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">8.4</span><h2>Continuous batching</h2></div>
+        <p>Batching is how decode escapes the bandwidth wall — weights are read <em>once per step</em> for the whole batch. The naïve version (static batching: wait, run all to completion) dies on variance: one 2,000-token response holds 31 finished requests hostage. <strong>Continuous (in-flight) batching</strong> schedules at the <em>iteration</em> level:</p>
+        <ul>
+          <li>Every decode step, finished sequences exit the batch <em>immediately</em> and queued requests join — the batch composition changes step to step.</li>
+          <li><strong>Chunked prefill</strong> splits long prompts into slices interleaved with ongoing decodes, so a giant document upload doesn't spike everyone's inter-token latency.</li>
+          <li>The scheduler's whole life is the <strong>throughput–latency frontier</strong>: deeper batches raise tokens/s/GPU but stretch each user's TPOT. SLO-aware schedulers ride that curve explicitly.</li>
+        </ul>
+        <div class="eq"><span class="eq-tag">EQ 8.3 — THE METRICS THAT GET PAGED ON</span>
+        $$ \mathrm{TTFT} \approx t_{\text{queue}} + \frac{\text{prefill FLOPs}}{\text{compute}}, \qquad \mathrm{TPOT} \approx \frac{\text{bytes}_{\text{weights}} + \text{bytes}_{\text{KV}}(T)}{\text{bandwidth} \cdot b_{\text{eff}}}, \qquad \mathrm{E2E} = \mathrm{TTFT} + n \cdot \mathrm{TPOT} $$
+        <div class="eq-note">Goodput — requests/s <em>within SLO</em> — is the number that matters commercially, and it's why prefill and decode are increasingly <b>disaggregated</b> onto separate GPU pools (compute-heavy cards prefill, bandwidth-heavy cards decode, KV shipped between them).</div>
+        </div>
+      </section>
+
+      <!-- ====================== 8.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">8.5</span><h2>Speculative decoding: guess cheap, verify exact</h2></div>
+        <p>Decode wastes a full model read on one token — unless you verify <em>several</em> proposed tokens in a single pass. A small <strong>draft model</strong> (or extra prediction heads: Medusa, EAGLE; or the model's own MTP heads, as in DeepSeek-V3) proposes \(K\) tokens; the target model scores them all at once — that's a prefill-shaped, compute-cheap operation — and a rejection-sampling rule keeps the output distribution <em>exactly</em> the target's:</p>
+
+        <div class="eq"><span class="eq-tag">EQ 8.4 — ACCEPTANCE RULE (LOSSLESS)</span>
+        $$ \text{accept } \tilde{x}_t \text{ with probability } \min\!\left(1,\; \frac{p(\tilde{x}_t)}{q(\tilde{x}_t)}\right); \quad \text{on reject, resample } x_t \sim \mathrm{norm}\big(\max(0,\, p - q)\big) $$
+        <div class="eq-note">\(q\) = draft distribution, \(p\) = target. The correction term on rejection is what makes the scheme <b>provably distribution-preserving</b> — speculative decoding is a pure latency win, not an approximation. Expected speedup ≈ acceptance rate × draft length, minus draft overhead: 2–3× in practice on predictable text (code!), less on high-entropy prose.</div>
+        </div>
+
+        <div class="widget" id="spec-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT 8.3 — SPECULATIVE DECODING, SIMULATED</span><span class="w-sub">DRAFT K=4 · VERIFY · CORRECT</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <button class="w-btn" id="spec-play">RUN SIMULATION</button>
+            </div>
+            <div class="tok-stream" id="spec-out" style="min-height:80px;"></div>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">DRAFTED</div><div class="r-value" id="spec-drafted">0</div></div>
+              <div class="readout"><div class="r-label">ACCEPTED</div><div class="r-value" id="spec-accepted">0</div></div>
+              <div class="readout acc"><div class="r-label">ACCEPT RATE</div><div class="r-value" id="spec-rate">—</div></div>
+              <div class="readout acc"><div class="r-label">TOKENS / TARGET PASS</div><div class="r-value" id="spec-speed">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Grey = drafted by the small model · mint = verified accepted · red flash = rejected (the rest of the draft is discarded) · deep green = the target model's own correction. Without speculation this sentence would cost one full forward pass per word.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 8.6 ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">8.6</span><h2>The serving stack, assembled</h2></div>
+        <figure class="figure" data-reveal>
+          <div class="fig-head"><span class="fig-id">FIG 8.A</span><span class="fig-title">ANATOMY OF AN LLM SERVICE</span></div>
+          <div class="fig-body">
+            <svg viewBox="0 0 900 300" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Serving stack diagram">
+              <rect class="dg-box" x="10" y="120" width="120" height="56" rx="4" data-pop/>
+              <text class="dg-label" x="70" y="144" text-anchor="middle">CLIENTS</text>
+              <text class="dg-label-sm" x="70" y="160" text-anchor="middle">streaming API</text>
+              <path class="dg-line" d="M130 148 H170" data-draw/><path class="dg-line" d="M164 143 l8 5 -8 5" data-draw/>
+
+              <rect class="dg-box" x="174" y="120" width="140" height="56" rx="4" data-pop/>
+              <text class="dg-label" x="244" y="144" text-anchor="middle">GATEWAY / ROUTER</text>
+              <text class="dg-label-sm" x="244" y="160" text-anchor="middle">auth · quotas · model select</text>
+              <path class="dg-line" d="M314 148 H354" data-draw/><path class="dg-line" d="M348 143 l8 5 -8 5" data-draw/>
+
+              <rect class="dg-box-accent" x="358" y="96" width="180" height="104" rx="4" data-pop/>
+              <text class="dg-label" x="448" y="124" text-anchor="middle" fill="#a6f2cc">INFERENCE ENGINE</text>
+              <text class="dg-label-sm" x="448" y="144" text-anchor="middle">continuous batching</text>
+              <text class="dg-label-sm" x="448" y="160" text-anchor="middle">PagedAttention · spec decode</text>
+              <text class="dg-label-sm" x="448" y="176" text-anchor="middle">vLLM · SGLang · TRT-LLM</text>
+
+              <path class="dg-line" d="M538 124 H586" data-draw/>
+              <rect class="dg-box" x="590" y="96" width="130" height="48" rx="4" data-pop/>
+              <text class="dg-label" x="655" y="116" text-anchor="middle">PREFILL POOL</text>
+              <text class="dg-label-sm" x="655" y="132" text-anchor="middle">compute-bound</text>
+
+              <path class="dg-line" d="M538 172 H586" data-draw/>
+              <rect class="dg-box" x="590" y="152" width="130" height="48" rx="4" data-pop/>
+              <text class="dg-label" x="655" y="172" text-anchor="middle">DECODE POOL</text>
+              <text class="dg-label-sm" x="655" y="188" text-anchor="middle">bandwidth-bound</text>
+
+              <path class="dg-line-blue" d="M720 120 Q762 120 762 148 Q762 176 720 176" data-draw/>
+              <text class="dg-label-mut" x="788" y="144">KV transfer</text>
+              <text class="dg-label-mut" x="788" y="158">(disaggregated)</text>
+
+              <rect class="dg-box-ghost" x="174" y="228" width="546" height="52" rx="4" data-pop/>
+              <text class="dg-label-sm" x="447" y="250" text-anchor="middle">OBSERVABILITY: TTFT · TPOT · goodput · cache hit-rate · per-token cost</text>
+              <text class="dg-label-mut" x="447" y="266" text-anchor="middle">autoscaling on queue depth + SLO burn</text>
+            </svg>
+          </div>
+          <div class="fig-cap"><b>The 2026 default stack.</b> Open engines (vLLM, SGLang, TensorRT-LLM, llama.cpp at the edge) implement everything in this chapter off the shelf; what remains proprietary at frontier labs is mostly scheduling policy, multi-region cache routing, and silicon-specific kernels.</div>
+          </figure>
+
+        <table class="data">
+          <thead><tr><th>Deployment tier</th><th>Typical engine</th><th>Model + precision</th><th>Defining constraint</th></tr></thead>
+          <tbody>
+            <tr><td>Hyperscale API</td><td class="m">proprietary / TRT-LLM</td><td class="m">frontier MoE · FP8/FP4</td><td>goodput per megawatt</td></tr>
+            <tr><td>Self-hosted cluster</td><td class="m">vLLM · SGLang</td><td class="m">open 7–700B · FP8/INT4</td><td>data control, $/token</td></tr>
+            <tr><td>Workstation / edge</td><td class="m">llama.cpp · Ollama · MLX</td><td class="m">1–70B · GGUF 4-bit</td><td>RAM + bandwidth (EQ 7.1)</td></tr>
+            <tr><td>On-device</td><td class="m">Core ML / NNAPI runtimes</td><td class="m">1–3B · 4-bit + QAT</td><td>battery, thermals, privacy</td></tr>
+          </tbody>
+        </table>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>Everything so far described one dense transformer.</strong> The frontier no longer looks like that. Chapter 09: mixture-of-experts, million-token context, models that see and hear, agents that act — and what's still unsolved.</p>
+        </div>
+      </section>
+
+      <nav class="pager">
+        <a href="07-compression.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">07</span> Compression</div></a>
+        <a class="next" href="09-frontier.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">09</span> The Frontier</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — VOL II · CH 08</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/glossary.js"></script>
+<script src="../assets/js/shared.js"></script>
+<script src="../assets/js/search.js"></script>
+<script src="../assets/js/interactives.js"></script>
+</body>
+</html>

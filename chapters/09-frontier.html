@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>09 · The Frontier — LLM Field Manual</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css" />
+</head>
+<body>
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ VOL II / 09 / THE FRONTIER</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="10-diffusion.html">NEXT: DIFFUSION →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">CHAPTER 09 / 10</div>
+    <h1>The Frontier</h1>
+    <p class="lede">The dense decoder of Chapters 02–03 is now the <strong>baseline</strong>, not the frontier. Production flagships route tokens through expert subnetworks, read million-token contexts, consume pixels and audio alongside text, and act in the world through tools. This chapter maps what changed — and what nobody has solved.</p>
+    <div class="ch-meta">
+      <span>READING TIME<b>≈ 30 MIN</b></span>
+      <span>BUILDS ON<b>ALL PREVIOUS</b></span>
+      <span>INSTRUMENTS<b>MoE ROUTER · CONTEXT METER</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">9.1</span>Mixture-of-Experts</a>
+      <a href="#s2"><span class="n">9.2</span>Long context</a>
+      <a href="#s3"><span class="n">9.3</span>Multimodality</a>
+      <a href="#s4"><span class="n">9.4</span>Agents &amp; tools</a>
+      <a href="#s5"><span class="n">9.5</span>Beyond transformers</a>
+      <a href="#s6"><span class="n">9.6</span>Open problems</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 9.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">9.1</span><h2>Mixture-of-Experts: capacity without the bill</h2></div>
+        <p>Chapter 02 noted that MLPs hold most parameters; MoE makes them <em>conditional</em>. Replace each MLP with \(E\) parallel expert MLPs and a tiny <strong>router</strong> that sends every token to its top-\(k\):</p>
+
+        <div class="eq"><span class="eq-tag">EQ 9.1 — ROUTED EXPERT LAYER</span>
+        $$ y = \sum_{i \,\in\, \mathrm{TopK}(g)} g_i\, \mathrm{FFN}_i(x), \qquad g = \mathrm{softmax}\big( W_r\, x \big) $$
+        <div class="eq-note">Only \(k\) of \(E\) experts run per token: <b>parameters scale with \(E\); FLOPs scale with \(k\)</b>. Mixtral 8×7B: 47B total, 13B active. DeepSeek-V3: 256 fine-grained experts + 1 always-on shared expert, 8 routed — 671B total, 37B active. The same economics drive the strongly-rumored MoE backbones of current closed frontier models. Decode-time win (recall EQ 7.1): only active-expert weights stream per token.</div>
+        </div>
+
+        <div class="eq"><span class="eq-tag">EQ 9.2 — LOAD BALANCING</span>
+        $$ \mathcal{L}_{\text{aux}} = \lambda\, E \sum_{i=1}^{E} f_i\, P_i \qquad \big(f_i = \text{fraction of tokens routed to } i,\;\; P_i = \text{mean router prob}\big) $$
+        <div class="eq-note">Routers left alone collapse onto a few favorite experts, stranding the rest as dead weight. The auxiliary loss penalizes the dot product of <em>realized</em> load and <em>intended</em> probability — minimized when both are uniform. DeepSeek-V3 instead tunes a per-expert bias online (“aux-loss-free” balancing) to avoid distorting the main objective. Expert parallelism (§4.5) then spreads experts across GPUs, paying all-to-all communication per layer.</div>
+        </div>
+
+        <div class="widget" id="moe-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT 9.1 — TOP-2 ROUTER</span><span class="w-sub">8 EXPERTS · LOAD ACCUMULATION</span></div>
+          <div class="w-body">
+            <div class="ctl-row" style="align-items:center;">
+              <button class="w-btn" id="moe-play">ROUTE TOKENS</button>
+              <div style="font-family:ui-monospace,Menlo,monospace;font-size:13px;color:#a6f2cc;" id="moe-token">—</div>
+            </div>
+            <div style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.16em;color:#636363;margin:12px 0 6px;">ROUTER PROBABILITIES g(x)</div>
+            <div id="moe-gates" style="display:flex;gap:8px;margin-bottom:20px;"></div>
+            <div style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.16em;color:#636363;margin-bottom:6px;">CUMULATIVE EXPERT LOAD</div>
+            <div id="moe-experts" style="display:grid;grid-template-columns:repeat(8,1fr);gap:8px;"></div>
+          </div>
+          <div class="w-note">Each token's hidden state produces gate logits; the top-2 experts (mint) process it, weighted by their gate values. Watch the load bars: drift toward imbalance is exactly what EQ 9.2 exists to punish. Real experts specialize by token statistics — not by clean human topics.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 9.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">9.2</span><h2>Long context: the million-token problem</h2></div>
+        <p>Context windows grew 1,000× in four years (2K → 1M–10M claimed). Three fronts made it possible:</p>
+        <ul>
+          <li><strong>Positional extension.</strong> RoPE trained at 4K collapses at 32K — unseen rotation angles. Fixes rescale the spectrum: <em>Position Interpolation</em> compresses all frequencies; <em>NTK-aware</em> scaling raises the base \(b\); <strong>YaRN</strong> interpolates per-frequency (fast dims untouched, slow dims stretched) plus an attention-temperature correction. Standard recipe: pre-train short → continue briefly at long context with scaled RoPE (Llama-3.1's base-500K + 800B long-context tokens).</li>
+          <li><strong>Attention cost.</strong> \(O(T^2)\) prefill at \(T = 10^6\) is ~10⁶× a 1K prompt. Mitigations: FlashAttention (exact), interleaved sliding-window layers, context parallelism (ring attention across GPUs), and learned sparse patterns (NSA-style) approaching \(O(T)\).</li>
+          <li><strong>KV memory.</strong> EQ 3.5 at 1M tokens is brutal — hence GQA/MLA, KV quantization, token eviction/compression heuristics, and tiered KV offload in serving stacks.</li>
+        </ul>
+        <div class="widget" id="ctx-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT 9.2 — THE PRICE OF CONTEXT</span><span class="w-sub">70B-CLASS · GQA-8 · FP16 KV</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl">
+                <label>CONTEXT LENGTH T <output id="ctx-t-out">8K</output></label>
+                <input type="range" id="ctx-t" min="10" max="20" step="1" value="13"/>
+              </div>
+            </div>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">KV CACHE / SEQUENCE</div><div class="r-value" id="ctx-kv">—</div></div>
+              <div class="readout"><div class="r-label">PREFILL COMPUTE</div><div class="r-value" id="ctx-attn">—</div></div>
+              <div class="readout"><div class="r-label">ATTENTION SHARE OF FLOPs</div><div class="r-value" id="ctx-share">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">At 8K the quadratic term is a rounding error; at 1M it dominates the entire forward pass and the KV cache alone outweighs the model. Every technique in this section exists because of what this slider does past 128K. (An SSM's state, for comparison: fixed at a few hundred MB regardless of T.)</div>
+        </div>
+
+        <p class="note"><strong>Honest caveat:</strong> needle-in-a-haystack retrieval saturated long ago, but <em>using</em> a full window for reasoning still degrades — the “lost in the middle” effect and context-rot benchmarks show effective context lags advertised context. Long context complements rather than kills retrieval (RAG): selection is cheaper than attention.</p>
+      </section>
+
+      <!-- ====================== 9.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">9.3</span><h2>Multimodality: everything becomes tokens</h2></div>
+        <p>The transformer never cared that its tokens meant text. Modern frontier models are <strong>natively multimodal</strong>: one decoder attends over interleaved sequences of text tokens, image patches, audio frames, video.</p>
+
+        <div class="eq"><span class="eq-tag">EQ 9.3 — IMAGES AS TOKENS (ViT PATCHIFY)</span>
+        $$ x_{\text{img}} \in \mathbb{R}^{H \times W \times 3} \;\longrightarrow\; \Big\{ W_p\, \mathrm{vec}\big(\text{patch}_{16\times16}^{(j)}\big) \Big\}_{j=1}^{HW/256} \in \mathbb{R}^{d_{\text{model}}} $$
+        <div class="eq-note">Slice the image into 16×16 patches, flatten, project — each patch is now just another embedding in the sequence. A 1024×1024 image ≈ 4K tokens (hence image inputs' token pricing). Architectures differ in coupling: a pre-trained vision encoder bridged by a projector (LLaVA-style, cheap), cross-attention taps (Flamingo lineage), or early-fusion single-stack training on mixed data (the frontier default).</div>
+        </div>
+        <ul>
+          <li><strong>Generation side:</strong> discrete image/audio tokens from learned codecs (VQ-VAE/RVQ descendants) let the same autoregressive machinery <em>emit</em> media; diffusion heads remain common for high-fidelity images.</li>
+          <li><strong>Speech:</strong> native audio-to-audio loops (realtime APIs) replace the ASR→LLM→TTS pipeline, cutting latency below conversational thresholds.</li>
+          <li><strong>Why it matters beyond features:</strong> vision grounds language in geometry and physics; computer-use agents (below) are impossible without reading screens.</li>
+        </ul>
+      </section>
+
+      <!-- ====================== 9.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">9.4</span><h2>Agents &amp; tool use</h2></div>
+        <p>An LLM that can only emit text is an oracle; given tools, it becomes an <strong>actor</strong>. The mechanics are disarmingly simple — the loop is the product:</p>
+        <pre><code><span class="c"># The agent loop — everything else is engineering around it</span>
+<span class="k">while</span> not done:
+    response = llm(system, history, <span class="v">tools</span>)        <span class="c"># model may emit a tool call</span>
+    <span class="k">if</span> response.tool_calls:
+        results = execute(response.tool_calls)      <span class="c"># search, code, browser, files…</span>
+        history += [response, results]              <span class="c"># observations feed back in</span>
+    <span class="k">else</span>: done = <span class="v">True</span>                              <span class="c"># final answer</span></code></pre>
+        <ul>
+          <li><strong>Tool calling is trained, not prompted</strong> — post-training (Chapter 05) teaches the schema-constrained emission format; RLVR-style training on long-horizon tasks (SWE-bench-like environments) is the current capability driver.</li>
+          <li><strong>Standardization:</strong> the Model Context Protocol (MCP) turned tool integration from N×M custom adapters into a USB-like interface — servers expose tools/resources, any model client consumes them.</li>
+          <li><strong>Reasoning × acting compounds:</strong> thinking models that plan, act, observe, and revise (the ReAct pattern, now internalized) turn test-time compute into real-world task completion — coding agents being the proof case.</li>
+          <li><strong>The hard parts are systemic:</strong> error compounding over long horizons (0.99⁵⁰ ≈ 0.6), sandboxing and permissioning, prompt injection from hostile content, and evaluation of open-ended tasks.</li>
+        </ul>
+      </section>
+
+      <!-- ====================== 9.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">9.5</span><h2>Beyond the transformer: SSMs and hybrids</h2></div>
+        <p>The transformer's \(O(T^2)\) attention and \(O(T)\) cache are taxes, and <strong>state-space models</strong> offer an alternative: compress history into a fixed-size recurrent state. Mamba's selective SSM is the breakthrough form:</p>
+
+        <div class="eq"><span class="eq-tag">EQ 9.4 — SELECTIVE STATE-SPACE RECURRENCE (MAMBA)</span>
+        $$ h_t = \bar{A}(x_t)\, h_{t-1} + \bar{B}(x_t)\, x_t, \qquad y_t = C(x_t)\, h_t $$
+        <div class="eq-note">A linear RNN whose transition matrices are <b>functions of the input</b> — the “selectivity” that lets it gate what to remember and forget (the failure of older linear RNNs), while remaining parallelizable for training via scan algorithms. Decode cost: \(O(1)\) per token, zero KV cache.</div>
+        </div>
+        <p>Pure SSMs lag transformers on exact recall (copy a phone number from 50K tokens back — attention does this trivially; a compressed state cannot). The convergent answer is <strong>hybrids</strong>: mostly SSM/linear-attention layers with a sparse sprinkling of full attention (Jamba, Zamba, recent efficiency-focused releases) — most of the speed, most of the recall. Related test-time-compute economics, not just architecture, will decide this race: cheap long generation matters most for reasoning models that think in tens of thousands of tokens.</p>
+      </section>
+
+      <!-- ====================== 9.6 ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">9.6</span><h2>Open problems</h2></div>
+        <table class="data">
+          <thead><tr><th>Problem</th><th>State of play</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Hallucination</strong></td><td>Structural, not a bug: sampling + imperfect knowledge ⇒ confident fabrication. Mitigations (RAG, citations, abstention training, verification loops) manage it; nothing eliminates it. Calibrated uncertainty remains open.</td></tr>
+            <tr><td><strong>Interpretability</strong></td><td>Sparse autoencoders decompose the residual stream into millions of monosemantic features; circuit tracing maps small behaviors end-to-end. Still far from auditing a frontier model's reasoning — the gap between “we can find features” and “we can certify behavior”.</td></tr>
+            <tr><td><strong>Alignment under optimization pressure</strong></td><td>Reward hacking, sycophancy, and (in lab settings) strategic deception scale with capability. Scalable oversight — supervising models smarter than the supervisor — is the live research front.</td></tr>
+            <tr><td><strong>Continual learning</strong></td><td>Weights freeze at deployment; the world doesn't. Today's patch — context + retrieval + agentic memory files — sidesteps rather than solves weight-space updating without forgetting.</td></tr>
+            <tr><td><strong>Data &amp; energy ceilings</strong></td><td>High-quality human text is finite; synthetic data and RL-generated experience must carry growth. Gigawatt clusters make energy, cooling and capital the binding constraints as much as algorithms.</td></tr>
+            <tr><td><strong>Evaluation</strong></td><td>Benchmarks saturate or leak within months; the field leans on held-out private evals, arena preferences, and real-task completion rates — all gameable, none sufficient.</td></tr>
+          </tbody>
+        </table>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>One family of generative models has been conspicuously absent</strong> — the one that paints, speaks, and increasingly drafts text in parallel. Chapter 10: diffusion, from the noise-reversal mathematics to masked diffusion language models — including a sandbox where you run real reverse diffusion in the browser.</p>
+        </div>
+      </section>
+
+      <nav class="pager">
+        <a href="08-inference.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">08</span> Inference &amp; Deployment</div></a>
+        <a class="next" href="10-diffusion.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">10</span> Diffusion</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — VOL II · CH 09</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/glossary.js"></script>
+<script src="../assets/js/shared.js"></script>
+<script src="../assets/js/search.js"></script>
+<script src="../assets/js/interactives.js"></script>
+</body>
+</html>

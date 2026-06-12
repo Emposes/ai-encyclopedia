@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>01 · How Models Read Prompts — AI Encyclopedia</title>
+<meta name="description" content="Why prompting works at all: a prompt conditions a frozen probability distribution — chat templates, position effects, token budgets, and the empirical mindset." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css" />
+</head>
+<body>
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ VOL III / PROMPTING / 01 / HOW MODELS READ PROMPTS</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="02-the-scaffold.html">NEXT: THE SCAFFOLD →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">VOLUME III — PROMPTING · CHAPTER 01 / 07</div>
+    <h1>How Models Read Prompts</h1>
+    <p class="lede">A prompt is not a message to a mind. It is the condition in a conditional probability: every token you write reshapes the distribution over every token the model might write back, while the weights themselves never move. <strong>Prompting is programming the conditional</strong> — and once you see the machinery, most prompt folklore dissolves into mechanics you can actually reason about.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 18 MIN</b></span>
+      <span>BUILDS ON<b>VOL II · CH 01–03</b></span>
+      <span>INSTRUMENTS<b>PROMPT ANATOMY · MASS SHIFTER</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">1.1</span>Conditioning a distribution</a>
+      <a href="#s2"><span class="n">1.2</span>Anatomy of a real request</a>
+      <a href="#s3"><span class="n">1.3</span>What the model attends to</a>
+      <a href="#s4"><span class="n">1.4</span>Tokens: cost &amp; attention</a>
+      <a href="#s5"><span class="n">1.5</span>The empirical mindset</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 1.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">1.1</span><h2>A prompt conditions a distribution</h2></div>
+        <p>Strip away the chat window, the typing indicator, the first-person voice. What remains is a frozen function: a network with parameters \(\theta\) that maps a token sequence to a probability distribution over the next token (Vol II · Ch 01). Generation is that function applied repeatedly. Everything prompting will ever do is contained in one equation:</p>
+
+        <div class="eq"><span class="eq-tag">EQ P1.1 — THE CONDITIONAL</span>
+        $$ p_\theta\!\left(y \mid x\right) \;=\; \prod_{t=1}^{|y|} p_\theta\!\left(y_t \,\middle|\, x,\; y_{&lt;t}\right) $$
+        <div class="eq-note">\(x\) is your prompt, \(y\) the response, \(\theta\) the weights — <b>frozen</b>. No gradient flows at inference; nothing you type changes a single parameter. What you control is \(x\), and through attention (Vol II · EQ 3.1) every token of \(x\) is visible to every step of \(y\). Change one token and you are indexing into a <b>different conditional distribution</b> — sometimes imperceptibly, sometimes catastrophically. Prompting is the art of choosing the condition.</div>
+        </div>
+
+        <p>This is why wording matters in a way that feels disproportionate. "Please" is not politeness to the model; it is two tokens of evidence that shift the response toward registers where "please" appeared in training data. A typo, a code fence, ALL-CAPS, the choice between <code>:</code> and <code>—</code> — each perturbs the condition, and the distribution moves. There is no separate channel for "what you meant." The tokens are the entire input.</p>
+
+        <p>A useful — and honest — second lens treats the model as inferring <em>what kind of text this is</em> before continuing it. Pre-training data is a mixture of countless documents, each written under some latent context: an author, a genre, a task, a level of care. One way to describe trained behavior:</p>
+
+        <div class="eq"><span class="eq-tag">EQ P1.2 — THE LATENT-TASK LENS</span>
+        $$ p_\theta\!\left(y \mid x\right) \;\approx\; \sum_{\tau} p_\theta\!\left(y \mid \tau, x\right)\, p_\theta\!\left(\tau \mid x\right) $$
+        <div class="eq-note">\(\tau\) ranges over latent "document types" — task, persona, register, quality tier. The prompt acts as <b>evidence about which \(\tau\) you are in</b>; roles and examples sharpen the posterior \(p(\tau \mid x)\). To be clear: no such sum is computed anywhere in the network — this is a behavioral description (the implicit-Bayesian-inference account of in-context learning, Xie et al. 2021), not an architecture fact. But it predicts real phenomena: why examples often beat instructions, why personas shift style more than skill, why sloppy prompts beget sloppy answers.</div>
+        </div>
+
+        <div class="spec-grid">
+          <div class="spec-cell"><div class="s-label">WHAT PROMPTING MOVES</div><div class="s-value">p(y | <em>x</em>)</div><div class="s-sub">Every token of the condition re-weights the entire output distribution.</div></div>
+          <div class="spec-cell"><div class="s-label">WHAT IT NEVER TOUCHES</div><div class="s-value">θ</div><div class="s-sub">The weights are frozen. Capability is fixed before you type a word.</div></div>
+          <div class="spec-cell"><div class="s-label">WHAT THAT IMPLIES</div><div class="s-value"><em>selection</em>, not creation</div><div class="s-sub">A prompt elicits behaviors the network can already express — it cannot add new ones.</div></div>
+        </div>
+
+        <p class="note">You will watch EQ P1.1 happen in Instrument P1.2 below: four one-line edits to a prompt, each visibly dragging probability mass across eight candidate replies — with the weights untouched throughout.</p>
+      </section>
+
+      <!-- ====================== 1.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">1.2</span><h2>The anatomy of a real request</h2></div>
+        <p>You send an API call with a <code>messages</code> array — <code>system</code>, <code>user</code>, <code>assistant</code> turns. The model never sees that JSON. A <strong>chat template</strong> serializes the array into one flat token stream, stitched together with <strong>special tokens</strong>: reserved vocabulary items that ordinary text can never tokenize into. Here is what a two-message request actually looks like by the time the transformer reads it:</p>
+
+<pre><code><span class="c"># messages=[{system}, {user}] → the literal token stream (Llama-3-family template)</span>
+<span class="v">&lt;|begin_of_text|&gt;</span><span class="v">&lt;|start_header_id|&gt;</span>system<span class="v">&lt;|end_header_id|&gt;</span>
+
+You are a concise geography tutor.<span class="v">&lt;|eot_id|&gt;</span><span class="v">&lt;|start_header_id|&gt;</span>user<span class="v">&lt;|end_header_id|&gt;</span>
+
+What is the capital of Australia?<span class="v">&lt;|eot_id|&gt;</span><span class="v">&lt;|start_header_id|&gt;</span>assistant<span class="v">&lt;|end_header_id|&gt;</span>
+
+<span class="c">← generation starts here; it ends when the model itself emits &lt;|eot_id|&gt;</span></code></pre>
+
+        <p>Four mechanical facts fall out of this picture, and each one is load-bearing for the rest of the volume:</p>
+        <ul>
+          <li><strong>There is one flat stream.</strong> "System", "user" and "assistant" are token conventions, not channels. The model attends across all of it with the same machinery (Vol II · Ch 03).</li>
+          <li><strong>System privilege is trained, not architectural.</strong> Post-training taught the model to weight the system region heavily; nothing in attention enforces it. That gap between convention and enforcement is exactly why prompt injection is possible at all (Vol IV).</li>
+          <li><strong>The trailing assistant header is the generation cue.</strong> The template ends mid-conversation, on purpose: the highest-probability continuation is the assistant's reply. Pre-loading text after that cue is <em>prefilling</em> — Chapter 05's favorite trick.</li>
+          <li><strong>Wrong template, silent failure.</strong> A model fine-tuned on one template and served with another still answers — just measurably worse, with degraded formatting and instruction-following. Vol II · §6.5 calls the mismatched chat template "silent killer #1" for good reason.</li>
+        </ul>
+
+        <p>Past assistant turns deserve a special mention: they are just more context. The model has no memory of "having said" them — re-send a conversation with an edited assistant message and the model will treat the edit as its own words. History is a document, and you are its editor.</p>
+
+        <div class="widget" id="hp-anat" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT P1.1 — PROMPT ANATOMY</span><span class="w-sub">HOVER A SEGMENT · TOGGLE THE TEMPLATE VIEW</span></div>
+          <div class="w-body">
+            <div class="ctl-row" style="margin-bottom:18px;">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>VIEW</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" id="hp-anat-vplain">LOGICAL SEGMENTS</button>
+                  <button class="w-btn ghost" id="hp-anat-vtpl">RENDER AS CHAT TEMPLATE</button>
+                </div>
+              </div>
+            </div>
+            <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start;">
+              <div id="hp-anat-doc" style="flex:1.5;min-width:300px;"></div>
+              <div id="hp-anat-panel" style="flex:1;min-width:240px;border:1px solid var(--hairline);border-radius:4px;padding:16px 18px;background:#000;"></div>
+            </div>
+          </div>
+          <div class="w-note">Hover (or tap) each segment to see its mechanical job and its failure mode when dropped. Then toggle to the chat-template view and notice the reshuffle: FORMAT rides inside the system turn, the EXAMPLE becomes a fake conversation turn the model cannot distinguish from real history, and grey machinery — the special tokens — holds it all together. Hover the machinery too.</div>
+        </div>
+
+        <p>Each segment in the instrument is a different way of supplying evidence to EQ P1.1 — and EQ P1.2 says different segments should move the distribution differently. Watch it happen. The logits below are hand-crafted to mimic typical model behavior (this page calls no API), but the softmax, entropy and KL divergence are computed live from them:</p>
+
+        <div class="widget" id="hp-mass" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT P1.2 — MASS SHIFTER</span><span class="w-sub">ILLUSTRATIVE LOGITS · LIVE SOFTMAX · EQ P1.1</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>PROMPT VARIANT (ONE EDIT AT A TIME)</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-hp-var="0">NEUTRAL</button>
+                  <button class="w-btn ghost" data-hp-var="1">+ ROLE</button>
+                  <button class="w-btn ghost" data-hp-var="2">+ CONSTRAINT</button>
+                  <button class="w-btn ghost" data-hp-var="3">+ EXAMPLE</button>
+                </div>
+              </div>
+              <div class="ctl"><label>SAMPLING TEMPERATURE τ <output id="hp-mass-temp-out">1.00</output></label><input type="range" id="hp-mass-temp" min="0.3" max="2" step="0.05" value="1"/></div>
+            </div>
+            <div id="hp-mass-prompt" style="border:1px solid var(--hairline);border-radius:4px;padding:12px 14px;margin-bottom:16px;font-family:ui-monospace,Menlo,monospace;font-size:11.5px;line-height:1.7;color:#9b9b9b;"></div>
+            <canvas class="w-canvas" id="hp-mass-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">TOP CANDIDATE</div><div class="r-value" id="hp-mass-top" style="font-size:14px;line-height:1.5;">—</div></div>
+              <div class="readout"><div class="r-label">ENTROPY OF DISTRIBUTION</div><div class="r-value" id="hp-mass-ent">—</div></div>
+              <div class="readout"><div class="r-label">KL FROM NEUTRAL</div><div class="r-value" id="hp-mass-kl">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Solid bars are the current variant; ghost outlines are the NEUTRAL baseline at the same temperature. One role line moves ~60 points of probability mass onto the policy-voiced opening; one worked example moves ~85 points onto its format. Now sweep τ: temperature flattens or sharpens the distribution but <em>never reorders it</em> — sampling settings rescale the conditional, only the prompt can rewrite it.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 1.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">1.3</span><h2>What the model attends to</h2></div>
+        <p>Attention is content-based addressing: information flows wherever query meets key, regardless of distance (Vol II · EQ 3.1). In principle, position 1 and position 100,000 are equally reachable. In practice, trained models carry strong <em>positional priors</em>, and three of them shape how you should lay out a prompt:</p>
+        <ul>
+          <li><strong>Primacy.</strong> The opening of the context is disproportionately influential. Part of this is training data (documents front-load their framing); part is mechanical — early tokens double as <em>attention sinks</em>, accumulating probability mass that softmax has to park somewhere (Vol II · §3.7).</li>
+          <li><strong>Recency.</strong> The end of the context is closest to the tokens being generated, and models are trained on data where the most recent text is the most relevant. The final tokens before the generation cue punch far above their weight.</li>
+          <li><strong>Lost in the middle.</strong> Liu et al. (2023) measured retrieval accuracy as a function of <em>where</em> in a long context the answer-bearing document sat, and found a U: strong at the start, strong at the end, a trough in the middle — sometimes below the model's closed-book score.</li>
+        </ul>
+
+        <div class="figure" data-reveal>
+          <div class="fig-head"><span class="fig-id">FIG P1.1</span><span class="fig-title">POSITION OF THE RELEVANT FACT vs RETRIEVAL ACCURACY — ILLUSTRATIVE</span></div>
+          <div class="fig-body">
+            <svg viewBox="0 0 720 300" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="U-shaped retrieval accuracy curve over context position">
+              <line x1="70" y1="250" x2="660" y2="250" class="dg-line"/>
+              <line x1="70" y1="40" x2="70" y2="250" class="dg-line"/>
+              <line x1="70" y1="120" x2="660" y2="120" stroke="#2f3234" stroke-width="1" stroke-dasharray="4 4"/>
+              <line x1="70" y1="185" x2="660" y2="185" stroke="#2f3234" stroke-width="1" stroke-dasharray="4 4"/>
+              <path d="M 80 95 C 190 200, 270 218, 365 218 C 460 218, 540 200, 650 105" class="dg-line-blue" data-draw/>
+              <path d="M 80 72 C 190 112, 270 122, 365 124 C 460 122, 540 113, 650 80" class="dg-line-acc" data-draw/>
+              <text x="80" y="272" class="dg-label-sm">START OF CONTEXT</text>
+              <text x="322" y="272" class="dg-label-sm">MIDDLE</text>
+              <text x="592" y="272" class="dg-label-sm">END</text>
+              <text x="62" y="50" class="dg-label-mut" text-anchor="end">HIGH</text>
+              <text x="62" y="250" class="dg-label-mut" text-anchor="end">LOW</text>
+              <text x="76" y="34" class="dg-label-sm">RETRIEVAL ACCURACY</text>
+              <g data-pop>
+                <line x1="468" y1="56" x2="496" y2="56" class="dg-line-acc"/>
+                <text x="504" y="60" class="dg-label-acc">MODERN LONG-CONTEXT MODEL</text>
+                <line x1="468" y1="76" x2="496" y2="76" class="dg-line-blue"/>
+                <text x="504" y="80" class="dg-label-sm">2023-ERA MODEL (DEEP U)</text>
+              </g>
+            </svg>
+          </div>
+          <div class="fig-cap"><b>Illustrative curves</b>, after Liu et al., "Lost in the Middle" (2023). Newer long-context models flatten the U substantially — mostly via training on synthetic long-range retrieval data, not architectural change — but the trough has narrowed, not vanished. Plan as if the middle of a long context is the cheapest real estate you own.</div>
+        </div>
+
+        <p>The engineering consequences are blunt. <strong>Put the task last</strong>, after everything it depends on — the question should be the freshest thing in the model's window when generation begins. <strong>Keep binding constraints near the task</strong>, not 40,000 tokens upstream. And when you must ship a huge context (a codebase, a contract, a transcript), <strong>state the instructions before the dump and restate them after it</strong> — buying both primacy and recency for the price of a few dozen tokens. A long context window is not uniformly readable; it is a stage with bright edges and a dim center.</p>
+
+        <p class="note">Caveat worth keeping: position effects are model- and version-specific, and frontier long-context models have closed much of the gap on needle-in-a-haystack benchmarks — which are easier than real multi-fact reasoning over long inputs. The U is weakest exactly where benchmarks are strongest. Measure on your own task (§1.5) before trusting any curve, including FIG P1.1.</p>
+      </section>
+
+      <!-- ====================== 1.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">1.4</span><h2>Tokens are the unit of cost and attention</h2></div>
+        <p>The model does not read words, lines, or pages — it reads tokens (Vol II · Ch 01), and tokens are the currency of all three budgets you are spending: <strong>money</strong> (APIs price per token, input and output separately), <strong>latency</strong> (time-to-first-token scales with prefill length; every prompt token is paid for on every call unless prefix caching saves you — Vol II · Ch 08), and <strong>attention</strong> (a 200K window sounds infinite until thirty retrieved documents at 4K tokens each eat 120K of it, most of which lands in the dim middle of FIG P1.1).</p>
+        <p>Less obviously, <em>formatting is not free styling</em> — it changes the token stream, and therefore the condition in EQ P1.1. The same content, serialized differently, is a different prompt:</p>
+
+        <table class="data">
+          <thead><tr><th>Choice</th><th>Token-level effect</th><th>Behavioral effect</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Headers, delimiters, XML tags</strong></td><td class="m">a few extra structure tokens</td><td>Anchors for attention; sections become addressable. Usually the cheapest reliability upgrade available.</td></tr>
+            <tr><td><strong>JSON vs YAML vs prose</strong></td><td class="m">JSON spends heavily on quotes, braces, escapes; YAML is often leaner</td><td>Shifts the latent register toward "config file" / "API payload"; affects compliance, verbosity, and what the model thinks it is writing.</td></tr>
+            <tr><td><strong>Trailing whitespace</strong></td><td class="m">BPE merges leading spaces into words; <code>"is:"</code> and <code>"is: "</code> end in different tokens</td><td>A trailing space can strand the model off its preferred token boundary and measurably degrade the completion. End prompts cleanly.</td></tr>
+            <tr><td><strong>ALL CAPS, typos, sloppy text</strong></td><td class="m">fragments into rarer, longer token sequences</td><td>Evidence (EQ P1.2) that this is low-care text — distributions drift toward the registers where such text lived in training.</td></tr>
+            <tr><td><strong>Repeated boilerplate per call</strong></td><td class="m">thousands of identical prefill tokens</td><td>Pure cost and latency unless served with prefix caching; also crowds the window the task actually needs.</td></tr>
+          </tbody>
+        </table>
+
+        <p class="note">Do not micro-optimize tokens at the expense of clarity — a clear 400-token instruction beats a cryptic 150-token one every time, and the table's effects are second-order next to <em>what you actually say</em>. The point is narrower: format choices are real inputs with real consequences, not decoration. Budget them like you budget words.</p>
+      </section>
+
+      <!-- ====================== 1.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">1.5</span><h2>The empirical mindset</h2></div>
+        <p>You cannot inspect \(p_\theta(y \mid x)\) directly — no gradients, no documentation, billions of opaque parameters. Prompting is therefore an <strong>experimental science</strong> run against a black box: form a hypothesis, change <em>one</em> variable, hold everything else fixed, and measure. The discipline matters because the noise is vicious — at any temperature above zero a single run is an anecdote, and even "deterministic" settings wobble under batched serving and expert routing on modern stacks. The protocol that survives contact with this:</p>
+
+<pre><code><span class="c"># The prompt experiment, minimum viable rigor</span>
+<span class="k">baseline</span>:   current prompt, frozen — including its chat template
+<span class="k">change</span>:     ONE edit (role line, example, ordering, format) per variant
+<span class="k">decoding</span>:   fix temperature / top-p across variants; n ≥ 20 samples each
+<span class="k">metric</span>:     programmatic check &gt; rubric scored blind &gt; vibes (never vibes)
+<span class="k">record</span>:     prompt version, model ID, date — served models drift under you
+<span class="k">decide</span>:     keep the edit only if the gain holds on a second, held-out set</code></pre>
+
+        <p>Run Instrument P1.2 again with this lens: each button is a one-variable experiment, and the KL readout is the measured effect size. That is the whole methodology in miniature — the rest of this volume is a catalog of <em>which</em> edits are worth testing first.</p>
+
+        <div class="callout warn">
+          <span class="co-icon">NO MAGIC WORDS</span>
+          <p><strong>Two honest limits.</strong> First: incantations — "take a deep breath", offering tips, threats — show real but small, model-specific effects that routinely evaporate across model versions; the folklore survives because single runs are anecdotes and confirmation bias does the rest. Test them like anything else; expect them to lose to one good example. Second, the hard ceiling: <strong>prompting selects among behaviors the frozen \(\theta\) can already express — it cannot add capability</strong>. If the model fails at best-of-50 sampling, no phrasing will fix it; you need a stronger model, tools, or fine-tuning (Vol II · §6.1's escalation ladder). Knowing which side of that line you are on is the most valuable prompt skill there is.</p>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>You now know why prompts work: they condition a frozen distribution, read through a template, with bright edges and a priced-by-the-token interior.</strong> Chapter 02 turns mechanics into method — the five-part scaffold of Role · Task · Context · Format · Constraints, assembled live with before/after pairs.</p>
+        </div>
+      </section>
+
+      <nav class="pager">
+        <a href="../index.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">00</span> Encyclopedia Index</div></a>
+        <a class="next" href="02-the-scaffold.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">02</span> The Scaffold: Role · Task · Context · Format · Constraints</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — VOL III · CH 01</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/glossary.js"></script>
+<script src="../assets/js/shared.js"></script>
+<script>
+/* chapter instruments — single IIFE, no globals */
+(function () {
+  "use strict";
+  var FM = window.FM;
+
+  /* ================= INSTRUMENT P1.1 — PROMPT ANATOMY ================= */
+  (function () {
+    var doc = document.getElementById("hp-anat-doc");
+    var panel = document.getElementById("hp-anat-panel");
+    var btnPlain = document.getElementById("hp-anat-vplain");
+    var btnTpl = document.getElementById("hp-anat-vtpl");
+    if (!doc || !panel || !btnPlain || !btnTpl) return;
+
+    var SEGS = {
+      system: { name: "SYSTEM", col: "#a6f2cc", bg: "rgba(166,242,204,0.06)", hot: "rgba(166,242,204,0.14)",
+        text: 'You are "Atlas", the support assistant for Acme Outdoor. Be accurate. Never invent order data.',
+        mech: "Standing instructions for the whole conversation. The model's deference to this region is installed by post-training — nothing in the architecture enforces it, which is why injection attacks target the gap between convention and enforcement.",
+        miss: "The model falls back to its generic post-trained persona: helpful, verbose, unbranded — and unguarded." },
+      role: { name: "ROLE", col: "rgba(166,242,204,0.62)", bg: "rgba(43,89,69,0.16)", hot: "rgba(43,89,69,0.34)",
+        text: "You speak as a senior returns specialist: terse, warm, policy-exact.",
+        mech: "A persona is evidence about the latent register τ (EQ P1.2): it selects vocabulary, tone and caution levels the model saw attached to such speakers in training. It shifts style strongly, skill barely.",
+        miss: "Register drifts toward the bland assistant mean — chirpy, hedging, over-long." },
+      context: { name: "CONTEXT", col: "#4e8af7", bg: "rgba(78,138,247,0.07)", hot: "rgba(78,138,247,0.16)",
+        text: "POLICY v3.2 — damaged-on-arrival items: full refund within 30 days, no receipt needed if the order ID is present. ORDER #A-1029: 2-person tent, delivered 2026-06-08.",
+        mech: "Ground truth supplied in-window so the model can route answers through it via attention instead of parametric memory. Supplying knowledge is the one gap prompting genuinely fixes.",
+        miss: "The model improvises policy from training data — fluently, confidently, and wrongly." },
+      examples: { name: "EXAMPLES", col: "#9b9b9b", bg: "rgba(229,229,229,0.05)", hot: "rgba(229,229,229,0.12)",
+        text: 'USER: "The stove arrived dented." → ASSISTANT: {"action":"refund_full","message":"Sorry about the dented stove — your refund is on its way."}',
+        mech: "A worked input→output pair. Format and behavior leak more strongly from one example than from paragraphs of instruction — the example is a direct sample from the distribution you want (Chapter 03).",
+        miss: "Format compliance becomes probabilistic: right shape most of the time, parser-breaking the rest." },
+      task: { name: "TASK", col: "#ffffff", bg: "rgba(229,229,229,0.07)", hot: "rgba(229,229,229,0.15)",
+        text: 'Customer (order #A-1029): "My tent pole snapped the first time I set it up. Can I get my money back?"',
+        mech: "The actual query. It sits last on purpose: the freshest tokens before the generation cue carry maximal recency weight (§1.3), with everything it depends on already in-window above it.",
+        miss: "Nothing to condition on — the rest of the prompt is a stage with no play." },
+      format: { name: "FORMAT", col: "#ff4136", bg: "rgba(255,65,54,0.06)", hot: "rgba(255,65,54,0.14)",
+        text: 'Reply with exactly one JSON object: {"action": "...", "message": "..."} — no prose outside it.',
+        mech: "A hard output constraint. Watch Instrument P1.2's + CONSTRAINT variant: a single format clause collapses nearly all probability mass onto one output shape.",
+        miss: "Free prose. Whatever parses your output downstream breaks tonight, quietly." },
+      tok: { name: "SPECIAL TOKENS", col: "#636363", bg: "transparent", hot: "rgba(99,99,99,0.18)",
+        text: "",
+        mech: "Reserved vocabulary the template inserts to delimit turns — trained delimiters, not punctuation. The trailing assistant header is the generation cue; the model stops by emitting the end-of-turn token itself.",
+        miss: "Wrong or missing template tokens: the model still answers, measurably worse — the silent killer of fine-tunes and prompts alike (Vol II · §6.5)." }
+    };
+
+    var PLAIN_ORDER = ["system", "role", "context", "examples", "task", "format"];
+
+    /* template serialization: ChatML-style */
+    var TPL = [
+      { tok: '<|im_start|>system\n' },
+      { seg: "system" }, { raw: "\n" },
+      { seg: "role" }, { raw: "\n" },
+      { seg: "context" }, { raw: "\n" },
+      { seg: "format" }, { raw: "\n" },
+      { tok: '<|im_end|>\n' },
+      { tok: '<|im_start|>user\n' },
+      { seg: "examples", text: '"The stove arrived dented." (order #A-0883)\n' },
+      { tok: '<|im_end|>\n' },
+      { tok: '<|im_start|>assistant\n' },
+      { seg: "examples", text: '{"action":"refund_full","message":"Sorry about the dented stove — your refund is on its way."}\n' },
+      { tok: '<|im_end|>\n' },
+      { tok: '<|im_start|>user\n' },
+      { seg: "task", text: '"My tent pole snapped the first time I set it up. Can I get my money back?" (order #A-1029)\n' },
+      { tok: '<|im_end|>\n' },
+      { tok: '<|im_start|>assistant\n' }
+    ];
+
+    var view = "plain";
+    var current = "system";
+
+    function esc(s) {
+      return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    function renderPanel() {
+      var s = SEGS[current];
+      panel.innerHTML =
+        '<div style="font-family:ui-monospace,Menlo,monospace;font-size:10px;letter-spacing:.18em;color:' + s.col + ';margin-bottom:12px;">' + s.name + "</div>" +
+        '<div style="font-family:ui-monospace,Menlo,monospace;font-size:9px;letter-spacing:.16em;color:#636363;margin-bottom:5px;">MECHANISM</div>' +
+        '<p style="font-size:12.5px;line-height:1.65;color:#e5e5e5;margin:0 0 14px;">' + s.mech + "</p>" +
+        '<div style="font-family:ui-monospace,Menlo,monospace;font-size:9px;letter-spacing:.16em;color:#636363;margin-bottom:5px;">IF DROPPED</div>' +
+        '<p style="font-size:12.5px;line-height:1.65;color:#9b9b9b;margin:0;">' + s.miss + "</p>";
+    }
+
+    function paintStates() {
+      var nodes = doc.querySelectorAll("[data-hp-seg]");
+      for (var i = 0; i < nodes.length; i++) {
+        var el = nodes[i];
+        var id = el.getAttribute("data-hp-seg");
+        var s = SEGS[id];
+        var on = id === current;
+        if (view === "plain") {
+          el.style.background = on ? s.hot : s.bg;
+          el.style.opacity = on ? "1" : "0.55";
+        } else {
+          el.style.background = on ? s.hot : "transparent";
+          el.style.opacity = "1";
+        }
+      }
+    }
+
+    function bind() {
+      var nodes = doc.querySelectorAll("[data-hp-seg]");
+      for (var i = 0; i < nodes.length; i++) {
+        (function (el) {
+          function sel() { current = el.getAttribute("data-hp-seg"); renderPanel(); paintStates(); }
+          el.addEventListener("mouseenter", sel);
+          el.addEventListener("click", sel);
+        })(nodes[i]);
+      }
+    }
+
+    function renderPlain() {
+      var html = "";
+      for (var i = 0; i < PLAIN_ORDER.length; i++) {
+        var id = PLAIN_ORDER[i];
+        var s = SEGS[id];
+        html += '<div data-hp-seg="' + id + '" style="cursor:pointer;border-left:3px solid ' + s.col + ";background:" + s.bg + ';border-radius:0 4px 4px 0;padding:10px 14px;margin-bottom:8px;transition:opacity .2s ease-in-out,background .2s ease-in-out;">' +
+          '<div style="font-family:ui-monospace,Menlo,monospace;font-size:9px;letter-spacing:.18em;color:' + s.col + ';margin-bottom:5px;">' + s.name + "</div>" +
+          '<div style="font-size:12.5px;line-height:1.6;color:#e5e5e5;">' + esc(s.text) + "</div></div>";
+      }
+      doc.innerHTML = html;
+    }
+
+    function renderTpl() {
+      var html = '<div style="border:1px solid var(--hairline);border-radius:4px;background:#000;padding:16px 18px;font-family:ui-monospace,Menlo,monospace;font-size:11px;line-height:1.85;white-space:pre-wrap;word-break:break-word;">';
+      for (var i = 0; i < TPL.length; i++) {
+        var part = TPL[i];
+        if (part.raw) { html += esc(part.raw); continue; }
+        if (part.tok) {
+          html += '<span data-hp-seg="tok" style="cursor:pointer;color:#636363;border-radius:2px;transition:background .2s ease-in-out;">' + esc(part.tok) + "</span>";
+          continue;
+        }
+        var s = SEGS[part.seg];
+        html += '<span data-hp-seg="' + part.seg + '" style="cursor:pointer;color:' + (part.seg === "role" ? "#a6f2cc" : s.col) + ';border-radius:2px;transition:background .2s ease-in-out;">' + esc(part.text || s.text) + "</span>";
+      }
+      html += '<span style="color:#a6f2cc;">▮</span> <span style="color:#636363;">← GENERATION STARTS HERE</span></div>';
+      doc.innerHTML = html;
+    }
+
+    function render() {
+      if (view === "plain") renderPlain(); else renderTpl();
+      bind();
+      if (view === "plain" && current === "tok") current = "system";
+      renderPanel();
+      paintStates();
+    }
+
+    btnPlain.addEventListener("click", function () {
+      view = "plain";
+      btnPlain.classList.add("on"); btnTpl.classList.remove("on");
+      render();
+    });
+    btnTpl.addEventListener("click", function () {
+      view = "tpl";
+      btnTpl.classList.add("on"); btnPlain.classList.remove("on");
+      render();
+    });
+
+    render();
+  })();
+
+  /* ================= INSTRUMENT P1.2 — MASS SHIFTER ================= */
+  (function () {
+    var canvas = document.getElementById("hp-mass-canvas");
+    var promptBox = document.getElementById("hp-mass-prompt");
+    var tempIn = document.getElementById("hp-mass-temp");
+    var tempOut = document.getElementById("hp-mass-temp-out");
+    var topEl = document.getElementById("hp-mass-top");
+    var entEl = document.getElementById("hp-mass-ent");
+    var klEl = document.getElementById("hp-mass-kl");
+    var btns = document.querySelectorAll("[data-hp-var]");
+    if (!canvas || !promptBox || !tempIn || !btns.length) return;
+
+    var CANDS = ['"I\'m so sorry —"', '"Hi! Thanks for"', '"Sure, let\'s"', '"Unfortunately,"', '"Per policy 3.2,"', '"{"', '"REFUND-101:"', '"Certainly."'];
+    /* hand-crafted, illustrative logits per variant (no API behind this page) */
+    var LOGITS = [
+      [2.1, 1.3, 0.9, 0.4, -0.7, -2.6, -3.2, 0.6],   /* neutral            */
+      [0.9, -0.6, -0.4, 0.8, 2.6, -1.8, -2.4, 0.2],  /* + role             */
+      [-1.3, -2.2, -1.9, -1.6, -1.0, 3.5, -1.5, -2.0], /* + JSON constraint */
+      [-0.6, -1.4, -1.1, -0.8, 0.3, -0.9, 3.3, -1.2]  /* + worked example   */
+    ];
+    var BASE = 'USER: "My tent pole snapped the first time I set it up. Can I get my money back?"';
+    var ADDS = [
+      null,
+      'SYSTEM: "You are a senior returns specialist. Terse, policy-exact."',
+      'SYSTEM: "Reply with a single JSON object — no prose outside it."',
+      'EXAMPLE — USER: "The stove arrived dented." → ASSISTANT: "REFUND-101: approved — full refund."'
+    ];
+
+    var variant = 0;
+
+    function log2(x) { return Math.log(x) / Math.LN2; }
+
+    function render() {
+      var T = parseFloat(tempIn.value);
+      tempOut.textContent = T.toFixed(2);
+      var p = FM.softmax(LOGITS[variant], T);
+      var q = FM.softmax(LOGITS[0], T); /* neutral baseline at same τ */
+
+      /* prompt preview */
+      var html = '<span style="color:#e5e5e5;">' + BASE + "</span>";
+      if (ADDS[variant]) html += '<br/><span style="color:#a6f2cc;">+ ' + ADDS[variant] + "</span>";
+      else html += '<br/><span style="color:#636363;">— no additions: bare task —</span>';
+      promptBox.innerHTML = html;
+
+      /* stats */
+      var H = 0, KL = 0, top = 0, i;
+      for (i = 0; i < p.length; i++) {
+        if (p[i] > 0) H -= p[i] * log2(p[i]);
+        if (p[i] > 0 && q[i] > 0) KL += p[i] * log2(p[i] / q[i]);
+        if (p[i] > p[top]) top = i;
+      }
+      topEl.innerHTML = CANDS[top] + " <small>" + (p[top] * 100).toFixed(1) + "%</small>";
+      entEl.innerHTML = H.toFixed(2) + ' <small>bits</small>';
+      klEl.innerHTML = (variant === 0 ? "0.00" : KL.toFixed(2)) + ' <small>bits</small>';
+
+      /* bars */
+      var s = FM.setupCanvas(canvas, 300);
+      var ctx = s.ctx, w = s.w;
+      var labelW = 122, padR = 56, x0 = labelW + 10;
+      var barW = Math.max(40, w - x0 - padR);
+      var rowH = (300 - 24) / CANDS.length;
+      ctx.font = FM.C.MONO;
+      for (i = 0; i < CANDS.length; i++) {
+        var y = 16 + i * rowH;
+        var cy = y + rowH / 2;
+        /* label */
+        ctx.fillStyle = i === top ? FM.C.BRIGHT : FM.C.SEC;
+        ctx.textAlign = "right";
+        ctx.textBaseline = "middle";
+        ctx.fillText(CANDS[i], labelW, cy);
+        /* baseline rail */
+        ctx.strokeStyle = FM.C.HAIR;
+        ctx.beginPath(); ctx.moveTo(x0, y + rowH - 6); ctx.lineTo(x0 + barW, y + rowH - 6); ctx.stroke();
+        /* ghost = neutral at same τ */
+        ctx.strokeStyle = "#565656";
+        ctx.strokeRect(x0, cy - 9, Math.max(1, q[i] * barW), 18);
+        /* solid = current variant */
+        ctx.fillStyle = i === top ? FM.C.MINT : "rgba(166,242,204,0.38)";
+        ctx.fillRect(x0, cy - 6, Math.max(1.5, p[i] * barW), 12);
+        /* percent */
+        ctx.fillStyle = i === top ? FM.C.MINT : FM.C.MUT;
+        ctx.textAlign = "left";
+        ctx.fillText((p[i] * 100).toFixed(1) + "%", x0 + Math.max(1.5, p[i] * barW) + 6, cy);
+      }
+      ctx.textAlign = "left";
+      ctx.fillStyle = FM.C.MUT;
+      ctx.fillText("SOLID = CURRENT VARIANT · OUTLINE = NEUTRAL @ SAME τ", x0, 300 - 4);
+    }
+
+    for (var b = 0; b < btns.length; b++) {
+      (function (btn) {
+        btn.addEventListener("click", function () {
+          for (var j = 0; j < btns.length; j++) btns[j].classList.remove("on");
+          btn.classList.add("on");
+          variant = parseInt(btn.getAttribute("data-hp-var"), 10);
+          render();
+        });
+      })(btns[b]);
+    }
+    tempIn.addEventListener("input", render);
+
+    var rsTimer = null;
+    window.addEventListener("resize", function () {
+      if (rsTimer) clearTimeout(rsTimer);
+      rsTimer = setTimeout(render, 150);
+    });
+
+    render();
+  })();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>07 · Compression — LLM Field Manual</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css" />
+</head>
+<body>
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ VOL II / 07 / COMPRESSION</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="08-inference.html">NEXT: INFERENCE →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">CHAPTER 07 / 10</div>
+    <h1>Compression</h1>
+    <p class="lede">Generating a token means streaming <strong>every weight through the chip</strong>. At decode time LLMs are memory-bandwidth-bound, so the bits each weight occupies translate directly into speed, capacity and cost. Three levers shrink the bill: distill into a smaller model, quantize the numbers, prune the connections.</p>
+    <div class="ch-meta">
+      <span>READING TIME<b>≈ 25 MIN</b></span>
+      <span>BUILDS ON<b>CH 04–06</b></span>
+      <span>INSTRUMENTS<b>QUANTIZER · DARK KNOWLEDGE</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">7.1</span>Why bits = speed</a>
+      <a href="#s2"><span class="n">7.2</span>Distillation</a>
+      <a href="#s3"><span class="n">7.3</span>Quantization basics</a>
+      <a href="#s4"><span class="n">7.4</span>PTQ: GPTQ, AWQ, FP8</a>
+      <a href="#s5"><span class="n">7.5</span>QAT</a>
+      <a href="#s6"><span class="n">7.6</span>Pruning &amp; sparsity</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 7.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">7.1</span><h2>Why bits are speed</h2></div>
+        <p>During autoregressive decoding at small batch, each new token requires reading all model weights from HBM once. The arithmetic is trivial relative to the data movement, so:</p>
+
+        <div class="eq"><span class="eq-tag">EQ 7.1 — THE DECODE SPEED-OF-LIGHT</span>
+        $$ \text{tokens/s per sequence} \;\lesssim\; \frac{\text{memory bandwidth}}{\text{bytes per parameter} \times N_{\text{active}}} $$
+        <div class="eq-note">H100: 3.35 TB/s. A 70B dense model in FP16 (140 GB… already &gt; one GPU) streams at best ~24 tok/s; in INT4 (35 GB) the ceiling is ~96 tok/s <em>on one card</em>. Halve the bits, double the speed <em>and</em> double the KV-cache room — quantization is the rare optimization that pays twice. (\(N_{\text{active}}\) matters: MoE models only read routed experts — Chapter 09.)</div>
+        </div>
+      </section>
+
+      <!-- ====================== 7.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">7.2</span><h2>Distillation: small model, big teacher</h2></div>
+        <p><strong>Knowledge distillation</strong> trains a small <em>student</em> to match a large <em>teacher's</em> output distribution rather than the one-hot data labels. The classic loss blends soft and hard targets, with a temperature that exposes the teacher's “dark knowledge” — the relative probabilities of <em>wrong</em> answers:</p>
+
+        <div class="eq"><span class="eq-tag">EQ 7.2 — DISTILLATION LOSS (HINTON 2015)</span>
+        $$ \mathcal{L}_{\text{KD}} = (1-\lambda)\, \mathcal{L}_{\text{CE}}(y, p_S) \;+\; \lambda\, \tau^2\, \mathrm{KL}\!\Big( p_T^{(\tau)} \,\Big\|\, p_S^{(\tau)} \Big), \qquad p^{(\tau)} = \mathrm{softmax}(z / \tau) $$
+        <div class="eq-note">A full distribution per token is a vastly richer signal than a single label — “the next token is <em>cat</em>, but <em>kitten</em> was nearly as good and <em>carburetor</em> was absurd” — which is why students train far more sample-efficiently than from raw text.</div>
+        </div>
+
+        <div class="widget" id="distill-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT 7.1 — DARK KNOWLEDGE</span><span class="w-sub">TEACHER SOFTMAX AT TEMPERATURE τ</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl">
+                <label>DISTILLATION TEMPERATURE <output id="distill-t-out">τ = 1.0</output></label>
+                <input type="range" id="distill-t" min="1" max="10" step="0.1" value="1"/>
+              </div>
+            </div>
+            <div id="distill-bars" style="margin:8px 0;"></div>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">ENTROPY OF SOFT TARGETS</div><div class="r-value" id="distill-h">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">A teacher classifying an image of a cat. At τ = 1 the target is nearly one-hot — barely more informative than a label. Raise τ and the structure appears: kitten ≈ cat, lynx plausible, loaf-of-bread amusingly possible, carburetor absurd. That ranking over wrong answers is what the student actually learns from.</div>
+        </div>
+
+        <h3>The three production flavors</h3>
+        <ul>
+          <li><strong>Logit/soft-label distillation</strong> (EQ 7.2): needs teacher logits — natural when you own the teacher (Gemini Flash from larger Gemini, Claude Haiku-class models, Llama-3.2-1B/3B from 8B/70B).</li>
+          <li><strong>Sequence-level / hard distillation:</strong> generate outputs from the teacher, SFT the student on them. All you need is API access — this is how DeepSeek-R1's reasoning was poured into Qwen/Llama students, and what most “distilled” open models mean.</li>
+          <li><strong>On-policy distillation (GKD-style):</strong> the <em>student</em> generates, the teacher grades/corrects each token (reverse-KL on student samples). Fixes exposure bias — the student gets feedback on its own mistakes, not just on teacher-perfect prefixes — and is rapidly becoming the default for reasoning transfer.</li>
+        </ul>
+        <div class="callout">
+          <span class="co-icon">PATTERN</span>
+          <p><strong>The frontier ladder.</strong> Standard industry economics: train one expensive flagship, then distill a family (pro/flash/nano) for the latency-cost curve. Capability flows downhill from each frontier generation into models 10–100× cheaper within months.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 7.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">7.3</span><h2>Quantization fundamentals</h2></div>
+        <p>Quantization maps continuous weights onto a small grid of representable values. The workhorse is uniform <strong>affine</strong> quantization; for weights, the symmetric (zero-point-free) form:</p>
+
+        <div class="eq"><span class="eq-tag">EQ 7.3 — SYMMETRIC UNIFORM QUANTIZATION</span>
+        $$ \hat{w} = s \cdot \mathrm{clamp}\!\Big( \mathrm{round}\big( w / s \big),\, -2^{b-1},\, 2^{b-1}-1 \Big), \qquad s = \frac{\max_i |w_i|}{2^{b-1}-1} $$
+        <div class="eq-note">One FP scale \(s\) per <b>group</b> of weights; the integers are stored, the scale rides along. The whole game is choosing the granularity of \(s\): per-tensor (cheapest, coarsest) → per-channel → per-group of 64–128 (the GGUF/GPTQ standard) — smaller groups isolate outliers at slightly more bits/param overhead.</div>
+        </div>
+
+        <div class="widget" id="quant-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT 7.2 — QUANTIZE A WEIGHT TENSOR</span><span class="w-sub">8,192 WEIGHTS · GAUSSIAN + OUTLIERS</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>BIT WIDTH <output id="quant-bits-out">4-bit</output></label><input type="range" id="quant-bits" min="0" max="5" step="1" value="2"/></div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>&nbsp;</label>
+                <button class="w-btn ghost" id="quant-group">group-wise scales: OFF</button>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="quant-canvas" height="280"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">FORMAT</div><div class="r-value" id="quant-fmt">—</div></div>
+              <div class="readout"><div class="r-label">LEVELS</div><div class="r-value" id="quant-levels">—</div></div>
+              <div class="readout acc"><div class="r-label">RMS ERROR</div><div class="r-value" id="quant-rmse">—</div></div>
+              <div class="readout acc"><div class="r-label">70B MODEL WEIGHT MEMORY</div><div class="r-value" id="quant-mem">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Grey: original distribution. Mint: surviving levels — mass collapses onto the grid. At 2–3 bits with one global scale, the rare outliers stretch s and crush the bulk into a few levels; switch group-wise scales ON and watch the error fall. That single observation motivates most of §7.4.</div>
+        </div>
+
+        <p><strong>The outlier problem.</strong> LLM weight matrices are friendly (near-Gaussian) but <em>activations</em> are not: past ~6B parameters, a few hidden channels carry systematically huge magnitudes. Naïve W8A8 quantization breaks on them — the discovery (LLM.int8) that shaped every method since.</p>
+      </section>
+
+      <!-- ====================== 7.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">7.4</span><h2>Post-training quantization: the methods that matter</h2></div>
+        <p><strong>PTQ</strong> compresses a finished model with a small calibration set and no (or minimal) retraining — minutes to hours, and the way virtually every deployed quantized LLM is made.</p>
+
+        <h3>GPTQ — error-correcting rounding</h3>
+        <div class="eq"><span class="eq-tag">EQ 7.4 — LAYER-WISE OBJECTIVE</span>
+        $$ \min_{\widehat{W}} \;\big\| W X - \widehat{W} X \big\|_F^2 $$
+        <div class="eq-note">Don't preserve weights — preserve the layer's <b>output</b> on real calibration activations \(X\). GPTQ quantizes one column at a time and redistributes each column's rounding error onto not-yet-quantized columns, using second-order (Hessian \(\,H = XX^\top\)) information from Optimal Brain Surgeon lineage. 3–4 bit weights with minor loss, at billion-parameter scale, in hours on one GPU.</div>
+        </div>
+
+        <h3>AWQ — protect what activations say matters</h3>
+        <div class="eq"><span class="eq-tag">EQ 7.5 — ACTIVATION-AWARE SCALING</span>
+        $$ \hat{y} = \big( W \,\mathrm{diag}(s) \big)_{\text{quantized}} \cdot \big( \mathrm{diag}(s)^{-1} x \big) $$
+        <div class="eq-note">A small fraction (~1%) of weight channels — those multiplying large activations — cause most of the damage. AWQ scales them up before quantization (and inversely scales the activations, mathematically a no-op) so rounding error lands on channels that matter least. No reconstruction loop; robust across domains; the standard for 4-bit instruction models. <b>SmoothQuant</b> applies the same migration trick to enable fast W8A8.</div>
+        </div>
+
+        <h3>The format landscape</h3>
+        <table class="data">
+          <thead><tr><th>Format / method</th><th>Bits</th><th>Quality cost</th><th>Where you meet it</th></tr></thead>
+          <tbody>
+            <tr><td>BF16 (reference)</td><td class="m">16</td><td class="m">—</td><td>Training output, quality baseline</td></tr>
+            <tr><td>FP8 (E4M3)</td><td class="m">8</td><td class="m">≈ none</td><td>Datacenter serving on Hopper/Blackwell; weights + activations + KV</td></tr>
+            <tr><td>INT8 (SmoothQuant / LLM.int8)</td><td class="m">8</td><td class="m">negligible</td><td>Older datacenter GPUs, CPUs</td></tr>
+            <tr><td>INT4 group-wise (GPTQ / AWQ / GGUF Q4_K)</td><td class="m">~4.2–4.6</td><td class="m">small, task-dependent</td><td>The local-inference default (llama.cpp, Ollama)</td></tr>
+            <tr><td>NF4 (QLoRA)</td><td class="m">~4.1</td><td class="m">small</td><td>Fine-tuning base weights (CH 06)</td></tr>
+            <tr><td>MXFP4 / NVFP4</td><td class="m">4 + micro-scales</td><td class="m">small</td><td>Blackwell-native block-scaled FP4; GPT-OSS ships in it</td></tr>
+            <tr><td>~2-bit (AQLM / QuIP#, vector quant)</td><td class="m">2–2.5</td><td class="m">visible</td><td>Research edge; rotations + codebooks</td></tr>
+          </tbody>
+        </table>
+        <p class="note"><strong>KV-cache quantization</strong> (FP8/INT4 keys and values) composes with all of the above and directly multiplies serving concurrency — revisit Instrument 03.</p>
+      </section>
+
+      <!-- ====================== 7.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">7.5</span><h2>Quantization-aware training</h2></div>
+        <p>When PTQ's accuracy floor isn't enough — extreme bit widths, or shipping a flagship at FP4 — train <em>with</em> quantization in the loop. The forward pass uses fake-quantized weights; the backward pass pretends rounding didn't happen:</p>
+
+        <div class="eq"><span class="eq-tag">EQ 7.6 — STRAIGHT-THROUGH ESTIMATOR</span>
+        $$ \frac{\partial \mathcal{L}}{\partial w} \;\approx\; \frac{\partial \mathcal{L}}{\partial \hat{w}} \cdot \mathbb{1}\big[\, |w/s| \le 2^{b-1} \big] $$
+        <div class="eq-note">round() has zero gradient almost everywhere, so the STE passes gradients straight through inside the clipping range. The model learns weights that <em>sit comfortably on the grid</em>. Cost: a (usually short) training run with training-grade infrastructure — reserved for high-volume deployments where the last percent matters. Llama-3.2's QAT+LoRA spins and Gemma's QAT releases are the open exemplars.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 7.6 ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">7.6</span><h2>Pruning &amp; structured sparsity</h2></div>
+        <p>Pruning zeroes connections outright. Magnitude pruning (drop the smallest \(|w|\)) needs no data; <strong>Wanda</strong> ranks by \(|w| \cdot \|x\|\) (weight × typical input magnitude) and prunes LLMs to ~50% unstructured sparsity with little loss and no retraining; SparseGPT runs a GPTQ-style reconstruction.</p>
+        <ul>
+          <li><strong>Unstructured</strong> sparsity is hard to monetize — random zeros don't speed up dense matmul units.</li>
+          <li><strong>2:4 semi-structured</strong> (two zeros in every four weights) is the exception: NVIDIA tensor cores execute it at up to 2× — the one sparsity pattern with first-class hardware.</li>
+          <li><strong>Structural pruning + heal:</strong> remove whole layers/heads/width, then distill briefly to recover (Minitron-style: 15B → 8B → 4B families at a fraction of from-scratch cost).</li>
+          <li><strong>MoE as “learned sparsity”:</strong> the most successful sparsity story of all is architectural — activate only the experts you need (Chapter 09).</li>
+        </ul>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>The model is trained, aligned, adapted, and shrunk.</strong> Chapter 08: what actually happens when a request arrives — prefill, decode, batching, paging, speculation, and the serving stack that turns weights into a product.</p>
+        </div>
+      </section>
+
+      <nav class="pager">
+        <a href="06-finetuning.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">06</span> Fine-tuning</div></a>
+        <a class="next" href="08-inference.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">08</span> Inference &amp; Deployment</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — VOL II · CH 07</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/glossary.js"></script>
+<script src="../assets/js/shared.js"></script>
+<script src="../assets/js/search.js"></script>
+<script src="../assets/js/interactives.js"></script>
+</body>
+</html>

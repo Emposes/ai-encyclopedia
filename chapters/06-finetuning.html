@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>06 · Fine-tuning — LLM Field Manual</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css" />
+</head>
+<body>
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ VOL II / 06 / FINE-TUNING</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="07-compression.html">NEXT: COMPRESSION →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">CHAPTER 06 / 10</div>
+    <h1>Fine-tuning</h1>
+    <p class="lede">Adapting a pre-trained giant to your task is mostly a question of <strong>which parameters you allow to move</strong>. This chapter covers the spectrum from full fine-tuning to parameter-efficient methods — above all LoRA, whose low-rank algebra lets a laptop-class GPU specialize a multi-billion-parameter model.</p>
+    <div class="ch-meta">
+      <span>READING TIME<b>≈ 20 MIN</b></span>
+      <span>BUILDS ON<b>CH 04–05</b></span>
+      <span>INSTRUMENTS<b>LoRA RANK · VRAM FIT</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">6.1</span>To tune or not</a>
+      <a href="#s2"><span class="n">6.2</span>LoRA</a>
+      <a href="#s3"><span class="n">6.3</span>QLoRA</a>
+      <a href="#s4"><span class="n">6.4</span>The PEFT zoo</a>
+      <a href="#s5"><span class="n">6.5</span>A practical recipe</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 6.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">6.1</span><h2>To tune or not to tune</h2></div>
+        <p>Fine-tuning is the <em>third</em> tool to reach for, not the first. The escalation ladder:</p>
+        <table class="data">
+          <thead><tr><th>Approach</th><th>Changes</th><th>Right when…</th><th>Wrong when…</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Prompting</strong></td><td class="m">nothing</td><td>Instructions + few-shot examples suffice (they usually do)</td><td>Behavior must be deeply consistent or token budget matters at scale</td></tr>
+            <tr><td><strong>RAG</strong></td><td class="m">context</td><td>The gap is <em>knowledge</em> — fresh, private, or vast</td><td>The gap is <em>behavior</em>, format, or skill</td></tr>
+            <tr><td><strong>Fine-tuning</strong></td><td class="m">weights</td><td>Style, format, domain dialect, tool protocols, narrow skills; latency/cost via smaller specialized models</td><td>You're trying to inject facts (fragile, stale) or fix what a bigger model does out of the box</td></tr>
+          </tbody>
+        </table>
+        <p><strong>Full fine-tuning</strong> updates every weight — maximum capacity, but it costs training-grade memory (≈16 bytes/param with AdamW: a 7B model wants ~112 GB before activations), produces a full model copy per task, and courts <strong>catastrophic forgetting</strong> of general capability. Parameter-efficient fine-tuning (PEFT) exists to dodge all three.</p>
+      </section>
+
+      <!-- ====================== 6.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">6.2</span><h2>LoRA: the low-rank hypothesis</h2></div>
+        <p><strong>Low-Rank Adaptation</strong> rests on an empirical observation: the weight <em>update</em> a fine-tune needs has low intrinsic rank — the task lives in a tiny subspace of the full parameter space. So freeze \(W_0\) and learn the update as a product of two thin matrices:</p>
+
+        <div class="eq"><span class="eq-tag">EQ 6.1 — LoRA</span>
+        $$ W \;=\; W_0 + \Delta W \;=\; W_0 + \frac{\alpha}{r}\, B A, \qquad A \in \mathbb{R}^{r \times d_{\text{in}}},\; B \in \mathbb{R}^{d_{\text{out}} \times r},\; r \ll d $$
+        <div class="eq-note">\(A\) starts Gaussian, \(B\) starts at <b>zero</b> — so training begins exactly at the pre-trained model and drifts smoothly away. \(\alpha/r\) rescales so behavior is stable across ranks. Trainable parameters per matrix drop from \(d_{\text{out}} d_{\text{in}}\) to \(r(d_{\text{in}} + d_{\text{out}})\). After training, \(BA\) can be <b>merged into \(W_0\)</b> — zero inference overhead — or kept separate and hot-swapped, letting one server multiplex hundreds of LoRA “personalities” over a single base model.</div>
+        </div>
+
+        <div class="widget" id="lora-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT 6.1 — LoRA PARAMETER COUNTER</span><span class="w-sub">ONE d×d PROJECTION · EQ 6.1</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>MODEL WIDTH d <output id="lora-d-out">8,192</output></label><input type="range" id="lora-d" min="10" max="14" step="1" value="13"/></div>
+              <div class="ctl"><label>RANK r <output id="lora-r-out">16</output></label><input type="range" id="lora-r" min="0" max="9" step="1" value="4"/></div>
+            </div>
+            <div style="border:1px solid var(--hairline);border-radius:4px;padding:14px;margin-top:4px;">
+              <div style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.16em;color:#636363;margin-bottom:8px;">TRAINABLE FRACTION OF THE MATRIX</div>
+              <div style="height:14px;background:rgba(47,50,52,.4);border-radius:2px;overflow:hidden;">
+                <div id="lora-bar" style="height:100%;width:1%;background:#a6f2cc;transition:width .25s ease-in-out;"></div>
+              </div>
+            </div>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">FULL ΔW PARAMS (d²)</div><div class="r-value" id="lora-full">—</div></div>
+              <div class="readout acc"><div class="r-label">LoRA PARAMS (2dr)</div><div class="r-value" id="lora-params">—</div></div>
+              <div class="readout acc"><div class="r-label">TRAINABLE %</div><div class="r-value" id="lora-pct">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">At d = 8,192, rank 16 trains 0.39% of the matrix. Applied across a 70B model's attention + MLP projections, a typical r = 16 adapter is ~200–400 MB of bf16 — versus 140 GB for the model it steers.</div>
+        </div>
+
+        <p class="note"><strong>Where to attach, what rank.</strong> Original practice targeted only \(W_Q, W_V\); current default is <em>all linear layers</em> (Q, K, V, O, gate, up, down), which beats raising the rank at equal parameter count. Ranks 8–64 cover most tasks; style transfers sit low, new skills (code dialects, tool-calling formats) sit higher. rsLoRA fixes the scale to \(\alpha/\sqrt{r}\) for stability at high rank; DoRA decomposes magnitude from direction for a small quality bump.</p>
+      </section>
+
+      <!-- ====================== 6.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">6.3</span><h2>QLoRA: fine-tuning on one GPU</h2></div>
+        <p><strong>QLoRA</strong> stacks three tricks so a 65–70B model fine-tunes on a single 48 GB card: (1) freeze the base weights in 4-bit <strong>NF4</strong>; (2) train bf16 LoRA adapters on top, dequantizing on the fly per matmul; (3) page optimizer states to CPU on memory spikes.</p>
+
+        <div class="eq"><span class="eq-tag">EQ 6.2 — NF4: QUANTILES OF A GAUSSIAN</span>
+        $$ q_i = \mathrm{Quantile}_{\mathcal{N}(0,1)}\!\left( \delta + \frac{i}{15}\,(1 - 2\delta) \right), \quad i = 0, \ldots, 15, \quad \delta \approx 0.03 \qquad\text{(then normalized to } [-1, 1]\text{)} $$
+        <div class="eq-note">Trained weights are approximately Gaussian, so NF4 places its 16 levels at Gaussian <b>quantiles</b> — equal probability mass per bin, minimizing expected error where weights actually live (dense near zero, sparse at the tails). A second-order trick, <b>double quantization</b>, quantizes the per-block scale factors themselves, saving another ~0.4 bits/param. Full quantization theory: Chapter 07.</div>
+        </div>
+
+        <p class="note">Gradients flow <em>through</em> the frozen 4-bit weights into the adapters only. Quality matches 16-bit LoRA closely on instruction-tuning benchmarks — the canonical result that made serious fine-tuning a consumer-hardware activity.</p>
+
+        <div class="widget" id="vram-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT 6.2 — WILL IT FINE-TUNE?</span><span class="w-sub">VRAM ESTIMATE · SINGLE NODE</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>MODEL SIZE <output id="vram-n-out">8B params</output></label><input type="range" id="vram-n" min="0" max="6.2" step="0.1" value="3"/></div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>METHOD</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost" data-vram-mode="full">FULL FT</button>
+                  <button class="w-btn ghost" data-vram-mode="lora">LoRA</button>
+                  <button class="w-btn ghost on" data-vram-mode="qlora">QLoRA</button>
+                </div>
+              </div>
+            </div>
+            <div id="vram-bars" style="margin-top:8px;"></div>
+          </div>
+          <div class="w-note">Rule-of-thumb totals (weights + optimizer + modest activations at batch 1, seq 2K). Full fine-tuning a 70B wants ~1.1 TB; QLoRA squeezes the same model under 48 GB. Vertical lines mark common cards.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 6.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">6.4</span><h2>The PEFT zoo, briefly</h2></div>
+        <table class="data">
+          <thead><tr><th>Method</th><th>What trains</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td><strong>LoRA / QLoRA</strong></td><td class="m">low-rank ΔW</td><td>The default. Mergeable, swappable, multi-tenant.</td></tr>
+            <tr><td><strong>Adapters (serial)</strong></td><td class="m">small bottleneck MLPs inserted per block</td><td>The 2019 original; adds inference latency, now rare.</td></tr>
+            <tr><td><strong>Prefix / prompt tuning</strong></td><td class="m">virtual KV prefixes or input embeddings</td><td>Tiny footprint; weaker on hard tasks; fully reversible.</td></tr>
+            <tr><td><strong>(IA)³</strong></td><td class="m">per-channel rescaling vectors</td><td>Orders of magnitude fewer params than LoRA; niche.</td></tr>
+            <tr><td><strong>BitFit</strong></td><td class="m">bias terms only</td><td>A useful lower bound on “how little is enough”.</td></tr>
+          </tbody>
+        </table>
+        <p class="note">Everything in Chapter 05 composes with PEFT: DPO-with-LoRA is the standard budget alignment stack, and GRPO over LoRA adapters is increasingly how small reasoning fine-tunes ship.</p>
+      </section>
+
+      <!-- ====================== 6.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">6.5</span><h2>A practical recipe</h2></div>
+        <pre><code><span class="c"># Defaults that survive contact with reality (7–70B, instruction-style task)</span>
+<span class="k">base</span>:        strongest instruct model that fits serving budget
+<span class="k">method</span>:      QLoRA (NF4) · r=16 · α=32 · all linear layers · dropout 0.05
+<span class="k">data</span>:        500–50k examples; dedup; decontaminate against your evals;
+             quality &gt;&gt; quantity — read 50 examples yourself
+<span class="k">format</span>:      exact chat template of the base model (silent killer #1)
+<span class="k">lr</span>:          1e-4 (LoRA) · cosine decay · warmup 3% · 1–3 epochs
+<span class="k">batch</span>:       effective 64–128 sequences via gradient accumulation
+<span class="k">eval</span>:        held-out task metric + a general benchmark (forgetting probe)
+             + manual review of 50 outputs per checkpoint
+<span class="k">ship</span>:        merge adapter for latency · or serve multi-LoRA (S-LoRA/vLLM)</code></pre>
+        <div class="callout warn">
+          <span class="co-icon">PITFALLS</span>
+          <p><strong>The four classic failures:</strong> (1) wrong/mismatched chat template — model answers fine but formats garbage; (2) eval contamination — your test set leaked into training data and the numbers are fiction; (3) overfitting epoch 3+ — loss down, vibes down; (4) silent capability regression — always probe general skills, not just the target task.</p>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>Adaptation changes what a model says; compression changes what it costs.</strong> Chapter 07: distillation, the quantization stack from absmax to GPTQ/AWQ, and why bits-per-weight is the real unit of deployment.</p>
+        </div>
+      </section>
+
+      <nav class="pager">
+        <a href="05-posttraining.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">05</span> Post-training</div></a>
+        <a class="next" href="07-compression.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">07</span> Compression</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — VOL II · CH 06</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/glossary.js"></script>
+<script src="../assets/js/shared.js"></script>
+<script src="../assets/js/search.js"></script>
+<script src="../assets/js/interactives.js"></script>
+</body>
+</html>

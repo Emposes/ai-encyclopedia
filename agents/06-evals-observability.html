@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>06 · Evals, Observability &amp; Cost — AI Encyclopedia</title>
+<meta name="description" content="How to evaluate, observe, and price agents: the eval pyramid, the unbiased pass@k estimator, LLM-judged trajectories, trace-first observability, cost per resolved task, and the production checklist." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css" />
+</head>
+<body>
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ VOL IV / AGENT ENGINEERING / 06 / EVALS, OBSERVABILITY &amp; COST</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../gym/index.html">NEXT: THE GYM →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">VOLUME IV — AGENT ENGINEERING · CHAPTER 06 / 06</div>
+    <h1>Evals, Observability &amp; Cost</h1>
+    <p class="lede">Five chapters of this volume taught you to build agents. This one teaches you to know whether they work, why they fail, and what they cost — because in production, <strong>you ship what you measure, and an unmeasured agent is an outage with a head start</strong>. We climb the eval pyramid, derive the unbiased pass@k estimator, hire (and audit) a trajectory judge, make traces first-class artifacts, and finish with the only KPI that matters: cost per <em>resolved</em> task.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>ADVANCED</b></span>
+      <span>READING TIME<b>≈ 25 MIN</b></span>
+      <span>BUILDS ON<b>VOL IV CH 01–05 · VOL III CH 07</b></span>
+      <span>INSTRUMENTS<b>PASS@K EXPLORER · COST OF A TASK</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">6.1</span>Why agent evals are hard</a>
+      <a href="#s2"><span class="n">6.2</span>The eval pyramid</a>
+      <a href="#s3"><span class="n">6.3</span>pass@k, read honestly</a>
+      <a href="#s4"><span class="n">6.4</span>Judged trajectories</a>
+      <a href="#s5"><span class="n">6.5</span>Observability</a>
+      <a href="#s6"><span class="n">6.6</span>Cost &amp; token accounting</a>
+      <a href="#s7"><span class="n">6.7</span>The production checklist</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 6.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">6.1</span><h2>Why agent evals are hard</h2></div>
+        <p>Classical LLM evaluation assumes a clean contract: one input, one output, one reference to compare against. Agents break every clause of that contract at once:</p>
+        <ul>
+          <li><strong>Nondeterminism is structural, not incidental.</strong> Sampling temperature, tool side effects, live APIs, mutable filesystems, rate limits — run the same task twice and you get two different trajectories, sometimes two different <em>outcomes</em>. A single-run eval of an agent is a coin flip wearing a lab coat. The fix is statistical: multiple seeded runs per task, and reported variance, not just a point estimate (the noise-floor logic of Vol III · EQ P7.1 applies with larger error bars).</li>
+          <li><strong>Errors compound across steps.</strong> A model that takes the right action 98% of the time finishes a 30-step task at \(0.98^{30} \approx 0.55\) if errors are fatal and independent. They are neither, fully — recovery loops (Ch 05) buy back some of that — but the geometry is real: per-step metrics wildly overstate end-to-end reliability, and small per-step gains move task success a lot.</li>
+          <li><strong>There is no single right answer.</strong> Two correct trajectories for "fix this bug" may share zero tool calls and produce different-but-both-valid patches. String-matching transcripts is hopeless; you must verify <em>outcomes</em> (does the test suite pass? does the row exist?) or score <em>process quality</em> with rubrics — never diff trajectories against a golden transcript.</li>
+          <li><strong>The world is part of the system under test.</strong> A flaky dependency, a changed API response, a repo that drifted since the task was authored — all show up as "agent regressions." Serious harnesses pin the environment: containerized repos, recorded API fixtures, snapshot databases.</li>
+          <li><strong>Evals are expensive.</strong> One end-to-end run can take minutes and cost real dollars, so statistical power is something you budget for, not something you get for free. This is exactly why the next section is a pyramid and not a single metric.</li>
+        </ul>
+        <p>The consequence: agent evaluation is a layered system you engineer, with the same care as the agent itself. Teams that treat it as an afterthought discover their agent's true success rate from customer tickets.</p>
+      </section>
+
+      <!-- ====================== 6.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">6.2</span><h2>The eval pyramid</h2></div>
+        <p>Like the testing pyramid in software, agent evals trade fidelity against speed. Cheap, deterministic checks run thousands of times a day and catch most regressions; expensive end-to-end runs are the ground truth you can only afford nightly. Each layer catches what the one below cannot see:</p>
+
+        <figure class="figure" data-reveal>
+          <div class="fig-head"><span class="fig-id">FIG A6.A</span><span class="fig-title">THE EVAL PYRAMID — VOLUME DOWN, FIDELITY UP</span></div>
+          <div class="fig-body">
+            <svg viewBox="0 0 880 300" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Four-layer eval pyramid from prompt evals to end-to-end task success">
+              <rect class="dg-box-accent" x="330" y="34"  width="220" height="46" rx="4" data-pop/>
+              <text class="dg-label-acc" x="440" y="54" text-anchor="middle">L3 · END-TO-END TASK SUCCESS</text>
+              <text class="dg-label" x="440" y="70" text-anchor="middle">harness verifies world state · nightly · dollars/run</text>
+
+              <rect class="dg-box" x="280" y="96" width="320" height="46" rx="4" data-pop/>
+              <text class="dg-label" x="440" y="116" text-anchor="middle">L2 · TRAJECTORY EVALS</text>
+              <text class="dg-label" x="440" y="132" text-anchor="middle">rubric or judge over the full step sequence</text>
+
+              <rect class="dg-box" x="230" y="158" width="420" height="46" rx="4" data-pop/>
+              <text class="dg-label" x="440" y="178" text-anchor="middle">L1 · TOOL-CALL ACCURACY</text>
+              <text class="dg-label" x="440" y="194" text-anchor="middle">right tool, right args, schema-valid · vs golden calls</text>
+
+              <rect class="dg-box" x="180" y="220" width="520" height="46" rx="4" data-pop/>
+              <text class="dg-label" x="440" y="240" text-anchor="middle">L0 · PROMPT EVALS</text>
+              <text class="dg-label" x="440" y="256" text-anchor="middle">deterministic asserts on single completions · CI on every commit</text>
+
+              <path class="dg-line" d="M120 250 V50" data-draw/>
+              <path class="dg-line" d="M115 60 l5 -10 5 10" data-draw/>
+              <text class="dg-label" x="120" y="276" text-anchor="middle">FIDELITY · COST</text>
+              <path class="dg-line" d="M760 50 V250" data-draw/>
+              <path class="dg-line" d="M755 240 l5 10 5 -10" data-draw/>
+              <text class="dg-label" x="760" y="276" text-anchor="middle">VOLUME · SPEED</text>
+            </svg>
+          </div>
+        </figure>
+
+        <table class="data">
+          <thead><tr><th>Layer</th><th>Unit scored</th><th>Oracle</th><th>Cost / run</th><th>What it misses</th></tr></thead>
+          <tbody>
+            <tr><td><strong>L0 — Prompt evals</strong></td><td class="m">one completion</td><td>asserts: contains / parses / classifies correctly</td><td class="m">~free</td><td>Everything multi-step; passes while the agent loops forever</td></tr>
+            <tr><td><strong>L1 — Tool-call accuracy</strong></td><td class="m">one decision</td><td>golden tool call: name + args match (semantically, not byte-wise)</td><td class="m">¢</td><td>Compounding: 95% per-step ≠ 95% per-task</td></tr>
+            <tr><td><strong>L2 — Trajectory evals</strong></td><td class="m">the step sequence</td><td>rubric, scored by humans or an LLM judge (§6.4)</td><td class="m">¢¢</td><td>Judge bias; a beautiful trajectory can still end in the wrong answer</td></tr>
+            <tr><td><strong>L3 — End-to-end success</strong></td><td class="m">final world state</td><td class="hl">harness verification: tests pass, record exists, file correct</td><td class="m">$</td><td>The <em>why</em> — a pass/fail bit with no diagnosis</td></tr>
+          </tbody>
+        </table>
+
+        <p>The raw material for every layer is the same: a <strong>golden set</strong> — a small, frozen, versioned collection of tasks with verified outcomes. The discipline you learned for prompts (Vol III Ch 07) transfers intact: 30–200 tasks drawn from real traffic and real failures, decontaminated from anything the model might have memorized, pinned alongside the prompt and tool versions they test. Every production incident you fix becomes a new golden task. The set is never edited casually — when it changes, every historical score changes meaning.</p>
+        <p class="note">The pyramid is also a debugging router. L3 fails but L2 looks clean? Suspect the environment or the verifier. L2 degrades while L1 holds? The individual decisions are fine but the <em>plan</em> is drifting — look at context engineering (Ch 02). L1 drops after a tool-description edit? You just measured the blast radius of a one-line change.</p>
+      </section>
+
+      <!-- ====================== 6.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">6.3</span><h2>pass@k, read honestly</h2></div>
+        <p><strong>pass@k</strong> answers: if I let the agent attempt the task \(k\) times, what is the probability that at least one attempt succeeds? Estimating it naively is a trap. You could sample \(k\) runs, check if any passed, and average — but that wastes samples and has brutal variance. You could compute the per-attempt success rate \(c/n\) from \(n\) runs and plug it into \(1-(1-c/n)^k\) — but that estimator is <em>biased low</em>: it treats your \(k\) hypothetical draws as resampling with replacement from the empirical rate, and the bias is worst exactly where benchmarks live (small \(n\), small \(c\)). The fix, popularized by the Codex paper (Chen et al., 2021), is combinatorial:</p>
+
+        <div class="eq"><span class="eq-tag">EQ A6.1 — UNBIASED pass@k ESTIMATOR</span>
+        $$ \widehat{\text{pass@}k} \;=\; \mathop{\mathbb{E}}_{\text{tasks}} \left[\, 1 \;-\; \frac{\dbinom{n-c}{k}}{\dbinom{n}{k}} \,\right] $$
+        <div class="eq-note">Per task: draw \(n \ge k\) samples, count \(c\) correct. \(\binom{n-c}{k}/\binom{n}{k}\) is exactly the probability that a uniformly random \(k\)-subset of your \(n\) samples contains <em>zero</em> successes — so its complement is the chance at least one of \(k\) passes. <b>This is unbiased for any \(n \ge k\)</b>; the plug-in \(1-(1-c/n)^k\) systematically underestimates. If \(n - c &lt; k\), the numerator is zero and the estimate is exactly 1. Compute it as the product \(\prod_{i=0}^{k-1}\frac{n-c-i}{\,n-i\,}\) — never with raw factorials, which overflow past \(n \approx 170\).</div>
+        </div>
+
+        <p><strong>Now the honesty clause.</strong> pass@1 is what a production agent experiences: one attempt, no second chances. pass@8 is what a system with eight attempts <em>and a free oracle to pick the winner</em> experiences. A model that solves a task 5% of the time per attempt posts pass@1 = 5% but pass@8 ≈ 34% — a 7× flattery factor, earned entirely by the harness, not the model. pass@8 is a legitimate number when you actually run best-of-\(k\) with a cheap verifier (unit tests, schema checks) to select among attempts. It is marketing when the headline omits the \(k\). When you read any benchmark claim, demand four facts: <em>k</em>, <em>n</em>, the sampling temperature (pass@1 at \(T=0\) and pass@1 averaged over \(T=0.8\) samples are different quantities), and the scaffold.</p>
+        <p>That last one dominates more than most people expect. <strong>SWE-bench-style harness evals</strong> are the L3 gold standard for coding agents: the harness drops the agent into a containerized repo at a pinned commit, the agent produces a patch, and the harness runs the repo's own tests — the previously failing ones must now pass (<code>FAIL_TO_PASS</code>) without breaking the rest (<code>PASS_TO_PASS</code>). Resolution is verified by execution, not by judgment. But the published number is a property of the <em>agent system</em> — model + scaffold + tools + retry budget — and leaderboard climbs mix all four. The Verified subset exists because hundreds of original tasks turned out to be unsolvable or under-specified; contamination remains a live concern for any repo that predates a model's training cutoff. Read harness numbers as: "this scaffold, this model, this k." Nothing more transfers.</p>
+
+        <div class="widget" id="ev-pk" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT A6.1 — PASS@K EXPLORER</span><span class="w-sub">EQ A6.1 · EXACT ESTIMATOR · LIVE</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>SAMPLES PER TASK n <output id="ev-pk-n-out">50</output></label><input type="range" id="ev-pk-n" min="5" max="200" step="1" value="50"/></div>
+              <div class="ctl"><label>CORRECT SAMPLES c <output id="ev-pk-c-out">10</output></label><input type="range" id="ev-pk-c" min="0" max="50" step="1" value="10"/></div>
+              <div class="ctl"><label>ATTEMPT BUDGET k <output id="ev-pk-k-out">8</output></label><input type="range" id="ev-pk-k" min="1" max="32" step="1" value="8"/></div>
+            </div>
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>PRESETS</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost" data-ev-pk-preset="weak">WEAK MODEL</button>
+                  <button class="w-btn ghost" data-ev-pk-preset="strong">STRONG MODEL</button>
+                  <button class="w-btn ghost" data-ev-pk-preset="lucky">LUCKY BENCHMARK</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="ev-pk-canvas" height="250"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">PASS@1 (= c/n)</div><div class="r-value" id="ev-pk-p1">—</div></div>
+              <div class="readout acc"><div class="r-label">PASS@k AT SELECTED k</div><div class="r-value" id="ev-pk-pk">—</div></div>
+              <div class="readout"><div class="r-label">FLATTERY (PASS@k ÷ PASS@1)</div><div class="r-value" id="ev-pk-flat">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">WEAK MODEL: 5% per-attempt success becomes ≈35% at k = 8 — sampling does the work. STRONG MODEL: pass@8 saturates near 100% and stops discriminating between good and great. LUCKY BENCHMARK: with only n = 10 samples and c = 1, pass@8 reads 80% off a single success — small-n harnesses make weak models look heroic. The curve is the exact estimator, not a fit.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 6.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">6.4</span><h2>LLM-judged trajectories</h2></div>
+        <p>End-to-end harnesses output one bit per run. When the bit is 0, you need to know <em>which step</em> went wrong — and grading hundreds of fifty-step transcripts is not a job humans accept twice. So you hire a judge model to score trajectories. The craft is to make the judge grade <strong>checkable per-step properties, not vibes</strong>:</p>
+        <table class="data">
+          <thead><tr><th>Rubric item (per step)</th><th>Form</th><th>What it catches</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Tool choice defensible?</strong></td><td class="m">binary + cite the step</td><td>Search-when-it-should-read, write-before-verify</td></tr>
+            <tr><td><strong>Arguments grounded?</strong></td><td class="m">binary</td><td>Args invented rather than copied from a prior observation — the hallucinated-ID classic</td></tr>
+            <tr><td><strong>Result actually read?</strong></td><td class="m">binary</td><td>Next action contradicts what the tool just returned</td></tr>
+            <tr><td><strong>State re-verified after mutation?</strong></td><td class="m">binary</td><td>Fire-and-forget writes; assuming success on a 500</td></tr>
+            <tr><td><strong>Termination correct?</strong></td><td class="m">binary, end of run</td><td>Declared victory early; gave up with budget remaining; asked the user what a tool could answer</td></tr>
+          </tbody>
+        </table>
+        <p>Binary, citable items keep the judge auditable: every "no" must point to a step number, which a human can check in seconds. Aggregate to a per-run score, then track the <em>distribution</em> across the golden set.</p>
+        <p><strong>Every judge bias from Vol III Ch 07 applies — doubly.</strong> Trajectories are long, so the judge inherits the lost-in-the-middle problem and quietly skims steps 12 through 38. Style bias gets worse: an agent that narrates its failure confidently ("I have verified the fix") outscores one that succeeds tersely, unless the rubric forces evidence citations. Position bias contaminates pairwise trajectory comparisons exactly as it does single completions — judge both orders or don't bother. Self-preference is sharper still, because the judge recognizes its own family's <em>action style</em>, not just prose style: judge with a different model family than the agent. And add one bias unique to this setting: <strong>outcome leakage</strong> — if the judge can see that the run ended in success, it retroactively scores every step as reasonable. Strip the final outcome when you want a genuine process grade.</p>
+        <p class="note">Calibrate before you trust: hand-label 50–100 trajectories, measure judge–human agreement per rubric item, and only automate the items where agreement is high. Keep a standing human spot-audit (5–10% of judged runs, forever). A judge you never audit is a metric drifting in the dark.</p>
+      </section>
+
+      <!-- ====================== 6.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">6.5</span><h2>Observability: the trace is the artifact</h2></div>
+        <p>For an agent, the log is not a debugging aid — <strong>the trace is the primary artifact the system produces</strong>, more durable than any single answer. A production-grade trace records, for every step: the model and prompt version, the rendered context (or a hash plus a pointer to it), the tool called, the exact arguments, the result (truncated, with a content hash), input and output token counts, cache hit tokens, latency, and the stop reason. Structure it as a span tree — sub-agents (Ch 05) nest naturally — and store it where engineers can query it, not where it rotates out after 24 hours.</p>
+        <p>Raw traces become knowledge through a <strong>failure taxonomy</strong>. Five classes cover the overwhelming majority of agent failures, and each has a recognizable trace signature:</p>
+        <table class="data">
+          <thead><tr><th>Failure class</th><th>Trace signature</th><th>Usual root cause</th><th>First fix to try</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Wrong tool</strong></td><td class="m">plausible call, wrong instrument for the goal</td><td>Overlapping or vague tool descriptions</td><td class="hl">Sharpen descriptions; merge near-duplicate tools (Ch 03)</td></tr>
+            <tr><td><strong>Bad args</strong></td><td class="m">schema errors, or valid-but-wrong values</td><td>Loose schemas; required context truncated away</td><td class="hl">Tighten schemas + validate server-side; check what compaction dropped</td></tr>
+            <tr><td><strong>Hallucinated state</strong></td><td class="m">acts on a file / ID / result that no observation ever returned</td><td>Model filled a gap from priors instead of reading</td><td class="hl">Force a read-before-write discipline; keep ground truth in context (Ch 02)</td></tr>
+            <tr><td><strong>Gave up</strong></td><td class="m">premature "I cannot" with budget and tools remaining</td><td>Over-cautious prompt; one failed call treated as fatal</td><td class="hl">Prompt for retry-with-variation; surface remaining budget to the model</td></tr>
+            <tr><td><strong>Loop</strong></td><td class="m">same call (or A→B→A cycle) with near-identical args, 3+ times</td><td>No new information entering context between attempts</td><td class="hl">Loop detector in the runtime; inject "you already tried this" (Ch 05)</td></tr>
+          </tbody>
+        </table>
+        <p>Tag every failed run with one (or more) of these classes — by judge, by heuristic, or by hand — and the vague complaint "the agent is flaky" becomes a Pareto chart with an owner per bar. In practice the distribution is never uniform, and the top class usually points at one tool description or one compaction rule.</p>
+        <p><strong>Debugging an agent means replaying the trace.</strong> Because the trace stores every tool result, you can re-run the model deterministically against recorded observations — no live side effects — and bisect for the exact step where the agent's belief diverged from the world. Change the prompt, replay the same recorded run, and watch whether the divergence step moves. This is the agent engineer's equivalent of a time-travel debugger, and it is the single strongest argument for paying the storage bill on full traces.</p>
+        <div class="callout warn">
+          <span class="co-icon">CAVEAT</span>
+          <p><strong>Traces are radioactive.</strong> They contain user data, secrets that transited tool calls, and occasionally credentials a tool should never have returned. Redact at write time (not query time), encrypt at rest, scope access, and set retention deliberately: 100% of traces for days-to-weeks, a sample plus all failures for the long term.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 6.6 ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">6.6</span><h2>Cost &amp; token accounting</h2></div>
+        <p>An agent's bill is a sum over loop iterations, and each iteration re-sends the (growing) context. Two prices apply to input: the full rate for fresh tokens and a deep discount — commonly around 10× cheaper — for tokens served from the provider's prefix cache, which is why cache-friendly context layout (Ch 02) is a line item, not a nicety:</p>
+
+        <div class="eq"><span class="eq-tag">EQ A6.2 — COST OF A RUN, COST OF A RESULT</span>
+        $$ C_{\text{run}} \;=\; \sum_{s=1}^{S} \Big[\, n^{(s)}_{\text{in}} \big( h\, p_{\text{cached}} + (1-h)\, p_{\text{in}} \big) \;+\; n^{(s)}_{\text{out}}\, p_{\text{out}} \,\Big], \qquad C_{\text{resolved}} \;=\; \frac{C_{\text{run}}}{\Pr[\text{resolved}]} $$
+        <div class="eq-note">\(S\) steps; \(n^{(s)}_{\text{in}}, n^{(s)}_{\text{out}}\) input/output tokens at step \(s\); \(h\) the cache hit rate; \(p_{\text{cached}} \approx 0.1\, p_{\text{in}}\) on most current pricing. Because context accumulates, \(n^{(s)}_{\text{in}}\) grows roughly linearly in \(s\) — so without compaction, <b>run cost grows quadratically in step count</b>: the sum of a linearly growing context is \(O(S^2)\). And the right-hand identity is the one executives should see: dividing by the resolution rate converts "cost per attempt" into <b>cost per task actually solved</b> — the only number comparable across models, scaffolds, and vendors.</div>
+        </div>
+
+        <p><strong>Cost per resolved task is the real KPI</strong> because it correctly punishes false economies. A worked example with the instrument's illustrative prices — 20 steps, 12K average input and 700 output tokens per step, 60% cache hit rate. All-frontier ($3.00 in / $15.00 out per Mtok): about <strong>$0.54 per run</strong>; at a 65% resolution rate, <strong>≈ $0.83 per resolved task</strong>, or ≈ $5,400 a month at 10K runs. Now route the 14 mechanical steps (file reads, greps, summarization) to the small tier ($0.15 / $0.60) and keep the 6 decision steps on frontier: the run drops to <strong>≈ $0.18 — 3× cheaper</strong>. If resolution holds near 60%, cost per resolved task falls to ≈ $0.30 and the routing pays. If resolution collapses to 20% — which sloppy down-tiering absolutely can do — cost per resolved task is ≈ $0.90 and the "savings" made you worse off than frontier-everywhere. <strong>Never approve a routing change on cost per run; approve it on cost per resolved task, re-measured.</strong></p>
+
+        <div class="widget" id="ev-ct" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT A6.2 — COST OF A TASK</span><span class="w-sub">EQ A6.2 · ILLUSTRATIVE PRICE TIERS</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>STEPS PER RUN S <output id="ev-ct-steps-out">20</output></label><input type="range" id="ev-ct-steps" min="1" max="60" step="1" value="20"/></div>
+              <div class="ctl"><label>AVG INPUT / STEP <output id="ev-ct-in-out">12K tok</output></label><input type="range" id="ev-ct-in" min="1" max="200" step="1" value="12"/></div>
+              <div class="ctl"><label>AVG OUTPUT / STEP <output id="ev-ct-otok-out">700 tok</output></label><input type="range" id="ev-ct-otok" min="50" max="4000" step="50" value="700"/></div>
+            </div>
+            <div class="ctl-row">
+              <div class="ctl"><label>CACHE HIT RATE h <output id="ev-ct-cache-out">60%</output></label><input type="range" id="ev-ct-cache" min="0" max="95" step="5" value="60"/></div>
+              <div class="ctl"><label>RESOLUTION RATE <output id="ev-ct-succ-out">65%</output></label><input type="range" id="ev-ct-succ" min="5" max="100" step="5" value="65"/></div>
+              <div class="ctl"><label>MODEL TIER (ILLUSTRATIVE $/MTOK)</label>
+                <select id="ev-ct-tier" class="w-input">
+                  <option value="frontier" selected>FRONTIER — $3.00 in / $15.00 out</option>
+                  <option value="mid">MID — $0.80 in / $4.00 out</option>
+                  <option value="small">SMALL — $0.15 in / $0.60 out</option>
+                </select>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="ev-ct-canvas" height="230"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">COST / RUN</div><div class="r-value" id="ev-ct-run">—</div></div>
+              <div class="readout acc"><div class="r-label">COST / RESOLVED TASK</div><div class="r-value" id="ev-ct-resolved">—</div></div>
+              <div class="readout"><div class="r-label">MONTHLY @ 10K RUNS</div><div class="r-value" id="ev-ct-month">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Bars show cost per run for all three tiers at your dials (cached input billed at 10% of the input rate); the selected tier feeds the readouts. Push steps to 60 and watch output stay a rounding error while input dominates — then raise the cache hit rate and reclaim most of it. The trap to internalize: switching tiers moves the bar instantly, but the RESOLUTION RATE slider is your honesty dial — drop it to what the cheap tier actually achieves before celebrating. Prices are illustrative; the algebra is EQ A6.2 exactly.</div>
+        </div>
+
+        <p class="note">Token accounting belongs in the trace (§6.5), per step, not just per run — it is how you discover that one chatty tool returns 40K tokens of JSON nobody reads, or that a prompt edit silently broke prefix caching and doubled the bill. Budget caps (next section) are enforced from these same counters, inside the loop, in real time.</p>
+      </section>
+
+      <!-- ====================== 6.7 ====================== -->
+      <section class="section" id="s7">
+        <div class="sec-head"><span class="sec-num">6.7</span><h2>The production checklist</h2></div>
+        <p>Everything in this volume condenses to six controls. An agent missing any of them is a demo, whatever the deck says:</p>
+        <table class="data">
+          <thead><tr><th>Control</th><th>What it is</th><th>Trip-wire / discipline</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Eval gate</strong></td><td>No prompt, model, tool, or scaffold change ships without a green golden-set run</td><td class="hl">Block on any regression beyond the suite's measured noise floor — not on "looks fine"</td></tr>
+            <tr><td><strong>Budget caps</strong></td><td>Per-run ceilings on steps, tokens, dollars, and wall-clock, enforced inside the loop</td><td class="m">Cap hit → graceful summarize-and-stop, logged as its own failure class</td></tr>
+            <tr><td><strong>Kill switch</strong></td><td>One flag halts new runs and drains in-flight ones</td><td class="m">Fire-drill it quarterly; a kill switch you have never pulled is a hypothesis</td></tr>
+            <tr><td><strong>Trace retention</strong></td><td>100% of traces for days–weeks; all failures + a sample, long-term; redacted at write time</td><td class="m">You cannot replay what you discarded; you cannot leak what you redacted</td></tr>
+            <tr><td><strong>Regression suite</strong></td><td>Golden set + one new task per fixed incident, run nightly and pre-deploy</td><td class="hl">The suite only grows; deletions require a written reason</td></tr>
+            <tr><td><strong>Incident playbook</strong></td><td>Failure taxonomy → owner → rollback procedure, written before the incident</td><td class="m">Every postmortem ends by adding a golden task and, where possible, a runtime guard</td></tr>
+          </tbody>
+        </table>
+        <p>The through-line of this chapter — and this volume — is a single habit: <strong>close the loop</strong>. Traces feed the taxonomy, the taxonomy feeds the golden set, the golden set gates the next change, and the cost accounting tells you whether any of it is worth running. Agents do not become reliable by being built well once; they become reliable by being measured forever.</p>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>Four volumes of theory earn you exactly nothing until they survive contact with practice.</strong> <a href="../gym/index.html">THE GYM</a> is where that happens: drills across all four volumes — foundations, prompting, and agent engineering — with instruments scoring you instead of the model. Go lift.</p>
+        </div>
+      </section>
+
+      <nav class="pager">
+        <a href="05-loop-engineering.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">05</span> Loop Engineering &amp; Multi-Agent Patterns</div></a>
+        <a class="next" href="../gym/index.html"><div class="p-dir">NEXT</div><div class="p-title"><span class="p-num">GYM</span> The Gym</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — VOL IV · CH 06</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/glossary.js"></script>
+<script src="../assets/js/shared.js"></script>
+<script>
+/* chapter instruments — single IIFE, no globals */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+
+  function usd(x) {
+    if (x >= 1000) return "$" + Math.round(x).toLocaleString("en-US");
+    if (x >= 100) return "$" + x.toFixed(0);
+    if (x >= 1) return "$" + x.toFixed(2);
+    if (x >= 0.01) return "$" + x.toFixed(3);
+    return "$" + x.toFixed(4);
+  }
+  function pct(x, d) { return (100 * x).toFixed(d === undefined ? 1 : d) + "%"; }
+
+  /* ============ INSTRUMENT A6.1 — PASS@K EXPLORER ============ */
+  (function () {
+    var root = document.getElementById("ev-pk");
+    if (!root) return;
+    var nEl = document.getElementById("ev-pk-n"),
+        cEl = document.getElementById("ev-pk-c"),
+        kEl = document.getElementById("ev-pk-k"),
+        nOut = document.getElementById("ev-pk-n-out"),
+        cOut = document.getElementById("ev-pk-c-out"),
+        kOut = document.getElementById("ev-pk-k-out"),
+        cv = document.getElementById("ev-pk-canvas"),
+        rP1 = document.getElementById("ev-pk-p1"),
+        rPk = document.getElementById("ev-pk-pk"),
+        rFl = document.getElementById("ev-pk-flat");
+
+    /* EQ A6.1: 1 - C(n-c,k)/C(n,k), as a stable product. */
+    function passAtK(n, c, k) {
+      if (c <= 0) return 0;
+      if (n - c < k) return 1;
+      var p = 1, i;
+      for (i = 0; i < k; i++) p *= (n - c - i) / (n - i);
+      return 1 - p;
+    }
+
+    function clampControls() {
+      var n = +nEl.value;
+      cEl.max = n;
+      if (+cEl.value > n) cEl.value = n;
+      kEl.max = Math.min(n, 32);
+      if (+kEl.value > +kEl.max) kEl.value = kEl.max;
+    }
+
+    function draw(n, c, k) {
+      var s = FM.setupCanvas(cv, 250), ctx = s.ctx;
+      ctx.clearRect(0, 0, s.w, s.h);
+      var L = 46, R = 14, T = 16, B = 28;
+      var pw = s.w - L - R, ph = s.h - T - B;
+      var kmax = Math.max(2, Math.min(n, 32));
+      function X(ki) { return L + ((ki - 1) / (kmax - 1)) * pw; }
+      function Y(v) { return T + (1 - v) * ph; }
+
+      /* grid */
+      ctx.font = FM.C.MONO;
+      ctx.textAlign = "right";
+      var g;
+      for (g = 0; g <= 4; g++) {
+        var v = g / 4;
+        ctx.strokeStyle = FM.C.HAIR;
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(L, Y(v)); ctx.lineTo(L + pw, Y(v)); ctx.stroke();
+        ctx.fillStyle = FM.C.MUT;
+        ctx.fillText((v * 100).toFixed(0) + "%", L - 6, Y(v) + 3);
+      }
+      ctx.textAlign = "center";
+      var ticks = [1, 4, 8, 16, 24, 32], t;
+      for (t = 0; t < ticks.length; t++) {
+        if (ticks[t] <= kmax) ctx.fillText("k=" + ticks[t], X(ticks[t]), T + ph + 16);
+      }
+
+      /* pass@1 reference line */
+      var p1 = passAtK(n, c, 1);
+      ctx.strokeStyle = FM.C.SEC;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath(); ctx.moveTo(L, Y(p1)); ctx.lineTo(L + pw, Y(p1)); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = FM.C.SEC;
+      ctx.textAlign = "left";
+      ctx.fillText("PASS@1 " + pct(p1), L + 4, Y(p1) - 5);
+
+      /* the exact curve */
+      ctx.strokeStyle = FM.C.MINT;
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      var ki;
+      for (ki = 1; ki <= kmax; ki++) {
+        var pv = passAtK(n, c, ki);
+        if (ki === 1) ctx.moveTo(X(ki), Y(pv)); else ctx.lineTo(X(ki), Y(pv));
+      }
+      ctx.stroke();
+
+      /* selected-k marker */
+      var pk = passAtK(n, c, k);
+      ctx.strokeStyle = FM.C.BLUE;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([2, 3]);
+      ctx.beginPath(); ctx.moveTo(X(k), T); ctx.lineTo(X(k), T + ph); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = FM.C.BLUE;
+      ctx.beginPath(); ctx.arc(X(k), Y(pk), 3.5, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = FM.C.BRIGHT;
+      ctx.textAlign = X(k) > L + pw - 110 ? "right" : "left";
+      ctx.fillText("PASS@" + k + " = " + pct(pk), X(k) + (X(k) > L + pw - 110 ? -8 : 8), Y(pk) - 8);
+    }
+
+    function render() {
+      clampControls();
+      var n = +nEl.value, c = +cEl.value, k = +kEl.value;
+      nOut.textContent = n;
+      cOut.textContent = c;
+      kOut.textContent = k;
+      var p1 = passAtK(n, c, 1), pk = passAtK(n, c, k);
+      rP1.textContent = pct(p1);
+      rPk.textContent = pct(pk);
+      rFl.textContent = p1 > 0 ? "×" + (pk / p1).toFixed(1) : "—";
+      draw(n, c, k);
+    }
+
+    var presets = {
+      weak:   { n: 100, c: 5,  k: 8 },
+      strong: { n: 100, c: 60, k: 8 },
+      lucky:  { n: 10,  c: 1,  k: 8 }
+    };
+    var btns = root.querySelectorAll("[data-ev-pk-preset]");
+    function clearOn() { var i; for (i = 0; i < btns.length; i++) btns[i].classList.remove("on"); }
+    var b;
+    for (b = 0; b < btns.length; b++) {
+      (function (btn) {
+        btn.addEventListener("click", function () {
+          var p = presets[btn.getAttribute("data-ev-pk-preset")];
+          if (!p) return;
+          nEl.value = p.n; clampControls();
+          cEl.value = p.c; kEl.value = p.k;
+          clearOn(); btn.classList.add("on");
+          render();
+        });
+      })(btns[b]);
+    }
+    [nEl, cEl, kEl].forEach(function (el) {
+      el.addEventListener("input", function () { clearOn(); render(); });
+    });
+    window.addEventListener("resize", render);
+    render();
+  })();
+
+  /* ============ INSTRUMENT A6.2 — COST OF A TASK ============ */
+  (function () {
+    var root = document.getElementById("ev-ct");
+    if (!root) return;
+    var sEl = document.getElementById("ev-ct-steps"),
+        inEl = document.getElementById("ev-ct-in"),
+        oEl = document.getElementById("ev-ct-otok"),
+        hEl = document.getElementById("ev-ct-cache"),
+        rEl = document.getElementById("ev-ct-succ"),
+        tEl = document.getElementById("ev-ct-tier"),
+        sOut = document.getElementById("ev-ct-steps-out"),
+        inOut = document.getElementById("ev-ct-in-out"),
+        oOut = document.getElementById("ev-ct-otok-out"),
+        hOut = document.getElementById("ev-ct-cache-out"),
+        rOut = document.getElementById("ev-ct-succ-out"),
+        cv = document.getElementById("ev-ct-canvas"),
+        roRun = document.getElementById("ev-ct-run"),
+        roRes = document.getElementById("ev-ct-resolved"),
+        roMon = document.getElementById("ev-ct-month");
+
+    /* illustrative $/Mtok; cache read billed at 10% of input rate */
+    var TIERS = [
+      { id: "frontier", label: "FRONTIER", pin: 3.00, pout: 15.00 },
+      { id: "mid",      label: "MID",      pin: 0.80, pout: 4.00 },
+      { id: "small",    label: "SMALL",    pin: 0.15, pout: 0.60 }
+    ];
+
+    /* EQ A6.2 with constant per-step averages */
+    function costs(tier, steps, inTokStep, outTokStep, h) {
+      var inTok = steps * inTokStep, outTok = steps * outTokStep;
+      var fresh = inTok * (1 - h) * tier.pin / 1e6;
+      var cached = inTok * h * (0.1 * tier.pin) / 1e6;
+      var out = outTok * tier.pout / 1e6;
+      return { fresh: fresh, cached: cached, out: out, total: fresh + cached + out };
+    }
+
+    function draw(all, selIdx) {
+      var s = FM.setupCanvas(cv, 230), ctx = s.ctx;
+      ctx.clearRect(0, 0, s.w, s.h);
+      var T = 34, B = 36, ph = s.h - T - B;
+      var maxTotal = Math.max(all[0].total, all[1].total, all[2].total) || 1;
+      var slot = s.w / 3, bw = Math.min(86, slot * 0.42);
+      ctx.font = FM.C.MONO;
+
+      /* legend */
+      var legend = [["FRESH INPUT", FM.C.BLUE], ["CACHED INPUT", FM.C.DEEP], ["OUTPUT", FM.C.MINT]];
+      var lx = 8, li;
+      for (li = 0; li < legend.length; li++) {
+        ctx.fillStyle = legend[li][1];
+        ctx.fillRect(lx, 8, 8, 8);
+        ctx.fillStyle = FM.C.SEC;
+        ctx.textAlign = "left";
+        ctx.fillText(legend[li][0], lx + 12, 15);
+        lx += 12 + ctx.measureText(legend[li][0]).width + 18;
+      }
+
+      var i;
+      for (i = 0; i < all.length; i++) {
+        var c = all[i];
+        var x = slot * i + (slot - bw) / 2;
+        var base = T + ph;
+        var hFresh = (c.fresh / maxTotal) * ph,
+            hCache = (c.cached / maxTotal) * ph,
+            hOut = (c.out / maxTotal) * ph;
+        ctx.fillStyle = FM.C.BLUE;  ctx.fillRect(x, base - hFresh, bw, hFresh);
+        ctx.fillStyle = FM.C.DEEP;  ctx.fillRect(x, base - hFresh - hCache, bw, hCache);
+        ctx.fillStyle = FM.C.MINT;  ctx.fillRect(x, base - hFresh - hCache - hOut, bw, hOut);
+        if (i === selIdx) {
+          ctx.strokeStyle = FM.C.MINT;
+          ctx.lineWidth = 1;
+          ctx.strokeRect(x - 4.5, T - 6, bw + 9, ph + 12);
+        }
+        ctx.textAlign = "center";
+        ctx.fillStyle = i === selIdx ? FM.C.BRIGHT : FM.C.SEC;
+        ctx.fillText(usd(c.total) + " / RUN", x + bw / 2, base - hFresh - hCache - hOut - 7);
+        ctx.fillStyle = i === selIdx ? FM.C.MINT : FM.C.MUT;
+        ctx.fillText(TIERS[i].label + (i === selIdx ? " ◂" : ""), x + bw / 2, base + 18);
+      }
+    }
+
+    function render() {
+      var steps = +sEl.value,
+          inK = +inEl.value,
+          outT = +oEl.value,
+          h = +hEl.value / 100,
+          succ = +rEl.value / 100;
+      sOut.textContent = steps;
+      inOut.textContent = inK + "K tok";
+      oOut.textContent = outT + " tok";
+      hOut.textContent = Math.round(h * 100) + "%";
+      rOut.textContent = Math.round(succ * 100) + "%";
+
+      var all = [], selIdx = 0, i;
+      for (i = 0; i < TIERS.length; i++) {
+        all.push(costs(TIERS[i], steps, inK * 1000, outT, h));
+        if (TIERS[i].id === tEl.value) selIdx = i;
+      }
+      var sel = all[selIdx];
+      roRun.textContent = usd(sel.total);
+      roRes.textContent = usd(sel.total / succ);
+      roMon.textContent = usd(sel.total * 10000);
+      draw(all, selIdx);
+    }
+
+    [sEl, inEl, oEl, hEl, rEl].forEach(function (el) { el.addEventListener("input", render); });
+    tEl.addEventListener("change", render);
+    window.addEventListener("resize", render);
+    render();
+  })();
+})();
+</script>
+</body>
+</html>

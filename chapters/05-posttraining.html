@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>05 · Post-training — LLM Field Manual</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css" />
+</head>
+<body>
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ VOL II / 05 / POST-TRAINING</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="06-finetuning.html">NEXT: FINE-TUNING →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">CHAPTER 05 / 10</div>
+    <h1>Post-training</h1>
+    <p class="lede">A base model knows; it does not <strong>behave</strong>. Post-training is the comparatively tiny but decisive stage that converts a next-token predictor into an assistant: supervised fine-tuning for format, preference optimization for judgment, and — since 2024 — reinforcement learning on verifiable rewards for genuine reasoning.</p>
+    <div class="ch-meta">
+      <span>READING TIME<b>≈ 30 MIN</b></span>
+      <span>BUILDS ON<b>CH 01, 04</b></span>
+      <span>KEY OBJECTS<b>SFT · RM · PPO · DPO · GRPO · RLVR</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">5.1</span>The pipeline</a>
+      <a href="#s2"><span class="n">5.2</span>SFT</a>
+      <a href="#s3"><span class="n">5.3</span>Reward models</a>
+      <a href="#s4"><span class="n">5.4</span>RLHF with PPO</a>
+      <a href="#s5"><span class="n">5.5</span>DPO</a>
+      <a href="#s6"><span class="n">5.6</span>GRPO</a>
+      <a href="#s7"><span class="n">5.7</span>Reasoning &amp; RLVR</a>
+      <a href="#s8"><span class="n">5.8</span>Constitutional AI</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 5.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">5.1</span><h2>The alignment pipeline at a glance</h2></div>
+        <figure class="figure" data-reveal>
+          <div class="fig-head"><span class="fig-id">FIG 5.A</span><span class="fig-title">FROM BASE MODEL TO ASSISTANT</span></div>
+          <div class="fig-body">
+            <svg viewBox="0 0 920 250" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Post-training pipeline">
+              <rect class="dg-box" x="12" y="86" width="132" height="64" rx="4" data-pop/>
+              <text class="dg-label" x="78" y="112" text-anchor="middle">BASE MODEL</text>
+              <text class="dg-label-sm" x="78" y="130" text-anchor="middle">predicts the internet</text>
+
+              <path class="dg-line" d="M144 118 H186" data-draw/><path class="dg-line" d="M180 113 l8 5 -8 5" data-draw/>
+
+              <rect class="dg-box" x="190" y="86" width="132" height="64" rx="4" data-pop/>
+              <text class="dg-label" x="256" y="112" text-anchor="middle">SFT</text>
+              <text class="dg-label-sm" x="256" y="130" text-anchor="middle">imitate demonstrations</text>
+
+              <path class="dg-line" d="M322 118 H364" data-draw/><path class="dg-line" d="M358 113 l8 5 -8 5" data-draw/>
+
+              <!-- branch -->
+              <rect class="dg-box-accent" x="368" y="26" width="180" height="60" rx="4" data-pop/>
+              <text class="dg-label" x="458" y="50" text-anchor="middle" fill="#a6f2cc">RLHF (PPO / GRPO)</text>
+              <text class="dg-label-sm" x="458" y="68" text-anchor="middle">optimize a learned reward</text>
+
+              <rect class="dg-box-accent" x="368" y="156" width="180" height="60" rx="4" data-pop/>
+              <text class="dg-label" x="458" y="180" text-anchor="middle" fill="#a6f2cc">DPO</text>
+              <text class="dg-label-sm" x="458" y="198" text-anchor="middle">preferences, no RM, no RL loop</text>
+
+              <path class="dg-line" d="M364 118 Q368 56 372 56" data-draw/>
+              <path class="dg-line" d="M364 118 Q368 186 372 186" data-draw/>
+
+              <rect class="dg-box" x="600" y="86" width="140" height="64" rx="4" data-pop/>
+              <text class="dg-label" x="670" y="112" text-anchor="middle">RLVR</text>
+              <text class="dg-label-sm" x="670" y="130" text-anchor="middle">verifiable rewards · reasoning</text>
+              <path class="dg-line" d="M548 56 Q596 56 612 86" data-draw/>
+              <path class="dg-line" d="M548 186 Q596 186 612 150" data-draw/>
+
+              <path class="dg-line" d="M740 118 H782" data-draw/><path class="dg-line" d="M776 113 l8 5 -8 5" data-draw/>
+              <rect class="dg-box" x="786" y="86" width="122" height="64" rx="4" data-pop/>
+              <text class="dg-label" x="847" y="112" text-anchor="middle">ASSISTANT</text>
+              <text class="dg-label-sm" x="847" y="130" text-anchor="middle">+ safety evals, red team</text>
+
+              <!-- RM feeder -->
+              <rect class="dg-box-ghost" x="190" y="10" width="132" height="48" rx="4" data-pop/>
+              <text class="dg-label-sm" x="256" y="30" text-anchor="middle">REWARD MODEL</text>
+              <text class="dg-label-mut" x="256" y="46" text-anchor="middle">trained on comparisons</text>
+              <path class="dg-line" d="M322 34 H368 L368 40" data-draw/>
+            </svg>
+          </div>
+          <div class="fig-cap"><b>Stacked, not exclusive.</b> Production pipelines iterate several rounds: SFT → preference optimization → RL on verifiable tasks → safety-specific passes — each stage consuming the previous stage's model. Post-training costs &lt;1–10% of pre-training compute and is now where products differentiate (and where reasoning RL keeps growing that share).</div>
+        </figure>
+      </section>
+
+      <!-- ====================== 5.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">5.2</span><h2>Supervised fine-tuning</h2></div>
+        <p><strong>SFT</strong> is pre-training's loss on curated conversations: prompts plus high-quality demonstration responses, formatted in a chat template (special tokens delimiting <code>system</code> / <code>user</code> / <code>assistant</code> turns). The single technical wrinkle is masking — the loss is computed only on response tokens:</p>
+
+        <div class="eq"><span class="eq-tag">EQ 5.1 — SFT LOSS (RESPONSE-MASKED)</span>
+        $$ \mathcal{L}_{\text{SFT}} = -\,\mathbb{E}_{(x, y) \sim \mathcal{D}} \sum_{t=1}^{|y|} \log \pi_\theta\!\left(y_t \mid x, y_{&lt;t}\right) $$
+        <div class="eq-note">The model learns to <em>produce</em> answers, not to predict prompts. Quality dominates quantity: a few thousand to low-millions of carefully written or model-generated-then-filtered examples. LIMA's “superficial alignment hypothesis” — that SFT mostly teaches style and format on top of pre-trained capability — holds up reasonably well, with the important exception of distilled reasoning traces (§5.7).</div>
+        </div>
+      </section>
+
+      <!-- ====================== 5.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">5.3</span><h2>Reward models: judgment as a function</h2></div>
+        <p>Humans cannot write a reward function for “helpful, honest, harmless” — but they can compare two answers. A <strong>reward model</strong> \(r_\phi(x, y)\) (usually the LLM itself with a scalar head) is trained on those comparisons under the Bradley–Terry assumption:</p>
+
+        <div class="eq"><span class="eq-tag">EQ 5.2 — BRADLEY–TERRY PREFERENCE LOSS</span>
+        $$ \mathcal{L}_{\text{RM}} = -\,\mathbb{E}_{(x,\, y_w \succ y_l)} \Big[ \log \sigma\big( r_\phi(x, y_w) - r_\phi(x, y_l) \big) \Big] $$
+        <div class="eq-note">\(y_w\) = chosen, \(y_l\) = rejected. The model only learns reward <em>differences</em> — absolute scale is unidentified. Reward models are imperfect proxies, which makes them gameable: over-optimize and you harvest sycophancy, verbosity, and confident nonsense. That failure mode is called <b>reward hacking</b>, and the KL term in EQ 5.3 is its leash.</div>
+        </div>
+
+        <div class="widget" id="bt-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT 5.1 — PREFERENCE MARGIN</span><span class="w-sub">EQ 5.2 · σ(Δr)</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl">
+                <label>REWARD MARGIN Δ = r(y_w) − r(y_l) <output id="bt-delta-out">1.0</output></label>
+                <input type="range" id="bt-delta" min="-6" max="6" step="0.1" value="1"/>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="bt-canvas" height="200"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">P(HUMAN PREFERS y_w) UNDER BRADLEY–TERRY</div><div class="r-value" id="bt-p">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The same sigmoid is DPO's engine: there, Δ becomes β·(log-ratio of chosen − log-ratio of rejected), so pushing P(prefer) toward 1 directly reshapes the policy's probabilities. Note the flat tails — once a pair is confidently ordered, its gradient vanishes.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 5.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">5.4</span><h2>RLHF with PPO</h2></div>
+        <p>With a reward model in hand, alignment becomes reinforcement learning: the LLM is a <strong>policy</strong> \(\pi_\theta\), a full generated response is an episode, and we maximize reward <em>without drifting far from the SFT model</em>:</p>
+
+        <div class="eq"><span class="eq-tag">EQ 5.3 — THE RLHF OBJECTIVE</span>
+        $$ \max_\theta\; \mathbb{E}_{x \sim \mathcal{D},\, y \sim \pi_\theta} \Big[ r_\phi(x, y) \Big] \;-\; \beta\, \mathrm{KL}\!\big[ \pi_\theta(\cdot \mid x) \,\big\|\, \pi_{\text{ref}}(\cdot \mid x) \big] $$
+        <div class="eq-note">The KL penalty against the frozen reference (SFT) policy keeps text fluent and bounds reward hacking: the policy may only spend so much “distributional budget” chasing reward. \(\beta\) tunes the leash length.</div>
+        </div>
+
+        <p><strong>PPO</strong> (proximal policy optimization) is the workhorse algorithm. Its core is a clipped surrogate that forbids any single update from moving the policy too far:</p>
+
+        <div class="eq"><span class="eq-tag">EQ 5.4 — PPO CLIPPED SURROGATE</span>
+        $$ \mathcal{L}_{\text{PPO}} = -\,\mathbb{E}_t \Big[ \min\Big( \rho_t\, \hat{A}_t,\;\; \mathrm{clip}\big(\rho_t,\, 1-\varepsilon,\, 1+\varepsilon\big)\, \hat{A}_t \Big) \Big], \qquad \rho_t = \frac{\pi_\theta(y_t \mid \cdot)}{\pi_{\theta_{\text{old}}}(y_t \mid \cdot)} $$
+        <div class="eq-note">\(\hat{A}_t\) is the advantage — how much better this token was than expected, estimated with a learned <b>value model</b> (GAE). The clip at \(\varepsilon \approx 0.2\) caps per-token incentive. Total machinery in flight: policy + reference + reward + value models, four large networks — RLHF-PPO is famously an engineering project, which set the stage for the two simplifications that follow.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 5.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">5.5</span><h2>DPO: preference optimization without RL</h2></div>
+        <p><strong>Direct Preference Optimization</strong> begins from a closed-form fact: the optimal policy for EQ 5.3 is \( \pi^*(y|x) \propto \pi_{\text{ref}}(y|x)\, e^{r(x,y)/\beta} \). Inverting this expresses the reward in terms of the policy itself — substitute into the Bradley–Terry loss and the reward model cancels out entirely:</p>
+
+        <div class="eq"><span class="eq-tag">EQ 5.5 — DPO LOSS</span>
+        $$ \mathcal{L}_{\text{DPO}} = -\,\mathbb{E}_{(x, y_w, y_l)} \left[ \log \sigma\!\left( \beta \log \frac{\pi_\theta(y_w \mid x)}{\pi_{\text{ref}}(y_w \mid x)} \;-\; \beta \log \frac{\pi_\theta(y_l \mid x)}{\pi_{\text{ref}}(y_l \mid x)} \right) \right] $$
+        <div class="eq-note">A plain classification loss over preference pairs: push the chosen response's likelihood ratio up, the rejected one's down. <b>The language model is secretly its own reward model.</b> No sampling loop, no value network, no RM — just two forward passes per pair. Variants abound (IPO, KTO for unpaired thumbs-up/down, ORPO without a reference, SimPO length-normalized); DPO-family methods dominate open-weight post-training, while frontier labs still lean on online RL for the final stretch.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 5.6 ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">5.6</span><h2>GRPO: RL slimmed for LLMs</h2></div>
+        <p><strong>Group Relative Policy Optimization</strong> (DeepSeek) keeps online RL but deletes the value network. For each prompt, sample a <em>group</em> of \(G\) responses; the baseline is simply the group's mean reward:</p>
+
+        <div class="eq"><span class="eq-tag">EQ 5.6 — GROUP-RELATIVE ADVANTAGE</span>
+        $$ \hat{A}_i \;=\; \frac{r_i - \mathrm{mean}\big(r_1, \ldots, r_G\big)}{\mathrm{std}\big(r_1, \ldots, r_G\big)} $$
+        <div class="eq-note">Each response is scored against its siblings: better than the group average ⇒ positive advantage, all its tokens reinforced (with PPO-style clipping and a KL term). Half the networks, half the memory of PPO — and a natural fit for verifiable rewards, where sampling 8–64 attempts per problem is exactly what you want anyway. This is the algorithm behind DeepSeek-R1; successors (DAPO, Dr. GRPO, GSPO) patch its length and difficulty biases.</div>
+        </div>
+
+        <div class="widget" id="grpo-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT 5.2 — GROUP ADVANTAGES</span><span class="w-sub">EQ 5.6 · G = 8 · VERIFIABLE REWARD</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <button class="w-btn" id="grpo-roll">SAMPLE A NEW GROUP</button>
+            </div>
+            <div id="grpo-bars" style="display:flex;gap:10px;margin:8px 0 4px;"></div>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">GROUP MEAN</div><div class="r-value" id="grpo-mean">—</div></div>
+              <div class="readout"><div class="r-label">GROUP STD</div><div class="r-value" id="grpo-std">—</div></div>
+              <div class="readout acc"><div class="r-label">READING</div><div class="r-value" id="grpo-note" style="font-size:11.5px;line-height:1.55;">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Eight attempts at one math problem; r = 1 if the verifier accepts. Keep sampling — when a group comes back all-correct or all-wrong, advantages collapse to zero. Curriculum (problems near the model's edge) is what keeps GRPO's gradient alive.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 5.7 ====================== -->
+      <section class="section" id="s7">
+        <div class="sec-head"><span class="sec-num">5.7</span><h2>Reasoning models: RL on verifiable rewards</h2></div>
+        <p>The decisive shift of 2024–25: for math, code, and logic, you don't need a learned reward model at all. The answer is <em>checkable</em> — a unit test passes, the boxed number matches. <strong>RLVR</strong> (RL with verifiable rewards) optimizes against that binary signal:</p>
+
+        <div class="eq"><span class="eq-tag">EQ 5.7 — VERIFIABLE REWARD</span>
+        $$ r(x, y) = \mathbb{1}\big[\, \mathrm{verify}(x, y) \,\big] \;+\; \lambda_{\text{fmt}}\, \mathbb{1}\big[\,\text{format ok}\,\big] $$
+        <div class="eq-note">Unhackable (to first order), infinitely scalable, no human raters. Trained with GRPO at scale, models <em>spontaneously</em> learn to emit long chains of thought, check their own work, backtrack, and try alternatives — DeepSeek-R1's training curves show response length and accuracy growing together, the “aha moment” emerging rather than being taught.</div>
+        </div>
+        <ul>
+          <li><strong>Test-time compute as a new scaling axis.</strong> o1/R1-class models trade tokens for accuracy: more thinking tokens, better answers — a dial (reasoning effort) exposed to users and a curve that compounds with train-time scaling.</li>
+          <li><strong>Distilled reasoning.</strong> SFT on traces sampled from a strong reasoning model transfers a surprising fraction of the skill to small models (R1-distill family) — cheaper than running RL on the small model itself (Chapter 07).</li>
+          <li><strong>Open challenge.</strong> Extending RLVR beyond verifiable domains — essays, strategy, taste — currently routes through model-as-judge rewards (rubric- or AI-feedback based), reintroducing the proxy-gaming problem in subtler form.</li>
+        </ul>
+      </section>
+
+      <!-- ====================== 5.8 ====================== -->
+      <section class="section" id="s8">
+        <div class="sec-head"><span class="sec-num">5.8</span><h2>Constitutional AI &amp; RLAIF</h2></div>
+        <p>Human feedback does not scale to every edge case, and raters disagree. <strong>Constitutional AI</strong> (Anthropic) replaces much of the human signal with an explicit list of principles: the model critiques and revises its own outputs against the constitution (supervised phase), then an AI judge applies the same principles to generate preference labels for RL (<strong>RLAIF</strong>). The result is cheaper, more consistent, and — importantly — <em>auditable</em>: the normative choices live in a readable document rather than in a million implicit rating decisions.</p>
+        <p class="note">Production stacks blend everything in this chapter: human preferences where stakes are high, AI feedback for breadth, verifiable rewards where possible, plus deliberate safety training (refusal boundaries, jailbreak robustness) and post-hoc evals/red-teaming as the release gate.</p>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>You rarely get to post-train a frontier model</strong> — but you can adapt one. Chapter 06: fine-tuning as a consumer of all the machinery above, and the low-rank algebra that makes it affordable.</p>
+        </div>
+      </section>
+
+      <nav class="pager">
+        <a href="04-pretraining.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">04</span> Pre-training</div></a>
+        <a class="next" href="06-finetuning.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">06</span> Fine-tuning</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — VOL II · CH 05</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/glossary.js"></script>
+<script src="../assets/js/shared.js"></script>
+<script src="../assets/js/search.js"></script>
+<script src="../assets/js/interactives.js"></script>
+</body>
+</html>

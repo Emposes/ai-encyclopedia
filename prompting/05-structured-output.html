@@ -1,0 +1,649 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>05 · Structured Output &amp; Tool-Ready Prompts — AI Encyclopedia</title>
+<meta name="description" content="From prose to parseable: the six-rung ladder from asking nicely to grammar-constrained decoding — XML anchors, prefilling, JSON Schema, defensive parsing, and logit masking." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css" />
+</head>
+<body>
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ VOL III / PROMPTING / 05 / STRUCTURED OUTPUT</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="06-adversarial.html">NEXT: SELF-CRITIQUE &amp; RED TEAMS →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">VOLUME III — PROMPTING · CHAPTER 05 / 07</div>
+    <h1>Structured Output &amp; Tool-Ready Prompts</h1>
+    <p class="lede">The moment a model's output feeds a program instead of a person, formatting stops being style and becomes <strong>contract</strong>. This chapter is the ladder from asking nicely to making invalid output mathematically impossible: templates, XML anchors, prefilling, schemas, and the logit mask at the bottom of it all — plus the defensive parser you write for everything above that rung.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 22 MIN</b></span>
+      <span>BUILDS ON<b>VOL III CH 02–04 · VOL II CH 08</b></span>
+      <span>INSTRUMENTS<b>SCHEMA BUILDER · PARSE ROULETTE</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">5.1</span>Why structure</a>
+      <a href="#s2"><span class="n">5.2</span>The toolbox, ranked</a>
+      <a href="#s3"><span class="n">5.3</span>XML tags as anchors</a>
+      <a href="#s4"><span class="n">5.4</span>Prefilling</a>
+      <a href="#s5"><span class="n">5.5</span>Schemas &amp; tool calls</a>
+      <a href="#s6"><span class="n">5.6</span>Failure modes</a>
+      <a href="#s7"><span class="n">5.7</span>Constrained decoding</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 5.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">5.1</span><h2>Why structure: code, evals, agents</h2></div>
+        <p>Three consumers force the issue. <strong>Downstream code</strong> needs to index into the answer — <code>result["sentiment"]</code> either exists or your pipeline throws at 3 a.m. <strong>Eval harnesses</strong> need to grade thousands of outputs mechanically; if the answer's location varies, you end up grading the extractor instead of the model. <strong>Agents</strong> are the extreme case: every tool call is a structured output, and every loop iteration re-parses one. A format that holds 97% of the time feels reliable in a chat window and is a disaster in a chain:</p>
+
+        <div class="eq"><span class="eq-tag">EQ P5.1 — RELIABILITY COMPOUNDS AGAINST YOU</span>
+        $$ \Pr[\text{pipeline survives}] \;=\; \prod_{i=1}^{k} p_i \;\xrightarrow{\;p_i \,=\, p\;}\; p^{\,k}, \qquad 0.97^{20} \approx 0.54 $$
+        <div class="eq-note">\(p_i\) is the probability call \(i\) yields parseable, schema-valid output. An agent that makes twenty calls per task at 97% per-call validity <b>fails almost half its runs on formatting alone</b> — before any reasoning error is counted. Structure work is reliability work, not cosmetics.</div>
+        </div>
+
+        <p class="note">There is a real tension to keep in view throughout: the tighter you clamp the format, the less room the model has to think <em>en route</em> to the answer (Chapter 04). The professional pattern is to separate the two — free-form reasoning first, clamped answer last — and every technique below composes with that split.</p>
+      </section>
+
+      <!-- ====================== 5.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">5.2</span><h2>The toolbox, ranked</h2></div>
+        <p>Six rungs, ordered by how strong a guarantee you get. Each rung up costs a little flexibility and buys a lot of validity. Most production systems run rung 3 or 4 with the rung-6 safety net where the API offers it.</p>
+
+        <div class="figure" data-reveal>
+          <div class="fig-head"><span class="fig-id">FIG P5.1</span><span class="fig-title">THE STRUCTURE LADDER — GUARANTEE STRENGTH BY TECHNIQUE</span></div>
+          <div class="fig-body">
+            <svg viewBox="0 0 740 210" xmlns="http://www.w3.org/2000/svg">
+              <line class="dg-line" x1="14" y1="186" x2="726" y2="186" data-draw></line>
+              <text class="dg-label-mut" x="14" y="202">NO GUARANTEE · PARSE DEFENSIVELY</text>
+              <text class="dg-label-mut" x="560" y="202">SYNTAX GUARANTEED BY DECODER</text>
+              <g data-pop>
+                <rect class="dg-box" x="14"  y="146" width="104" height="32" rx="2"></rect><text class="dg-label-sm" x="26"  y="166">1 · PROSE ASK</text>
+                <rect class="dg-box" x="134" y="124" width="104" height="32" rx="2"></rect><text class="dg-label-sm" x="146" y="144">2 · TEMPLATE</text>
+                <rect class="dg-box" x="254" y="102" width="104" height="32" rx="2"></rect><text class="dg-label-sm" x="266" y="122">3 · XML TAGS</text>
+                <rect class="dg-box" x="374" y="80"  width="104" height="32" rx="2"></rect><text class="dg-label-sm" x="386" y="100">4 · JSON+SCHEMA</text>
+                <rect class="dg-box" x="494" y="58"  width="104" height="32" rx="2"></rect><text class="dg-label-sm" x="506" y="78">5 · PREFILL</text>
+                <rect class="dg-box-accent" x="614" y="36" width="112" height="32" rx="2"></rect><text class="dg-label-acc" x="624" y="56">6 · CONSTRAINED</text>
+              </g>
+              <line class="dg-line-acc" x1="66" y1="146" x2="186" y2="124" data-draw></line><line class="dg-line-acc" x1="186" y1="124" x2="306" y2="102" data-draw></line>
+              <line class="dg-line-acc" x1="306" y1="102" x2="426" y2="80" data-draw></line><line class="dg-line-acc" x1="426" y1="80" x2="546" y2="58" data-draw></line>
+              <line class="dg-line-acc" x1="546" y1="58" x2="670" y2="36" data-draw></line>
+            </svg>
+          </div>
+          <div class="fig-cap"><b>Rungs 1–5 shape a probability distribution; rung 6 truncates it.</b> Everything left of rung 6 can still fail, which is why §5.6 exists.</div>
+        </div>
+
+        <p><strong>Rung 1 — ask in prose.</strong> "Classify the sentiment and give a confidence." The model decides the format per-call: sometimes a sentence, sometimes a bulleted list, sometimes a table. Fine for humans, hostile to parsers.</p>
+        <pre><code><span class="c"># Rung 1 — hope as a strategy</span>
+Classify the sentiment of this review and give a confidence score.</code></pre>
+
+        <p><strong>Rung 2 — show a template.</strong> Models imitate far better than they obey. An exact output skeleton in the prompt collapses most of the format variance at the cost of a few input tokens:</p>
+        <pre><code><span class="c"># Rung 2 — show, don't describe</span>
+Respond in exactly this format, nothing else:
+
+SENTIMENT: &lt;positive | neutral | negative&gt;
+CONFIDENCE: &lt;0.00-1.00&gt;</code></pre>
+
+        <p><strong>Rung 3 — XML tags.</strong> Tags delimit fields without escaping rules: the content between them can contain quotes, newlines, code, even JSON, and a one-line regex still extracts it. Claude-family models are conspicuously good at this rung — §5.3 explains why.</p>
+        <pre><code><span class="c"># Rung 3 — tags delimit; content stays free</span>
+&lt;analysis&gt;
+  &lt;sentiment&gt;negative&lt;/sentiment&gt;
+  &lt;confidence&gt;0.87&lt;/confidence&gt;
+  &lt;quote&gt;the hinge snapped after two weeks&lt;/quote&gt;
+&lt;/analysis&gt;</code></pre>
+
+        <p><strong>Rung 4 — JSON with a schema in the prompt.</strong> When downstream code wants typed data, show the model the actual JSON Schema. Compliance is still probabilistic, but the schema's <code>description</code> strings double as per-field instructions (§5.5):</p>
+        <pre><code><span class="c"># Rung 4 — the schema is part of the prompt</span>
+Return a single JSON object matching this schema. No markdown fences.
+{ "type": "object",
+  "properties": {
+    "sentiment":  { "type": "string", "enum": ["positive","neutral","negative"] },
+    "confidence": { "type": "number", "description": "calibrated, in [0,1]" } },
+  "required": ["sentiment","confidence"] }</code></pre>
+
+        <p><strong>Rung 5 — prefill the assistant turn.</strong> Don't ask for JSON — start writing it yourself and let the model continue. The preamble ("Sure! Here's…") becomes impossible rather than discouraged (§5.4):</p>
+        <pre><code><span class="c"># Rung 5 — start the answer yourself</span>
+{"role": "user",      "content": "Classify ... Respond with JSON only."}
+{"role": "assistant", "content": "{\"sentiment\":"}   <span class="c">← prefill: the reply MUST continue from here</span></code></pre>
+
+        <p><strong>Rung 6 — constrained decoding / structured-output APIs.</strong> The serving stack compiles your schema to a grammar and masks every token that would violate it (§5.7). Invalid JSON is not unlikely; it is <em>unrepresentable</em>:</p>
+        <pre><code><span class="c"># Rung 6 — the decoder cannot emit invalid JSON</span>
+output_format = { "type": "json_schema", "schema": { ... } }
+<span class="c"># or: tools=[...] with the choice forced — the arguments ARE the structured output</span></code></pre>
+
+        <table class="data">
+          <thead><tr><th>Rung</th><th>Guarantee</th><th>Costs you</th><th>Reach for it when</th></tr></thead>
+          <tbody>
+            <tr><td>1 · Prose ask</td><td class="m">none</td><td class="m">your weekend</td><td>A human reads the output</td></tr>
+            <tr><td>2 · Template</td><td class="m">weak</td><td class="m">~20 input tokens</td><td>Simple flat fields, quick scripts</td></tr>
+            <tr><td>3 · XML tags</td><td class="m">moderate</td><td class="m">verbosity</td><td>Free-text fields; Claude-family; streaming extraction</td></tr>
+            <tr><td>4 · JSON + schema</td><td class="m">moderate+</td><td class="m">schema tokens</td><td>Typed data, nested objects</td></tr>
+            <tr><td>5 · Prefill</td><td class="m">strong start</td><td class="m">no extended thinking</td><td>Killing preambles; forcing the first token</td></tr>
+            <tr><td>6 · Constrained</td><td class="hl">syntactic certainty</td><td class="m">latency, some quality</td><td>Anything load-bearing the API supports</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <!-- ====================== 5.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">5.3</span><h2>XML tags as attention anchors</h2></div>
+        <p>Why do tags work so well — and why especially on Claude? Four reasons, in decreasing order of how confident you should be in them:</p>
+        <ul>
+          <li><strong>Tags are rare, distinctive token sequences.</strong> <code>&lt;sentiment&gt;</code> appears nowhere in ordinary prose, so it makes an unambiguous key for attention to bind to. The induction-head circuit (Vol II · Ch 03) — find an earlier occurrence of the current pattern, copy what followed — is precisely the machinery that, having seen an opening tag in the instructions, reproduces it and later closes it. A tag is an address the model can attend to exactly, where "the second paragraph of your answer" is not.</li>
+          <li><strong>Training distribution.</strong> Anthropic's own system prompts, tool harnesses, and post-training data lean heavily on XML-style scaffolding, and their documentation has recommended tags since the first Claude. The model has seen millions of examples where tags delimit semantically distinct regions and the structure is always respected. This is behavioral and circumstantial evidence — no public mechanistic study isolates "XML compliance" in the weights — but the effect size in practice is large and stable.</li>
+          <li><strong>No escaping rules.</strong> JSON dies on an unescaped quote or newline inside a string. Tag content is free text; the only collision is the literal closing tag appearing in the payload, which for a name like <code>&lt;verbatim_quote&gt;</code> is essentially never.</li>
+          <li><strong>Streaming-friendly.</strong> A tag block is parseable the moment it closes, mid-generation. JSON is all-or-nothing until the final brace.</li>
+        </ul>
+        <p class="note"><strong>Craft rules:</strong> name tags semantically (<code>&lt;diagnosis&gt;</code>, not <code>&lt;output2&gt;</code>) — the name itself is a micro-instruction; refer to tags by name in the instructions ("put your reasoning in <code>&lt;thinking&gt;</code>"); nest shallowly; and keep tag vocabulary consistent across few-shot examples, because the model will imitate your inconsistencies just as faithfully as your structure.</p>
+      </section>
+
+      <!-- ====================== 5.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">5.4</span><h2>Prefilling: forcing the first token</h2></div>
+        <p>Every instruction in the prompt merely <em>tilts</em> the output distribution. Prefilling edits the sample itself: you submit the conversation with a final assistant message already begun, and the model has no choice but to continue from your text. The arithmetic is the autoregressive factorization — there is no step at which "Sure, here's the JSON…" can be emitted, because those positions are already spent:</p>
+
+        <div class="eq"><span class="eq-tag">EQ P5.2 — PREFILL AS HARD CONDITIONING</span>
+        $$ y \;\sim\; \prod_{t=1}^{T} p_\theta\!\left(y_t \mid x,\; c,\; y_{&lt;t}\right) $$
+        <div class="eq-note">\(x\) is the prompt, \(c\) the prefill — tokens <b>fixed by you, not sampled</b>. Instructions change \(p_\theta\)'s tilt; the prefill changes the support: every generated token is conditioned on \(c\) having already been said. Start \(c = \texttt{\{}\) and the preamble has probability zero by construction, not by persuasion.</div>
+        </div>
+
+        <p>The standard plays:</p>
+        <ul>
+          <li><strong>Kill the preamble.</strong> Prefill <code>{</code> for JSON, or <code>&lt;analysis&gt;</code> for a tag block. Pair with a <strong>stop sequence</strong> on the matching closer (<code>"}"</code> won't work for nested JSON — but <code>&lt;/analysis&gt;</code> works perfectly for tags) and the response is the payload, whole and nothing but.</li>
+          <li><strong>Skip a rehearsed opening.</strong> In extraction loops where the model re-explains its task every call, prefilling past the boilerplate saves output tokens — the expensive kind.</li>
+          <li><strong>Hold a role.</strong> A prefilled in-character first sentence is a stronger anchor against persona drift than another paragraph of system prompt.</li>
+        </ul>
+        <p class="note"><strong>Caveats, honestly stated.</strong> Prefilling is incompatible with extended-thinking modes on current Anthropic APIs (the model must open its own reasoning block); a prefill ending in trailing whitespace is rejected; and a prefill is a strong start, <em>not</em> a guarantee — the model can close your brace and append commentary. Prefill shapes the head of the sequence; stop sequences guard the tail; the validator (§5.6) catches what slips between.</p>
+      </section>
+
+      <!-- ====================== 5.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">5.5</span><h2>Schemas and function calling</h2></div>
+        <p>A <strong>JSON Schema</strong> does double duty. In-prompt (rung 4), it is documentation the model reads and probably follows. API-enforced — OpenAI structured outputs, Anthropic's structured outputs and strict tool use (GA'd via beta in late 2025), open-stack guided decoding — the same schema is compiled into the decoder and compliance stops being the model's decision (§5.7). Either way, the highest-leverage tokens in the schema are the <code>description</code> strings:</p>
+        <p><strong>Field descriptions are mini-prompts.</strong> The description is what the model reads at the moment it fills that field — instruction placed at the exact point of decision, which Chapter 02 taught you is the best real estate in the context. Write them as imperatives with edge cases: not <code>"the quote"</code> but <code>"verbatim quote copied character-for-character from the input; never paraphrase; empty array if none"</code>. Teams that A/B their tool descriptions routinely find double-digit accuracy swings from description wording alone — it is the cheapest fine-tuning you will ever do.</p>
+        <p><strong>Function calling is structured output wearing a dispatcher.</strong> A tool definition is a name, a description ("when to call me"), and an <code>input_schema</code> ("how to call me"). The model's tool call <em>is</em> a structured output validated against that schema; the agent loop parses it, executes, and returns a result. Everything in this chapter applies verbatim — a flaky tool-argument format is exactly the compounding failure of EQ P5.1. And one warning carries over with extra force: <strong>schema enforcement guarantees shape, not truth.</strong> A guaranteed-well-formed <code>"confidence": 0.93</code> is still a made-up number unless you've done the calibration work of Chapter 04.</p>
+
+        <div class="widget" id="so-builder" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT P5.1 — SCHEMA→PROMPT BUILDER</span><span class="w-sub">FIELDS IN · SCHEMA + XML TEMPLATE + EXAMPLE OUT</span></div>
+          <div class="w-body">
+            <div id="so-b-list" style="display:flex;flex-direction:column;gap:6px;margin-bottom:16px;"></div>
+            <div class="ctl-row" style="align-items:flex-end;">
+              <div class="ctl" style="min-width:120px;"><label>FIELD NAME</label><input class="w-input" id="so-b-name" type="text" placeholder="ticket_id" spellcheck="false"/></div>
+              <div class="ctl" style="min-width:110px;flex:0 0 auto;"><label>TYPE</label>
+                <select class="w-input" id="so-b-type">
+                  <option value="string">string</option>
+                  <option value="number">number</option>
+                  <option value="boolean">boolean</option>
+                  <option value="enum">enum</option>
+                  <option value="string[]">string[]</option>
+                </select>
+              </div>
+              <div class="ctl" style="min-width:200px;flex:2;"><label>DESCRIPTION (THE MINI-PROMPT)</label><input class="w-input" id="so-b-desc" type="text" placeholder="instruction the model reads when filling this field" spellcheck="false"/></div>
+            </div>
+            <div class="ctl-row">
+              <div class="ctl" style="min-width:200px;"><label>ENUM VALUES (COMMA-SEP · ENUM ONLY)</label><input class="w-input" id="so-b-enum" type="text" placeholder="low, medium, high" spellcheck="false"/></div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;"><label>REQUIRED</label>
+                <div class="seg-row"><button class="w-btn ghost on" id="so-b-req">YES</button></div>
+              </div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;"><label>&nbsp;</label>
+                <div class="seg-row"><button class="w-btn" id="so-b-add">ADD FIELD +</button><button class="w-btn ghost" id="so-b-clear">RESET</button></div>
+              </div>
+            </div>
+            <div id="so-b-warn" style="font-family:ui-monospace,Menlo,monospace;font-size:10px;color:#ff4136;min-height:14px;margin-bottom:8px;"></div>
+
+            <div style="display:flex;align-items:center;justify-content:space-between;margin:10px 0 4px;">
+              <span style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.16em;color:#636363;">A — JSON SCHEMA (PASTE INTO output_format / input_schema)</span>
+              <button class="w-btn ghost" id="so-b-copy-a" style="font-size:9px;padding:4px 10px;">COPY</button>
+            </div>
+            <pre id="so-b-pane-a" style="max-height:260px;overflow:auto;"></pre>
+
+            <div style="display:flex;align-items:center;justify-content:space-between;margin:10px 0 4px;">
+              <span style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.16em;color:#636363;">B — PROMPT SECTION WITH XML TEMPLATE (RUNG 3)</span>
+              <button class="w-btn ghost" id="so-b-copy-b" style="font-size:9px;padding:4px 10px;">COPY</button>
+            </div>
+            <pre id="so-b-pane-b" style="max-height:260px;overflow:auto;"></pre>
+
+            <div style="display:flex;align-items:center;justify-content:space-between;margin:10px 0 4px;">
+              <span style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.16em;color:#636363;">C — A VALID OUTPUT (WHAT A GOOD CALL RETURNS)</span>
+              <button class="w-btn ghost" id="so-b-copy-c" style="font-size:9px;padding:4px 10px;">COPY</button>
+            </div>
+            <pre id="so-b-pane-c" style="max-height:200px;overflow:auto;"></pre>
+
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">FIELDS</div><div class="r-value" id="so-b-nf">—</div></div>
+              <div class="readout"><div class="r-label">REQUIRED</div><div class="r-value" id="so-b-nr">—</div></div>
+              <div class="readout acc"><div class="r-label">SCHEMA SIZE (≈ TOKENS)</div><div class="r-value" id="so-b-tok">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Add a field and watch all three panes regenerate: the machine-facing schema, the model-facing XML prompt section, and a realistic valid output. Note how your DESCRIPTION text lands in both the schema and the per-field rules — write it as an instruction, because that is what it is. Token estimate is chars/4, illustrative.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 5.6 ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">5.6</span><h2>Failure modes and defensive parsing</h2></div>
+        <p>Below rung 6, model output is a <em>probable</em> format, and the tail of that distribution is where pipelines die. The recurring villains: trailing commas (legal in every JavaScript file the model trained on, illegal in JSON), markdown fences wrapping the payload, preamble and postamble prose, hallucinated enum values that parse cleanly and fail silently, Python literals (<code>'single quotes'</code>, <code>True</code>, <code>None</code>) from code-heavy training data, and truncation when <code>max_tokens</code> lands mid-string. A production parser is a pipeline, not a call:</p>
+
+        <pre><code><span class="c"># The defensive parsing pipeline — every stage logs what it touched</span>
+<span class="k">extract</span>:  take the outermost balanced {...} block  <span class="c"># strips fences + prose</span>
+<span class="k">repair</span>:   trailing commas · smart quotes · True/None  <span class="c"># mechanical, logged</span>
+<span class="k">parse</span>:    strict JSON.parse — no eval, ever
+<span class="k">validate</span>: schema check (types, enums, ranges, required)
+<span class="k">retry</span>:    re-prompt with the validator's error message verbatim, ≤ 2 attempts
+<span class="k">surface</span>:  persistent failure is a signal, not noise — count it in your evals</code></pre>
+
+        <div class="widget" id="so-roulette" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT P5.2 — PARSE ROULETTE</span><span class="w-sub">SIX REAL FAILURE MODES · LIVE JSON.parse IN YOUR BROWSER</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;"><label>BATCH</label>
+                <div class="seg-row">
+                  <button class="w-btn" id="so-r-all">PARSE ALL RAW ▶</button>
+                  <button class="w-btn ghost" id="so-r-def">DEFEND ALL + RE-PARSE</button>
+                </div>
+              </div>
+            </div>
+            <div id="so-r-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px;"></div>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">RAW OUTPUTS SURVIVING PARSE+SCHEMA</div><div class="r-value" id="so-r-raw">— / 6</div></div>
+              <div class="readout acc"><div class="r-label">AFTER DEFENSIVE PIPELINE</div><div class="r-value" id="so-r-fix">— / 6</div></div>
+            </div>
+          </div>
+          <div class="w-note">Each card is a plausible model reply. PARSE RAW runs an actual <code>JSON.parse</code> plus a schema check (enum + types) — the verdict text is the real engine error. DEFEND applies that card's documented fix and re-runs. Note card 4: it <em>parses green and validates red</em> — the failure mode a try/catch alone never catches. And card 6's bracket-balancer "succeeds" by silently amputating data: detection and re-request beat repair.</div>
+        </div>
+
+        <div class="callout warn">
+          <span class="co-icon">RULE</span>
+          <p><strong>Repair syntax mechanically; never repair semantics silently.</strong> Stripping a fence loses nothing. Mapping <code>"slightly_negative"</code> to <code>"negative"</code> changes the answer — do it only with a log line, or better, send the validator error back to the model and let it correct itself (Chapter 06 builds this into a full critique loop).</p>
+        </div>
+      </section>
+
+      <!-- ====================== 5.7 ====================== -->
+      <section class="section" id="s7">
+        <div class="sec-head"><span class="sec-num">5.7</span><h2>Constrained decoding under the hood</h2></div>
+        <p>Rung 6 is not prompting at all — it is surgery on the sampling step you met in Vol II · Ch 08. The schema (or regex, or context-free grammar: llama.cpp's GBNF, Outlines, XGrammar, vLLM guided decoding) is compiled into an automaton over the <em>tokenizer's vocabulary</em>. At every step the automaton's current state \(q_s\) defines the set of tokens that keep the output grammatical; everything else is masked to \(-\infty\) before softmax:</p>
+
+        <div class="eq"><span class="eq-tag">EQ P5.3 — LOGIT MASKING BY GRAMMAR</span>
+        $$ \tilde{p}(v \mid s) \;=\; \frac{ p_\theta(v \mid s)\; \mathbf{1}\!\left[v \in \mathcal{A}(q_s)\right] }{ \sum_{u \,\in\, \mathcal{A}(q_s)} p_\theta(u \mid s) } $$
+        <div class="eq-note">\(\mathcal{A}(q_s)\) is the allowed-token set in automaton state \(q_s\). The model's distribution is <b>renormalized over the legal moves only</b>, then temperature and top-p (Vol II · EQ 8.2 machinery) apply to the survivors. Validity becomes a property of the decoder, not of the model's cooperation.</div>
+        </div>
+
+        <p>Two subtleties separate the good implementations from the slow or broken ones:</p>
+        <ul>
+          <li><strong>Token–grammar misalignment.</strong> The grammar is defined over characters, but the model emits tokens — and <code>"true"</code> might be one token or four, with thousands of vocabulary entries spanning any given character boundary. Engines precompute, for each automaton state, which of the ~100K+ tokens are admissible (Outlines' FSM indexing, XGrammar's adaptive token-mask cache), turning a per-step vocabulary scan into a lookup. Done naively, masking dominates decode latency; done well, it is near-free.</li>
+          <li><strong>Distribution distortion.</strong> Masking is greedy with respect to the grammar: each step keeps locally-legal tokens, but the model may be forced down a path it assigns low <em>joint</em> probability — valid JSON it never meant to write, with quality falling where the mask bit hardest. Measured effects on reasoning-heavy tasks are real but contested in size, and the consensus mitigation is the split this chapter keeps returning to: <strong>let the model reason unconstrained, then constrain only the final answer</strong> — either two calls, or thinking tags followed by an enforced answer block.</li>
+        </ul>
+        <p class="note">So the ladder closes its loop: rung 6 guarantees syntax by reaching into the sampler, and rungs 1–5 remain the art of making the model <em>want</em> what the grammar permits — because a constrained decoder dragging an unwilling distribution through a schema produces exactly the hallucinated-but-well-formed fields that §5.5 warned about.</p>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>Structure makes output checkable — now make the model check it.</strong> Chapter 06: self-critique loops, rubric-driven revision, red-team prompts that attack your own system, and councils of models that grade each other's work.</p>
+        </div>
+      </section>
+
+      <nav class="pager">
+        <a href="04-reasoning.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">04</span> Reasoning Controls: CoT to Effort Dials</div></a>
+        <a class="next" href="06-adversarial.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">06</span> Self-Critique, Red Teams &amp; Councils</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — VOL III · CH 05</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/glossary.js"></script>
+<script src="../assets/js/shared.js"></script>
+<script>
+/* chapter instruments — single IIFE, no globals */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var MINT = FM.C.MINT, RED = FM.C.RED, SEC = FM.C.SEC, MUT = FM.C.MUT;
+
+  function copyText(btn, text) {
+    var old = btn.textContent;
+    function done(ok) {
+      btn.textContent = ok ? "COPIED ✓" : "CLIPBOARD BLOCKED";
+      setTimeout(function () { btn.textContent = old; }, 1400);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () { done(true); }, function () { done(false); });
+    } else { done(false); }
+  }
+
+  /* ============================================================
+     INSTRUMENT P5.1 — SCHEMA→PROMPT BUILDER
+     ============================================================ */
+  (function () {
+    var root = document.getElementById("so-builder");
+    if (!root) return;
+    var listEl = document.getElementById("so-b-list");
+    var paneA = document.getElementById("so-b-pane-a");
+    var paneB = document.getElementById("so-b-pane-b");
+    var paneC = document.getElementById("so-b-pane-c");
+    var warnEl = document.getElementById("so-b-warn");
+    var reqBtn = document.getElementById("so-b-req");
+
+    function mkDefaults() {
+      return [
+        { name: "sentiment",  type: "enum",     desc: "Overall sentiment of the review, judged from the text alone", req: true,  vals: ["positive", "neutral", "negative"] },
+        { name: "confidence", type: "number",   desc: "Calibrated confidence in [0,1]; 0.5 means a coin flip",       req: true,  vals: [] },
+        { name: "key_quotes", type: "string[]", desc: "Verbatim quotes copied character-for-character; never paraphrase; empty array if none", req: false, vals: [] }
+      ];
+    }
+    var fields = mkDefaults();
+
+    function singular(n) { return /s$/i.test(n) && n.length > 2 ? n.slice(0, -1) : "item"; }
+
+    function exampleVal(f) {
+      if (f.type === "enum") return f.vals.length ? f.vals[f.vals.length - 1] : "unknown";
+      if (f.type === "number") return /conf|prob|score|rate/i.test(f.name) ? 0.87 : (/count|num|qty/i.test(f.name) ? 3 : 12.5);
+      if (f.type === "boolean") return true;
+      if (f.type === "string[]") return [exampleStr(f.name), "support response took nine days"];
+      return exampleStr(f.name);
+    }
+    function exampleStr(name) {
+      if (/quote/i.test(name)) return "the hinge snapped after two weeks";
+      if (/summary|reason|note/i.test(name)) return "Customer reports a broken hinge and a slow support response.";
+      if (/id|ref/i.test(name)) return "TCK-4821";
+      if (/name|title|product/i.test(name)) return "Atlas-3 battery housing";
+      return "hinge assembly";
+    }
+    function placeholder(f) {
+      if (f.type === "enum") return f.vals.join(" | ");
+      if (f.type === "number") return "0.00";
+      if (f.type === "boolean") return "true | false";
+      return "…";
+    }
+
+    function buildSchema() {
+      var props = {}, req = [];
+      fields.forEach(function (f) {
+        var p = {};
+        if (f.type === "enum") { p.type = "string"; p["enum"] = f.vals; }
+        else if (f.type === "string[]") { p.type = "array"; p.items = { type: "string" }; }
+        else { p.type = f.type; }
+        if (f.desc) p.description = f.desc;
+        props[f.name] = p;
+        if (f.req) req.push(f.name);
+      });
+      return { type: "object", properties: props, required: req, additionalProperties: false };
+    }
+
+    function buildPrompt() {
+      var L = [];
+      L.push("Analyze the input, then answer in exactly this format —");
+      L.push("no prose before or after the tags:");
+      L.push("");
+      L.push("<result>");
+      fields.forEach(function (f) {
+        if (f.type === "string[]") {
+          var it = singular(f.name);
+          L.push("  <" + f.name + ">");
+          L.push("    <" + it + ">…</" + it + ">");
+          L.push("    <" + it + ">…</" + it + ">");
+          L.push("  </" + f.name + ">");
+        } else {
+          L.push("  <" + f.name + ">" + placeholder(f) + "</" + f.name + ">");
+        }
+      });
+      L.push("</result>");
+      L.push("");
+      L.push("Field rules:");
+      fields.forEach(function (f) {
+        var t = f.type === "enum" ? "one of: " + f.vals.join(", ") : f.type;
+        L.push("- <" + f.name + "> (" + t + (f.req ? ", required" : ", optional — omit the tag entirely if absent") + "): " + (f.desc || "—"));
+      });
+      return L.join("\n");
+    }
+
+    function buildExample() {
+      var o = {};
+      fields.forEach(function (f) { o[f.name] = exampleVal(f); });
+      return JSON.stringify(o, null, 2);
+    }
+
+    function render() {
+      listEl.innerHTML = "";
+      fields.forEach(function (f, i) {
+        var row = document.createElement("div");
+        row.style.cssText = "display:flex;align-items:center;gap:10px;border:1px solid #2f3234;border-radius:3px;padding:7px 10px;font-family:ui-monospace,Menlo,monospace;font-size:11px;";
+        var t = f.type === "enum" ? "enum(" + f.vals.join("|") + ")" : f.type;
+        row.innerHTML =
+          '<span style="color:' + MINT + ';min-width:90px;">' + f.name + "</span>" +
+          '<span style="color:#4e8af7;min-width:70px;">' + t + "</span>" +
+          '<span style="color:' + SEC + ';flex:1;font-size:10.5px;">' + (f.desc || "—") + "</span>" +
+          '<span style="color:' + (f.req ? MINT : MUT) + ';font-size:9px;letter-spacing:.12em;">' + (f.req ? "REQ" : "OPT") + "</span>";
+        var x = document.createElement("button");
+        x.className = "w-btn ghost";
+        x.style.cssText = "font-size:9px;padding:2px 8px;";
+        x.textContent = "✕";
+        x.addEventListener("click", function () { fields.splice(i, 1); render(); });
+        row.appendChild(x);
+        listEl.appendChild(row);
+      });
+      var schemaTxt = JSON.stringify(buildSchema(), null, 2);
+      paneA.textContent = schemaTxt;
+      paneB.textContent = buildPrompt();
+      paneC.textContent = buildExample();
+      document.getElementById("so-b-nf").textContent = String(fields.length);
+      document.getElementById("so-b-nr").textContent = String(fields.filter(function (f) { return f.req; }).length);
+      document.getElementById("so-b-tok").textContent = "≈ " + Math.round(schemaTxt.length / 4);
+    }
+
+    reqBtn.addEventListener("click", function () { reqBtn.classList.toggle("on"); reqBtn.textContent = reqBtn.classList.contains("on") ? "YES" : "NO"; });
+
+    document.getElementById("so-b-add").addEventListener("click", function () {
+      var name = document.getElementById("so-b-name").value.trim();
+      var type = document.getElementById("so-b-type").value;
+      var desc = document.getElementById("so-b-desc").value.trim();
+      var ev = document.getElementById("so-b-enum").value.split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+      warnEl.textContent = "";
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) { warnEl.textContent = "field name must be a valid identifier (letters, digits, _)"; return; }
+      if (fields.some(function (f) { return f.name === name; })) { warnEl.textContent = 'field "' + name + '" already exists'; return; }
+      if (type === "enum" && ev.length < 2) { warnEl.textContent = "enum needs ≥ 2 comma-separated values"; return; }
+      if (fields.length >= 8) { warnEl.textContent = "8 fields is plenty — flat beats deep (and so does this demo)"; return; }
+      fields.push({ name: name, type: type, desc: desc, req: reqBtn.classList.contains("on"), vals: type === "enum" ? ev : [] });
+      document.getElementById("so-b-name").value = "";
+      document.getElementById("so-b-desc").value = "";
+      document.getElementById("so-b-enum").value = "";
+      render();
+    });
+
+    document.getElementById("so-b-clear").addEventListener("click", function () { fields = mkDefaults(); render(); });
+
+    document.getElementById("so-b-copy-a").addEventListener("click", function () { copyText(this, paneA.textContent); });
+    document.getElementById("so-b-copy-b").addEventListener("click", function () { copyText(this, paneB.textContent); });
+    document.getElementById("so-b-copy-c").addEventListener("click", function () { copyText(this, paneC.textContent); });
+
+    render();
+  })();
+
+  /* ============================================================
+     INSTRUMENT P5.2 — PARSE ROULETTE
+     ============================================================ */
+  (function () {
+    var grid = document.getElementById("so-r-grid");
+    if (!grid) return;
+    var ALLOWED = ["positive", "neutral", "negative"];
+
+    function extractBraces(s) {
+      var a = s.indexOf("{"), b = s.lastIndexOf("}");
+      return (a >= 0 && b > a) ? s.slice(a, b + 1) : s;
+    }
+    function repairTruncated(s) {
+      var stack = [], inStr = false, esc = false, i, ch;
+      for (i = 0; i < s.length; i++) {
+        ch = s.charAt(i);
+        if (inStr) {
+          if (esc) { esc = false; }
+          else if (ch === "\\") { esc = true; }
+          else if (ch === '"') { inStr = false; }
+        } else {
+          if (ch === '"') { inStr = true; }
+          else if (ch === "{") { stack.push("}"); }
+          else if (ch === "[") { stack.push("]"); }
+          else if (ch === "}" || ch === "]") { stack.pop(); }
+        }
+      }
+      var out = s;
+      if (inStr) { out += '"'; } else { out = out.replace(/[,:]\s*$/, ""); }
+      while (stack.length) { out += stack.pop(); }
+      return out;
+    }
+    function validateObj(o) {
+      var errs = [];
+      if (typeof o !== "object" || o === null || Object.prototype.toString.call(o) === "[object Array]") { errs.push("root is not a JSON object"); return errs; }
+      if (!o.hasOwnProperty("sentiment")) { errs.push('missing required "sentiment"'); }
+      else if (ALLOWED.indexOf(o.sentiment) === -1) { errs.push('"' + o.sentiment + '" not in enum [' + ALLOWED.join(", ") + "]"); }
+      if (!o.hasOwnProperty("confidence")) { errs.push('missing required "confidence"'); }
+      else if (typeof o.confidence !== "number" || o.confidence < 0 || o.confidence > 1) { errs.push('"confidence" must be a number in [0,1]'); }
+      return errs;
+    }
+    function attempt(s) {
+      var r = { parseOk: false, parseMsg: "", valErrs: null };
+      try {
+        var o = JSON.parse(s);
+        r.parseOk = true;
+        r.valErrs = validateObj(o);
+      } catch (e) {
+        r.parseMsg = String(e.message || e).slice(0, 90);
+      }
+      return r;
+    }
+
+    var CASES = [
+      { name: "1 · TRAILING COMMA",
+        raw: '{"sentiment": "negative", "confidence": 0.87,}',
+        fix: 'strip commas before } or ] — s.replace(/,\\s*([}\\]])/g, "$1") — the single most common repair',
+        defend: function (s) { return s.replace(/,\s*([}\]])/g, "$1"); } },
+      { name: "2 · MARKDOWN FENCE",
+        raw: "```json\n{\"sentiment\": \"negative\", \"confidence\": 0.91}\n```",
+        fix: "extract the outermost {...} block — fences and language hints are presentation, not payload",
+        defend: extractBraces },
+      { name: "3 · PREAMBLE + POSTAMBLE",
+        raw: 'Sure! Here is the structured analysis you asked for:\n\n{"sentiment": "negative", "confidence": 0.83}\n\nLet me know if you need anything else.',
+        fix: 'same extractor — or better, make the prose impossible: prefill the assistant turn with "{" (§5.4)',
+        defend: extractBraces },
+      { name: "4 · HALLUCINATED ENUM",
+        raw: '{"sentiment": "slightly_negative", "confidence": 0.74}',
+        fix: "parses GREEN, validates RED — map to nearest allowed value WITH a log line, or re-prompt with the validator error",
+        defend: function (s) {
+          var o = JSON.parse(s), i;
+          for (i = 0; i < ALLOWED.length; i++) { if (String(o.sentiment).indexOf(ALLOWED[i]) !== -1) { o.sentiment = ALLOWED[i]; break; } }
+          return JSON.stringify(o);
+        } },
+      { name: "5 · PYTHON LITERALS",
+        raw: "{'sentiment': 'negative', 'confidence': 0.87, 'verified': True, 'notes': None}",
+        fix: "swap quotes; True/False/None → true/false/null. Fragile (apostrophes in content break it) — in production a retry beats a clever regex",
+        defend: function (s) { return s.replace(/'/g, '"').replace(/\bTrue\b/g, "true").replace(/\bFalse\b/g, "false").replace(/\bNone\b/g, "null"); } },
+      { name: "6 · TRUNCATED (max_tokens)",
+        raw: '{"sentiment": "negative", "confidence": 0.87, "key_quotes": ["the hinge snapped after tw',
+        fix: 'bracket-balancer closes open strings/arrays/objects — "works", but silently amputates data. Honest fix: check stop_reason and re-request',
+        defend: repairTruncated }
+    ];
+
+    var state = CASES.map(function () { return { raw: null, def: null }; });
+    var cards = [];
+
+    function verdictHTML(r, prefix) {
+      var h = "";
+      if (r.parseOk) {
+        h += '<div style="color:' + MINT + ';">' + prefix + 'JSON.parse → ✓ ok</div>';
+        if (r.valErrs.length === 0) { h += '<div style="color:' + MINT + ';">' + prefix + "SCHEMA → ✓ valid</div>"; }
+        else { h += '<div style="color:' + RED + ';">' + prefix + "SCHEMA → ✗ " + r.valErrs.join(" · ") + "</div>"; }
+      } else {
+        h += '<div style="color:' + RED + ';">' + prefix + "JSON.parse → ✗ " + r.parseMsg + "</div>";
+      }
+      return h;
+    }
+    function passes(r) { return !!(r && r.parseOk && r.valErrs && r.valErrs.length === 0); }
+
+    function updateCounts() {
+      var rawN = 0, fixN = 0, ran = 0, dran = 0;
+      state.forEach(function (st) {
+        if (st.raw) { ran++; if (passes(st.raw)) rawN++; }
+        if (st.def) { dran++; if (passes(st.def)) fixN++; }
+      });
+      document.getElementById("so-r-raw").textContent = ran ? rawN + " / 6" : "— / 6";
+      document.getElementById("so-r-fix").textContent = dran ? fixN + " / 6" : "— / 6";
+    }
+
+    function runRaw(i) {
+      state[i].raw = attempt(CASES[i].raw);
+      cards[i].rawV.innerHTML = verdictHTML(state[i].raw, "RAW · ");
+      updateCounts();
+    }
+    function runDef(i) {
+      var repaired;
+      try { repaired = CASES[i].defend(CASES[i].raw); } catch (e) { repaired = CASES[i].raw; }
+      state[i].def = attempt(repaired);
+      cards[i].defV.innerHTML =
+        '<div style="color:' + SEC + ';white-space:pre-wrap;word-break:break-all;">DEFENDED → ' + repaired.slice(0, 110) + (repaired.length > 110 ? "…" : "") + "</div>" +
+        verdictHTML(state[i].def, "FIXED · ");
+      updateCounts();
+    }
+
+    CASES.forEach(function (c, i) {
+      var card = document.createElement("div");
+      card.style.cssText = "border:1px solid #2f3234;border-radius:4px;background:#000;padding:12px;display:flex;flex-direction:column;gap:8px;";
+      var head = document.createElement("div");
+      head.style.cssText = "font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.14em;color:" + SEC + ";";
+      head.textContent = c.name;
+      var raw = document.createElement("pre");
+      raw.style.cssText = "margin:0;max-height:110px;overflow:auto;font-size:10.5px;white-space:pre-wrap;word-break:break-all;";
+      raw.textContent = c.raw;
+      var btns = document.createElement("div");
+      btns.className = "seg-row";
+      var b1 = document.createElement("button"); b1.className = "w-btn"; b1.style.cssText = "font-size:9px;padding:5px 10px;"; b1.textContent = "PARSE RAW ▶";
+      var b2 = document.createElement("button"); b2.className = "w-btn ghost"; b2.style.cssText = "font-size:9px;padding:5px 10px;"; b2.textContent = "DEFEND + RE-PARSE";
+      b1.addEventListener("click", function () { runRaw(i); });
+      b2.addEventListener("click", function () { if (!state[i].raw) runRaw(i); runDef(i); });
+      btns.appendChild(b1); btns.appendChild(b2);
+      var rawV = document.createElement("div");
+      rawV.style.cssText = "font-family:ui-monospace,Menlo,monospace;font-size:10px;line-height:1.6;min-height:16px;";
+      rawV.innerHTML = '<div style="color:' + MUT + ';">awaiting parse…</div>';
+      var defV = document.createElement("div");
+      defV.style.cssText = "font-family:ui-monospace,Menlo,monospace;font-size:10px;line-height:1.6;";
+      var fixN = document.createElement("div");
+      fixN.style.cssText = "font-size:10.5px;color:" + SEC + ";border-top:1px solid #2f3234;padding-top:8px;margin-top:auto;";
+      fixN.textContent = "FIX: " + c.fix;
+      card.appendChild(head); card.appendChild(raw); card.appendChild(btns);
+      card.appendChild(rawV); card.appendChild(defV); card.appendChild(fixN);
+      grid.appendChild(card);
+      cards.push({ rawV: rawV, defV: defV });
+    });
+
+    document.getElementById("so-r-all").addEventListener("click", function () {
+      for (var i = 0; i < CASES.length; i++) { runRaw(i); }
+    });
+    document.getElementById("so-r-def").addEventListener("click", function () {
+      for (var i = 0; i < CASES.length; i++) { if (!state[i].raw) runRaw(i); runDef(i); }
+    });
+  })();
+
+})();
+</script>
+</body>
+</html>

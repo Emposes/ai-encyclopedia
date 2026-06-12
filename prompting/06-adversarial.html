@@ -1,0 +1,649 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>06 · Self-Critique, Red Teams &amp; Councils — AI Encyclopedia</title>
+<meta name="description" content="Verification as a prompting pattern: self-critique and revise, Reflexion loops, red-team prompts, pre-mortems, councils of judges and debate — with the math of when checking beats generating." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css" />
+</head>
+<body>
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ VOL III / PROMPTING / 06 / SELF-CRITIQUE &amp; RED TEAMS</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="07-evaluation-lab.html">NEXT: EVALUATION LAB →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">VOLUME III — PROMPTING · CHAPTER 06 / 07</div>
+    <h1>Self-Critique, Red Teams &amp; Councils</h1>
+    <p class="lede">Everything a model emits in one pass is a draft — fluent, confident, and unexamined. The techniques in this chapter exploit one asymmetry: <strong>models are measurably better at judging work than at producing it</strong>, so a second pass spent checking buys more quality per token than a longer first pass spent generating. The catch, and the discipline of this chapter: the judge must never be the author still warm in the same context.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>ADVANCED</b></span>
+      <span>READING TIME<b>≈ 24 MIN</b></span>
+      <span>BUILDS ON<b>CH 04–05 · VOL II CH 05</b></span>
+      <span>INSTRUMENTS<b>CRITIQUE DIFF · COUNCIL SIM</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">6.1</span>The draft problem</a>
+      <a href="#s2"><span class="n">6.2</span>Critique &amp; revise</a>
+      <a href="#s3"><span class="n">6.3</span>Reflexion loops</a>
+      <a href="#s4"><span class="n">6.4</span>Red-team prompting</a>
+      <a href="#s5"><span class="n">6.5</span>Pre-mortem</a>
+      <a href="#s6"><span class="n">6.6</span>Council of judges</a>
+      <a href="#s7"><span class="n">6.7</span>Debate</a>
+      <a href="#s8"><span class="n">6.8</span>Honest costs</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 6.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">6.1</span><h2>Why single-pass output is a draft</h2></div>
+        <p>An autoregressive model commits to every token as it goes. There is no backspace in the decoding loop: a weak opening sentence constrains everything after it, an early arithmetic slip propagates to the conclusion, and the model's trademark fluency papers over both. Single-pass generation is a first draft produced by a writer who is forbidden from rereading.</p>
+        <p>What rescues this is an asymmetry the field keeps rediscovering. Ask a model to <em>produce</em> a correct solution and it succeeds with some probability; show it a candidate solution and ask <em>is this correct?</em> and it succeeds more often. The canonical early result: on grade-school math, a small model that generates many answers and ranks them with a trained verifier beat a generator <em>30× its size</em> sampling once (Cobbe et al., 2021). The same asymmetry is why RLHF works at all — humans (and reward models) can rank outputs they could never write (Vol II · EQ 5.2). The intuition is old: checking a proof is easier than finding one.</p>
+
+        <div class="eq"><span class="eq-tag">EQ P6.1 — THE GENERATOR–VERIFIER GAP</span>
+        $$ \Delta_{\mathrm{GV}} \;=\; \underbrace{\Pr\!\big[\,V_\theta(x,\hat y) \,=\, \mathbf{1}[\hat y \text{ solves } x]\,\big]}_{\text{verification accuracy}} \;-\; \underbrace{\Pr_{\hat y\,\sim\,p_\theta(\cdot\mid x)}\!\big[\,\hat y \text{ solves } x\,\big]}_{\text{generation accuracy}} $$
+        <div class="eq-note">\(V_\theta\) is the same model prompted as a judge. When \(\Delta_{\mathrm{GV}} &gt; 0\), extra compute is better spent <b>checking and selecting</b> than generating longer. The gap is task-dependent and honestly contested: it is large for code-with-tests, math-with-verifiers, and factual claims; it shrinks toward zero for taste, style, and — without an external signal — for the model's own reasoning chains (§6.8). Every pattern in this chapter is a way of spending a positive gap.</div>
+        </div>
+
+        <p>Three topologies organize everything that follows: run the check <strong>after</strong> the draft (sequential — self-critique, Reflexion), run many checks <strong>in parallel</strong> (the council), or make two copies of the model <strong>fight</strong> and judge the wreckage (debate). The pre-mortem and red team are sequential patterns wearing armor: the critique arrives dressed as an attacker or a coroner, which turns out to matter enormously.</p>
+
+        <div class="figure" data-reveal>
+          <div class="fig-head"><span class="fig-id">FIG P6.1</span><span class="fig-title">THREE VERIFICATION TOPOLOGIES</span></div>
+          <div class="fig-body">
+            <svg viewBox="0 0 760 250" xmlns="http://www.w3.org/2000/svg">
+              <!-- sequential -->
+              <rect class="dg-box" x="40" y="20" width="150" height="40" rx="4" data-pop/><text class="dg-label" x="115" y="44" text-anchor="middle">AUTHOR → DRAFT</text>
+              <path class="dg-line" d="M115 60 V86" data-draw/><path class="dg-line" d="M110 80 l5 8 5 -8" data-draw/>
+              <rect class="dg-box-accent" x="40" y="90" width="150" height="40" rx="4" data-pop/><text class="dg-label" x="115" y="114" text-anchor="middle" fill="#a6f2cc">CRITIC (FRESH CTX)</text>
+              <path class="dg-line" d="M115 130 V156" data-draw/><path class="dg-line" d="M110 150 l5 8 5 -8" data-draw/>
+              <rect class="dg-box" x="40" y="160" width="150" height="40" rx="4" data-pop/><text class="dg-label" x="115" y="184" text-anchor="middle">REVISER</text>
+              <text class="dg-label-mut" x="115" y="232" text-anchor="middle">SEQUENTIAL — §6.2–6.5</text>
+              <!-- parallel -->
+              <rect class="dg-box" x="330" y="20" width="130" height="40" rx="4" data-pop/><text class="dg-label" x="395" y="44" text-anchor="middle">ARTIFACT</text>
+              <path class="dg-line" d="M395 60 L325 90" data-draw/><path class="dg-line" d="M395 60 V90" data-draw/><path class="dg-line" d="M395 60 L465 90" data-draw/>
+              <rect class="dg-box-accent" x="285" y="94" width="76" height="36" rx="4" data-pop/><text class="dg-label" x="323" y="116" text-anchor="middle" fill="#a6f2cc">JUDGE 1</text>
+              <rect class="dg-box-accent" x="367" y="94" width="76" height="36" rx="4" data-pop/><text class="dg-label" x="405" y="116" text-anchor="middle" fill="#a6f2cc">JUDGE 2</text>
+              <rect class="dg-box-accent" x="449" y="94" width="76" height="36" rx="4" data-pop/><text class="dg-label" x="487" y="116" text-anchor="middle" fill="#a6f2cc">JUDGE N</text>
+              <path class="dg-line" d="M323 130 L390 160" data-draw/><path class="dg-line" d="M405 130 V160" data-draw/><path class="dg-line" d="M487 130 L420 160" data-draw/>
+              <rect class="dg-box" x="330" y="160" width="130" height="40" rx="4" data-pop/><text class="dg-label" x="395" y="184" text-anchor="middle">AGGREGATOR</text>
+              <text class="dg-label-mut" x="395" y="232" text-anchor="middle">PARALLEL — §6.6</text>
+              <!-- adversarial -->
+              <rect class="dg-box" x="575" y="20" width="80" height="40" rx="4" data-pop/><text class="dg-label" x="615" y="44" text-anchor="middle">ADV. A</text>
+              <rect class="dg-box" x="665" y="20" width="80" height="40" rx="4" data-pop/><text class="dg-label" x="705" y="44" text-anchor="middle">ADV. B</text>
+              <path class="dg-line-blue" d="M615 60 Q660 84 705 60" data-draw/><path class="dg-line-blue" d="M705 70 Q660 94 615 70" data-draw/>
+              <path class="dg-line" d="M660 92 V156" data-draw/><path class="dg-line" d="M655 150 l5 8 5 -8" data-draw/>
+              <rect class="dg-box-accent" x="600" y="160" width="120" height="40" rx="4" data-pop/><text class="dg-label" x="660" y="184" text-anchor="middle" fill="#a6f2cc">JUDGE</text>
+              <text class="dg-label-mut" x="660" y="232" text-anchor="middle">ADVERSARIAL — §6.7</text>
+            </svg>
+          </div>
+          <div class="fig-cap"><b>Same gap, three ways to spend it.</b> Sequential patterns trade latency for depth on one artifact; parallel councils trade tokens for variance reduction; adversarial setups make claims earn survival under attack. Mint boxes mark the contexts that must stay fresh — they never see the author's reasoning, only its output.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 6.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">6.2</span><h2>Self-critique &amp; revise: the three-turn pattern</h2></div>
+        <p>The minimum viable verification loop is three calls: <strong>produce → critique against explicit criteria → revise</strong>. Each clause carries weight. <em>Three calls</em>, because critique appended to the generation prompt ("write it, then review your work") collapses into one distribution — the model that just committed to a draft is the model least able to see its flaws, and in practice appends a paragraph of polite self-congratulation. <em>Explicit criteria</em>, because "make it better" licenses cosmetic edits; a rubric converts taste into checkable claims.</p>
+        <p><strong>Rubric-as-prompt</strong> is the load-bearing trick. A good rubric has 3–6 criteria, each phrased so that a verdict can be defended by <em>quotation</em> — the critic must point at failing text, not emit vibes. A worked example, for a status-update paragraph:</p>
+        <table class="data">
+          <thead><tr><th>Criterion</th><th>Checkable phrasing</th><th>Catches</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Specificity</strong></td><td>every claim carries a number, date, or named source</td><td class="m">"much faster", "significantly"</td></tr>
+            <tr><td><strong>Falsifiability</strong></td><td>a skeptic could in principle prove each claim wrong</td><td class="m">"better performance overall"</td></tr>
+            <tr><td><strong>Causal clarity</strong></td><td>mechanisms stated — X because Y, with Y measured</td><td class="m">"caching and other improvements"</td></tr>
+            <tr><td><strong>Reader cost</strong></td><td>no sentence makes the reader do the author's work</td><td class="m">"the team worked very hard"</td></tr>
+          </tbody>
+        </table>
+        <pre><code><span class="c"># THE 3-TURN PATTERN — each turn is a separate API call</span>
+<span class="k">TURN 1 — AUTHOR</span>
+Write the deployment update for the engineering newsletter.
+<span class="v">{{task context}}</span>
+
+<span class="k">TURN 2 — CRITIC</span>   <span class="c"># fresh context: gets draft + rubric, nothing else</span>
+You are reviewing a draft you did not write. Grade it against each
+criterion below. For every verdict, QUOTE the text that earns it.
+Do not rewrite. Do not praise. Verdicts: PASS / PARTIAL / FAIL.
+
+RUBRIC
+1. SPECIFICITY     every claim carries a number, date, or named source
+2. FALSIFIABILITY  a skeptic could in principle prove each claim wrong
+3. CAUSAL CLARITY  mechanisms stated (X because Y), not adjacency
+4. READER COST     no sentence makes the reader do the author's work
+
+DRAFT
+<span class="v">{{draft}}</span>
+
+<span class="k">TURN 3 — REVISER</span>  <span class="c"># gets draft + critique; NOT the critic's context</span>
+Rewrite the draft so every FAIL and PARTIAL becomes a PASS.
+Change nothing the critique did not flag. Output only the revision.</code></pre>
+        <p class="note">The reviser's leash — <em>change nothing the critique did not flag</em> — prevents revision drift, where a model "improving" a draft quietly rewrites the parts that were already right. And the critic's <em>quote-to-convict</em> rule is your hallucination filter: a criticism that cannot point at text is usually invented.</p>
+
+        <div class="widget" id="adv-diff" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT P6.1 — CRITIQUE PASS DIFF</span><span class="w-sub">3 TURNS · RUBRIC OF §6.2</span></div>
+          <div class="w-body">
+            <div class="ctl-row" style="align-items:center;">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>STEP THROUGH THE PIPELINE</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-adv-turn="1">1 · DRAFT</button>
+                  <button class="w-btn ghost" data-adv-turn="2">2 · CRITIQUE</button>
+                  <button class="w-btn ghost" data-adv-turn="3">3 · REVISION</button>
+                </div>
+              </div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>&nbsp;</label>
+                <div class="seg-row">
+                  <button class="w-btn" id="adv-next">NEXT TURN →</button>
+                  <button class="w-btn ghost" id="adv-clean" style="display:none;">VIEW: CLEAN</button>
+                </div>
+              </div>
+            </div>
+            <div id="adv-stage" style="border:1px solid var(--hairline);border-radius:4px;padding:18px 20px;min-height:150px;"></div>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">DRAFT RUBRIC</div><div class="r-value" id="adv-d-draft">—</div></div>
+              <div class="readout acc"><div class="r-label">REVISION RUBRIC</div><div class="r-value" id="adv-d-rev">—</div></div>
+              <div class="readout"><div class="r-label">PIPELINE TOKEN COST</div><div class="r-value" id="adv-d-cost">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Step through the three turns. The draft is fluent and empty; the critique convicts it by quotation, criterion by criterion; the revision view shows exactly what the critique paid for — <span style="color:#ff4136;">deletions struck in red</span>, <span style="color:#a6f2cc;">insertions in mint</span>. Toggle VIEW: CLEAN to read the final text. Token cost is computed from the actual word counts of the three turns — note it lands near 5× here, not the 3× rule of thumb of §6.8: short drafts amortize the rubric badly, long artifacts amortize it well.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 6.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">6.3</span><h2>Reflexion loops: carry the critique forward</h2></div>
+        <p>One critique pass fixes one draft. <strong>Reflexion</strong> (Shinn et al., 2023) turns the pattern into a loop with memory: attempt the task, fail against an external signal (a unit test, a validator, an environment), then have a reflector distill <em>why</em> it failed into one or two sentences — and feed only those <em>lessons</em> into the next attempt, not the failed transcripts. The critique becomes episodic memory: a verbal gradient step, applied at inference time, with no weights touched.</p>
+        <p>The design choice that makes it work is what you <em>exclude</em>. Naive retry-with-history stuffs every failed attempt into context, which bloats the prompt and — worse — anchors the model on its own failed approach; models shown their previous wrong answer reproduce its skeleton with cosmetic edits. A distilled lesson ("the regex missed multiline input; anchor with \A…\z") transfers the information without the anchor. Memory should hold conclusions, not transcripts.</p>
+        <pre><code><span class="c"># REFLEXION LOOP — repeat until pass or attempts == K</span>
+<span class="k">ATTEMPT k</span>   <span class="c"># fresh context: task + memory, never previous transcripts</span>
+&lt;memory&gt;    <span class="c"># one lesson per failed attempt, written by the reflector</span>
+- Attempt 1 failed: regex missed multiline input; anchor with \A…\z
+- Attempt 2 failed: parsing fixed, but the empty-file case now throws
+&lt;/memory&gt;
+&lt;task&gt;<span class="v">{{task}}</span>&lt;/task&gt;
+
+<span class="c"># after each failure, with the attempt + the error/test output:</span>
+<span class="k">REFLECTOR</span>
+In at most 2 sentences: state why this attempt failed and the one
+rule that would have prevented it. Append to &lt;memory&gt;.
+Do not apologize. Do not restate the task. Do not propose code.</code></pre>
+        <p class="note"><strong>The honest constraint:</strong> Reflexion's published gains (it pushed GPT-4 from ~80% to ~91% pass@1 on HumanEval) lean on a <em>ground-truth signal</em> — tests either pass or they don't. With no external verifier, the reflector grades its own homework and the loop can wander: lessons become confabulated, and accuracy can go <em>down</em> across iterations (§6.8). Reflexion is a technique for tasks with oracles, approximate or exact.</p>
+      </section>
+
+      <!-- ====================== 6.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">6.4</span><h2>Red-team prompting: attack your own output</h2></div>
+        <p>A critique prompt asks "how good is this?" A red-team prompt asks <strong>"how does this fail?"</strong> — and the reframing changes what the model retrieves. Assistants are tuned toward helpfulness, which makes their default review charitable: they look for things to fix gently. Casting the model as a hostile reviewer — a security auditor, a competitor's analyst, a paid breaker — relicenses pure negativity, and the findings get sharper and more specific. The persona isn't theater; it's distribution selection (Ch 02).</p>
+        <p>Structure the attack like a security review, because the taxonomy forces coverage instead of letting the model fixate on its first objection. Four lines of attack, in escalating order of imagination: <strong>failure modes</strong> (inputs and states where behavior is wrong or undefined), <strong>edge cases</strong> (empty, enormous, malformed, concurrent, adversarial), the <strong>hostile reader</strong> (the sentence a critic quotes out of context; the claim a competitor screenshots), and <strong>abuse</strong> (how a motivated user weaponizes the artifact exactly as written).</p>
+        <pre><code><span class="k">RED TEAM</span>   <span class="c"># fresh context — the attacker must not have written the artifact</span>
+You wrote nothing below. You are a hostile reviewer paid per finding
+to identify the fastest ways this artifact fails in production.
+
+ARTIFACT
+<span class="v">{{output}}</span>
+
+Attack in order:
+1. FAILURE MODES   inputs or states where behavior is wrong/undefined
+2. EDGE CASES      empty · huge · malformed · concurrent · adversarial
+3. HOSTILE READER  the sentence a critic quotes out of context;
+                   the claim a competitor puts on a slide
+4. ABUSE           how a motivated user weaponizes this as written
+
+For each finding: severity P0–P3, the exact text or line, and a
+concrete trigger that reproduces it. No praise. No summary.
+If a category yields nothing real, write "no finding" — do not invent.</code></pre>
+        <p class="note">Red teams produce <em>candidates</em>, not confirmations. Some findings will be hallucinated — the "concrete trigger" requirement is the triage filter (an attack that can't name its reproduction is noise), and the explicit permission to return "no finding" suppresses the model's urge to fill all four quotas. Feed the surviving P0/P1s back through the §6.2 reviser.</p>
+      </section>
+
+      <!-- ====================== 6.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">6.5</span><h2>Pre-mortem: write the post-incident report first</h2></div>
+        <p>The red team attacks an artifact that exists. The <strong>pre-mortem</strong> — borrowed from Gary Klein's decision research — attacks a <em>plan</em> before anything is built, which is when objections are cheapest to act on. The move is a tense shift: not "what could go wrong?" (which invites hedged, low-effort maybes) but <strong>"it is six months later and this failed — explain"</strong>. Psychologists call it prospective hindsight: presupposing the outcome measurably increases the number and specificity of causes people generate. The same framing moves an LLM out of its plan-completion groove and into its incident-report groove — a genre it knows deeply, and one whose conventions <em>force</em> a timeline, a root cause, and a missed early signal.</p>
+        <pre><code><span class="k">PRE-MORTEM</span>   <span class="c"># run at planning time, before resources are committed</span>
+It is six months later. The plan below shipped and failed badly
+enough to be rolled back. Write the post-incident report.
+
+PLAN
+<span class="v">{{plan}}</span>
+
+REPORT FORMAT
+- TIMELINE       what broke first and what it cascaded into
+- ROOT CAUSE     the assumption in the plan that turned out false
+- EARLY SIGNAL   the metric that would have caught this in week 1
+- THE FIX        the single change to the plan that prevents this
+
+Write three independent reports: the MOST LIKELY failure, the MOST
+EXPENSIVE failure, and the MOST EMBARRASSING failure. Different root
+causes for each — no overlap.</code></pre>
+        <p class="note">The deliverable is not anxiety; it's the <strong>EARLY SIGNAL</strong> lines. Three pre-mortem reports yield three monitoring metrics and usually one genuine plan change — which is a better return than most planning meetings. The most-likely/most-expensive/most-embarrassing split exists to break the model's habit of writing the same failure three ways.</p>
+      </section>
+
+      <!-- ====================== 6.6 ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">6.6</span><h2>Council of judges</h2></div>
+        <p>A single LLM judge is noisy: rerun it and the verdict flips more often than anyone likes to admit (Ch 07 measures this). The classical fix is the classical one — <strong>ask several and take the majority</strong>. If \(n\) judges vote independently and each is right with probability \(p &gt; \tfrac12\), majority error doesn't just shrink, it collapses:</p>
+
+        <div class="eq"><span class="eq-tag">EQ P6.2 — CONDORCET JURY THEOREM (ODD n, IID JUDGES)</span>
+        $$ P_{\mathrm{maj}}(n,p) \;=\; \sum_{k=\frac{n+1}{2}}^{n} \binom{n}{k}\, p^{k}\,(1-p)^{\,n-k} \;\;\xrightarrow[\;n\,\to\,\infty\;]{}\;\; \begin{cases} 1 &amp; p &gt; \tfrac12 \\[2pt] 0 &amp; p &lt; \tfrac12 \end{cases} $$
+        <div class="eq-note">Five judges at \(p = 0.72\) give a majority that is right 86% of the time; nine give 92%. The theorem cuts both ways: <b>a council of below-chance judges converges confidently on the wrong answer</b>. And the whole guarantee rests on the word <em>independently</em> — which is exactly what N samples from one model in one context are not.</div>
+        </div>
+
+        <div class="eq"><span class="eq-tag">EQ P6.3 — THE CORRELATION FLOOR</span>
+        $$ \operatorname{Var}(\bar s_N) \;=\; \frac{(1-\rho)\,\sigma^2}{N} \;+\; \rho\,\sigma^2 \;\;\xrightarrow[\;N\,\to\,\infty\;]{}\;\; \rho\,\sigma^2 $$
+        <div class="eq-note">For \(N\) judge scores with pairwise correlation \(\rho\), only the <em>uncorrelated</em> part of the noise averages away. Judges sharing a base model, a prompt phrasing, or a context window share blind spots: \(\rho \gg 0\), and judges 4 through 9 buy almost nothing. <b>Engineering independence — distinct lenses, separate contexts, different phrasings, ideally different models — is worth more than raising N.</b></div>
+        </div>
+
+        <p>Hence the production shape: <strong>N judges, each with a distinct lens, in separate contexts, plus an aggregator</strong> that sees only verdicts and evidence — never the artifact author's chain of thought. The lenses do double duty: they decorrelate the judges <em>and</em> partition the review surface, so five judges cover five failure classes instead of quintuple-checking grammar. This is also a familiar object wearing new clothes: GRPO scores each sampled response against its group's mean reward (Vol II · EQ 5.6) — the group is the baseline that makes a single noisy score meaningful. A council is the same variance-reduction move executed at inference time, with verdicts instead of rewards; self-consistency (Ch 04) is its degenerate cousin where every "judge" is the same persona resampled at temperature.</p>
+        <pre><code><span class="c"># COUNCIL — each judge is a separate call; aggregator sees verdicts only</span>
+<span class="k">JUDGE i of N</span>   <span class="c"># one lens per judge — assign, don't let them choose</span>
+You are one of N independent reviewers. You see only the artifact
+and your lens. Verdict first, then at most 3 sentences of evidence,
+each anchored to quoted text.
+
+LENS 1  factual accuracy — verify every checkable claim
+LENS 2  internal consistency — do any two sections contradict?
+LENS 3  completeness against the spec — what is missing?
+LENS 4  security and abuse — how does this get misused?
+LENS 5  the intended reader — what will they misunderstand first?
+
+VERDICT: ACCEPT | REVISE | REJECT
+
+<span class="k">AGGREGATOR</span>   <span class="c"># gets the N verdicts + evidence, not the artifact's history</span>
+Tally the verdicts. Quote each judge's strongest piece of evidence.
+Where judges disagree, name the disagreement — splits are signal,
+not noise to average away. Output: final verdict + minimal revision
+list, ordered by how many judges' objections each item resolves.</code></pre>
+
+        <div class="widget" id="adv-council" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT P6.2 — COUNCIL SIMULATOR</span><span class="w-sub">5 PERSONAS · EXACT POISSON-BINOMIAL MAJORITY</span></div>
+          <div class="w-body">
+            <div style="border:1px solid var(--hairline);border-radius:4px;padding:12px 16px;margin-bottom:18px;">
+              <div style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.16em;color:#636363;margin-bottom:6px;">CLAIM UNDER REVIEW</div>
+              <div style="font-size:13.5px;color:#9b9b9b;line-height:1.6;">“Moving the session store to Redis will eliminate our p99 latency spikes, because the spikes are caused by row-lock contention in Postgres.”</div>
+              <div id="adv-truth-line" style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.12em;color:#636363;margin-top:8px;">—</div>
+            </div>
+            <div class="ctl-row">
+              <div class="ctl"><label>COUNCIL SIZE n <output id="adv-size-out">5</output></label><input type="range" id="adv-size" min="1" max="9" step="1" value="5"/></div>
+              <div class="ctl"><label>BASE JUDGE ACCURACY p <output id="adv-acc-out">0.72</output></label><input type="range" id="adv-acc" min="0.50" max="0.95" step="0.01" value="0.72"/></div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>GROUND TRUTH</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-adv-truth="flawed">CLAIM IS FLAWED</button>
+                  <button class="w-btn ghost" data-adv-truth="sound">CLAIM IS SOUND</button>
+                </div>
+              </div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>&nbsp;</label>
+                <button class="w-btn" id="adv-resample">RESAMPLE ⟳</button>
+              </div>
+            </div>
+            <div style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.16em;color:#636363;margin-bottom:6px;">VERDICTS (BORDER: MINT = CORRECT · RED = WRONG)</div>
+            <div id="adv-chips" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px;"></div>
+            <canvas class="w-canvas" id="adv-curve" height="240"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">MAJORITY VERDICT</div><div class="r-value" id="adv-verdict">—</div></div>
+              <div class="readout"><div class="r-label">VOTE SPLIT</div><div class="r-value" id="adv-split">—</div></div>
+              <div class="readout acc"><div class="r-label">P(MAJORITY CORRECT) — EXACT</div><div class="r-value" id="adv-pmaj">—</div></div>
+              <div class="readout"><div class="r-label">MEAN SINGLE JUDGE</div><div class="r-value" id="adv-single">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Five toy personas vote on one claim: STRICT (biased to reject), LENIENT (biased to accept), EXPERT (+12 pts accuracy), RANDOM (coin flip), CONTRARIAN (worse than chance). RESAMPLE re-rolls the vote; the curve is the <em>exact</em> majority error rate versus council size — mint for this persona mix, blue dashed for the ideal IID council of EQ P6.2. Watch three lessons: the persona mix never reaches the IID curve (correlation and bad judges are a tax); flipping GROUND TRUTH swaps which biased judge helps you — bias is only "strictness" until the truth changes; and even council sizes kink the curve (ties resolved by coin flip). The personas are toys; the majority math is exact.</div>
+        </div>
+        <p class="note"><strong>Practicalities:</strong> use odd N; 3–5 judges capture most of the gain (the binomial tail flattens fast); keep the aggregator's job mechanical — tally, quote, surface splits. An aggregator allowed to "weigh holistically" becomes a sixth judge with veto power, and your variance reduction evaporates.</p>
+      </section>
+
+      <!-- ====================== 6.7 ====================== -->
+      <section class="section" id="s7">
+        <div class="sec-head"><span class="sec-num">6.7</span><h2>Debate &amp; the devil's advocate</h2></div>
+        <p>Councils judge in parallel silence. <strong>Debate</strong> makes the strongest case for and against collide, on the theory — proposed for AI oversight by Irving, Christiano and Amodei (2018) — that <em>refuting a lie is easier than detecting one</em>: a judge too weak to evaluate a claim directly can still tell which side's evidence survived rebuttal. The empirical record is genuinely encouraging on factual tasks: in the Khan et al. (2024) reading-comprehension setup, non-expert judges (who couldn't see the source text) gained double-digit accuracy from watching expert models debate, and <em>stronger</em> debaters helped judges more. The honest asterisk: debate rewards persuasion, persuasion and truth are correlated but not identical, and on open-ended questions a silver-tongued wrong answer can win rounds.</p>
+        <pre><code><span class="k">DEBATE</span>   <span class="c"># advocates argue in separate contexts; judge sees transcript only</span>
+ROUND 1 — ADVOCATE A: strongest honest case FOR the answer below.
+ROUND 1 — ADVOCATE B: strongest honest case AGAINST it.
+          Cite evidence; invented evidence forfeits the round.
+ROUND 2 — each advocate rebuts the other's specific points.
+          Quote what you rebut. Unanswered points stand.
+
+<span class="k">JUDGE</span>   <span class="c"># fresh context — has not seen the original question's solution</span>
+You see only the transcript. Score which side's EVIDENCE survived
+rebuttal — not which side is better written. List the surviving
+points per side. Verdict + the single argument that decided it.</code></pre>
+        <p>The budget version is the <strong>devil's advocate</strong>: a single extra instruction at the end of a generation — <em>"before finalizing: state the strongest case that this answer is wrong; if it changes your answer, change it; if not, say in one line why it fails."</em> It runs inside the author's own context, so it inherits the author's blind spots (§6.8) and is the weakest pattern in this chapter — but it costs ~50 tokens, catches the embarrassing class of error, and is the one technique here cheap enough to leave on by default.</p>
+      </section>
+
+      <!-- ====================== 6.8 ====================== -->
+      <section class="section" id="s8">
+        <div class="sec-head"><span class="sec-num">6.8</span><h2>Honest costs</h2></div>
+        <p>Every pattern in this chapter multiplies tokens, latency, or both. The honest ledger:</p>
+        <table class="data">
+          <thead><tr><th>Pattern</th><th>LLM calls</th><th>Token cost</th><th>Latency shape</th><th>Reach for it when</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Critique → revise</strong></td><td class="m">3</td><td class="m">≈ 3×</td><td class="m">3 serial turns</td><td>one artifact, quality floor matters</td></tr>
+            <tr><td><strong>Reflexion loop</strong></td><td class="m">2k + 1</td><td class="m">5–10×</td><td class="m">serial × attempts</td><td>an external pass/fail signal exists</td></tr>
+            <tr><td><strong>Red team</strong></td><td class="m">2–3</td><td class="m">2–3×</td><td class="m">short serial</td><td>anything public-facing or load-bearing</td></tr>
+            <tr><td><strong>Pre-mortem</strong></td><td class="m">1–3</td><td class="m">≈ 2×</td><td class="m">planning time</td><td>before resources are committed</td></tr>
+            <tr><td><strong>Council of N</strong></td><td class="m">N + 1</td><td class="hl">≈ (N+1)×</td><td class="hl">~2 turns (judges run parallel)</td><td>high-stakes verdicts, noisy single judge</td></tr>
+            <tr><td><strong>Debate</strong></td><td class="m">5–7</td><td class="m">4–6×</td><td class="m">3 serial rounds</td><td>contested claims, judge weaker than task</td></tr>
+          </tbody>
+        </table>
+        <p>The subtler cost is <strong>sycophantic self-review</strong>. Models exhibit self-preference: asked to grade outputs, they systematically favor their own — and recent work suggests part of the mechanism is <em>self-recognition</em> (Panickssery et al., 2024). Worse, a critic running in the author's context inherits the author's framing, retrieves the author's justifications, and converges on "looks good with minor nits." This is why every template above repeats the same clause: <strong>the judge is a fresh context</strong>. The author's chain of thought is contamination. Same model with a clean context and an adversarial persona is good; a different model entirely is better; a different model with a rubric and quote-to-convict rules is the strongest cheap judge you can build.</p>
+        <p>And self-correction has a documented failure mode: <em>without</em> an external signal, asking a model to reconsider a correct answer frequently talks it out of that answer — measured as net-negative "intrinsic self-correction" on reasoning benchmarks (Huang et al., 2024). The lesson is not "never critique"; it's that critique needs either an oracle (tests, validators, retrieval) or an asymmetric frame (rubric, attack taxonomy) — a bare "are you sure?" is an invitation to dither, and models accept it.</p>
+        <p class="note"><strong>When single-shot is fine:</strong> low stakes, latency-bound UX, taste-driven tasks with no articulable rubric, and anywhere \(\Delta_{\mathrm{GV}} \approx 0\). One more honest note: reasoning models trained with RLVR (Vol II · Ch 05) already run a private draft-check-backtrack loop inside their chain of thought — for them, external critique buys less than it did in 2023, and a council of reasoning models is often compute better spent as one longer reasoning budget. Measure, don't assume — which is precisely the next chapter.</p>
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>You have been judging by hand; now make it reproducible.</strong> Chapter 07: prompt evals, the biases of LLM judges (position, length, self-preference — measured), versioning prompts like code, and the Prompt Lab — every technique in this volume, run live against a real model with your own key.</p>
+        </div>
+      </section>
+
+      <nav class="pager">
+        <a href="05-structured-output.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">05</span> Structured Output &amp; Tool-Ready Prompts</div></a>
+        <a class="next" href="07-evaluation-lab.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">07</span> Evaluation &amp; The Prompt Lab</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — VOL III · CH 06</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/glossary.js"></script>
+<script src="../assets/js/shared.js"></script>
+<script>
+/* chapter instruments — single IIFE, no globals */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  /* ============================================================
+     INSTRUMENT P6.2 — COUNCIL SIMULATOR
+     ============================================================ */
+  var cRoot = document.getElementById("adv-council");
+  var renderCouncil = null;
+  if (cRoot) {
+    var $ = function (id) { return document.getElementById(id); };
+    var sizeEl = $("adv-size"), sizeOut = $("adv-size-out"), accEl = $("adv-acc"), accOut = $("adv-acc-out"),
+        chipsEl = $("adv-chips"), curveEl = $("adv-curve"), verdictEl = $("adv-verdict"), splitEl = $("adv-split"),
+        pmajEl = $("adv-pmaj"), singleEl = $("adv-single"), truthLineEl = $("adv-truth-line"),
+        resampleBtn = $("adv-resample"), truthBtns = cRoot.querySelectorAll("[data-adv-truth]");
+
+    var ROSTER = ["STRICT", "LENIENT", "EXPERT", "RANDOM", "CONTRARIAN", "STRICT·2", "LENIENT·2", "EXPERT·2", "RANDOM·2"];
+    var truthFlawed = true;
+    var sampleSeed = 11;
+
+    function clamp01(x) { return Math.min(0.98, Math.max(0.02, x)); }
+
+    /* per-persona accuracy: P(judge votes the ground-truth verdict) */
+    function personaAcc(name, p) {
+      var kind = name.split("·")[0];
+      if (kind === "EXPERT") return clamp01(p + 0.12);
+      if (kind === "STRICT") return clamp01(truthFlawed ? p + 0.07 : p - 0.20);
+      if (kind === "LENIENT") return clamp01(truthFlawed ? p - 0.20 : p + 0.07);
+      if (kind === "RANDOM") return 0.5;
+      return clamp01(1 - p); /* CONTRARIAN: anti-correlated with truth */
+    }
+
+    /* exact P(majority correct) for heterogeneous accuracies:
+       Poisson-binomial DP; even-n ties resolved by coin flip */
+    function pMajority(accs) {
+      var poly = [1], i, k;
+      for (i = 0; i < accs.length; i++) {
+        var next = [], a = accs[i];
+        for (k = 0; k <= poly.length; k++) next.push(0);
+        for (k = 0; k < poly.length; k++) {
+          next[k] += poly[k] * (1 - a);
+          next[k + 1] += poly[k] * a;
+        }
+        poly = next;
+      }
+      var n = accs.length, p = 0;
+      for (k = 0; k <= n; k++) {
+        if (2 * k > n) p += poly[k];
+        else if (2 * k === n) p += 0.5 * poly[k];
+      }
+      return p;
+    }
+
+    function accList(n, p) {
+      var out = [];
+      for (var i = 0; i < n; i++) out.push(personaAcc(ROSTER[i], p));
+      return out;
+    }
+
+    function drawCurve(n, p) {
+      var sc = FM.setupCanvas(curveEl, 240);
+      var ctx = sc.ctx;
+      var PAD = { l: 46, r: 16, t: 16, b: 30 };
+      var r = { x: PAD.l, y: PAD.t, w: sc.w - PAD.l - PAD.r, h: sc.h - PAD.t - PAD.b };
+      var errMix = [], errIid = [], m, k, maxE = 0;
+      for (m = 1; m <= 9; m++) {
+        var iid = [];
+        for (k = 0; k < m; k++) iid.push(p);
+        var e1 = 1 - pMajority(accList(m, p));
+        var e2 = 1 - pMajority(iid);
+        errMix.push(e1); errIid.push(e2);
+        maxE = Math.max(maxE, e1, e2);
+      }
+      var yMax = Math.min(1, Math.max(0.3, Math.ceil(maxE * 10) / 10 + 0.05));
+      function px(m2) { return r.x + (m2 - 1) / 8 * r.w; }
+      function py(e) { return r.y + (1 - e / yMax) * r.h; }
+
+      ctx.clearRect(0, 0, sc.w, sc.h);
+      ctx.strokeStyle = FM.C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(r.x, r.y, r.w, r.h);
+      ctx.font = FM.C.MONO; ctx.fillStyle = FM.C.MUT;
+      ctx.strokeStyle = "rgba(47,50,52,0.45)";
+      var step = yMax > 0.45 ? 0.2 : 0.1;
+      for (var g = 0; g <= yMax + 1e-9; g += step) {
+        var gy = py(g);
+        ctx.beginPath(); ctx.moveTo(r.x, gy); ctx.lineTo(r.x + r.w, gy); ctx.stroke();
+        ctx.textAlign = "right"; ctx.fillText(Math.round(g * 100) + "%", r.x - 7, gy + 3);
+      }
+      for (m = 1; m <= 9; m++) {
+        ctx.textAlign = "center"; ctx.fillText(String(m), px(m), r.y + r.h + 16);
+      }
+      ctx.textAlign = "left";
+      ctx.fillText("MAJORITY ERROR vs COUNCIL SIZE", r.x + 6, r.y + 12);
+
+      /* current-n marker */
+      ctx.strokeStyle = "rgba(86,86,86,0.6)";
+      ctx.beginPath(); ctx.moveTo(px(n), r.y); ctx.lineTo(px(n), r.y + r.h); ctx.stroke();
+
+      function line(arr, color, dash) {
+        ctx.strokeStyle = color; ctx.lineWidth = 1.6;
+        ctx.setLineDash(dash || []);
+        ctx.beginPath();
+        for (var i = 0; i < 9; i++) {
+          var X = px(i + 1), Y = py(arr[i]);
+          if (i === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y);
+        }
+        ctx.stroke(); ctx.setLineDash([]);
+        ctx.fillStyle = color;
+        for (i = 0; i < 9; i++) {
+          ctx.beginPath(); ctx.arc(px(i + 1), py(arr[i]), 2.6, 0, Math.PI * 2); ctx.fill();
+        }
+      }
+      line(errIid, FM.C.BLUE, [5, 4]);
+      line(errMix, FM.C.MINT);
+
+      ctx.fillStyle = FM.C.MINT; ctx.fillText("● PERSONA MIX (EXACT)", r.x + r.w - 170, r.y + 14);
+      ctx.fillStyle = FM.C.BLUE; ctx.fillText("● IID @ p (EQ P6.2)", r.x + r.w - 170, r.y + 28);
+    }
+
+    renderCouncil = function () {
+      var n = parseInt(sizeEl.value, 10);
+      var p = parseFloat(accEl.value);
+      sizeOut.textContent = String(n);
+      accOut.textContent = p.toFixed(2);
+      var truthVerdict = truthFlawed ? "REJECT" : "ACCEPT";
+      var otherVerdict = truthFlawed ? "ACCEPT" : "REJECT";
+      truthLineEl.textContent = truthFlawed
+        ? "GROUND TRUTH (HIDDEN FROM JUDGES): the causal clause is wrong — spikes track GC pauses, not row locks. CORRECT VERDICT = REJECT."
+        : "GROUND TRUTH (HIDDEN FROM JUDGES): the diagnosis holds — lock contention confirmed in traces. CORRECT VERDICT = ACCEPT.";
+      var accs = accList(n, p);
+      var rng = FM.mulberry32(sampleSeed);
+      var html = "", i, nCorrect = 0, nReject = 0;
+      for (i = 0; i < n; i++) {
+        var correct = rng() < accs[i];
+        var v = correct ? truthVerdict : otherVerdict;
+        if (correct) nCorrect++;
+        if (v === "REJECT") nReject++;
+        var border = correct ? "rgba(166,242,204,0.55)" : "rgba(255,65,54,0.55)";
+        html += '<div style="border:1px solid ' + border + ';border-radius:4px;padding:8px 12px;min-width:96px;background:rgba(30,33,36,0.5);">' +
+          '<div style="font-family:ui-monospace,Menlo,monospace;font-size:9px;letter-spacing:.14em;color:#636363;">' + ROSTER[i] + '</div>' +
+          '<div style="font-family:ui-monospace,Menlo,monospace;font-size:13px;color:' + (v === "REJECT" ? "#ff4136" : "#a6f2cc") + ';margin:3px 0 2px;">' + v + '</div>' +
+          '<div style="font-family:ui-monospace,Menlo,monospace;font-size:9px;color:#636363;">acc ' + Math.round(accs[i] * 100) + '%</div></div>';
+      }
+      chipsEl.innerHTML = html;
+      var nAccept = n - nReject;
+      var maj = nReject > nAccept ? "REJECT" : (nAccept > nReject ? "ACCEPT" : "SPLIT");
+      var majCorrect = maj === truthVerdict;
+      verdictEl.textContent = maj === "SPLIT" ? "SPLIT —" : maj + (majCorrect ? " ✓" : " ✕");
+      verdictEl.style.color = maj === "SPLIT" ? "#9b9b9b" : (majCorrect ? "#a6f2cc" : "#ff4136");
+      splitEl.textContent = nReject + " REJ — " + nAccept + " ACC";
+      var pm = pMajority(accs);
+      pmajEl.textContent = (pm * 100).toFixed(1) + "%";
+      var mean = 0;
+      for (i = 0; i < n; i++) mean += accs[i];
+      singleEl.textContent = (mean / n * 100).toFixed(1) + "%";
+
+      drawCurve(n, p);
+    };
+
+    sizeEl.addEventListener("input", renderCouncil);
+    accEl.addEventListener("input", renderCouncil);
+    resampleBtn.addEventListener("click", function () { sampleSeed += 1; renderCouncil(); });
+    truthBtns.forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        truthBtns.forEach(function (b) { b.classList.remove("on"); });
+        btn.classList.add("on");
+        truthFlawed = btn.getAttribute("data-adv-truth") === "flawed";
+        renderCouncil();
+      });
+    });
+    renderCouncil();
+  }
+
+  /* ============================================================
+     INSTRUMENT P6.1 — CRITIQUE PASS DIFF
+     ============================================================ */
+  var dRoot = document.getElementById("adv-diff");
+  if (dRoot) {
+    var byId = function (id) { return document.getElementById(id); };
+    var stageEl = byId("adv-stage"), nextBtn = byId("adv-next"), cleanBtn = byId("adv-clean"),
+        dDraftEl = byId("adv-d-draft"), dRevEl = byId("adv-d-rev"), dCostEl = byId("adv-d-cost"),
+        turnBtns = dRoot.querySelectorAll("[data-adv-turn]");
+
+    /* diff segments: del = draft-only · ins = revision-only · same = shared */
+    var SEG = [
+      { t: "del", s: "Our deployment process is now much faster and basically eliminates most errors." },
+      { t: "ins", s: "Deploys now complete in 4 minutes, down from 19, and the failed-deploy rate fell from 3.1% to 0.4% over the last 60 days." },
+      { t: "same", s: " The " },
+      { t: "del", s: "new pipeline, which the team worked very hard on, uses caching and other improvements to speed things up significantly." },
+      { t: "ins", s: "pipeline caches dependency layers and runs integration tests in parallel — the two steps that previously accounted for 11 of the 19 minutes." },
+      { t: "del", s: " Users should see better performance overall, and we expect adoption to grow quickly." },
+      { t: "ins", s: " If the failure rate holds under 0.5% through Q3, call this fixed; if it climbs past 1%, suspect cache invalidation first." }
+    ];
+    var RUBRIC = [
+      ["1 · SPECIFICITY", "FAIL", "“much faster”, “most errors”, “significantly” — three claims, zero numbers. Each needs a measurement or the axe."],
+      ["2 · FALSIFIABILITY", "FAIL", "Nothing here could be proven wrong. “Better performance overall” is compatible with every possible future."],
+      ["3 · CAUSAL CLARITY", "PARTIAL", "“Caching” is named but never tied to a measured delay; “other improvements” is a hiding place, not a mechanism."],
+      ["4 · READER COST", "FAIL", "“The team worked very hard” asks the reader to grade effort instead of results. Cut it."]
+    ];
+    var turn = 1, cleanView = false;
+
+    function joinSeg(types) {
+      var out = "";
+      SEG.forEach(function (g) { if (types.indexOf(g.t) >= 0) out += g.s; });
+      return out;
+    }
+    function words(s) { return s.trim().split(/\s+/).length; }
+    function head(txt) {
+      return '<div style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.16em;color:#636363;margin-bottom:12px;">' + txt + '</div>';
+    }
+    var PARA = 'style="font-size:13.5px;line-height:1.8;color:#9b9b9b;margin:0;"';
+
+    function stageHTML() {
+      if (turn === 1) {
+        return head("TURN 1 — AUTHOR · single pass, no review") +
+          "<p " + PARA + ">" + joinSeg(["del", "same"]) + "</p>";
+      }
+      if (turn === 2) {
+        var rows = RUBRIC.map(function (r) {
+          var col = r[1] === "FAIL" ? "#ff4136" : (r[1] === "PARTIAL" ? "#4e8af7" : "#a6f2cc");
+          return '<div style="display:flex;gap:14px;align-items:baseline;padding:9px 0;border-bottom:1px solid rgba(47,50,52,0.5);">' +
+            '<span style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.1em;color:#636363;min-width:128px;">' + r[0] + '</span>' +
+            '<span style="font-family:ui-monospace,Menlo,monospace;font-size:10px;color:' + col + ';min-width:56px;">' + r[1] + '</span>' +
+            '<span style="font-size:12.5px;line-height:1.6;color:#9b9b9b;">' + r[2] + '</span></div>';
+        }).join("");
+        return head("TURN 2 — CRITIC · fresh context: sees draft + rubric, not the author's reasoning") + rows;
+      }
+      if (cleanView) {
+        return head("TURN 3 — REVISER · final text (clean view)") +
+          "<p " + PARA.replace("#9b9b9b", "#e5e5e5") + ">" + joinSeg(["ins", "same"]) + "</p>";
+      }
+      var html = SEG.map(function (g) {
+        if (g.t === "same") return '<span style="color:#9b9b9b;">' + g.s + "</span>";
+        if (g.t === "del") return '<span style="color:rgba(255,65,54,0.85);text-decoration:line-through;text-decoration-color:rgba(255,65,54,0.6);">' + g.s + "</span>";
+        return '<span style="color:#a6f2cc;background:rgba(166,242,204,0.07);border-radius:2px;">' + g.s + "</span>";
+      }).join("");
+      return head("TURN 3 — REVISER · every change is paid for by a critique line") +
+        "<p " + PARA + ">" + html + "</p>";
+    }
+
+    function renderDiff() {
+      stageEl.innerHTML = stageHTML();
+      turnBtns.forEach(function (b) {
+        b.classList.toggle("on", parseInt(b.getAttribute("data-adv-turn"), 10) === turn);
+      });
+      cleanBtn.style.display = turn === 3 ? "" : "none";
+      cleanBtn.textContent = cleanView ? "VIEW: DIFF" : "VIEW: CLEAN";
+
+      var wDraft = words(joinSeg(["del", "same"]));
+      var wCrit = RUBRIC.reduce(function (a, r) { return a + words(r[2]); }, 0) + 46; /* + rubric text itself */
+      var wRev = words(joinSeg(["ins", "same"]));
+      var mult = (wDraft + wCrit + wRev) / wDraft;
+      dDraftEl.textContent = "0 / 4 PASS";
+      dRevEl.textContent = "4 / 4 PASS";
+      dCostEl.textContent = "≈ " + mult.toFixed(1) + "× single pass";
+    }
+
+    turnBtns.forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        turn = parseInt(btn.getAttribute("data-adv-turn"), 10);
+        renderDiff();
+      });
+    });
+    nextBtn.addEventListener("click", function () { turn = turn % 3 + 1; renderDiff(); });
+    cleanBtn.addEventListener("click", function () { cleanView = !cleanView; renderDiff(); });
+    renderDiff();
+  }
+
+  /* ---------- re-render canvases on resize ---------- */
+  var resizeTimer = null;
+  window.addEventListener("resize", function () {
+    if (resizeTimer) clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(function () {
+      if (renderCouncil) renderCouncil();
+    }, 150);
+  });
+})();
+</script>
+</body>
+</html>

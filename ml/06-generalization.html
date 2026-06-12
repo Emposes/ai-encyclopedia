@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>06 · Generalization: Bias, Variance &amp; Regularization — AI Encyclopedia</title>
+<meta name="description" content="The bias–variance decomposition, the capacity U-curve and its modern double-descent twist, L1/L2 regularization, validation discipline, and early stopping — with live polynomial-fitting instruments." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css" />
+</head>
+<body>
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ VOL I / ML FOUNDATIONS / 06 / GENERALIZATION</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="07-neural-networks.html">NEXT: NEURAL NETWORKS →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">VOLUME I — FOUNDATIONS OF ML · CHAPTER 06 / 08</div>
+    <h1>Generalization: Bias, Variance &amp; Regularization</h1>
+    <p class="lede">Any model with enough knobs can score perfectly on data it has already seen — that is memorization, and it is worth nothing. <strong>The only error that counts is measured on data the model never touched</strong>, and this chapter is about the three-way budget that governs it: systematic error (bias), sensitivity to the luck of the sample (variance), and noise no model can remove. Master this trade and you stop being a tutorial-follower; everything from ridge penalties to early stopping is one idea wearing different uniforms.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 24 MIN</b></span>
+      <span>BUILDS ON<b>CH 01 · 02</b></span>
+      <span>INSTRUMENTS<b>DEGREE DIAL · RIDGE PATH</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">6.1</span>The bias–variance decomposition</a>
+      <a href="#s2"><span class="n">6.2</span>Capacity &amp; the U-curve</a>
+      <a href="#s3"><span class="n">6.3</span>Regularization</a>
+      <a href="#s4"><span class="n">6.4</span>Validation discipline</a>
+      <a href="#s5"><span class="n">6.5</span>Early stopping &amp; dropout</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 6.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">6.1</span><h2>The bias–variance decomposition</h2></div>
+        <p>Assume the world generates labels as \(y = f(x) + \varepsilon\): a true function \(f\) corrupted by noise with variance \(\sigma^2\). You never see \(f\) — you see one training set \(\mathcal{D}\), a finite sample of that process, and you fit \(\hat{f}_{\mathcal{D}}\) to it. Had the sample come out differently, your model would have too. The honest question is therefore an <em>average over training sets</em>: how wrong is the procedure, not just this one fit? For squared error the answer splits exactly into three parts:</p>
+
+        <div class="eq"><span class="eq-tag">EQ M6.1 — BIAS–VARIANCE DECOMPOSITION</span>
+        $$ \mathbb{E}_{\mathcal{D},\,\varepsilon}\!\left[\big(y - \hat{f}_{\mathcal{D}}(x)\big)^{2}\right] \;=\; \underbrace{\big(f(x) - \bar{f}(x)\big)^{2}}_{\text{bias}^{2}} \;+\; \underbrace{\mathbb{E}_{\mathcal{D}}\!\left[\big(\hat{f}_{\mathcal{D}}(x) - \bar{f}(x)\big)^{2}\right]}_{\text{variance}} \;+\; \underbrace{\sigma^{2}}_{\text{noise}} \qquad \bar{f}(x) = \mathbb{E}_{\mathcal{D}}\big[\hat{f}_{\mathcal{D}}(x)\big] $$
+        <div class="eq-note">\(\bar{f}\) is the <em>average</em> model — what your procedure produces averaged over all training sets it might have been dealt. <b>Bias²</b> is how far that average sits from the truth: the error your model family makes <em>systematically</em>, even with infinite resamples. <b>Variance</b> is how much any single fit scatters around that average: the error of trusting one particular sample. <b>Noise</b> \(\sigma^2\) is the floor — no model, however clever, beats it. <b>Capacity buys down bias by paying in variance</b>; the exchange rate is the subject of this chapter.</div>
+        </div>
+
+        <p>The archery reading: bias is your sights being misaligned — every arrow lands off-center the same way. Variance is an unsteady hand — arrows scatter, even though they center on the bullseye. A degree-1 polynomial fit to a cubic has misaligned sights: resample the data all you like, the average line is still a line, still wrong. A degree-12 polynomial has a violently unsteady hand: each resample produces a different contortion, and only their unreachable average is close to the truth.</p>
+        <p class="note">The decomposition is exact for squared loss. For classification under 0–1 loss the clean additive split breaks down (bias and variance interact through the decision boundary), but the qualitative trade-off survives and the vocabulary is used everywhere regardless. Honest usage: treat EQ M6.1 as a precise statement about regression and a sharp metaphor for everything else.</p>
+      </section>
+
+      <!-- ====================== 6.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">6.2</span><h2>Capacity and the U-curve</h2></div>
+        <p><strong>Capacity</strong> is the informal name for how rich a function family you are fitting — polynomial degree, tree depth, parameter count, training time. As capacity rises, training error falls monotonically: a bigger family always contains the smaller one, so the optimizer can only do better on the points it sees. Held-out error does something entirely different — it falls while added capacity is buying down bias, bottoms out, then climbs as the model starts spending its freedom on the noise. That is the classical <strong>U-curve</strong>, and the diagnosis table that goes with it is the most-used decision procedure in applied ML:</p>
+
+        <table class="data">
+          <thead><tr><th>Observation</th><th>Diagnosis</th><th>The move</th></tr></thead>
+          <tbody>
+            <tr><td>Train error high, held-out error high and close to it</td><td class="m">underfit · bias-dominated</td><td>More capacity, better features, train longer, weaken regularization</td></tr>
+            <tr><td>Train error near zero, held-out error far above it</td><td class="m">overfit · variance-dominated</td><td>More data, stronger regularization, less capacity, early stopping</td></tr>
+            <tr><td>Both errors near the noise floor \(\sigma^2\)</td><td class="hl">converged</td><td>Stop. Further gains require better data, not a better model.</td></tr>
+          </tbody>
+        </table>
+
+        <div class="widget" id="gn-degree-dial" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT M6.1 — DEGREE DIAL</span><span class="w-sub">18 NOISY POINTS · TRUE f IS A CUBIC · NORMAL EQUATIONS, LIVE</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>POLYNOMIAL DEGREE d <output id="gn-deg-out">3</output></label><input type="range" id="gn-deg" min="1" max="12" step="1" value="3"/></div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;"><label>RESAMPLE THE WORLD</label><div class="seg-row"><button class="w-btn ghost" id="gn-reseed">NEW SAMPLE ↻</button></div></div>
+            </div>
+            <canvas class="w-canvas" id="gn-fit-canvas" height="300"></canvas>
+            <div style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.16em;color:#636363;margin:16px 0 6px;">TRAIN vs HELD-OUT MSE ACROSS ALL DEGREES · LOG SCALE · SWEET SPOT MARKED</div>
+            <canvas class="w-canvas" id="gn-curve-canvas" height="200"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">TRAIN MSE · 18 PTS</div><div class="r-value" id="gn-train-mse">—</div></div>
+              <div class="readout acc"><div class="r-label">HELD-OUT MSE · 160 PTS</div><div class="r-value" id="gn-test-mse">—</div></div>
+              <div class="readout"><div class="r-label">GEN. GAP (HELD-OUT − TRAIN)</div><div class="r-value" id="gn-gap">—</div></div>
+              <div class="readout acc"><div class="r-label">REGIME</div><div class="r-value" id="gn-regime" style="font-size:14px;">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The dashed ghost is the true cubic; the model never sees it. At d = 1, click NEW SAMPLE repeatedly: the line barely moves but is always wrong — pure <b>bias</b>. At d = 12, train MSE collapses while the curve thrashes wildly between resamples and held-out MSE explodes — pure <b>variance</b>. The lower chart is EQ M6.1 made empirical: train error only falls, held-out error is a U, and the sweet spot hugs the true degree 3.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false">import numpy as np
+rng = np.random.default_rng(0)
+
+def f(x):                              # the truth — unknown to the model
+    return 1.5*x**3 - 0.9*x
+
+x_tr = rng.uniform(-1, 1, 18);  y_tr = f(x_tr) + rng.normal(0, 0.18, 18)
+x_te = rng.uniform(-1, 1, 200); y_te = f(x_te) + rng.normal(0, 0.18, 200)
+
+def fit(x, y, d):                      # least squares on the Vandermonde matrix
+    w, *_ = np.linalg.lstsq(np.vander(x, d + 1), y, rcond=None)
+    return w
+
+print(f"{'deg':&gt;4}{'train MSE':&gt;12}{'test MSE':&gt;11}")
+for d in (1, 3, 11):
+    w  = fit(x_tr, y_tr, d)
+    tr = np.mean((np.vander(x_tr, d+1) @ w - y_tr)**2)
+    te = np.mean((np.vander(x_te, d+1) @ w - y_te)**2)
+    print(f"{d:&gt;4}{tr:&gt;12.4f}{te:&gt;11.4f}")
+print(f"\nirreducible noise floor sigma^2 = {0.18**2:.4f}")
+</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — try d = 17, or 50 training points</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">MODERN</span>
+          <p><strong>The U-curve is true but incomplete.</strong> Push capacity far <em>past</em> the point where the model can interpolate its training data exactly, and held-out error often falls a <em>second</em> time — <strong>double descent</strong> (Belkin et al. 2019; Nakkiran et al. 2019, who also found it epoch-wise). In the heavily overparameterized regime, gradient descent among the many zero-train-error solutions implicitly prefers low-norm, smooth ones — the optimizer regularizes even when you don't ask it to. This is the regime modern LLMs live in, and part of why "bigger is better" holds there (Vol II · Ch 04 scaling laws). Honest status: the classical U still governs the small-data regime — this page's instruments, most tabular work, most fine-tunes — and a complete theory unifying both regimes remains open.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 6.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">6.3</span><h2>Regularization: paying for smoothness</h2></div>
+        <p>Choosing capacity by deleting parameters (degree 3, not 9) is a blunt dial. <strong>Regularization</strong> keeps the big model and instead charges it for complexity: add a penalty on the size of the weights to the training loss, and let a continuous knob \(\lambda\) set the price. The two canonical currencies differ only in which norm they tax — and that one choice changes everything about the solution's character.</p>
+
+        <div class="eq"><span class="eq-tag">EQ M6.2 — RIDGE (L2)</span>
+        $$ \hat{w}_{\text{ridge}} \;=\; \arg\min_{w}\; \lVert y - Xw \rVert_2^2 \;+\; \lambda \lVert w \rVert_2^2 \;=\; \big(X^{\top}X + \lambda I\big)^{-1} X^{\top} y $$
+        <div class="eq-note">Still closed-form — the penalty just fattens the diagonal of \(X^\top X\), which is also why it cures the numerical singularity of high-degree fits. In the SVD picture, the component of the solution along a singular direction with singular value \(\sigma_i\) gets multiplied by \(\sigma_i^2 / (\sigma_i^2 + \lambda)\): strong, well-supported directions pass almost untouched while weak, noise-amplifying directions are crushed. <b>Ridge shrinks every weight toward zero but never exactly to zero.</b></div>
+        </div>
+
+        <div class="eq"><span class="eq-tag">EQ M6.3 — LASSO (L1)</span>
+        $$ \hat{w}_{\text{lasso}} \;=\; \arg\min_{w}\; \lVert y - Xw \rVert_2^2 \;+\; \lambda \lVert w \rVert_1 \qquad \lVert w \rVert_1 = \textstyle\sum_{j} \lvert w_j \rvert $$
+        <div class="eq-note">No closed form — the kink of \(\lvert \cdot \rvert\) at zero breaks the calculus, so lasso is solved by coordinate descent or proximal methods, whose core operation is the soft threshold \(S(z, \lambda) = \mathrm{sign}(z)\max(\lvert z \rvert - \lambda,\, 0)\). That \(\max\) is the point: weights whose evidence is weaker than \(\lambda\) are set to <b>exactly zero</b>. Lasso doesn't just shrink — it <b>selects features</b>, and the surviving support is often the deliverable.</div>
+        </div>
+
+        <div class="figure" data-reveal>
+          <div class="fig-head"><span class="fig-id">FIG M6.A</span><span class="fig-title">WHY L1 ZEROS WEIGHTS AND L2 ONLY SHRINKS THEM</span></div>
+          <div class="fig-body">
+            <svg viewBox="0 0 700 260" xmlns="http://www.w3.org/2000/svg" aria-label="L2 ball versus L1 diamond constraint geometry">
+              <!-- left: ridge -->
+              <line class="dg-line" x1="70" y1="140" x2="290" y2="140" opacity="0.5"/>
+              <line class="dg-line" x1="180" y1="36" x2="180" y2="234" opacity="0.5"/>
+              <text class="dg-label-mut" x="282" y="132">w₁</text>
+              <text class="dg-label-mut" x="188" y="44">w₂</text>
+              <circle class="dg-line-acc" cx="180" cy="140" r="46" fill="none" data-draw/>
+              <ellipse class="dg-line-blue" cx="252" cy="76" rx="26" ry="16" transform="rotate(-20 252 76)" data-draw/>
+              <ellipse class="dg-line-blue" cx="252" cy="76" rx="50" ry="32" transform="rotate(-20 252 76)" opacity="0.6" data-draw/>
+              <ellipse class="dg-line-blue" cx="252" cy="76" rx="76" ry="50" transform="rotate(-20 252 76)" opacity="0.35" data-draw/>
+              <circle class="dg-dot" cx="252" cy="76" r="2.5" fill="#4e8af7" data-pop/>
+              <circle class="dg-dot" cx="214" cy="110" r="3.5" data-pop/>
+              <g data-pop>
+                <text class="dg-label-acc" x="74" y="206">ŵ ridge: both coords</text>
+                <text class="dg-label-acc" x="74" y="220">shrunk · neither zero</text>
+                <text class="dg-label-sm" x="226" y="56">ŵ LS (unconstrained)</text>
+              </g>
+              <!-- right: lasso -->
+              <line class="dg-line" x1="410" y1="140" x2="630" y2="140" opacity="0.5"/>
+              <line class="dg-line" x1="520" y1="36" x2="520" y2="234" opacity="0.5"/>
+              <text class="dg-label-mut" x="622" y="132">w₁</text>
+              <text class="dg-label-mut" x="528" y="44">w₂</text>
+              <polygon class="dg-line-acc" points="474,140 520,94 566,140 520,186" fill="none" data-draw/>
+              <ellipse class="dg-line-blue" cx="592" cy="76" rx="26" ry="16" transform="rotate(-20 592 76)" data-draw/>
+              <ellipse class="dg-line-blue" cx="592" cy="76" rx="50" ry="32" transform="rotate(-20 592 76)" opacity="0.6" data-draw/>
+              <ellipse class="dg-line-blue" cx="592" cy="76" rx="78" ry="52" transform="rotate(-20 592 76)" opacity="0.35" data-draw/>
+              <circle class="dg-dot" cx="592" cy="76" r="2.5" fill="#4e8af7" data-pop/>
+              <circle class="dg-dot" cx="520" cy="94" r="3.5" data-pop/>
+              <g data-pop>
+                <text class="dg-label-acc" x="414" y="206">ŵ lasso: lands on a corner</text>
+                <text class="dg-label-acc" x="414" y="220">→ w₁ = 0 exactly</text>
+              </g>
+            </svg>
+          </div>
+          <div class="fig-cap">Penalized fitting ≡ minimizing loss subject to a weight-norm budget. Blue ellipses are loss contours around the unconstrained minimum; the fit lands where the smallest reachable contour first touches the constraint set. <b>The L2 ball is round, so first contact is almost never on an axis; the L1 diamond has corners on the axes, and corners win</b> — that geometry is the entire reason lasso produces sparse models.</div>
+        </div>
+
+        <p><strong>Weight decay is L2 — with one large caveat.</strong> For plain SGD, adding \(\lambda \lVert w \rVert_2^2\) to the loss and multiplying weights by \((1 - \eta\lambda)\) each step are the same update. For adaptive optimizers they are <em>not</em>: Adam rescales the penalty's gradient per-coordinate along with everything else, quietly distorting the regularizer. AdamW fixes this by decoupling the decay from the adaptive machinery (Vol II · EQ 4.3) — which is why every modern LLM recipe says "AdamW, weight decay 0.1" rather than "L2 in the loss". Same idea, different plumbing, measurably different result.</p>
+
+        <div class="widget" id="gn-ridge-path" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT M6.2 — RIDGE PATH</span><span class="w-sub">DEGREE-9 FIT · λ FROM 1e-4 TO 1e2 · EQ M6.2 LIVE</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>PENALTY λ (LOG SLIDER) <output id="gn-lam-out">1.0e-4</output></label><input type="range" id="gn-lam" min="-4" max="2" step="0.05" value="-4"/></div>
+            </div>
+            <canvas class="w-canvas" id="gn-ridge-canvas" height="280"></canvas>
+            <div style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.16em;color:#636363;margin:16px 0 6px;">COEFFICIENT MAGNITUDES |w₀| … |w₉| · LOG BAR SCALE · GREY = UNPENALIZED INTERCEPT</div>
+            <div id="gn-bars" style="display:flex;gap:4px;align-items:flex-end;height:96px;border:1px solid var(--hairline);border-radius:4px;padding:10px 12px 8px;"></div>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">TRAIN MSE</div><div class="r-value" id="gn-r-train">—</div></div>
+              <div class="readout acc"><div class="r-label">HELD-OUT MSE</div><div class="r-value" id="gn-r-test">—</div></div>
+              <div class="readout acc"><div class="r-label">‖w‖₂ (EXCL. w₀)</div><div class="r-value" id="gn-r-norm">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Same data-generating world as Instrument M6.1 (a different draw of 18 points), but the model keeps all ten degree-9 coefficients and pays λ for their size. Drag right from 1e-4: the wiggle flattens, the coefficient bars collapse, and held-out MSE traces a U — too little λ re-creates overfitting, too much re-creates underfitting (the fit sags toward a flat line). <b>λ is a capacity dial with infinite resolution.</b> The intercept is conventionally left unpenalized; shrinking it would just bias predictions away from the data's mean.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false">import numpy as np
+rng = np.random.default_rng(1)
+
+def f(x): return 1.5*x**3 - 0.9*x
+x_tr = rng.uniform(-1, 1, 18);  y_tr = f(x_tr) + rng.normal(0, 0.18, 18)
+x_te = rng.uniform(-1, 1, 300); y_te = f(x_te) + rng.normal(0, 0.18, 300)
+
+d = 9
+Xtr, Xte = np.vander(x_tr, d + 1), np.vander(x_te, d + 1)
+I = np.eye(d + 1); I[-1, -1] = 0.0     # vander puts the intercept last — leave it unpenalized
+
+lams, mses = np.logspace(-6, 2, 41), []
+for lam in lams:
+    w = np.linalg.solve(Xtr.T @ Xtr + lam * I, Xtr.T @ y_tr)   # EQ M6.2
+    mses.append(float(np.mean((Xte @ w - y_te)**2)))
+
+b = int(np.argmin(mses))
+print(f"near-zero lam = 1e-6   : test MSE = {mses[0]:.4f}")
+print(f"best      lam = {lams[b]:&lt;8.3g}: test MSE = {mses[b]:.4f}")
+print(f"crushing  lam = 1e2    : test MSE = {mses[-1]:.4f}")
+plot_xy(np.log10(lams), np.array(mses))   # the regularization U-curve
+</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">x-axis is log10 λ — the U should bottom out mid-range</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 6.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">6.4</span><h2>Validation discipline</h2></div>
+        <p>Every dial in this chapter — degree, \(\lambda\), stopping epoch — must be tuned against data the fit never saw, which forces the three-way split: <strong>train</strong> (fit parameters), <strong>validation</strong> (choose hyperparameters), <strong>test</strong> (touch once, report, stop). When data is scarce, <strong>k-fold cross-validation</strong> recycles it: split into \(k\) folds (5 or 10 is standard), train \(k\) times each holding out a different fold, and average the held-out scores. The average is a far lower-variance estimate of generalization than any single split — at \(k\times\) the compute. Once hyperparameters are chosen, refit on everything. If you also want an honest estimate of the <em>whole selection pipeline</em>, nest a second CV loop around it; people skip this and quietly report optimistic numbers.</p>
+        <p>The dominant failure mode is not bad math — it is <strong>leakage</strong>: information from the evaluation side contaminating the training side. Leakage produces beautiful validation scores and production disasters, and it is almost always a pipeline bug, not a modeling bug:</p>
+
+        <table class="data">
+          <thead><tr><th>Leak</th><th>Horror story</th><th>The fix</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Preprocessing leak</strong></td><td>Scaler / imputer / feature-selector fit on the <em>full</em> dataset before splitting — test-set statistics seep into training</td><td class="m">fit every transform inside the training fold only</td></tr>
+            <tr><td><strong>Duplicate leak</strong></td><td>Near-identical rows land on both sides of the split; the model "generalizes" to data it memorized</td><td class="m">dedup before splitting; fuzzy-match, not exact-match</td></tr>
+            <tr><td><strong>Temporal leak</strong></td><td>Random split of time-ordered data — the model trains on the future it will be asked to predict</td><td class="m">split by time; validate strictly forward</td></tr>
+            <tr><td><strong>Group leak</strong></td><td>Same patient's scans in train and test; the model learns the patient, scores brilliantly, transfers to nobody</td><td class="m">split by group id, never by row</td></tr>
+            <tr><td><strong>Target leak</strong></td><td>A feature is a downstream echo of the label ("account_closed_date" predicting churn)</td><td class="m">audit features for post-outcome information</td></tr>
+          </tbody>
+        </table>
+
+        <div class="callout warn">
+          <span class="co-icon">HYGIENE</span>
+          <p><strong>The test set is an instrument you can use once.</strong> Every decision influenced by test numbers — "try one more λ", "rerun with the other seed" — silently moves test data into the training loop; iterate enough and the test score becomes fiction. Kaggle's public-vs-private leaderboard shakeups are this effect measured at scale. The same failure operates on LLMs as <strong>eval contamination</strong> — benchmarks leaking into web-scale training corpora (Vol II · Ch 04 decontamination, and the fine-tuning pitfall list in Vol II · Ch 06). Different scale, identical sin: testing on something the model has, in any form, already seen.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 6.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">6.5</span><h2>Early stopping &amp; dropout as regularizers</h2></div>
+        <p>Two of the most-used regularizers never touch the loss function. <strong>Early stopping</strong> exploits the fact that training time is itself a capacity dial: gradient descent fits broad, smooth structure first and noise last, so the validation curve traces the familiar U <em>over epochs</em>. The recipe is mechanical — evaluate on validation each epoch, checkpoint the best, stop after \(p\) epochs without improvement (patience), restore the best checkpoint. It is not merely a heuristic: for linear least squares, gradient descent stopped at step \(t\) is approximately ridge regression with \(\lambda \propto 1/(\eta t)\) — each direction of the solution gets pulled in at a rate set by its singular value, so stopping early leaves the weak, noise-dominated directions still near zero. Stopping early and penalizing weights are the same medicine through different needles.</p>
+        <p><strong>Dropout</strong> attacks variance from a different angle: during training, zero each hidden unit independently with probability \(p\) (and scale survivors by \(1/(1-p)\) — "inverted dropout" — so activation magnitudes match at inference, when nothing is dropped). Two readings coexist. The ensemble view: each step trains a different random subnetwork, and inference approximates averaging exponentially many of them — and averaging is variance reduction by construction. The co-adaptation view: no unit can rely on a specific partner that might vanish, so features are forced to be individually useful. For linear models, dropout works out to an L2-like penalty scaled by each feature's second moment (Wager et al. 2013) — once again, a familiar uniform.</p>
+        <p class="note"><strong>Honest modern footnote:</strong> dropout has largely vanished from LLM <em>pre-training</em> — one epoch over trillions of tokens means the binding constraint is underfitting, not overfitting — while weight decay and early stopping never left. But shrink the data and the classics return instantly: small-data fine-tunes ship with dropout on the adapters (the LoRA default of 0.05 in Vol II · Ch 06's recipe) and validation-based stopping. Regularization never became obsolete; it just follows the data-to-parameter ratio around.</p>
+
+        <p>The full toolbox, ordered by how often it is the right answer: <strong>more data</strong> (the only regularizer with no downside), weight decay / L2, early stopping, dropout, data augmentation, smaller model, L1 when you need the zeros. All of them buy the same thing — lower variance — and all charge the same currency: a little added bias.</p>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>You now own the budget every model must balance.</strong> Chapter 07 builds the first machine with enough capacity to need all of it: the multi-layer perceptron — perceptrons, hidden layers, activation functions, and a tiny network you can train on XOR in the page while you watch the decision boundary bend.</p>
+        </div>
+      </section>
+
+      <nav class="pager">
+        <a href="05-unsupervised.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">05</span> Clustering &amp; Dimensionality</div></a>
+        <a class="next" href="07-neural-networks.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">07</span> Neural Networks: The MLP</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — VOL I · CH 06</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/glossary.js"></script>
+<script src="../assets/js/shared.js"></script>
+<script src="../assets/js/pyrunner.js"></script>
+<script>
+/* chapter instruments — Degree Dial (M6.1) + Ridge Path (M6.2) */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+
+  /* ---------- shared math ---------- */
+  var SIGMA = 0.18, N_TR = 18, N_TE = 160;
+  var XMIN = -1.1, XMAX = 1.1, YMIN = -1.45, YMAX = 1.45;
+
+  function fTrue(x) { return 1.5 * x * x * x - 0.9 * x; }
+
+  function gauss(rng) { /* Box–Muller */
+    var u = Math.max(rng(), 1e-12), v = rng();
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+  }
+
+  function makeData(seed) {
+    var rng = FM.mulberry32(seed), tr = { x: [], y: [] }, te = { x: [], y: [] }, i, x;
+    for (i = 0; i < N_TR; i++) { x = -1 + 2 * rng(); tr.x.push(x); tr.y.push(fTrue(x) + SIGMA * gauss(rng)); }
+    for (i = 0; i < N_TE; i++) { x = -1 + 2 * rng(); te.x.push(x); te.y.push(fTrue(x) + SIGMA * gauss(rng)); }
+    return { tr: tr, te: te };
+  }
+
+  function solveLin(A, b) { /* Gaussian elimination, partial pivoting */
+    var m = b.length, i, j, k, M = [];
+    for (i = 0; i < m; i++) { M.push(Array.prototype.slice.call(A[i])); M[i].push(b[i]); }
+    for (k = 0; k < m; k++) {
+      var piv = k;
+      for (i = k + 1; i < m; i++) if (Math.abs(M[i][k]) > Math.abs(M[piv][k])) piv = i;
+      var tmp = M[k]; M[k] = M[piv]; M[piv] = tmp;
+      if (Math.abs(M[k][k]) < 1e-14) continue;
+      for (i = k + 1; i < m; i++) {
+        var f = M[i][k] / M[k][k];
+        for (j = k; j <= m; j++) M[i][j] -= f * M[k][j];
+      }
+    }
+    var w = new Array(m);
+    for (i = m - 1; i >= 0; i--) {
+      var s = M[i][m];
+      for (j = i + 1; j < m; j++) s -= M[i][j] * w[j];
+      w[i] = Math.abs(M[i][i]) < 1e-14 ? 0 : s / M[i][i];
+    }
+    return w;
+  }
+
+  /* normal equations with tiny stability ridge; user λ skips the intercept */
+  function fitPoly(xs, ys, d, lam) {
+    var m = d + 1, i, j, n, A = [], b = new Float64Array(m);
+    for (i = 0; i < m; i++) A.push(new Float64Array(m));
+    for (n = 0; n < xs.length; n++) {
+      var row = [1], p = 1;
+      for (j = 1; j < m; j++) { p *= xs[n]; row.push(p); }
+      for (i = 0; i < m; i++) {
+        b[i] += row[i] * ys[n];
+        for (j = 0; j < m; j++) A[i][j] += row[i] * row[j];
+      }
+    }
+    for (i = 0; i < m; i++) A[i][i] += 1e-8 + (i === 0 ? 0 : (lam || 0));
+    return solveLin(A, b);
+  }
+
+  function predict(w, x) { var s = 0, p = 1, j; for (j = 0; j < w.length; j++) { s += w[j] * p; p *= x; } return s; }
+  function mse(w, xs, ys) { var s = 0, i, e; for (i = 0; i < xs.length; i++) { e = predict(w, xs[i]) - ys[i]; s += e * e; } return s / xs.length; }
+  function fmt(v) {
+    if (!isFinite(v)) return "—";
+    if (v >= 1000) return v.toExponential(1);
+    if (v >= 1) return v.toFixed(2);
+    if (v >= 0.01) return v.toFixed(3);
+    return v.toFixed(4);
+  }
+
+  /* ---------- scatter + fit renderer (shared by both instruments) ---------- */
+  function drawScene(canvas, cssH, data, w, tag) {
+    var sc = FM.setupCanvas(canvas, cssH), ctx = sc.ctx;
+    var padL = 38, padR = 12, padT = 12, padB = 24;
+    var W = sc.w - padL - padR, H = cssH - padT - padB;
+    function X(v) { return padL + (v - XMIN) / (XMAX - XMIN) * W; }
+    function Y(v) { return padT + (1 - (v - YMIN) / (YMAX - YMIN)) * H; }
+    ctx.clearRect(0, 0, sc.w, cssH);
+    ctx.strokeStyle = FM.C.HAIR; ctx.lineWidth = 1; ctx.strokeRect(padL, padT, W, H);
+    ctx.strokeStyle = "rgba(47,50,52,.6)";
+    ctx.beginPath(); ctx.moveTo(X(0), padT); ctx.lineTo(X(0), padT + H); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(padL, Y(0)); ctx.lineTo(padL + W, Y(0)); ctx.stroke();
+    ctx.font = FM.C.MONO; ctx.fillStyle = FM.C.MUT;
+    [-1, 0, 1].forEach(function (t) {
+      ctx.textAlign = "center"; ctx.fillText(t.toString(), X(t), padT + H + 16);
+      ctx.textAlign = "right"; ctx.fillText(t.toString(), padL - 6, Y(t) + 3);
+    });
+    /* ghost truth */
+    ctx.save(); ctx.beginPath(); ctx.rect(padL, padT, W, H); ctx.clip();
+    ctx.setLineDash([5, 4]); ctx.strokeStyle = "rgba(155,155,155,.5)"; ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    for (var i = 0; i <= 120; i++) {
+      var x = XMIN + (XMAX - XMIN) * i / 120, y = fTrue(x);
+      if (i === 0) ctx.moveTo(X(x), Y(y)); else ctx.lineTo(X(x), Y(y));
+    }
+    ctx.stroke(); ctx.setLineDash([]);
+    /* fitted curve */
+    ctx.strokeStyle = FM.C.BLUE; ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    for (i = 0; i <= 240; i++) {
+      x = XMIN + (XMAX - XMIN) * i / 240; y = predict(w, x);
+      if (i === 0) ctx.moveTo(X(x), Y(y)); else ctx.lineTo(X(x), Y(y));
+    }
+    ctx.stroke(); ctx.restore();
+    /* training points */
+    ctx.fillStyle = FM.C.MINT; ctx.globalAlpha = 0.9;
+    for (i = 0; i < data.tr.x.length; i++) {
+      ctx.beginPath(); ctx.arc(X(data.tr.x[i]), Y(data.tr.y[i]), 3, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    /* legend + tag */
+    ctx.font = FM.C.MONO; ctx.textAlign = "left";
+    ctx.strokeStyle = FM.C.BLUE; ctx.lineWidth = 1.8;
+    ctx.beginPath(); ctx.moveTo(padL + 10, padT + 12); ctx.lineTo(padL + 26, padT + 12); ctx.stroke();
+    ctx.fillStyle = FM.C.SEC; ctx.fillText("FIT", padL + 31, padT + 15);
+    ctx.setLineDash([4, 3]); ctx.strokeStyle = "rgba(155,155,155,.6)"; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.moveTo(padL + 58, padT + 12); ctx.lineTo(padL + 74, padT + 12); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillText("TRUE f", padL + 79, padT + 15);
+    ctx.fillStyle = FM.C.MINT;
+    ctx.beginPath(); ctx.arc(padL + 134, padT + 12, 3, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = FM.C.SEC; ctx.fillText("TRAIN (18)", padL + 142, padT + 15);
+    ctx.fillStyle = FM.C.MINT; ctx.textAlign = "right";
+    ctx.fillText(tag, padL + W - 8, padT + 15);
+  }
+
+  /* ============ INSTRUMENT M6.1 — DEGREE DIAL ============ */
+  (function () {
+    var root = document.getElementById("gn-degree-dial");
+    if (!root) return;
+    var degIn = document.getElementById("gn-deg"), degOut = document.getElementById("gn-deg-out");
+    var fitCv = document.getElementById("gn-fit-canvas"), curveCv = document.getElementById("gn-curve-canvas");
+    var elTrain = document.getElementById("gn-train-mse"), elTest = document.getElementById("gn-test-mse");
+    var elGap = document.getElementById("gn-gap"), elRegime = document.getElementById("gn-regime");
+    var reseed = document.getElementById("gn-reseed");
+
+    var seed = 7, data, fits, trainM, testM, bestDeg;
+
+    function recompute() {
+      data = makeData(seed);
+      fits = [null]; trainM = [null]; testM = [null];
+      var best = Infinity; bestDeg = 1;
+      for (var d = 1; d <= 12; d++) {
+        var w = fitPoly(data.tr.x, data.tr.y, d, 0);
+        fits.push(w);
+        trainM.push(mse(w, data.tr.x, data.tr.y));
+        testM.push(mse(w, data.te.x, data.te.y));
+        if (testM[d] < best) { best = testM[d]; bestDeg = d; }
+      }
+    }
+
+    function drawCurves() {
+      var cssH = 200, sc = FM.setupCanvas(curveCv, cssH), ctx = sc.ctx;
+      var padL = 44, padR = 12, padT = 16, padB = 24;
+      var W = sc.w - padL - padR, H = cssH - padT - padB;
+      var floorL = Math.log10(SIGMA * SIGMA);
+      var lt = [], le = [], d;
+      for (d = 1; d <= 12; d++) { lt.push(Math.log10(Math.max(trainM[d], 1e-6))); le.push(Math.log10(Math.max(testM[d], 1e-6))); }
+      var ymin = Math.min(Math.min.apply(null, lt), floorL) - 0.3;
+      var ymax = Math.max.apply(null, le) + 0.3;
+      ymax = Math.min(ymax, floorL + 5); /* clip runaway overfit explosions to 5 decades */
+      function X(deg) { return padL + (deg - 1) / 11 * W; }
+      function Y(lv) { return padT + (1 - (Math.min(lv, ymax) - ymin) / (ymax - ymin)) * H; }
+      ctx.clearRect(0, 0, sc.w, cssH);
+      ctx.strokeStyle = FM.C.HAIR; ctx.lineWidth = 1; ctx.strokeRect(padL, padT, W, H);
+      ctx.font = FM.C.MONO;
+      for (var k = Math.ceil(ymin); k <= Math.floor(ymax); k++) {
+        ctx.strokeStyle = "rgba(47,50,52,.5)";
+        ctx.beginPath(); ctx.moveTo(padL, Y(k)); ctx.lineTo(padL + W, Y(k)); ctx.stroke();
+        ctx.fillStyle = FM.C.MUT; ctx.textAlign = "right"; ctx.fillText("1e" + k, padL - 5, Y(k) + 3);
+      }
+      for (d = 1; d <= 12; d++) {
+        ctx.fillStyle = FM.C.MUT; ctx.textAlign = "center";
+        ctx.fillText(d.toString(), X(d), padT + H + 16);
+      }
+      /* noise floor */
+      ctx.setLineDash([4, 4]); ctx.strokeStyle = "rgba(155,155,155,.45)";
+      ctx.beginPath(); ctx.moveTo(padL, Y(floorL)); ctx.lineTo(padL + W, Y(floorL)); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = FM.C.SEC; ctx.textAlign = "left";
+      ctx.fillText("σ² NOISE FLOOR", padL + 8, Y(floorL) - 5);
+      /* sweet spot */
+      ctx.setLineDash([4, 4]); ctx.strokeStyle = "rgba(166,242,204,.5)";
+      ctx.beginPath(); ctx.moveTo(X(bestDeg), padT); ctx.lineTo(X(bestDeg), padT + H); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = FM.C.MINT; ctx.textAlign = "center";
+      ctx.fillText("SWEET SPOT d=" + bestDeg, X(bestDeg), padT - 4);
+      /* current degree marker */
+      var cur = parseInt(degIn.value, 10);
+      ctx.strokeStyle = "rgba(255,255,255,.18)"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(X(cur), padT); ctx.lineTo(X(cur), padT + H); ctx.stroke();
+      /* curves */
+      ctx.save(); ctx.beginPath(); ctx.rect(padL, padT, W, H); ctx.clip();
+      [[lt, FM.C.BLUE], [le, FM.C.MINT]].forEach(function (pair) {
+        ctx.strokeStyle = pair[1]; ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        pair[0].forEach(function (lv, i) { if (i === 0) ctx.moveTo(X(i + 1), Y(lv)); else ctx.lineTo(X(i + 1), Y(lv)); });
+        ctx.stroke();
+        ctx.fillStyle = pair[1];
+        pair[0].forEach(function (lv, i) { ctx.beginPath(); ctx.arc(X(i + 1), Y(lv), 2.4, 0, Math.PI * 2); ctx.fill(); });
+      });
+      ctx.restore();
+      ctx.fillStyle = FM.C.BLUE; ctx.textAlign = "right"; ctx.fillText("TRAIN", padL + W - 64, padT + 12);
+      ctx.fillStyle = FM.C.MINT; ctx.fillText("HELD-OUT", padL + W - 8, padT + 12);
+    }
+
+    function render() {
+      var d = parseInt(degIn.value, 10);
+      degOut.textContent = d.toString();
+      drawScene(fitCv, 300, data, fits[d], "d = " + d);
+      drawCurves();
+      elTrain.textContent = fmt(trainM[d]);
+      elTest.textContent = fmt(testM[d]);
+      elGap.textContent = fmt(Math.max(testM[d] - trainM[d], 0));
+      elRegime.textContent = d < bestDeg ? "UNDERFIT · BIAS" : (d === bestDeg ? "SWEET SPOT" : "OVERFIT · VARIANCE");
+    }
+
+    degIn.addEventListener("input", render);
+    reseed.addEventListener("click", function () { seed += 1; recompute(); render(); });
+    recompute(); render();
+    root.__gnRender = render;
+  })();
+
+  /* ============ INSTRUMENT M6.2 — RIDGE PATH ============ */
+  (function () {
+    var root = document.getElementById("gn-ridge-path");
+    if (!root) return;
+    var lamIn = document.getElementById("gn-lam"), lamOut = document.getElementById("gn-lam-out");
+    var cv = document.getElementById("gn-ridge-canvas"), barsBox = document.getElementById("gn-bars");
+    var elTrain = document.getElementById("gn-r-train"), elTest = document.getElementById("gn-r-test");
+    var elNorm = document.getElementById("gn-r-norm");
+    var DEG = 9, data = makeData(14); /* seed picked for a vividly overfit unregularized fit */
+
+    /* reference magnitudes at λ = 1e-4 fix the bar scale */
+    var wRef = fitPoly(data.tr.x, data.tr.y, DEG, 1e-4), refMax = 0;
+    for (var j = 0; j <= DEG; j++) refMax = Math.max(refMax, Math.abs(wRef[j]));
+    var refLog = Math.log10(1 + refMax);
+
+    /* build the coefficient bar strip once */
+    var bars = [];
+    for (j = 0; j <= DEG; j++) {
+      var col = document.createElement("div");
+      col.style.cssText = "flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;height:100%;";
+      var bar = document.createElement("div");
+      bar.style.cssText = "width:100%;max-width:38px;background:" + (j === 0 ? "rgba(155,155,155,.55)" : "rgba(166,242,204,.85)") +
+        ";height:2px;transition:height .2s ease-in-out;border-radius:1px 1px 0 0;";
+      var lab = document.createElement("div");
+      lab.style.cssText = "font-family:ui-monospace,Menlo,monospace;font-size:9px;color:#636363;margin-top:5px;";
+      lab.textContent = "w" + j;
+      col.appendChild(bar); col.appendChild(lab); barsBox.appendChild(col);
+      bars.push(bar);
+    }
+
+    function fmtLam(lam) {
+      if (lam >= 10) return lam.toFixed(0);
+      if (lam >= 1) return lam.toFixed(1);
+      return lam.toExponential(1);
+    }
+
+    function render() {
+      var lam = Math.pow(10, parseFloat(lamIn.value));
+      lamOut.textContent = fmtLam(lam);
+      var w = fitPoly(data.tr.x, data.tr.y, DEG, lam);
+      drawScene(cv, 280, data, w, "d = 9 · λ = " + fmtLam(lam));
+      var n2 = 0;
+      for (var k = 0; k <= DEG; k++) {
+        if (k > 0) n2 += w[k] * w[k];
+        var h = 62 * Math.log10(1 + Math.abs(w[k])) / refLog;
+        bars[k].style.height = Math.max(2, Math.min(62, h)) + "px";
+      }
+      elTrain.textContent = fmt(mse(w, data.tr.x, data.tr.y));
+      elTest.textContent = fmt(mse(w, data.te.x, data.te.y));
+      elNorm.textContent = fmt(Math.sqrt(n2));
+    }
+
+    lamIn.addEventListener("input", render);
+    render();
+    root.__gnRender = render;
+  })();
+
+  /* ---------- re-render on resize (debounced) ---------- */
+  var rsT = null;
+  window.addEventListener("resize", function () {
+    if (rsT) clearTimeout(rsT);
+    rsT = setTimeout(function () {
+      ["gn-degree-dial", "gn-ridge-path"].forEach(function (id) {
+        var el = document.getElementById(id);
+        if (el && el.__gnRender) el.__gnRender();
+      });
+    }, 140);
+  });
+})();
+</script>
+</body>
+</html>

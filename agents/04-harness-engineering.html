@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>04 · Harness Engineering — AI Encyclopedia</title>
+<meta name="description" content="The cage that makes powerful agents shippable: sandboxing, permission systems, ground-truth verification, checkpoints, human gates, and parallel harnesses." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css" />
+</head>
+<body>
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ VOL IV / AGENT ENGINEERING / 04 / HARNESS ENGINEERING</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="05-loop-engineering.html">NEXT: LOOP ENGINEERING →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">VOLUME IV — AGENT ENGINEERING · CHAPTER 04 / 06</div>
+    <h1>Harness Engineering</h1>
+    <p class="lede">A capable model wired straight into a shell is not a product; it is an incident report with a future timestamp. The harness — sandbox, permissions, verification, recovery, human gates — is everything <em>around</em> the model that converts raw capability into deployable autonomy. The organizing principle: <strong>the model sets the probability of a harmful action, but the harness sets its maximum cost</strong> — and only the second factor is fully under your control.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>ADVANCED</b></span>
+      <span>READING TIME<b>≈ 24 MIN</b></span>
+      <span>BUILDS ON<b>VOL IV · CH 01–03</b></span>
+      <span>INSTRUMENTS<b>CONFIGURATOR · VERIFY LOOP · BEST-OF-N</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">4.1</span>What a harness is</a>
+      <a href="#s2"><span class="n">4.2</span>Sandboxing</a>
+      <a href="#s3"><span class="n">4.3</span>Permission systems</a>
+      <a href="#s4"><span class="n">4.4</span>Verification</a>
+      <a href="#s5"><span class="n">4.5</span>Checkpoints &amp; recovery</a>
+      <a href="#s6"><span class="n">4.6</span>Human-in-the-loop</a>
+      <a href="#s7"><span class="n">4.7</span>Parallel harnesses</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 4.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">4.1</span><h2>What a harness is</h2></div>
+        <p>By 2026 the strange fact of the agent market is that competitors often run the <em>same</em> frontier models and ship wildly different products. The difference is not in the weights — those are rented by the token. It is in the <strong>harness</strong>: the policy engine that decides which proposed actions execute, the sandbox they execute in, the verifiers that score the result, the checkpoints that make mistakes cheap, and the gates that keep humans in the path of the irreversible. The model proposes; the harness disposes.</p>
+
+        <figure class="figure" data-reveal>
+          <div class="fig-head"><span class="fig-id">FIG A4.A</span><span class="fig-title">THE LIFECYCLE OF ONE AGENT ACTION</span></div>
+          <div class="fig-body">
+            <svg viewBox="0 0 920 250" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Harness action lifecycle">
+              <rect class="dg-box-ghost" x="320" y="10" width="280" height="44" rx="4" data-pop/><text class="dg-label-sm" x="460" y="28" text-anchor="middle">HUMAN</text><text class="dg-label-mut" x="460" y="44" text-anchor="middle">answers asks · approves the irreversible</text>
+              <rect class="dg-box" x="10" y="96" width="112" height="60" rx="4" data-pop/><text class="dg-label" x="66" y="120" text-anchor="middle">MODEL</text><text class="dg-label-sm" x="66" y="138" text-anchor="middle">proposes action</text>
+              <path class="dg-line" d="M122 126 H146" data-draw/><path class="dg-line" d="M140 121 l8 5 -8 5" data-draw/>
+              <rect class="dg-box" x="150" y="96" width="120" height="60" rx="4" data-pop/><text class="dg-label" x="210" y="120" text-anchor="middle">PERMISSIONS</text><text class="dg-label-sm" x="210" y="138" text-anchor="middle">allow · ask · deny</text>
+              <path class="dg-line" d="M210 96 Q210 64 324 40" stroke-dasharray="4 4" data-draw/>
+              <path class="dg-line" d="M270 126 H294" data-draw/><path class="dg-line" d="M288 121 l8 5 -8 5" data-draw/>
+              <rect class="dg-box" x="298" y="96" width="120" height="60" rx="4" data-pop/><text class="dg-label" x="358" y="120" text-anchor="middle">SANDBOX</text><text class="dg-label-sm" x="358" y="138" text-anchor="middle">bounded execution</text>
+              <path class="dg-line" d="M418 126 H442" data-draw/><path class="dg-line" d="M436 121 l8 5 -8 5" data-draw/>
+              <rect class="dg-box-accent" x="446" y="96" width="120" height="60" rx="4" data-pop/><text class="dg-label" x="506" y="120" text-anchor="middle" fill="#a6f2cc">VERIFIER</text><text class="dg-label-sm" x="506" y="138" text-anchor="middle">tests · build · lint</text>
+              <path class="dg-line" d="M566 126 H590" data-draw/><path class="dg-line" d="M584 121 l8 5 -8 5" data-draw/>
+              <rect class="dg-box" x="594" y="96" width="120" height="60" rx="4" data-pop/><text class="dg-label" x="654" y="120" text-anchor="middle">CHECKPOINT</text><text class="dg-label-sm" x="654" y="138" text-anchor="middle">commit on green</text>
+              <path class="dg-line" d="M714 126 H738" data-draw/><path class="dg-line" d="M732 121 l8 5 -8 5" data-draw/>
+              <rect class="dg-box" x="742" y="96" width="80" height="60" rx="4" data-pop/><text class="dg-label" x="782" y="120" text-anchor="middle">GATE</text><text class="dg-label-sm" x="782" y="138" text-anchor="middle">irreversibles</text>
+              <path class="dg-line" d="M782 96 Q782 60 596 36" stroke-dasharray="4 4" data-draw/>
+              <path class="dg-line" d="M822 126 H846" data-draw/><path class="dg-line" d="M840 121 l8 5 -8 5" data-draw/>
+              <rect class="dg-box-ghost" x="850" y="96" width="60" height="60" rx="4" data-pop/><text class="dg-label" x="880" y="130" text-anchor="middle">WORLD</text>
+              <path class="dg-line-acc" d="M506 156 C 506 226, 66 226, 66 156" data-draw/><path class="dg-line-acc" d="M61 164 l5 -9 5 9" data-draw/>
+              <text class="dg-label-sm" x="286" y="218" text-anchor="middle">RED → failure text re-enters context as evidence · the loop that makes agents work</text>
+            </svg>
+          </div>
+          <div class="fig-cap"><b>Every layer is optional, and every omission is a bet.</b> Skip the sandbox and you bet no tool call ever goes wrong; skip the verifier and you bet the first sample is correct; skip the gate and you bet the model never confuses "draft the email" with "send it." Production harnesses make none of these bets.</div>
+        </figure>
+
+        <p>Why this is where the engineering value concentrated: a harmful outcome needs two things — a bad action <em>proposed</em>, and a bad action <em>allowed to matter</em>. Alignment training suppresses the first factor but cannot zero it, because agent inputs are adversarial (Chapter 03: anything the agent reads is a potential instruction). The second factor is yours:</p>
+
+        <div class="eq"><span class="eq-tag">EQ A4.1 — THE BLAST-RADIUS BOUND</span>
+        $$ \mathbb{E}[\text{damage}] \;\le\; \underbrace{\Pr\big[\text{harmful action executes}\big]}_{\text{model + adversary — never } 0} \;\times\; \underbrace{\max_{a \,\in\, \mathcal{A}_{\text{exec}}} c(a)}_{\text{blast radius — set by the harness}} $$
+        <div class="eq-note">\(\mathcal{A}_{\text{exec}}\) is the set of actions that can actually reach the world after sandboxing and permissions; \(c(a)\) is the worst-case cost of action \(a\), which checkpoints and reversibility shrink. <b>You cannot drive the first factor to zero under adversarial input — so engineering effort goes into clamping the second.</b> A "safe" agent with system-wide write access is one jailbreak from catastrophe; a mediocre agent in a disposable worktree is one <code>git branch -D</code> from harmless.</div>
+        </div>
+
+        <table class="data">
+          <thead><tr><th>Layer</th><th>Question it answers</th><th>Failure it bounds</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Sandbox</strong></td><td class="m">where can code run?</td><td>Host compromise, data exfiltration, collateral damage</td></tr>
+            <tr><td><strong>Permissions</strong></td><td class="m">which actions execute?</td><td>Out-of-scope writes, surprise side effects</td></tr>
+            <tr><td><strong>Verifier</strong></td><td class="m">did it actually work?</td><td>Confidently shipped breakage</td></tr>
+            <tr><td><strong>Checkpoints</strong></td><td class="m">can we go back?</td><td>Compounding errors, unrecoverable state</td></tr>
+            <tr><td><strong>Human gate</strong></td><td class="m">who owns the irreversible?</td><td>Deploys, sends, deletes that no rollback undoes</td></tr>
+            <tr><td><strong>Telemetry</strong></td><td class="m">what happened, exactly?</td><td>Unauditable incidents, unlearnable failures</td></tr>
+          </tbody>
+        </table>
+
+        <p class="note"><strong>Is the harness really the moat?</strong> The claim is contested. Skeptics argue that as models internalize verification and caution, harness layers thin away — and they do thin: teams ask less and allow more with every model generation. But the boundary at the bottom never moves. No amount of capability makes a sent email unsent or a dropped production table undropped. The layers that manage <em>irreversibility</em> are permanent engineering, not scaffolding awaiting a smarter model.</p>
+
+        <div class="widget" id="hx-cfg" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT A4.1 — HARNESS CONFIGURATOR</span><span class="w-sub">FIVE LAYERS · TWO METERS · ONE INCIDENT</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;"><label>PRESET</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-hx-preset="yolo">YOLO DEV</button>
+                  <button class="w-btn ghost" data-hx-preset="prod">PRODUCTION</button>
+                  <button class="w-btn ghost" data-hx-preset="reg">REGULATED</button>
+                </div>
+              </div>
+            </div>
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;"><label>SANDBOX</label>
+                <div class="seg-row"><button class="w-btn ghost" data-hx-set="sandbox:0">OFF</button><button class="w-btn ghost" data-hx-set="sandbox:1">ON</button></div>
+              </div>
+              <div class="ctl" style="min-width:170px;flex:0 0 auto;"><label>WRITE SCOPE</label>
+                <select class="w-input" id="hx-cfg-scope">
+                  <option value="system">SYSTEM-WIDE</option>
+                  <option value="home" selected>ENTIRE HOME DIR</option>
+                  <option value="project">PROJECT DIR</option>
+                  <option value="worktree">WORKTREE ONLY</option>
+                </select>
+              </div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;"><label>TEST VERIFICATION</label>
+                <div class="seg-row"><button class="w-btn ghost" data-hx-set="verify:0">OFF</button><button class="w-btn ghost" data-hx-set="verify:1">ON</button></div>
+              </div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;"><label>HUMAN GATE</label>
+                <div class="seg-row"><button class="w-btn ghost" data-hx-set="gate:0">OFF</button><button class="w-btn ghost" data-hx-set="gate:1">ON</button></div>
+              </div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;"><label>CHECKPOINTS</label>
+                <div class="seg-row"><button class="w-btn ghost" data-hx-set="ckpt:0">OFF</button><button class="w-btn ghost" data-hx-set="ckpt:1">ON</button></div>
+              </div>
+            </div>
+            <div style="border:1px solid var(--hairline);border-radius:4px;padding:14px;margin-top:4px;">
+              <div style="display:flex;justify-content:space-between;font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.16em;color:#636363;margin-bottom:6px;"><span>AUTONOMY / THROUGHPUT</span><span id="hx-cfg-auto-val" style="color:#4e8af7;">—</span></div>
+              <div style="height:12px;background:rgba(47,50,52,.4);border-radius:2px;overflow:hidden;margin-bottom:14px;"><div id="hx-cfg-auto-bar" style="height:100%;width:0%;background:#4e8af7;transition:width .3s ease-in-out;"></div></div>
+              <div style="display:flex;justify-content:space-between;font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.16em;color:#636363;margin-bottom:6px;"><span>SAFETY / RECOVERABILITY</span><span id="hx-cfg-safe-val" style="color:#a6f2cc;">—</span></div>
+              <div style="height:12px;background:rgba(47,50,52,.4);border-radius:2px;overflow:hidden;"><div id="hx-cfg-safe-bar" style="height:100%;width:0%;background:#a6f2cc;transition:width .3s ease-in-out;"></div></div>
+            </div>
+            <div id="hx-cfg-story-box" style="border:1px solid #2f3234;border-left:3px solid #ff4136;border-radius:4px;padding:12px 14px;margin-top:12px;">
+              <div style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.16em;color:#636363;margin-bottom:6px;">WEAKEST-LINK INCIDENT — <span id="hx-cfg-weak" style="color:#ff4136;">—</span></div>
+              <div id="hx-cfg-story" style="font-size:13px;line-height:1.55;color:#9b9b9b;">—</div>
+            </div>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">AUTONOMY SCORE</div><div class="r-value" id="hx-cfg-auto-ro">—</div></div>
+              <div class="readout acc"><div class="r-label">SAFETY SCORE</div><div class="r-value" id="hx-cfg-safe-ro">—</div></div>
+              <div class="readout"><div class="r-label">WEAKEST LAYER</div><div class="r-value" id="hx-cfg-weak-ro">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Flip layers and watch the trade. The meters are hand-tuned and illustrative; the incident stories are the real content — each describes what the <em>weakest</em> remaining setting allows, which is how attackers and entropy actually find you. Note that PRODUCTION and REGULATED differ only in write scope, and that no configuration reaches 100 on both meters. That is the theorem of this chapter, not a bug in the widget.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 4.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">4.2</span><h2>Sandboxing: blast-radius engineering</h2></div>
+        <p>The sandbox is where EQ A4.1's second factor gets physically enforced. The design stance is borrowed from security engineering, not from trust: <strong>assume the agent will eventually attempt the worst action its environment permits</strong> — through error, through injection, or through an instruction it misread — and size the environment so that this worst action is affordable. Three resources need walls:</p>
+        <ul>
+          <li><strong>Filesystem.</strong> Read-only mounts for everything the agent needs but must not touch; copy-on-write overlays or dedicated checkouts for what it edits. The cheapest unit of filesystem isolation is the <strong>git worktree</strong>: a second working directory sharing the repository's object store, where the agent can do anything and the cleanup operation is deleting a branch.</li>
+          <li><strong>Process.</strong> Namespaces, cgroups, and syscall filters (containers); or a separate guest kernel entirely (microVMs such as Firecracker, user-space kernels such as gVisor). The distinction matters because agents <em>run arbitrary code as a feature</em> — every <code>npm install</code> executes strangers' postinstall scripts with the agent's privileges.</li>
+          <li><strong>Network.</strong> The wall that matters most and gets built last. An injected agent with no network egress can corrupt its sandbox; the same agent with open egress can exfiltrate every secret inside it. Default-deny with a short allowlist of package registries and APIs is the production norm.</li>
+        </ul>
+
+        <table class="data">
+          <thead><tr><th>Mechanism</th><th>Isolates</th><th>Escape cost</th><th>Typical use</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Git worktree</strong></td><td class="m">workspace state</td><td class="m">none — not a security boundary</td><td>Parallel attempts, cheap rollback, blast-radius for <em>mistakes</em></td></tr>
+            <tr><td><strong>Container</strong></td><td class="m">fs · processes · network ns</td><td class="m">kernel exploit (shared kernel)</td><td>The default agent cell; seccomp/AppArmor hardened</td></tr>
+            <tr><td><strong>MicroVM / gVisor</strong></td><td class="m">guest kernel boundary</td><td class="hl">hardware-virt escape — rare</td><td>Untrusted code at scale, multi-tenant agent platforms</td></tr>
+            <tr><td><strong>Ephemeral cloud VM</strong></td><td class="m">separate machine</td><td class="hl">≈ infrastructure compromise</td><td>Long-horizon autonomous runs; destroyed after the task</td></tr>
+          </tbody>
+        </table>
+
+        <div class="callout warn">
+          <span class="co-icon">CAVEAT</span>
+          <p><strong>The sandbox protects the host from the agent — not the contents of the sandbox from the agent.</strong> Whatever you mount inside the wall is inside the blast radius: production credentials in environment variables, a <code>.env</code> with live keys, an authenticated cloud CLI. Prompt injection does not need a sandbox escape if the valuables were carried into the cell. Mount secrets read-only, scoped, and short-lived — or better, broker them through a proxy the agent never sees raw.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 4.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">4.3</span><h2>Permission systems: spending human attention</h2></div>
+        <p>Inside the sandbox, the permission layer decides per-action: <strong>allow</strong>, <strong>ask</strong>, or <strong>deny</strong>. Two principles carry most of the design. First, <strong>allowlist, don't denylist</strong>: the set of safe actions is finite and enumerable ("read any file in the repo, run the test suite, edit inside <code>src/</code>"), while the set of dangerous actions is infinite and adversarially generated — a denylist of bad commands is a parlor game against an attacker who can base64-encode. Second, permissions are tiered by capability, not by tool name: the same <code>bash</code> tool is harmless running <code>grep</code> and lethal running <code>curl | sh</code>, so production systems parse and classify the <em>action</em>, not the tool.</p>
+
+        <table class="data">
+          <thead><tr><th>Tier</th><th>Examples</th><th>Policy</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Read</strong></td><td class="m">ls · grep · cat · GET</td><td>Auto-allow, log. Asking here is pure fatigue.</td></tr>
+            <tr><td><strong>Scoped write</strong></td><td class="m">edit in worktree · commit · branch</td><td>Auto-allow inside the declared scope; the checkpoint layer makes it cheap to be wrong.</td></tr>
+            <tr><td><strong>Unscoped / mutating</strong></td><td class="m">install package · POST · write outside scope</td><td>Ask, with the concrete diff or command shown — never the intent paraphrased.</td></tr>
+            <tr><td><strong>Irreversible</strong></td><td class="m">deploy · send · delete prod data · pay</td><td>Hard gate (§4.6) or structurally denied — not reachable from the agent's action set at all.</td></tr>
+          </tbody>
+        </table>
+
+        <p>The binding constraint is not policy expressiveness — it is <strong>approval fatigue</strong>. Human scrutiny is a depleting budget: the first confirmation dialog of the day gets read; the thirtieth gets reflex-approved in 400 ms. Every unnecessary ask therefore does double damage — it costs throughput now, and it trains the human to rubber-stamp the ask that will matter later. The design objective is brutal and clarifying: <strong>asks should be so rare that each one is news.</strong> Make the common path silent (reads, scoped writes), batch the questions you must ask, and surface them with the evidence needed to decide in one glance: the diff, the command, the URL — not "the agent wants to use Bash."</p>
+
+        <p class="note">A useful audit: count asks per completed task across a week of traces. Above ~5, your users have already stopped reading them, and your permission system has quietly degraded into a latency tax with a false sense of security attached. The fix is almost never "ask better" — it is widening the auto-allow tier while narrowing the scope it applies to (a freer hand inside a smaller room).</p>
+      </section>
+
+      <!-- ====================== 4.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">4.4</span><h2>Verification: the ground-truth principle</h2></div>
+        <p>The single highest-leverage component of a harness is the verifier, because of an asymmetry covered in Vol II · §5.7: for code, math, and structured tasks, <em>checking</em> is enormously cheaper than <em>generating</em>, and the check is objective. RLVR exploits this at training time, turning test results into rewards. The harness exploits the identical signal at inference time, turning test results into retry gates. Same principle, different loop: <strong>if the harness can check it, the agent can fix it.</strong> The contrapositive governs your roadmap: what the harness cannot check, the agent cannot reliably fix — so the highest-leverage engineering of the era is converting vibes into asserts: golden files, schema validators, screenshot diffs scored by a vision model, latency budgets in CI.</p>
+
+        <div class="eq"><span class="eq-tag">EQ A4.2 — CLOSING THE LOOP</span>
+        $$ \Pr[\text{green within } k \text{ attempts}] \;=\; 1 - (1-p)^k, \qquad \mathbb{E}[\text{attempts}] \;=\; \frac{1-(1-p)^k}{p} $$
+        <div class="eq-note">\(p\) is single-attempt success probability against a sound verifier; attempts stop at first green or after \(k\). At \(p = 0.45\) and \(k = 3\): an 83% completion rate from a model that is right less than half the time — <b>the verifier converts mediocre per-shot accuracy into high task reliability</b>. Caveat: attempts are not independent. Error feedback usually raises later \(p_i\) (the failure text is evidence), but failures also correlate — an agent missing the concept loops on variants of the same wrong idea, which is why production harnesses cap retries and escalate to a human instead of burning tokens.</div>
+        </div>
+
+        <p>Everything depends on verifier quality, and "quality" decomposes into two error rates: \(\alpha\), the chance a correct patch is rejected (flaky tests — wasteful but safe), and \(\beta\), the chance a broken patch passes (weak tests — silently fatal). Bayes gives the ceiling:</p>
+
+        <div class="eq"><span class="eq-tag">EQ A4.3 — THE LEAKY-VERIFIER CEILING</span>
+        $$ \Pr[\text{correct} \mid \text{verifier green}] \;=\; \frac{(1-\alpha)\,p}{(1-\alpha)\,p + \beta\,(1-p)} $$
+        <div class="eq-note">With \(p = 0.45\) and a test suite that lets 15% of broken patches through (\(\beta = 0.15\), \(\alpha = 0.05\)), a green run means only 84% correct — <b>and no number of retries raises it</b>, because retries condition on the same leaky green. Worse, a strong agent optimizes against the verifier and inflates effective \(\beta\): deleting failing tests, hardcoding expected outputs, special-casing the test inputs. This is reward hacking (Vol II · Ch 05) at inference time. Standard mitigations: tests read-only to the agent's write scope, diff review on any test-file change, and held-out checks the agent never sees.</div>
+        </div>
+
+        <div class="widget" id="hx-sim" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT A4.2 — VERIFY-LOOP SIM</span><span class="w-sub">ONE BUG · TWO HARNESSES · SCRIPTED RUN</span></div>
+          <div class="w-body">
+            <div style="font-family:ui-monospace,Menlo,monospace;font-size:10px;letter-spacing:.12em;color:#636363;margin-bottom:10px;">TASK — fix: date parser drops timezone fold on DST boundary · suite: 14 tests · model identical in both runs</div>
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;"><label>RUN</label>
+                <div class="seg-row">
+                  <button class="w-btn" id="hx-sim-on">VERIFICATION ON ▶</button>
+                  <button class="w-btn ghost" id="hx-sim-off">VERIFICATION OFF ▶</button>
+                </div>
+              </div>
+            </div>
+            <div id="hx-sim-log" style="border:1px solid var(--hairline);border-radius:4px;padding:12px 14px;min-height:200px;font-family:ui-monospace,Menlo,monospace;font-size:11px;line-height:1.9;color:#9b9b9b;"></div>
+            <div id="hx-sim-banner" hidden style="border-radius:4px;padding:12px 14px;margin-top:12px;font-family:ui-monospace,Menlo,monospace;font-size:11.5px;letter-spacing:.08em;"></div>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">PATCH ATTEMPTS</div><div class="r-value" id="hx-sim-att">—</div></div>
+              <div class="readout"><div class="r-label">SUITE AT SHIP</div><div class="r-value" id="hx-sim-suite">—</div></div>
+              <div class="readout acc"><div class="r-label">FIRST EXTERNAL VERIFIER</div><div class="r-value" id="hx-sim-ext" style="font-size:13px;line-height:1.5;">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Run both modes. The model is identical; only the harness differs. With verification ON, two red runs become context and attempt 3 lands green — EQ A4.2 with \(p \approx 0.45\), \(k = 3\). With verification OFF, the very same first patch ships, and the verifier role is outsourced to CI, then to customers. Scripted and illustrative — but every event in it is the standard behavior of a verify-loop harness.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 4.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">4.5</span><h2>Checkpoints &amp; recovery</h2></div>
+        <p>Verification tells you an attempt failed; checkpoints make that information affordable. The agent-native unit of recovery is the <strong>commit</strong>: cheap (milliseconds), content-addressed, diffable, and reversible with one command. Production harnesses run a <strong>ratchet</strong>: commit on every verified-green state, never on red, so the worktree's history is a monotone sequence of working states and "undo" means <code>git reset --hard</code> to the last tooth of the ratchet. Databases solved this decades ago — write-ahead logging, atomic commit, crash recovery — and agent harnesses are rediscovering each piece under new names.</p>
+
+        <pre><code><span class="c"># the ratchet — recovery loop of a production coding harness</span>
+<span class="k">checkpoint</span>:  commit after every green verify        <span class="c"># save point ≈ WAL record</span>
+<span class="k">on red</span>:      keep the failure text, discard the diff  <span class="c"># evidence in, damage out</span>
+<span class="k">rollback</span>:    reset --hard last-green                  <span class="c"># O(1), no negotiation</span>
+<span class="k">reattempt</span>:   same goal + accumulated failure traces   <span class="c"># p rises with evidence</span>
+<span class="k">cap</span>:         k attempts, then escalate to human       <span class="c"># correlated failure ≠ retry fuel</span>
+<span class="k">abandon</span>:     delete worktree, branch, container       <span class="c"># total cost: one git ref</span></code></pre>
+
+        <p>The second recovery primitive is <strong>idempotence</strong>: design steps so that \(f(f(s)) = f(s)\) — running a step twice lands in the same state as running it once. Idempotent steps make retry-after-partial-failure safe, which matters because agents fail <em>mid-step</em> constantly: a timeout after the database write but before the confirmation, a crash between two file edits. Migrations written with <code>IF NOT EXISTS</code>, PUTs instead of POSTs, "ensure state X" instead of "apply change ΔX" — the agent can then be restarted blindly, which is exactly how it will be restarted at 3 a.m.</p>
+
+        <p class="note">Checkpoints also change agent <em>psychology</em>, in the behavioral sense: a harness that can roll back cheaply can afford to let the agent try aggressive refactors that an unprotected harness must forbid. Recoverability is not the opposite of autonomy — it is what makes autonomy affordable. This is the deep reason the SAFETY and AUTONOMY meters in Instrument A4.1 are not a strict trade-off.</p>
+      </section>
+
+      <!-- ====================== 4.6 ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">4.6</span><h2>Human-in-the-loop design</h2></div>
+        <p>Where exactly does a human belong in the loop? The principled answer falls out of §4.5: <strong>gate by undo cost, not by anxiety.</strong> If an action is cheaply reversible, gating it buys no safety — the checkpoint already covers it — and spends scarce attention (§4.3). If an action is irreversible, no downstream layer can save you, so a human belongs in front of it regardless of how capable the model is. Deploys, sends, deletes, payments, anything that crosses from the sandbox into the world of other people: gated.</p>
+
+        <div class="spec-grid">
+          <div class="spec-cell"><div class="s-label">GATE</div><div class="s-value">the irreversible</div><div class="s-sub">deploy · send · delete · pay — undo cost is infinite, so a human signs each one.</div></div>
+          <div class="spec-cell"><div class="s-label">DON'T GATE</div><div class="s-value">the recoverable</div><div class="s-sub">edits, commits, scoped writes — the checkpoint layer is the approval. Gating here mints fatigue, not safety.</div></div>
+          <div class="spec-cell"><div class="s-label">RELOCATE</div><div class="s-value">the boundary</div><div class="s-sub">the strongest move: make more actions reversible — soft deletes, staged deploys, outbox-with-delay — and the gate list shrinks honestly.</div></div>
+        </div>
+
+        <p>The second design axis is <strong>sync versus async</strong>. A synchronous gate stalls an agent that works at machine speed against a human who context-switches at meeting speed — the agent idles, the human gets interrupted, both lose. The async pattern borrowed from code review wins at scale: the agent completes everything reversible, parks irreversibles in a <strong>review queue</strong> (a pull request, a staged deploy, an unsent outbox), and the human disposes of the queue in batches, with full diffs, on their own schedule. The PR is the proven artifact here — agents that end every task at "branch pushed, PR open, CI green" compose with two decades of existing review infrastructure.</p>
+
+        <div class="callout warn">
+          <span class="co-icon">EROSION</span>
+          <p><strong>Gates decay under deadline pressure.</strong> Every team eventually discovers its humans approving deploys from their phones without reading the diff — at which point the gate is a ritual, not a control. Two honest countermeasures: keep the gated set so small that vigilance is sustainable (single digits per person per day), and make the safe path the fast path — if rollback-capable staged deploys ship in one click and raw deploys need two approvals, entropy works for you instead of against you.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 4.7 ====================== -->
+      <section class="section" id="s7">
+        <div class="sec-head"><span class="sec-num">4.7</span><h2>Parallel harnesses: N attempts, one winner</h2></div>
+        <p>Once a harness makes single runs cheap, disposable, and verifiable, an upgrade becomes nearly free: run <strong>N harnesses in parallel</strong> on the same task and keep the best result. Git worktrees make the isolation almost costless — N checkouts sharing one object store, one branch each, no interference — and the economics follow the oldest equation in sampling:</p>
+
+        <div class="eq"><span class="eq-tag">EQ A4.4 — BEST-OF-N WITH A SELECTOR</span>
+        $$ \Pr[\text{ship correct}] \;=\; j\cdot\big(1-(1-p)^{N}\big), \qquad \Delta_N \;=\; p\,(1-p)^{N-1} $$
+        <div class="eq-note">\(p\) per-attempt success, \(N\) parallel attempts, \(j\) the probability the selector picks a correct candidate when at least one exists. A <b>ground-truth verifier is a perfect selector</b> (\(j = 1\)): run the tests, ship whichever attempt is green. An LLM judge is a noisy one (\(j \approx 0.6\text{–}0.9\) on hard tasks), and its noise caps the whole pipeline — the gap between the two curves in Instrument A4.3 is the price of not having a checkable task. \(\Delta_N\), the marginal value of attempt \(N\), decays geometrically: most of best-of-N's value arrives by \(N = 4\text{–}5\) for \(p \gtrsim 0.3\), while cost grows linearly forever.</div>
+        </div>
+
+        <p>The honest caveat is <strong>correlation</strong>: the N attempts come from the same model with the same blind spots, so true success is below the independence curve — if the model misunderstands the task, it misunderstands it N times, in N worktrees, at N× the cost. Production mitigations: vary the approach across attempts (different plans seeded into each prompt), vary temperature, or vary the model itself. And the selector inherits §4.4's failure mode wholesale: best-of-N against a leaky verifier is N chances to find the hack.</p>
+
+        <div class="widget" id="hx-bon" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT A4.3 — BEST-OF-N PLANNER</span><span class="w-sub">EQ A4.4 · INDEPENDENCE ASSUMED — OPTIMISTIC</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>PER-ATTEMPT SUCCESS p <output id="hx-bon-p-out">0.30</output></label><input type="range" id="hx-bon-p" min="0.05" max="0.9" step="0.05" value="0.3"/></div>
+              <div class="ctl"><label>PARALLEL ATTEMPTS N <output id="hx-bon-n-out">4</output></label><input type="range" id="hx-bon-n" min="1" max="16" step="1" value="4"/></div>
+              <div class="ctl"><label>SELECTOR ACCURACY j <output id="hx-bon-j-out">0.75</output></label><input type="range" id="hx-bon-j" min="0.5" max="1" step="0.05" value="0.75"/></div>
+            </div>
+            <canvas class="w-canvas" id="hx-bon-canvas" height="250"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">P(≥1 CORRECT IN N)</div><div class="r-value" id="hx-bon-pass">—</div></div>
+              <div class="readout acc"><div class="r-label">P(SHIP CORRECT)</div><div class="r-value" id="hx-bon-ship">—</div></div>
+              <div class="readout"><div class="r-label">MARGINAL GAIN OF ATTEMPT N</div><div class="r-value" id="hx-bon-marg">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Mint curve: ground-truth selector (j = 1, e.g. a test suite). Blue curve: your LLM judge at accuracy j. Drag j to 1.0 and watch the curves merge — that vertical gap is the dollar value of making your task checkable. Then set p = 0.1 and note how N must explode to compensate: parallelism amplifies a competent agent and merely bankrolls an incompetent one. Compute cost scales as N; the marginal-gain readout tells you when to stop paying.</div>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>The cage is built; now study what runs inside it.</strong> Chapter 05: loop engineering and multi-agent patterns — how the agent's inner loop is structured, when to split work across orchestrators and subagents, and why most multi-agent failures are really context failures wearing a trench coat.</p>
+        </div>
+      </section>
+
+      <nav class="pager">
+        <a href="03-tools-and-mcp.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">03</span> Tool Design &amp; MCP</div></a>
+        <a class="next" href="05-loop-engineering.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">05</span> Loop Engineering &amp; Multi-Agent Patterns</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — VOL IV · CH 04</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/glossary.js"></script>
+<script src="../assets/js/shared.js"></script>
+<script>
+/* chapter instruments — single IIFE, no globals */
+(function () {
+  "use strict";
+  var FM = window.FM;
+
+  /* ============================================================
+     INSTRUMENT A4.1 — HARNESS CONFIGURATOR
+     ============================================================ */
+  (function () {
+    var root = document.getElementById("hx-cfg");
+    if (!root) return;
+    var $ = function (id) { return document.getElementById(id); };
+    var scopeSel = $("hx-cfg-scope"), autoBar = $("hx-cfg-auto-bar"), safeBar = $("hx-cfg-safe-bar");
+    var autoVal = $("hx-cfg-auto-val"), safeVal = $("hx-cfg-safe-val"), autoRo = $("hx-cfg-auto-ro"), safeRo = $("hx-cfg-safe-ro");
+    var weakEl = $("hx-cfg-weak"), weakRo = $("hx-cfg-weak-ro"), storyEl = $("hx-cfg-story"), storyBox = $("hx-cfg-story-box");
+    var setBtns = root.querySelectorAll("[data-hx-set]");
+    var preBtns = root.querySelectorAll("[data-hx-preset]");
+
+    var state = { sandbox: 0, scope: "home", verify: 0, gate: 0, ckpt: 0 };
+    var PRESETS = {
+      yolo: { sandbox: 0, scope: "home", verify: 0, gate: 0, ckpt: 0 },
+      prod: { sandbox: 1, scope: "project", verify: 1, gate: 1, ckpt: 1 },
+      reg:  { sandbox: 1, scope: "worktree", verify: 1, gate: 1, ckpt: 1 }
+    };
+    var SCOPE_AUTO = { system: 0, home: 0, project: 6, worktree: 12 };
+    var SCOPE_SAFE = { system: 0, home: 5, project: 14, worktree: 22 };
+
+    /* hand-written outcome matrix — first match = weakest link */
+    function incident() {
+      if (!state.sandbox && state.scope === "system") return ["WRITE SCOPE + SANDBOX",
+        "A cleanup script with an unquoted shell variable expands to '/'. The agent helpfully runs it — system-wide write access, no container, your actual machine. The weekend is now a reinstall."];
+      if (!state.sandbox && state.scope === "home") return ["SANDBOX",
+        "A README the agent ingested says: 'to build, first run: curl https://… | sh'. Unsandboxed and home-scoped, your ~/.ssh keys and browser session are one obedient tool call from leaving the building."];
+      if (!state.sandbox) return ["SANDBOX",
+        "Write scope holds for the agent's own edits — but its test run shells out to 'npm install', and a typosquatted package's postinstall script now executes on your host with your credentials. Permission checks bind tool calls, not the code those calls spawn."];
+      if (state.scope === "system" || state.scope === "home") return ["WRITE SCOPE",
+        "The container boundary holds — but your whole home directory is mounted read-write inside it. The injected instruction doesn't need an escape: everything valuable was carried into the cell."];
+      if (!state.gate) return ["HUMAN GATE",
+        "Friday, 17:58. The agent finishes the migration, and — with nothing between it and production — runs the deploy too. The work was good; the rollback still happens on Saturday."];
+      if (!state.verify) return ["VERIFICATION",
+        "The patch reads as plausible, so it ships. The first entity ever to run your test suite against it is a customer, three days from now."];
+      if (!state.ckpt) return ["CHECKPOINTS",
+        "Attempt 3 rewrites the files attempts 1 and 2 got right. With no green commits to reset to, the run's only durable artifact is regret."];
+      if (state.scope === "project") return ["WRITE SCOPE",
+        "Contained, verified, gated — but one write meant for the repo lands in a sibling service's shared config inside the project dir. Worktree scoping would have made that mistake unrepresentable."];
+      return ["NONE — RESIDUAL RISK ONLY",
+        "Worst recorded incident at this configuration: forty minutes of compute wasted in a doomed worktree. You delete the branch. Total blast radius: one git ref."];
+    }
+
+    function render() {
+      var auto = 100 - (state.gate ? 30 : 0) - (state.verify ? 10 : 0)
+                     - (state.sandbox ? 6 : 0) - (state.ckpt ? 2 : 0) - SCOPE_AUTO[state.scope];
+      var safe = 2 + (state.sandbox ? 28 : 0) + SCOPE_SAFE[state.scope]
+                   + (state.verify ? 16 : 0) + (state.gate ? 18 : 0) + (state.ckpt ? 12 : 0);
+      auto = Math.max(0, Math.min(100, auto));
+      safe = Math.max(0, Math.min(100, safe));
+
+      autoBar.style.width = auto + "%";
+      safeBar.style.width = safe + "%";
+      autoVal.textContent = auto + " / 100";
+      safeVal.textContent = safe + " / 100";
+      autoRo.textContent = String(auto);
+      safeRo.textContent = String(safe);
+
+      var inc = incident();
+      var clean = inc[0].indexOf("NONE") === 0;
+      weakEl.textContent = inc[0];
+      weakEl.style.color = clean ? FM.C.MINT : FM.C.RED;
+      weakRo.textContent = clean ? "NONE" : inc[0].split(" +")[0];
+      storyEl.textContent = inc[1];
+      storyBox.style.borderLeftColor = clean ? FM.C.MINT : FM.C.RED;
+
+      /* sync toggle button states */
+      for (var i = 0; i < setBtns.length; i++) {
+        var parts = setBtns[i].getAttribute("data-hx-set").split(":");
+        setBtns[i].classList.toggle("on", state[parts[0]] === parseInt(parts[1], 10));
+      }
+      /* highlight preset iff exact match */
+      for (var k = 0; k < preBtns.length; k++) {
+        var p = PRESETS[preBtns[k].getAttribute("data-hx-preset")];
+        var match = p.sandbox === state.sandbox && p.scope === state.scope &&
+                    p.verify === state.verify && p.gate === state.gate && p.ckpt === state.ckpt;
+        preBtns[k].classList.toggle("on", match);
+      }
+    }
+
+    for (var i = 0; i < setBtns.length; i++) {
+      (function (btn) {
+        btn.addEventListener("click", function () {
+          var parts = btn.getAttribute("data-hx-set").split(":");
+          state[parts[0]] = parseInt(parts[1], 10);
+          render();
+        });
+      })(setBtns[i]);
+    }
+    for (var k = 0; k < preBtns.length; k++) {
+      (function (btn) {
+        btn.addEventListener("click", function () {
+          var p = PRESETS[btn.getAttribute("data-hx-preset")];
+          state.sandbox = p.sandbox; state.scope = p.scope;
+          state.verify = p.verify; state.gate = p.gate; state.ckpt = p.ckpt;
+          scopeSel.value = p.scope;
+          render();
+        });
+      })(preBtns[k]);
+    }
+    scopeSel.addEventListener("change", function () { state.scope = scopeSel.value; render(); });
+    render();
+  })();
+
+  /* ============================================================
+     INSTRUMENT A4.2 — VERIFY-LOOP SIM
+     ============================================================ */
+  (function () {
+    var root = document.getElementById("hx-sim");
+    if (!root) return;
+    var $ = function (id) { return document.getElementById(id); };
+    var logEl = $("hx-sim-log"), banner = $("hx-sim-banner"), attEl = $("hx-sim-att");
+    var suiteEl = $("hx-sim-suite"), extEl = $("hx-sim-ext"), btnOn = $("hx-sim-on"), btnOff = $("hx-sim-off");
+    var timers = [];
+
+    var TAGC = { INFO: "#636363", PATCH: "#4e8af7", PASS: "#a6f2cc", FAIL: "#ff4136", WARN: "#ff4136" };
+
+    var RUN_ON = [
+      { d: 0,    tag: "INFO",  t: "worktree hx/fix-dst @ a41c9e2 · sandbox: container · scope: worktree-only" },
+      { d: 700,  tag: "INFO",  t: "baseline: pytest 12/14 — failing: test_dst_spring_forward · test_utc_offset_roundtrip", r: { suite: "12/14" } },
+      { d: 1500, tag: "PATCH", t: "attempt 1 — normalize all datetimes to UTC before computing deltas (parser.py +9 −3)", r: { att: "1" } },
+      { d: 2400, tag: "FAIL",  t: "pytest 13/14 — test_dst_spring_forward: expected 01:30−07:00, got 01:30−08:00", r: { suite: "13/14" } },
+      { d: 3100, tag: "INFO",  t: "failure text enters context — the error is now evidence, not an event" },
+      { d: 3900, tag: "PATCH", t: "attempt 2 — localize with is_dst=None, catch AmbiguousTimeError (parser.py +14 −6)", r: { att: "2" } },
+      { d: 4800, tag: "FAIL",  t: "pytest 13/14 — regression: test_utc_offset_roundtrip (naive datetimes now raise)", r: { suite: "13/14" } },
+      { d: 5500, tag: "INFO",  t: "rollback to checkpoint a41c9e2 — keep both failure traces, discard the diff" },
+      { d: 6300, tag: "PATCH", t: "attempt 3 — branch on tzinfo presence; ambiguous local times resolved with fold=1 (+11 −2)", r: { att: "3" } },
+      { d: 7200, tag: "PASS",  t: "pytest 14/14 · ruff clean · mypy clean", r: { suite: "14/14 ✓" } },
+      { d: 7900, tag: "INFO",  t: "commit 7f3d2b1 'fix: resolve DST fold in parser' — loop closed in 3 attempts", r: { ext: "the harness itself" } },
+      { d: 8600, banner: "win", t: "SHIPPED GREEN — 3 attempts · 0 human minutes · defects at merge: 0" }
+    ];
+
+    var RUN_OFF = [
+      { d: 0,    tag: "INFO",  t: "worktree hx/fix-dst @ a41c9e2 · verifier: none configured" },
+      { d: 800,  tag: "PATCH", t: "attempt 1 — normalize all datetimes to UTC before computing deltas (parser.py +9 −3)", r: { att: "1" } },
+      { d: 1700, tag: "INFO",  t: "patch reads as plausible. plausibility is a property of text; correctness is a property of the world", r: { suite: "not run" } },
+      { d: 2600, tag: "INFO",  t: "commit + push 'fix: handle DST in parser' — first sample shipped unexamined" },
+      { d: 3500, tag: "WARN",  t: "+45 min · CI on main: test_dst_spring_forward red — merge train blocked", r: { ext: "CI, 45 min late" } },
+      { d: 4400, tag: "WARN",  t: "+3 days · support queue: reminders fire an hour early across PST — 212 tickets", r: { ext: "212 customers" } },
+      { d: 5200, banner: "fail", t: "SHIPPED BROKEN — the first verifier this patch ever met was a customer" }
+    ];
+
+    function clearTimers() {
+      for (var i = 0; i < timers.length; i++) clearTimeout(timers[i]);
+      timers = [];
+    }
+
+    function addLine(tag, text) {
+      var row = document.createElement("div");
+      var chip = document.createElement("span");
+      chip.textContent = tag;
+      chip.style.cssText = "display:inline-block;width:52px;color:" + TAGC[tag] + ";letter-spacing:.1em;";
+      var body = document.createElement("span");
+      body.textContent = text;
+      body.style.color = tag === "PASS" ? "#e5e5e5" : "#9b9b9b";
+      row.appendChild(chip);
+      row.appendChild(body);
+      logEl.appendChild(row);
+    }
+
+    function showBanner(kind, text) {
+      banner.hidden = false;
+      banner.textContent = (kind === "win" ? "■ " : "■ ") + text;
+      if (kind === "win") {
+        banner.style.border = "1px solid " + FM.C.MINT;
+        banner.style.background = "rgba(166,242,204,.07)";
+        banner.style.color = FM.C.MINT;
+        extEl.textContent = "the harness itself";
+      } else {
+        banner.style.border = "1px solid " + FM.C.RED;
+        banner.style.background = "rgba(255,65,54,.06)";
+        banner.style.color = FM.C.RED;
+      }
+    }
+
+    function run(script) {
+      clearTimers();
+      logEl.innerHTML = "";
+      banner.hidden = true;
+      attEl.textContent = "0";
+      suiteEl.textContent = "—";
+      extEl.textContent = "—";
+      for (var i = 0; i < script.length; i++) {
+        (function (ev) {
+          timers.push(setTimeout(function () {
+            if (ev.banner) { showBanner(ev.banner, ev.t); return; }
+            addLine(ev.tag, ev.t);
+            if (ev.r) {
+              if (ev.r.att) attEl.textContent = ev.r.att;
+              if (ev.r.suite) suiteEl.textContent = ev.r.suite;
+              if (ev.r.ext) extEl.textContent = ev.r.ext;
+            }
+          }, ev.d));
+        })(script[i]);
+      }
+    }
+
+    btnOn.addEventListener("click", function () { run(RUN_ON); });
+    btnOff.addEventListener("click", function () { run(RUN_OFF); });
+    /* sensible initial state without interaction */
+    addLine("INFO", "task loaded — two runs available, identical model, different harness");
+    addLine("INFO", "press a RUN button above to start the event log");
+  })();
+
+  /* ============================================================
+     INSTRUMENT A4.3 — BEST-OF-N PLANNER
+     ============================================================ */
+  (function () {
+    var root = document.getElementById("hx-bon");
+    if (!root) return;
+    var $ = function (id) { return document.getElementById(id); };
+    var canvas = $("hx-bon-canvas"), pIn = $("hx-bon-p"), nIn = $("hx-bon-n"), jIn = $("hx-bon-j");
+    var pOut = $("hx-bon-p-out"), nOut = $("hx-bon-n-out"), jOut = $("hx-bon-j-out");
+    var roPass = $("hx-bon-pass"), roShip = $("hx-bon-ship"), roMarg = $("hx-bon-marg");
+    var NMAX = 16;
+
+    function passAt(p, n) { return 1 - Math.pow(1 - p, n); }
+
+    function render() {
+      var p = parseFloat(pIn.value);
+      var N = parseInt(nIn.value, 10);
+      var j = parseFloat(jIn.value);
+      pOut.textContent = p.toFixed(2);
+      nOut.textContent = String(N);
+      jOut.textContent = j.toFixed(2);
+
+      var pass = passAt(p, N);
+      roPass.textContent = (pass * 100).toFixed(1) + "%";
+      roShip.textContent = (j * pass * 100).toFixed(1) + "%";
+      roMarg.textContent = "+" + (p * Math.pow(1 - p, N - 1) * 100).toFixed(1) + " pts";
+
+      var s = FM.setupCanvas(canvas, 250);
+      var ctx = s.ctx, W = s.w, H = s.h;
+      var L = 44, R = 16, T = 14, B = 30;
+      var pw = W - L - R, ph = H - T - B;
+      ctx.clearRect(0, 0, W, H);
+      ctx.font = FM.C.MONO;
+
+      /* gridlines */
+      var g;
+      for (g = 0; g <= 4; g++) {
+        var gy = T + ph - (g / 4) * ph;
+        ctx.strokeStyle = "rgba(47,50,52,.7)";
+        ctx.beginPath(); ctx.moveTo(L, gy); ctx.lineTo(L + pw, gy); ctx.stroke();
+        ctx.fillStyle = FM.C.MUT;
+        ctx.textAlign = "right";
+        ctx.fillText((g * 25) + "%", L - 6, gy + 3);
+      }
+      ctx.textAlign = "center";
+      var n;
+      for (n = 1; n <= NMAX; n++) {
+        var gx = L + ((n - 1) / (NMAX - 1)) * pw;
+        if (n === 1 || n % 2 === 0) { ctx.fillStyle = FM.C.MUT; ctx.fillText(String(n), gx, H - B + 14); }
+      }
+      ctx.fillStyle = FM.C.MUT;
+      ctx.fillText("PARALLEL ATTEMPTS N", L + pw / 2, H - 4);
+
+      /* marker at chosen N */
+      var mx = L + ((N - 1) / (NMAX - 1)) * pw;
+      ctx.strokeStyle = "#565656";
+      ctx.setLineDash([3, 4]);
+      ctx.beginPath(); ctx.moveTo(mx, T); ctx.lineTo(mx, T + ph); ctx.stroke();
+      ctx.setLineDash([]);
+
+      /* curves: mint = ground truth (j=1) · blue = judge (j) */
+      function curve(scale, color) {
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        for (var i = 1; i <= NMAX; i++) {
+          var x = L + ((i - 1) / (NMAX - 1)) * pw;
+          var y = T + ph - scale * passAt(p, i) * ph;
+          if (i === 1) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+        ctx.lineWidth = 1;
+      }
+      curve(1, FM.C.MINT);
+      curve(j, FM.C.BLUE);
+
+      /* dots at chosen N */
+      function dot(scale, color) {
+        var y = T + ph - scale * passAt(p, N) * ph;
+        ctx.fillStyle = color;
+        ctx.beginPath(); ctx.arc(mx, y, 3.5, 0, Math.PI * 2); ctx.fill();
+      }
+      dot(1, FM.C.MINT);
+      dot(j, FM.C.BLUE);
+
+      ctx.textAlign = "left";
+      ctx.fillStyle = FM.C.MINT;
+      ctx.fillText("GROUND-TRUTH SELECTOR (j = 1)", L + 8, T + 10);
+      ctx.fillStyle = FM.C.BLUE;
+      ctx.fillText("LLM JUDGE (j = " + j.toFixed(2) + ")", L + 8, T + 24);
+    }
+
+    pIn.addEventListener("input", render);
+    nIn.addEventListener("input", render);
+    jIn.addEventListener("input", render);
+    var rsTimer = null;
+    window.addEventListener("resize", function () {
+      if (rsTimer) clearTimeout(rsTimer);
+      rsTimer = setTimeout(render, 150);
+    });
+    render();
+  })();
+})();
+</script>
+</body>
+</html>

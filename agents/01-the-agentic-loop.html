@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>01 · From Chat to Agents: The Loop — AI Encyclopedia</title>
+<meta name="description" content="What an agent actually is — LLM, tools, loop, goal — the anatomy of the canonical agentic loop, the autonomy ladder, what changed in 2024–26, and the four hard problems of agent engineering." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css" />
+</head>
+<body>
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ VOL IV / AGENT ENGINEERING / 01 / THE AGENTIC LOOP</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="02-context-engineering.html">NEXT: CONTEXT ENGINEERING →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">VOLUME IV — AGENT ENGINEERING · CHAPTER 01 / 06</div>
+    <h1>From Chat to Agents: The Loop</h1>
+    <p class="lede">A chatbot emits an answer and the episode ends. An agent emits an <em>action</em>, watches what the world does about it, and gets to try again — and that single change of wiring, about ten lines of code, is the entire difference between the two product categories. Strip the marketing and what remains is precise: <strong>an agent is a while-loop with judgment</strong> — judgment about which action comes next, and judgment about when to stop.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 22 MIN</b></span>
+      <span>BUILDS ON<b>VOL II CH 05 · 09 — VOL III CH 05–06</b></span>
+      <span>INSTRUMENTS<b>LOOP STEP-SIM · AUTONOMY LADDER</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">1.1</span>The definition</a>
+      <a href="#s2"><span class="n">1.2</span>Loop anatomy</a>
+      <a href="#s3"><span class="n">1.3</span>Degrees of autonomy</a>
+      <a href="#s4"><span class="n">1.4</span>What changed 2024–26</a>
+      <a href="#s5"><span class="n">1.5</span>The four hard problems</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 1.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">1.1</span><h2>A definition that survives the hype</h2></div>
+        <p>“Agent” is the most marketing-soaked word in the field, applied with equal confidence to a cron job with an API key and to a system that ships production code unsupervised. A definition that survives contact with both vendors and reality has exactly four components:</p>
+        <table class="data">
+          <thead><tr><th>Component</th><th>Role</th><th>Without it you have…</th></tr></thead>
+          <tbody>
+            <tr><td><strong>LLM</strong></td><td class="m">the policy — picks the next action from everything seen so far</td><td>ordinary software</td></tr>
+            <tr><td><strong>Tools</strong></td><td class="m">actuators — the only way the model touches the world</td><td>a chatbot: all talk, no hands</td></tr>
+            <tr><td><strong>Loop</strong></td><td class="m">feedback — observations return as input to the next decision</td><td>a one-shot pipeline: open-loop, no recovery</td></tr>
+            <tr><td><strong>Goal</strong></td><td class="m">termination — defines what “done” means and who decides it</td><td>a screensaver that bills by the token</td></tr>
+          </tbody>
+        </table>
+        <p>Formally, the agent is a fixed policy unrolled against an environment. The state is nothing more exotic than the transcript so far:</p>
+
+        <div class="eq"><span class="eq-tag">EQ A1.1 — THE LOOP AS A POLICY</span>
+        $$ s_t \;=\; \big(\,g;\; a_1, o_1,\; \ldots,\; a_{t-1}, o_{t-1}\big), \qquad a_t \,\sim\, \pi_\theta(\cdot \mid s_t), \qquad o_t \,=\, E(a_t), \qquad \text{until } a_t \in \mathcal{A}_{\mathrm{stop}} $$
+        <div class="eq-note">\(g\) the goal, \(a_t\) an action (a tool call, or a final answer), \(o_t\) the observation the environment \(E\) returns, \(\pi_\theta\) the frozen LLM. Two things deserve a stare. First, <b>the weights never change at runtime</b> — every scrap of within-episode “learning” lives in \(s_t\), the context, which is why Chapter 02 exists. Second, the model itself emits the stop action: termination is a <em>decision</em>, sampled from the same distribution as everything else, and it can be wrong in both directions — quitting early or looping forever (Chapter 05).</div>
+        </div>
+
+        <p>The boundary worth defending is the one between <strong>workflows</strong> and <strong>agents</strong>. In a workflow, your code owns control flow and the model fills in slots — summarize this, classify that — along paths fixed before the run started. In an agent, the model owns control flow: it decides what happens next, how many steps to take, and when the job is done. Everything in between is a gradient, which §1.3 turns into a ladder. The distinction matters because the two fail differently: workflows fail like software (loudly, reproducibly, at a known step), agents fail like employees (plausibly, variably, sometimes silently) — and everything in this volume is about engineering around the second failure style.</p>
+        <p class="note"><strong>What “judgment” buys.</strong> A while-loop with judgment is not a put-down — the judgment is the whole product. Fixed automation handles enumerable cases; the agent's bet is that a strong policy over <em>open-ended</em> situations beats an exhaustive case analysis nobody can actually write. You pay for that bet in variance. The discipline of this volume is deciding, task by task, whether the bet is worth it.</p>
+      </section>
+
+      <!-- ====================== 1.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">1.2</span><h2>Anatomy of the loop</h2></div>
+        <p>Here is the object of study for the next five chapters — the canonical loop, essentially as it appears inside every production coding agent, stripped of error handling:</p>
+        <pre><code><span class="c"># The canonical agentic loop — the ~10 lines under every agent product</span>
+<span class="k">context</span> = [system_prompt, tool_schemas, user_goal]
+<span class="k">while</span> turns &lt; MAX_TURNS <span class="k">and</span> spend &lt; BUDGET:
+    reply = llm(context)                          <span class="c"># the only intelligent step</span>
+    <span class="k">if</span> reply.tool_calls:
+        results = [harness.execute(c) <span class="k">for</span> c <span class="k">in</span> reply.tool_calls]
+        context += [reply, results]               <span class="c"># the transcript IS the state</span>
+    <span class="k">else</span>:
+        <span class="k">return</span> reply.text                      <span class="c"># the model decided it is done</span>
+<span class="k">return</span> escalate(<span class="v">"budget exhausted — hand back to a human"</span>)</code></pre>
+        <p>One turn = one model emission. The model returns either <strong>tool calls</strong> — structured, schema-conforming action requests (Vol III · Ch 05) — or plain text, which the loop reads as “finished.” The <strong>harness</strong> executes the calls it approves, in a sandbox it controls, and appends whatever came back — stdout, an error trace, a screenshot, a search result — as an <strong>observation</strong>. Then the model is called again on the longer transcript. That is the entire trick: the model never touches the world, and the world never touches the model; they only exchange tokens through the context.</p>
+
+        <figure class="figure" data-reveal>
+          <div class="fig-head"><span class="fig-id">FIG A1.A</span><span class="fig-title">THE AGENTIC LOOP — DATA PATH</span></div>
+          <div class="fig-body">
+            <svg viewBox="0 0 880 320" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Agentic loop diagram: context feeds the model, the model emits tool calls to the harness and environment, observations are appended back to context, and a final answer exits the loop">
+              <!-- return path (observations) above -->
+              <path class="dg-line-acc" d="M710 60 V28 H155 V52" data-draw/>
+              <path class="dg-line-acc" d="M150 44 l5 10 5 -10" data-draw/>
+              <text class="dg-label-acc" x="435" y="18" text-anchor="middle">OBSERVATION APPENDED — THE TRANSCRIPT IS THE STATE</text>
+
+              <!-- context box -->
+              <rect class="dg-box" x="60" y="60" width="190" height="76" rx="4" data-pop/>
+              <text class="dg-label" x="155" y="92" text-anchor="middle">CONTEXT</text>
+              <text class="dg-label-sm" x="155" y="112" text-anchor="middle">system · tools · goal · transcript</text>
+
+              <!-- context -> model -->
+              <path class="dg-line" d="M250 98 H330" data-draw/>
+              <path class="dg-line" d="M322 93 l10 5 -10 5" data-draw/>
+
+              <!-- model box -->
+              <rect class="dg-box-accent" x="340" y="60" width="180" height="76" rx="4" data-pop/>
+              <text class="dg-label" x="430" y="92" text-anchor="middle" fill="#a6f2cc">MODEL  π_θ</text>
+              <text class="dg-label-sm" x="430" y="112" text-anchor="middle">one emission per turn</text>
+
+              <!-- model -> harness -->
+              <path class="dg-line" d="M520 98 H600" data-draw/>
+              <path class="dg-line" d="M592 93 l10 5 -10 5" data-draw/>
+              <text class="dg-label-mut" x="560" y="86" text-anchor="middle">tool call</text>
+
+              <!-- harness box -->
+              <rect class="dg-box" x="610" y="60" width="210" height="76" rx="4" data-pop/>
+              <text class="dg-label" x="715" y="92" text-anchor="middle">HARNESS + ENVIRONMENT</text>
+              <text class="dg-label-sm" x="715" y="112" text-anchor="middle">approves · executes · sandboxes</text>
+
+              <!-- exit path -->
+              <path class="dg-line" d="M430 136 V222" data-draw/>
+              <path class="dg-line" d="M425 214 l5 10 5 -10" data-draw/>
+              <text class="dg-label-mut" x="444" y="185">no tool call → loop exits</text>
+              <rect class="dg-box-ghost" x="340" y="232" width="180" height="56" rx="4" data-pop/>
+              <text class="dg-label" x="430" y="256" text-anchor="middle">FINAL ANSWER</text>
+              <text class="dg-label-sm" x="430" y="274" text-anchor="middle">or: budget exhausted → escalate</text>
+            </svg>
+          </div>
+          <div class="fig-cap"><b>Tokens are the only interface.</b> The model's sole output is text; the environment's sole input to the model is text appended to context. Every agent failure mode in Chapter 05 is ultimately a corruption of this picture: bad state in, bad action out, repeat.</div>
+        </figure>
+
+        <p>Watch the loop run. The task is the smallest real agentic episode there is — a failing test, a config file, and a model that has to find the bug, fix it, and prove the fix:</p>
+
+        <div class="widget" id="al-sim" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT A1.1 — LOOP STEP-SIM</span><span class="w-sub">SCRIPTED EPISODE · 6 TURNS · EQ A1.1 LIVE</span></div>
+          <div class="w-body">
+            <div style="border:1px solid var(--hairline);border-radius:4px;padding:10px 12px;margin-bottom:12px;">
+              <div style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.16em;color:#636363;margin-bottom:5px;">GOAL g</div>
+              <div style="font-size:13px;color:#e5e5e5;line-height:1.5;">“A test started failing after yesterday's config change. Find the bug in <code>config/</code> and fix it. The suite must pass.”</div>
+            </div>
+            <div class="ctl-row" style="margin-bottom:12px;">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>CONTROLS</label>
+                <div class="seg-row">
+                  <button class="w-btn" id="al-sim-step">STEP ▸</button>
+                  <button class="w-btn ghost" id="al-sim-auto">AUTO</button>
+                  <button class="w-btn ghost" id="al-sim-reset">RESET</button>
+                </div>
+              </div>
+            </div>
+            <div id="al-sim-log" style="max-height:320px;overflow-y:auto;border:1px solid var(--hairline);border-radius:4px;padding:10px;"></div>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">TURN</div><div class="r-value" id="al-sim-turn">—</div></div>
+              <div class="readout acc"><div class="r-label">CONTEXT (SIM. TOKENS)</div><div class="r-value" id="al-sim-tok">—</div></div>
+              <div class="readout"><div class="r-label">TOOL CALLS</div><div class="r-value" id="al-sim-tools">—</div></div>
+              <div class="readout"><div class="r-label">STATUS</div><div class="r-value" id="al-sim-status" style="font-size:12px;line-height:1.5;">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">STEP advances one event: model reasoning (grey), tool call (mint), observation (blue) — or hit AUTO and watch the whole episode. Three lessons hide in plain sight: the model never sees the repo, only observations its own calls produced; turn 5 re-runs the tests because <em>an unverified fix is a guess</em>; and the token counter only ever goes up — the loop's state grows monotonically, which is the problem Chapter 02 inherits. The transcript is scripted; real episodes differ run to run.</div>
+        </div>
+
+        <p>Why does the verification turn matter so much? Because an open-loop system multiplies its per-step reliability across the whole horizon:</p>
+
+        <div class="eq"><span class="eq-tag">EQ A1.2 — THE COMPOUNDING-ERROR BOUND</span>
+        $$ P(\text{episode succeeds}) \;=\; \prod_{t=1}^{n} p_t \;\overset{\text{indep.}}{=}\; p^{\,n}, \qquad 0.99^{60} \approx 0.55, \qquad 0.95^{60} \approx 0.046 $$
+        <div class="eq-note">With per-step success \(p\) and no feedback, a 60-step task collapses: 99% steps give a coin flip, 95% steps give near-certain failure. Real agents sit on <em>both</em> sides of this bound. They beat it because the loop lets observed errors be repaired — a red test is not a failure, it is information — and they undershoot it because their errors correlate (one wrong belief poisons every subsequent step). The engineering consequence: <b>verifiable feedback is worth more than raw per-step accuracy</b>. A tool that turns silent errors into visible observations (run the tests, render the page, validate the schema) is the cheapest reliability you will ever buy.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 1.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">1.3</span><h2>Degrees of autonomy: pick the lowest rung that works</h2></div>
+        <p>Autonomy is not a binary; it is a ladder of who owns control flow. Each rung hands the model more of the run — and hands you more variance, more cost, and a harder evaluation problem:</p>
+        <table class="data">
+          <thead><tr><th>Rung</th><th>Control flow owned by</th><th>Model decides</th><th>Evaluates like</th></tr></thead>
+          <tbody>
+            <tr><td><strong>R0 · Workflow</strong></td><td class="m">your code, fully</td><td>content of each slot</td><td>software — unit tests per step</td></tr>
+            <tr><td><strong>R1 · Router</strong></td><td class="m">your code, one branch point</td><td>one classification</td><td>a classifier — precision / recall</td></tr>
+            <tr><td><strong>R2 · Single-tool agent</strong></td><td class="m">model, inside one loop · one tool</td><td>each call + when to stop</td><td>task success under a turn cap</td></tr>
+            <tr><td><strong>R3 · Multi-step agent</strong></td><td class="m">model, open toolset</td><td>plan, actions, ordering, stop</td><td class="hl">end-state verifier on trajectories</td></tr>
+            <tr><td><strong>R4 · Multi-agent</strong></td><td class="m">an orchestrating model</td><td>decomposition + everything below</td><td>per-subagent verifiers + a merge gate</td></tr>
+          </tbody>
+        </table>
+        <p>The design rule is unfashionable and correct: <strong>take the lowest rung that solves the task</strong>. Every rung you climb without needing to converts a debuggable system into a stochastic one. A fixed sequence of LLM calls is still rung 0 — <em>multiple steps are not autonomy</em>; autonomy begins when the number or identity of the steps is decided at runtime. And rung 4 is justified by exactly two things — parallelism across independent subtasks, and context isolation when one window can't hold the job — not by the theater of models “collaborating.” The evidence on multi-agent debate and role-play is mixed at best: at matched token budgets, a single strong agent frequently wins. When someone proposes rung 4, ask which of the two real justifications applies.</p>
+
+        <div class="widget" id="al-lad" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT A1.2 — AUTONOMY LADDER</span><span class="w-sub">6 USE CASES · HAND-MAPPED · TEACHES RESTRAINT</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl">
+                <label>USE CASE</label>
+                <select id="al-lad-case" class="w-input">
+                  <option value="0">Translate every inbound support ticket to English</option>
+                  <option value="1">Triage tickets into billing / bug / refund / abuse queues</option>
+                  <option value="2">Research a competitor and produce a sourced brief</option>
+                  <option value="3">A CI build is red — find and fix the cause</option>
+                  <option value="4">Migrate a 400-file codebase to a new framework</option>
+                  <option value="5" selected>Nightly: pull signups, enrich each, post a digest to Slack</option>
+                </select>
+              </div>
+            </div>
+            <div id="al-lad-rungs" style="display:flex;flex-direction:column;gap:6px;margin-top:4px;"></div>
+            <div id="al-lad-why" style="margin-top:14px;padding:10px 12px;border-left:2px solid #2b5945;font-size:12.5px;line-height:1.6;color:#9b9b9b;"></div>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">RECOMMENDED RUNG</div><div class="r-value" id="al-lad-rec" style="font-size:14px;">—</div></div>
+              <div class="readout"><div class="r-label">EVALUATE IT AS</div><div class="r-value" id="al-lad-eval" style="font-size:12px;line-height:1.5;">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Pick a use case; the recommended rung lights up, everything above it is flagged OVERKILL. The mapping is hand-written judgment, not an algorithm — the point is the habit: before reaching for an agent, ask what the <em>cheapest</em> structure is that still solves the task. The default case is the trap: it feels agentic (steps! tools! a schedule!) and is a plain pipeline.</div>
+        </div>
+
+        <p class="note"><strong>Autonomy is also a permission grant.</strong> The ladder above is about who decides; in production it is mirrored by what the system is <em>allowed</em> to do — read-only vs write access, sandboxed vs live, human-approved vs autonomous actions. The two ladders should climb together: a rung-3 agent with rung-0 permissions (everything gated) is a safe way to earn trust; a rung-1 router with production write access is how incidents happen. Chapter 04 makes this precise.</p>
+      </section>
+
+      <!-- ====================== 1.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">1.4</span><h2>What changed in 2024–26</h2></div>
+        <p>The loop itself is old — ReAct (Yao et al., 2022) ran reason-act-observe cycles by pure prompting, parsing actions out of free text with a regex and a prayer. What changed is that every link in the loop got <em>trained</em> instead of prompted:</p>
+        <ul>
+          <li><strong>Tool use moved into the weights.</strong> Function calling stopped being a parsing convention and became a post-training target: models are fine-tuned and RL-trained to emit schema-valid tool calls in dedicated formats, to choose <em>between</em> tools, and to decide when no tool is needed. Reliability went from “mostly parses” to a substrate you can build on (Vol III · Ch 05). On the supply side, MCP (late 2024) standardized how tools describe themselves, so any agent can discover and call any conforming tool — the USB moment for actuators.</li>
+          <li><strong>RLVR went long-horizon.</strong> The recipe that built reasoning models (Vol II · Ch 05) — sample, verify the outcome, reinforce the trajectory — was extended from single-turn math to entire tool-using episodes: reward arrives at the <em>end</em> of a multi-turn rollout (did the tests pass? was the file produced?), and credit flows back through every intermediate decision. Out of this came trained agentic behaviors nobody prompted: decomposing before acting, checking work mid-stream, recovering from a failed call instead of repeating it.</li>
+          <li><strong>Computer use made pixels a tool.</strong> From late 2024, frontier models ship with screenshot-in, click/keystroke-out interfaces — the actuator of last resort that turns any GUI into an agent environment, no API required. It remains the slowest and most fragile rung of the tool stack, but the trendline is steep: on OSWorld, success rates went from roughly 15% at launch to above 60% within two years, against a human baseline near 72%.</li>
+          <li><strong>Coding agents became the proof case.</strong> Software is the perfect agent habitat: rich tools (read, grep, edit, run), a verifiable reward signal (compilers and tests are free oracles), and unbounded demand. On SWE-bench Verified — real GitHub issues, graded by held-out tests — resolution rates went from low single digits in late 2023 to above 70% by 2025. Whatever agents become elsewhere, they became real in code first, because code is where EQ A1.2's verifier is built into the environment.</li>
+        </ul>
+        <p>The most useful single number for tracking all of this is METR's <em>horizon</em>: take tasks humans need minutes-to-hours to do, and measure the longest task length (in human time) the model completes at 50% reliability. Fit across 2019–2025 frontier models, it doubles on a startlingly steady clock:</p>
+
+        <div class="eq"><span class="eq-tag">EQ A1.3 — THE HORIZON FIT (EMPIRICAL, ILLUSTRATIVE)</span>
+        $$ h(t) \;=\; h_0 \cdot 2^{\,(t - t_0)/T_d}, \qquad T_d \,\approx\, 7\ \text{months} $$
+        <div class="eq-note">\(h\) the 50%-success task horizon in human time, \(T_d\) the doubling period (Kwa et al., 2025). Honest caveats, all load-bearing: the task suite is software-heavy; the 2024–25 segment ran <em>faster</em> than the fit (≈4 months); and at an 80% success bar the horizon shrinks ~5×, which is the gap between a demo and a product. <b>This is an empirical fit, not a law</b> — but it is the cleanest quantitative statement of why this volume exists: the loop's economics improve on a schedule, and harness engineering decides who gets to cash that in.</div>
+        </div>
+
+        <p class="note"><strong>What did not change:</strong> the ten lines of §1.2. The 2022 prompted loop and the 2026 trained one are structurally identical — better policy, same plumbing. That is exactly why the plumbing is worth a volume: the model improves on someone else's schedule; the harness improves on yours.</p>
+      </section>
+
+      <!-- ====================== 1.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">1.5</span><h2>The four hard problems</h2></div>
+        <p>Everything difficult about agents is downstream of one fact: the loop runs <em>unattended</em>, accumulating state, spending money, and touching the world, on a policy you cannot inspect. Four problems fall out, and they fill the rest of this volume:</p>
+        <div class="spec-grid" data-reveal-stagger>
+          <div class="spec-cell"><div class="s-label">CH 02 · CONTEXT</div><div class="s-value">state</div><div class="s-sub">The transcript grows monotonically; the window and the model's attention do not. Compaction, memory, sub-agent isolation — engineering what the policy gets to see.</div></div>
+          <div class="spec-cell"><div class="s-label">CH 03–04 · TOOLS &amp; HARNESS</div><div class="s-value">body</div><div class="s-sub">Tool design, permissions, sandboxing, budgets. The model decides; the harness does — and the harness is the part you control completely.</div></div>
+          <div class="spec-cell"><div class="s-label">CH 05 · WHEN LOOPS GO WRONG</div><div class="s-value">failure</div><div class="s-sub">Doom loops, derailment, runaway spend, prompt injection through observations. Closed-loop systems fail in closed-loop ways.</div></div>
+          <div class="spec-cell"><div class="s-label">CH 06 · EVALS</div><div class="s-value">proof</div><div class="s-sub">Trajectories are nondeterministic and expensive. pass@k versus pass^k, end-state verifiers, and how to know your agent works before your users do.</div></div>
+        </div>
+        <p>Notice that none of the four is “make the model smarter.” The model arrives with its capabilities fixed; agent engineering is everything you wrap around EQ A1.1 so that a fallible policy produces reliable work. The encyclopedias of 2020 would have called this prompt engineering; it has grown into systems engineering with a stochastic component in the middle.</p>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>The loop's state is the context, and the context is always running out.</strong> Chapter 02: context engineering — what actually belongs in the window, compaction without amnesia, memory that survives the episode, and why the best agents read less than you think.</p>
+        </div>
+      </section>
+
+      <nav class="pager">
+        <a href="../prompting/07-evaluation-lab.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">07</span> Evaluation &amp; The Prompt Lab</div></a>
+        <a class="next" href="02-context-engineering.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">02</span> Context Engineering</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — VOL IV · CH 01</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/glossary.js"></script>
+<script src="../assets/js/shared.js"></script>
+<script>
+/* chapter instruments — single IIFE, no globals */
+(function () {
+  "use strict";
+  var FM = window.FM;
+
+  /* ============================================================
+     INSTRUMENT A1.1 — LOOP STEP-SIM
+     Scripted 6-turn episode rendered as a DOM event log.
+     STEP advances one event; AUTO chains them; typing feel via
+     setTimeout (background-tab safe). Counters track turns,
+     simulated context tokens, and tool calls.
+     ============================================================ */
+  (function () {
+    var root = document.getElementById("al-sim");
+    if (!root) return;
+    var log = document.getElementById("al-sim-log");
+    var stepBtn = document.getElementById("al-sim-step");
+    var autoBtn = document.getElementById("al-sim-auto");
+    var resetBtn = document.getElementById("al-sim-reset");
+    var turnEl = document.getElementById("al-sim-turn");
+    var tokEl = document.getElementById("al-sim-tok");
+    var toolsEl = document.getElementById("al-sim-tools");
+    var statEl = document.getElementById("al-sim-status");
+    if (!log || !stepBtn || !autoBtn || !resetBtn) return;
+
+    var BASE_TOK = 1420; /* system prompt + tool schemas + goal */
+    var TOTAL_TURNS = 6;
+
+    /* k: thought | call | obs | final · t: turn number · tok: tokens this event adds */
+    var EVENTS = [
+      { t: 1, k: "thought", tok: 42, text: "Goal: a test is failing and the change was in config. Reproduce first — run the suite before touching anything." },
+      { t: 1, k: "call", tok: 14, text: "run_tests(path=\"tests/\")" },
+      { t: 0, k: "obs", tok: 88, text: "FAIL tests/test_client.py::test_request_timeout\n  expected requests to abort after 30s — aborted after 3000s\n17 passed · 1 failed" },
+      { t: 2, k: "thought", tok: 38, text: "3000 vs 30 — a clean factor of 100. Smells like a milliseconds value pasted into a seconds field. Find where it is set." },
+      { t: 2, k: "call", tok: 16, text: "grep(pattern=\"timeout\", path=\"config/\")" },
+      { t: 0, k: "obs", tok: 34, text: "config/settings.yaml:12:  request_timeout: 3000   # seconds" },
+      { t: 3, k: "thought", tok: 41, text: "A 3000 sitting next to a '# seconds' comment. Check the neighboring keys before editing — units should be consistent across the file." },
+      { t: 3, k: "call", tok: 18, text: "read_file(path=\"config/settings.yaml\", lines=\"8-16\")" },
+      { t: 0, k: "obs", tok: 62, text: "connect_timeout: 5      # seconds\nretry_backoff:   2      # seconds\nrequest_timeout: 3000   # seconds" },
+      { t: 4, k: "thought", tok: 33, text: "Every sibling key is single-digit seconds. Someone wrote 3000 milliseconds into a seconds field. Fix: 3000 → 30." },
+      { t: 4, k: "call", tok: 24, text: "edit_file(path=\"config/settings.yaml\",\n          old=\"request_timeout: 3000\", new=\"request_timeout: 30\")" },
+      { t: 0, k: "obs", tok: 12, text: "OK — 1 replacement written." },
+      { t: 5, k: "thought", tok: 22, text: "An unverified fix is a guess. Re-run the suite." },
+      { t: 5, k: "call", tok: 14, text: "run_tests(path=\"tests/\")" },
+      { t: 0, k: "obs", tok: 18, text: "18 passed · 0 failed" },
+      { t: 6, k: "final", tok: 54, text: "Fixed. request_timeout in config/settings.yaml was 3000 — a milliseconds value in a seconds field (every sibling key is in seconds). Changed it to 30; the full suite now passes." }
+    ];
+
+    var STYLES = {
+      thought: { border: "#565656", color: "#9b9b9b", bg: "transparent", mono: false },
+      call:    { border: "#a6f2cc", color: "#a6f2cc", bg: "rgba(166,242,204,.03)", mono: true },
+      obs:     { border: "#4e8af7", color: "#e5e5e5", bg: "rgba(78,138,247,.04)", mono: true },
+      final:   { border: "#a6f2cc", color: "#ffffff", bg: "rgba(166,242,204,.06)", mono: false }
+    };
+
+    function labelFor(ev) {
+      if (ev.k === "thought") return "TURN " + ev.t + " · MODEL — REASONING";
+      if (ev.k === "call") return "TURN " + ev.t + " · MODEL — TOOL CALL";
+      if (ev.k === "obs") return "ENVIRONMENT — OBSERVATION";
+      return "TURN " + ev.t + " · MODEL — FINAL ANSWER · LOOP EXITS";
+    }
+
+    var idx = 0, turn = 0, tokens = BASE_TOK, tools = 0;
+    var typing = false, auto = false;
+    var typeTimer = null, autoTimer = null;
+    var curEl = null, curText = "";
+
+    function fmt(n) { return n.toLocaleString("en-US"); }
+
+    function readouts() {
+      turnEl.textContent = turn ? (turn + " / " + TOTAL_TURNS) : "—";
+      tokEl.textContent = fmt(tokens);
+      toolsEl.textContent = String(tools);
+    }
+
+    function setStatus(txt, mint) {
+      statEl.textContent = txt;
+      statEl.style.color = mint ? "#a6f2cc" : "";
+    }
+
+    function appendEvent(ev, instant) {
+      var st = STYLES[ev.k];
+      var entry = document.createElement("div");
+      entry.style.cssText = "padding:8px 10px;margin-bottom:6px;border-left:2px solid " + st.border +
+        ";background:" + st.bg + ";border-radius:0 3px 3px 0;";
+      var lab = document.createElement("div");
+      lab.style.cssText = "font-family:ui-monospace,Menlo,monospace;font-size:8.5px;letter-spacing:.14em;color:#636363;margin-bottom:4px;";
+      lab.textContent = labelFor(ev);
+      var body = document.createElement("div");
+      body.style.cssText = "font-size:" + (st.mono ? "11.5px" : "12.5px") + ";line-height:1.55;color:" + st.color +
+        ";white-space:pre-wrap;" + (st.mono ? "font-family:ui-monospace,Menlo,monospace;" : "");
+      entry.appendChild(lab);
+      entry.appendChild(body);
+      log.appendChild(entry);
+
+      /* counters update at event start — the context grows the moment tokens land */
+      tokens += ev.tok;
+      if (ev.t) turn = ev.t;
+      if (ev.k === "call") tools++;
+      readouts();
+
+      if (instant) {
+        body.textContent = ev.text;
+        log.scrollTop = log.scrollHeight;
+        afterEvent();
+        return;
+      }
+      typing = true;
+      curEl = body;
+      curText = ev.text;
+      var i = 0;
+      function tick() {
+        i += 3;
+        body.textContent = curText.slice(0, i);
+        log.scrollTop = log.scrollHeight;
+        if (i < curText.length) {
+          typeTimer = setTimeout(tick, 13);
+        } else {
+          typing = false;
+          afterEvent();
+        }
+      }
+      tick();
+    }
+
+    function afterEvent() {
+      if (idx >= EVENTS.length) {
+        setStatus("DONE — GOAL VERIFIED, LOOP EXITED", true);
+        auto = false;
+        autoBtn.classList.remove("on");
+        return;
+      }
+      setStatus("RUNNING — " + (EVENTS.length - idx) + " EVENTS LEFT");
+      if (auto) {
+        autoTimer = setTimeout(stepNext, 430);
+      }
+    }
+
+    function finishTyping() {
+      if (!typing) return;
+      clearTimeout(typeTimer);
+      curEl.textContent = curText;
+      log.scrollTop = log.scrollHeight;
+      typing = false;
+      afterEvent();
+    }
+
+    function stepNext() {
+      if (typing) { finishTyping(); return; }
+      if (idx >= EVENTS.length) return;
+      appendEvent(EVENTS[idx++], false);
+    }
+
+    function reset() {
+      clearTimeout(typeTimer);
+      clearTimeout(autoTimer);
+      typing = false;
+      auto = false;
+      autoBtn.classList.remove("on");
+      log.innerHTML = "";
+      idx = 0; turn = 0; tokens = BASE_TOK; tools = 0;
+      /* sensible initial state without interaction: first event pre-rendered */
+      appendEvent(EVENTS[idx++], true);
+      setStatus("READY — PRESS STEP OR AUTO");
+    }
+
+    stepBtn.addEventListener("click", function () {
+      if (typing) { finishTyping(); return; }
+      stepNext();
+    });
+    autoBtn.addEventListener("click", function () {
+      if (idx >= EVENTS.length && !typing) return; /* episode over — nothing to chain */
+      auto = !auto;
+      autoBtn.classList.toggle("on", auto);
+      clearTimeout(autoTimer);
+      if (auto && !typing && idx < EVENTS.length) stepNext();
+    });
+    resetBtn.addEventListener("click", reset);
+
+    reset();
+  })();
+
+  /* ============================================================
+     INSTRUMENT A1.2 — AUTONOMY LADDER
+     Six hand-mapped use cases → recommended rung, with WHY text.
+     Rungs above the recommendation flag as OVERKILL, below as
+     INSUFFICIENT. Pure DOM; renders fully without interaction.
+     ============================================================ */
+  (function () {
+    var root = document.getElementById("al-lad");
+    if (!root) return;
+    var sel = document.getElementById("al-lad-case");
+    var rungsEl = document.getElementById("al-lad-rungs");
+    var whyEl = document.getElementById("al-lad-why");
+    var recEl = document.getElementById("al-lad-rec");
+    var evalEl = document.getElementById("al-lad-eval");
+    if (!sel || !rungsEl || !whyEl) return;
+
+    var RUNGS = [
+      { name: "R0 · WORKFLOW", desc: "code owns control flow; the model fills slots" },
+      { name: "R1 · ROUTER", desc: "the model makes exactly one decision; code does the rest" },
+      { name: "R2 · SINGLE-TOOL AGENT", desc: "a loop over one tool; the model decides calls and stopping" },
+      { name: "R3 · MULTI-STEP AGENT", desc: "open toolset, unknown step count, verifiable end state" },
+      { name: "R4 · MULTI-AGENT", desc: "orchestrator + subagents in isolated contexts" }
+    ];
+
+    var CASES = [
+      { rec: 0,
+        evalAs: "software — unit tests, golden outputs per step",
+        why: "R0 — WORKFLOW. Zero runtime decisions: the input is known, the operation is fixed, every ticket takes the identical path. This is one prompted call inside a queue worker. An agent here buys nothing and costs latency, money, and a new class of failure. Volume ≠ autonomy: a million tickets a day is still rung 0." },
+      { rec: 1,
+        evalAs: "a classifier — precision / recall / confusion matrix",
+        why: "R1 — ROUTER. Exactly one judgment — a four-way classification — then deterministic code takes over. Keep the model's freedom that narrow on purpose: a router can be evaluated like a classifier, with a confusion matrix and a threshold, instead of like an agent. The moment you let it also draft the reply, you've climbed a rung — climb it deliberately or not at all." },
+      { rec: 2,
+        evalAs: "task success + citation audit, under a turn cap",
+        why: "R2 — SINGLE-TOOL AGENT. The shape is search → read → search again, and nobody can enumerate the queries in advance: the second query depends on what the first returned. That dependency is what makes it a loop, not a pipeline. But one tool (web search) suffices, and a turn cap plus a sources-required output bounds both cost and damage. No file writes, no side effects — autonomy without blast radius." },
+      { rec: 3,
+        evalAs: "an end-state verifier — the suite goes green",
+        why: "R3 — MULTI-STEP AGENT. Unknown step count, needs read / grep / edit / run, and the cause could be anywhere in the repo. What makes this much autonomy safe is the oracle: the test suite verifies the end state for free, so the loop can check its own work (Instrument A1.1) and a wrong path gets caught before it ships. The honest rule: no verifier, no rung 3." },
+      { rec: 4,
+        evalAs: "per-subagent verifiers + a merge gate (tests, types, lint)",
+        why: "R4 — MULTI-AGENT, for the only two reasons that hold. The work shards into hundreds of largely independent per-file conversions — parallelism — and no single context window can hold the whole codebase — isolation. An orchestrator plans and assigns; subagents convert in clean contexts; a verifier gate guards the merge. Note what does NOT justify rung 4: the hope that models 'collaborating' are smarter. Sharding does the work here, not conversation." },
+      { rec: 0,
+        evalAs: "software — the same DAG every night; assert per node",
+        why: "R0 — WORKFLOW, and this is the trap case. It feels agentic — multiple steps, three tools, a schedule — but every step is known before the run starts: pull, then enrich, then summarize, then post, identically every night. Steps are not autonomy; runtime decisions are. Build it as a pipeline with LLM calls at two nodes and it fails loudly, retries cleanly, and debugs like normal software. The agent version fails creatively at 3 a.m." }
+    ];
+
+    var rows = [], tags = [];
+    /* render top-down R4 → R0, like a ladder */
+    for (var d = RUNGS.length - 1; d >= 0; d--) {
+      (function (r) {
+        var row = document.createElement("div");
+        row.style.cssText = "display:flex;align-items:baseline;gap:12px;padding:9px 12px;border:1px solid var(--hairline);border-radius:4px;transition:border-color .25s,background .25s;";
+        var name = document.createElement("span");
+        name.style.cssText = "font-family:ui-monospace,Menlo,monospace;font-size:10.5px;letter-spacing:.1em;color:#e5e5e5;min-width:178px;";
+        name.textContent = RUNGS[r].name;
+        var desc = document.createElement("span");
+        desc.style.cssText = "font-size:11.5px;color:#636363;flex:1;line-height:1.4;";
+        desc.textContent = RUNGS[r].desc;
+        var tag = document.createElement("span");
+        tag.style.cssText = "font-family:ui-monospace,Menlo,monospace;font-size:8.5px;letter-spacing:.14em;margin-left:auto;white-space:nowrap;";
+        row.appendChild(name);
+        row.appendChild(desc);
+        row.appendChild(tag);
+        rungsEl.appendChild(row);
+        rows[r] = row;
+        tags[r] = tag;
+      })(d);
+    }
+
+    function select(ci) {
+      var c = CASES[ci];
+      for (var r = 0; r < RUNGS.length; r++) {
+        var isRec = r === c.rec;
+        rows[r].style.borderColor = isRec ? "rgba(166,242,204,.55)" : "var(--hairline)";
+        rows[r].style.background = isRec ? "rgba(166,242,204,.05)" : "transparent";
+        if (isRec) {
+          tags[r].textContent = "● RECOMMENDED";
+          tags[r].style.color = "#a6f2cc";
+        } else if (r > c.rec) {
+          tags[r].textContent = "OVERKILL";
+          tags[r].style.color = "rgba(255,65,54,.75)";
+        } else {
+          tags[r].textContent = "INSUFFICIENT";
+          tags[r].style.color = "#636363";
+        }
+      }
+      whyEl.textContent = c.why;
+      recEl.textContent = RUNGS[c.rec].name;
+      evalEl.textContent = c.evalAs;
+    }
+
+    sel.addEventListener("change", function () {
+      select(parseInt(sel.value, 10));
+    });
+    select(parseInt(sel.value, 10));
+  })();
+})();
+</script>
+</body>
+</html>

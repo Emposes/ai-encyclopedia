@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>01 · Learning from Data — AI Encyclopedia</title>
+<meta name="description" content="What machine learning actually is: functions with knobs, loss as disagreement, the train/test split, and the predict–measure–adjust loop behind every system in this encyclopedia." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css" />
+</head>
+<body>
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ VOL I / ML FOUNDATIONS / 01 / LEARNING FROM DATA</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="02-linear-regression.html">NEXT: LINEAR REGRESSION →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">VOLUME I — FOUNDATIONS OF ML · CHAPTER 01 / 08</div>
+    <h1>Learning from Data</h1>
+    <p class="lede">Everything in this encyclopedia — regression lines, neural networks, trillion-parameter language models — is a single idea wearing progressively heavier armor: <strong>instead of writing the rules yourself, write a score, and let the data turn the knobs</strong>. This chapter builds that idea from nothing: a function with two knobs, a number that measures disagreement, and the one test that separates learning from memorizing.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>INTRO</b></span>
+      <span>READING TIME<b>≈ 18 MIN</b></span>
+      <span>BUILDS ON<b>NOTHING — START HERE</b></span>
+      <span>INSTRUMENTS<b>HAND-FIT · TRAIN/TEST</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">1.1</span>The trick behind all of it</a>
+      <a href="#s2"><span class="n">1.2</span>A function with knobs</a>
+      <a href="#s3"><span class="n">1.3</span>Loss: keeping score</a>
+      <a href="#s4"><span class="n">1.4</span>Generalization</a>
+      <a href="#s5"><span class="n">1.5</span>The loop</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 1.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">1.1</span><h2>The trick behind all of it</h2></div>
+        <p>For seventy years, making a computer do something meant one thing: a person figures out the rules, writes them down precisely, and the machine follows them. This works beautifully when the rules are knowable — payroll, physics simulations, chess-piece movement. It collapses when they are not. Nobody can write down the rules for recognizing a face, transcribing mumbled speech, or deciding whether an email is spam. We do these things effortlessly, and we cannot say how.</p>
+        <p>Machine learning inverts the contract. The human supplies three things: a pile of <strong>examples</strong> of the job done correctly, a <strong>flexible function</strong> with adjustable numbers inside it, and a <strong>score</strong> that measures how badly the function currently does the job. The machine's only task is to adjust the numbers until the score improves. The rules are never written by anyone. They condense out of the data, the way a curve condenses out of scattered points.</p>
+        <table class="data">
+          <thead><tr><th></th><th>Classical programming</th><th>Machine learning</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Human writes</strong></td><td>the rules, by hand</td><td class="hl">examples + a score + a flexible function</td></tr>
+            <tr><td><strong>Machine produces</strong></td><td class="m">answers</td><td class="m">the rules (as knob settings)</td></tr>
+            <tr><td><strong>Wins when</strong></td><td>rules are crisp and known</td><td>rules are unknown, fuzzy, or drift over time</td></tr>
+            <tr><td><strong>Fails by</strong></td><td>crashing — loudly, traceably</td><td>being statistically wrong — quietly, sometimes confidently</td></tr>
+          </tbody>
+        </table>
+        <p>Take spam. The hand-written version — <code>if subject contains "FREE!!!" then spam</code> — was the actual state of the art in the 1990s, and it aged badly: spammers read the rules too. The learned version is handed two million emails that humans already labeled <em>spam</em> or <em>not spam</em> and tunes itself to agree with those labels. When spammers adapt, you don't rewrite code; you feed in fresh examples and tune again. The maintenance burden moves from logic to data — which is the real reason this paradigm conquered the industry.</p>
+        <p class="note">The last table row is not a throwaway. A learned system's failures are <em>statistical</em>: it will be wrong on some inputs, with no stack trace pointing at the offending line, because there is no offending line. Knowing how often it is wrong — and on which inputs — is most of the discipline you are about to learn.</p>
+      </section>
+
+      <!-- ====================== 1.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">1.2</span><h2>A model is a function with knobs</h2></div>
+        <p>To make "adjust the numbers until the score improves" precise, we need names for the pieces. The cleanest setting — and the one this whole volume lives in — is <strong>supervised learning</strong>: each example is a pair \((x, y)\), where \(x\) is the input and \(y\) is the correct answer, the <strong>label</strong>. Square footage and sale price. Email text and spam-or-not. A photo and the word "cat". Someone, somewhere, supervised: they supplied the right answers.</p>
+        <p>A <strong>model</strong> (the older literature says <em>hypothesis</em>, hence the letter \(h\)) is a function that takes \(x\) and emits a guess for \(y\). What makes it a <em>learnable</em> function is that its behavior depends on adjustable numbers — its <strong>parameters</strong>, also called <strong>weights</strong>. The simplest interesting model on Earth has exactly two:</p>
+
+        <div class="eq"><span class="eq-tag">EQ M1.1 — A FUNCTION WITH TWO KNOBS</span>
+        $$ h_{w,b}(x) \;=\; w\,x + b $$
+        <div class="eq-note">A straight line. \(w\) is the slope — how much the prediction rises per unit of input — and \(b\) is the intercept, the prediction at \(x = 0\). The subscript records the central fact: <b>pick different numbers \(w, b\) and you get a different function</b>. Learning means searching the space of knob settings for the function that fits. Parameters are written collectively as \(\theta\) (theta), so you will see \(h_\theta\) everywhere; here \(\theta = (w, b)\).</div>
+        </div>
+
+        <p>Hold onto the geometry of that sentence: two knobs define a two-dimensional space of candidate lines, and "learning" is a search through that space. Every model in this encyclopedia is the same object scaled up. A frontier language model is a function with roughly \(10^{12}\) knobs instead of two — harder to search, impossible to visualize, but not a different kind of thing. The vocabulary you are acquiring on this page transfers without modification.</p>
+        <p class="note"><strong>An honest caveat before we proceed.</strong> Not all learning is supervised. Models can learn structure from unlabeled data (unsupervised), from data that labels itself (self-supervised — how language models pre-train, Vol II Ch 04), or from trial-and-error reward (reinforcement learning). Supervised learning is where the vocabulary is cleanest, and the other regimes reuse nearly all of it.</p>
+      </section>
+
+      <!-- ====================== 1.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">1.3</span><h2>Loss: keeping score</h2></div>
+        <p>"Fits the data" must become a number, or the machine has nothing to improve. For one example, the natural measure of failure is the <strong>residual</strong> — the gap between prediction and truth, \(h(x_i) - y_i\). To grade the model on the whole dataset, square each residual and average:</p>
+
+        <div class="eq"><span class="eq-tag">EQ M1.2 — MEAN SQUARED ERROR</span>
+        $$ \mathcal{L}(w, b) \;=\; \frac{1}{n} \sum_{i=1}^{n} \big( h_{w,b}(x_i) - y_i \big)^{2} $$
+        <div class="eq-note">\(n\) examples; the \(\Sigma\) just means "add them all up". Squaring does three jobs at once: it kills the sign (overshoot and undershoot both count), it punishes large misses far more than small ones (a residual of 4 costs 16; two residuals of 2 cost 8), and it leaves a smooth bowl-shaped surface with no kinks — which is what makes the automatic tuning of Chapter 02 possible. <b>The loss is a function of the knobs, not of the data</b>: the data is fixed; \(w\) and \(b\) move; \(\mathcal{L}\) reports disagreement at every setting.</div>
+        </div>
+
+        <p>Now feel it in your hands. Below are 25 measurements from a noisy linear process. Your job is the machine's job: turn the two knobs and drive the disagreement down. The red stalks are the residuals — the exact quantities EQ M1.2 squares and averages.</p>
+
+        <div class="widget" id="lfd-fit" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT M1.1 — HAND-FIT</span><span class="w-sub">25 NOISY POINTS · EQ M1.2 LIVE · TARGET: MSE BELOW 4.00</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>SLOPE w <output id="lfd-fit-w-out">1.00</output></label><input type="range" id="lfd-fit-w" min="-1" max="4" step="0.05" value="1"/></div>
+              <div class="ctl"><label>INTERCEPT b <output id="lfd-fit-b-out">0.0</output></label><input type="range" id="lfd-fit-b" min="-6" max="8" step="0.1" value="0"/></div>
+            </div>
+            <canvas class="w-canvas" id="lfd-fit-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">MSE — EQ M1.2</div><div class="r-value" id="lfd-fit-mse">—</div></div>
+              <div class="readout"><div class="r-label">CHALLENGE: BEAT 4.00</div><div class="r-value" id="lfd-fit-status" style="font-size:13px;line-height:1.6;">—</div></div>
+              <div class="readout"><div class="r-label">WORST SINGLE MISS</div><div class="r-value" id="lfd-fit-worst">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Drive the MSE below 4.00 — it is possible, but only just: the best achievable on these points is 3.57, at w ≈ 2.19, b ≈ 0.31. Notice the strategy your hands discover: big slope moves first, small intercept corrections after, ever-finer wiggles as you close in. That instinct — large steps far from the answer, small steps near it — is precisely what Chapter 02 turns into an algorithm.</div>
+        </div>
+
+        <p>And here is the same arithmetic with the curtain pulled back — the identical 25 points, two candidate knob settings, scored in four lines of numpy. The second candidate beats the instrument's target; neither is optimal.</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false">import numpy as np
+
+# The exact 25 points behind Instrument M1.1
+x = np.array([0.117, 4.055, 2.578, 3.680, 2.475, 2.910, 5.537, 9.212,
+              4.253, 4.267, 3.306, 3.224, 6.843, 9.199, 9.605, 5.486,
+              7.243, 8.232, 3.124, 8.334, 7.168, 8.049, 5.069, 8.135, 6.093])
+y = np.array([3.041, 9.265, 5.475, 8.950, 4.430, 8.188, 14.821, 16.660,
+              7.241, 12.262, 6.484, 5.253, 17.360, 19.157, 23.652, 10.813,
+              17.723, 17.977, 5.106, 16.549, 17.812, 18.369, 8.996, 20.632, 14.282])
+
+def mse(w, b):                      # EQ M1.2, verbatim
+    return np.mean((w * x + b - y) ** 2)
+
+candidates = [(1.0, 0.0), (2.0, 1.0)]
+for w, b in candidates:
+    print(f"h(x) = {w:.2f}x + {b:.2f}   ->   MSE = {mse(w, b):6.2f}")
+
+plot_scatter(x, y)
+</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edit the candidates — can you beat the instrument by hand?</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <p class="note"><strong>Units, briefly.</strong> Squaring changes units: if \(y\) is in dollars, MSE is in dollars-squared, which no human can feel. Practitioners report \(\sqrt{\mathrm{MSE}}\) (RMSE) when they want interpretability. And MSE is one loss among many — classification tasks use cross-entropy (Chapter 04), and the freedom to choose the score is a design lever, not a footnote. What never changes: <em>some</em> single number measures disagreement, and learning means pushing it down.</p>
+      </section>
+
+      <!-- ====================== 1.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">1.4</span><h2>Generalization: the only thing that matters</h2></div>
+        <p>Here is the trap at the heart of the field. If low loss on the examples were the goal, the perfect model would be a lookup table: store every \((x_i, y_i)\) pair, return \(y_i\) when asked about \(x_i\), achieve a loss of exactly zero. It is also perfectly useless — ask it about any \(x\) it hasn't stored and it has nothing to say. Zero training loss, zero learning. <strong>Memorization is not the goal. The goal is performance on data the model has never seen.</strong> That property is called generalization, and it is the only thing anyone is ever actually paying for.</p>
+        <p>The defense is almost embarrassingly simple, and it is the single most important habit in machine learning: <strong>before doing anything else, split the data</strong>. Tune the knobs on one part (the <strong>training set</strong>) and measure on a part the model never touched (the <strong>test set</strong>). The held-out score is a rehearsal for the future; the training score is just a record of the past. Formally, the quantity we minimize is a stand-in for the quantity we want:</p>
+
+        <div class="eq"><span class="eq-tag">EQ M1.3 — EMPIRICAL RISK STANDS IN FOR TRUE RISK</span>
+        $$ \hat{R}(h) \;=\; \frac{1}{n} \sum_{i=1}^{n} \ell\big(h(x_i),\, y_i\big) \qquad\text{approximates}\qquad R(h) \;=\; \mathbb{E}_{(x,y)\sim\mathcal{D}}\Big[\, \ell\big(h(x),\, y\big) \Big] $$
+        <div class="eq-note">\(\ell\) is any per-example loss (squared error, here). \(\mathcal{D}\) is the unseen process that generates the data — houses being sold, emails being sent — and \(\mathbb{E}\) means "the average over everything that process will ever produce". We can never compute \(R\), so we minimize \(\hat{R}\) on a sample and <em>hope the sample speaks for the population</em>. <b>Training loss measures fit. Test loss estimates risk. Only the second predicts the future.</b> The gap between them is overfitting, made visible.</div>
+        </div>
+
+        <p>To see the gap open wide, give a model too much flexibility. The instrument below fits the same 25 points two ways: a straight line (two knobs), and a degree-9 polynomial (ten knobs — enough to snake through nearly every training point individually). Both are fitted to the same 18 training points; 7 points are held out. Watch what each extra knob buys, and what it costs.</p>
+
+        <div class="widget" id="lfd-split" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT M1.2 — TRAIN/TEST SPLIT</span><span class="w-sub">SAME DATA · 18 TRAIN / 7 HELD OUT · EQ M1.3</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>MODEL CAPACITY</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-lfd-deg="1">DEGREE 1 — STRAIGHT LINE</button>
+                  <button class="w-btn ghost" data-lfd-deg="9">DEGREE 9 — MEMORIZER</button>
+                </div>
+              </div>
+            </div>
+            <div style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.16em;color:#636363;margin-bottom:6px;"><span style="color:#a6f2cc;">●</span> TRAIN (18) &nbsp;&nbsp; <span style="color:#4e8af7;">●</span> TEST (7) — HELD OUT, NEVER FITTED</div>
+            <canvas class="w-canvas" id="lfd-split-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">TRAIN MSE (18 PTS)</div><div class="r-value" id="lfd-split-train">—</div></div>
+              <div class="readout acc"><div class="r-label">TEST MSE (7 PTS)</div><div class="r-value" id="lfd-split-test">—</div></div>
+              <div class="readout"><div class="r-label">TEST / TRAIN GAP</div><div class="r-value" id="lfd-split-gap">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Flip to DEGREE 9. Train MSE collapses from 3.13 to 0.87 — by the training score, the wiggly curve is the better model, and it always will be: more knobs can never fit the training data worse. But test MSE detonates from 5.0 to 1,373, because between the memorized points the polynomial swings wildly through territory no data constrains. The degree-9 coefficients are precomputed (an exact least-squares fit to the 18 training points); both MSE readouts are computed live from them.</div>
+        </div>
+
+        <p>Run the same experiment yourself — a 90/10 split this time, fits via <code>np.polyfit</code>. With only 3 points held out the verdict is noisier than the instrument's (small test sets are unreliable juries — that is a real lesson, not an apology), but it points the same way:</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false">import numpy as np
+
+x = np.array([0.117, 4.055, 2.578, 3.680, 2.475, 2.910, 5.537, 9.212,
+              4.253, 4.267, 3.306, 3.224, 6.843, 9.199, 9.605, 5.486,
+              7.243, 8.232, 3.124, 8.334, 7.168, 8.049, 5.069, 8.135, 6.093])
+y = np.array([3.041, 9.265, 5.475, 8.950, 4.430, 8.188, 14.821, 16.660,
+              7.241, 12.262, 6.484, 5.253, 17.360, 19.157, 23.652, 10.813,
+              17.723, 17.977, 5.106, 16.549, 17.812, 18.369, 8.996, 20.632, 14.282])
+
+perm = np.random.default_rng(0).permutation(len(x))
+train, test = perm[:22], perm[22:]      # 90 / 10 split
+z = x / 10                              # rescale so degree 9 stays well-conditioned
+
+for deg in (1, 9):
+    c = np.polyfit(z[train], y[train], deg)
+    mse_tr = np.mean((np.polyval(c, z[train]) - y[train]) ** 2)
+    mse_te = np.mean((np.polyval(c, z[test])  - y[test])  ** 2)
+    print(f"degree {deg}:  train MSE = {mse_tr:5.2f}   test MSE = {mse_te:5.2f}")
+
+held_out = np.isin(np.arange(len(x)), test).astype(int)
+plot_scatter(x, y, held_out)            # blue = the 3 points the fit never saw
+</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">change the rng seed — watch the 3-point test verdict wobble</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="callout warn">
+          <span class="co-icon">FINE PRINT</span>
+          <p><strong>The split certifies less than it seems to.</strong> (1) It assumes test data is drawn from the same process \(\mathcal{D}\) as training data — but the world drifts, and a model certified on last year's emails meets next year's spammers. This failure mode, <em>distribution shift</em>, is endemic in deployment. (2) The certificate expires with use: every time you peek at the test score and adjust your model in response, information leaks, and the test set quietly becomes training signal. Serious practice holds out a final untouched set and looks at it once. (3) For language models this discipline has a sharper name — <em>contamination</em> — because when your training set is the internet, your test set is usually in it somewhere (Vol II, Ch 04).</p>
+        </div>
+      </section>
+
+      <!-- ====================== 1.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">1.5</span><h2>The loop you will see thirty more times</h2></div>
+        <p>Assemble the pieces and you get the universal cadence of machine learning — the loop every chapter in this encyclopedia will replay at larger scale:</p>
+
+        <div class="figure" data-reveal>
+          <div class="fig-head"><span class="fig-id">FIG M1.1</span><span class="fig-title">PREDICT → MEASURE → ADJUST</span></div>
+          <div class="fig-body">
+            <svg viewBox="0 0 720 232" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="The training loop: data flows into the model, predictions flow into the loss, the loss is compared against true labels, and adjustments flow back into the model's knobs.">
+              <defs>
+                <marker id="lfd-arr" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#565656"/></marker>
+                <marker id="lfd-arr-acc" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#a6f2cc"/></marker>
+              </defs>
+              <g data-pop>
+                <rect class="dg-box" x="16" y="88" width="124" height="54" rx="3"/>
+                <text class="dg-label" x="78" y="111" text-anchor="middle">TRAINING DATA</text>
+                <text class="dg-label-sm" x="78" y="128" text-anchor="middle">(x, y) pairs</text>
+              </g>
+              <g data-pop>
+                <rect class="dg-box-accent" x="206" y="88" width="124" height="54" rx="3"/>
+                <text class="dg-label" x="268" y="111" text-anchor="middle">MODEL</text>
+                <text class="dg-label-sm" x="268" y="128" text-anchor="middle">ŷ = wx + b</text>
+              </g>
+              <g data-pop>
+                <rect class="dg-box" x="396" y="88" width="124" height="54" rx="3"/>
+                <text class="dg-label" x="458" y="111" text-anchor="middle">LOSS</text>
+                <text class="dg-label-sm" x="458" y="128" text-anchor="middle">mean (ŷ − y)²</text>
+              </g>
+              <g data-pop>
+                <rect class="dg-box" x="586" y="88" width="118" height="54" rx="3"/>
+                <text class="dg-label" x="645" y="111" text-anchor="middle">ADJUST</text>
+                <text class="dg-label-sm" x="645" y="128" text-anchor="middle">nudge w, b</text>
+              </g>
+              <path class="dg-line" d="M140,115 L198,115" data-draw marker-end="url(#lfd-arr)"/>
+              <text class="dg-label-mut" x="169" y="106" text-anchor="middle">x</text>
+              <path class="dg-line" d="M330,115 L388,115" data-draw marker-end="url(#lfd-arr)"/>
+              <text class="dg-label-mut" x="359" y="106" text-anchor="middle">predict</text>
+              <path class="dg-line" d="M520,115 L578,115" data-draw marker-end="url(#lfd-arr)"/>
+              <text class="dg-label-mut" x="549" y="106" text-anchor="middle">measure</text>
+              <path class="dg-line" d="M78,142 L78,196 L458,196 L458,150" data-draw marker-end="url(#lfd-arr)"/>
+              <text class="dg-label-mut" x="268" y="189" text-anchor="middle">y — the right answers, for comparison</text>
+              <path class="dg-line-acc" d="M645,88 L645,36 L268,36 L268,80" data-draw marker-end="url(#lfd-arr-acc)"/>
+              <text class="dg-label-acc" x="456" y="29" text-anchor="middle">new knob settings — repeat until the score stops falling</text>
+            </svg>
+          </div>
+          <div class="fig-cap"><b>The loop.</b> Predict with the current knobs, measure disagreement against the labels, adjust the knobs, repeat. Everything else in machine learning is a refinement of one of these four boxes.</div>
+        </div>
+
+        <p>In Instrument M1.1, <em>you</em> were the ADJUST box — eyes on the residuals, hands on the sliders. That works for two knobs. It does not work for ten, and it is unthinkable for \(10^{12}\). The entire next chapter is about firing you from the job: calculus can read the slope of the loss surface and announce, for every knob simultaneously, which direction reduces disagreement. That announcement is called the gradient, and following it is called gradient descent — the algorithm that trains essentially everything, from the straight line above to the largest models ever built.</p>
+        <p>What will change as this volume proceeds: the model grows from a line to a network of millions of units; the loss changes shape for new tasks; the data swells from 25 points to trillions of tokens; ADJUST acquires momentum, schedules, and tricks. What will never change: predict, measure, adjust. When the architecture of Volume II towers over you, find the four boxes. They are always there.</p>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>You fit the line by feel; the machine fits it by calculus.</strong> Chapter 02: the loss surface as a landscape, the gradient as a compass pointing downhill, the learning rate as stride length — and why the exact solution to linear regression exists yet almost nobody uses it.</p>
+        </div>
+      </section>
+
+      <nav class="pager">
+        <a href="../index.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">∎</span> Encyclopedia Index</div></a>
+        <a class="next" href="02-linear-regression.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">02</span> Linear Regression &amp; Gradient Descent</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — VOL I · CH 01</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/glossary.js"></script>
+<script src="../assets/js/shared.js"></script>
+<script src="../assets/js/pyrunner.js"></script>
+<script>
+/* chapter instruments — single IIFE, no globals */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+
+  /* ---------- shared dataset: mulberry32 seed 7 — identical points in both pycells ---------- */
+  var N = 25, XS = [], YS = [];
+  (function () {
+    var rng = FM.mulberry32(7);
+    for (var i = 0; i < N; i++) {
+      var x = rng() * 10;
+      var noise = (rng() + rng() + rng() + rng() - 2) * 3.2; /* ~Gaussian, std ≈ 1.85 */
+      XS.push(Math.round(x * 1000) / 1000);
+      YS.push(Math.round((1.8 * x + 2 + noise) * 1000) / 1000);
+    }
+  })();
+
+  /* ---------- shared plot frame (both instruments use the same axes) ---------- */
+  var PAD = { l: 44, r: 16, t: 14, b: 28 };
+  var XMIN = -0.4, XMAX = 10.4, YMIN = -7, YMAX = 27;
+  function plotRect(sc) {
+    return { x: PAD.l, y: PAD.t, w: sc.w - PAD.l - PAD.r, h: sc.h - PAD.t - PAD.b };
+  }
+  function toPx(r, x) { return r.x + (x - XMIN) / (XMAX - XMIN) * r.w; }
+  function toPy(r, y) { return r.y + (1 - (y - YMIN) / (YMAX - YMIN)) * r.h; }
+  function drawFrame(sc) {
+    var ctx = sc.ctx, r = plotRect(sc), i;
+    ctx.clearRect(0, 0, sc.w, sc.h);
+    ctx.strokeStyle = FM.C.HAIR; ctx.lineWidth = 1;
+    ctx.strokeRect(r.x, r.y, r.w, r.h);
+    ctx.font = FM.C.MONO; ctx.fillStyle = FM.C.MUT;
+    ctx.strokeStyle = "rgba(47,50,52,0.45)";
+    for (i = 0; i <= 10; i += 2) {
+      var gx = toPx(r, i);
+      ctx.beginPath(); ctx.moveTo(gx, r.y); ctx.lineTo(gx, r.y + r.h); ctx.stroke();
+      ctx.textAlign = "center"; ctx.fillText(String(i), gx, r.y + r.h + 16);
+    }
+    for (i = 0; i <= 20; i += 10) {
+      var gy = toPy(r, i);
+      ctx.beginPath(); ctx.moveTo(r.x, gy); ctx.lineTo(r.x + r.w, gy); ctx.stroke();
+      ctx.textAlign = "right"; ctx.fillText(String(i), r.x - 7, gy + 3);
+    }
+    return r;
+  }
+  function drawPoints(ctx, r, idx, color) {
+    ctx.fillStyle = color; ctx.globalAlpha = 0.9;
+    idx.forEach(function (i) {
+      ctx.beginPath(); ctx.arc(toPx(r, XS[i]), toPy(r, YS[i]), 3.2, 0, Math.PI * 2); ctx.fill();
+    });
+    ctx.globalAlpha = 1;
+  }
+
+  /* ============================================================
+     INSTRUMENT M1.1 — HAND-FIT
+     ============================================================ */
+  var fitRoot = document.getElementById("lfd-fit");
+  var renderFit = null;
+  if (fitRoot) {
+    var wSlider = document.getElementById("lfd-fit-w");
+    var bSlider = document.getElementById("lfd-fit-b");
+    var wOut = document.getElementById("lfd-fit-w-out");
+    var bOut = document.getElementById("lfd-fit-b-out");
+    var fitCanvas = document.getElementById("lfd-fit-canvas");
+    var mseEl = document.getElementById("lfd-fit-mse");
+    var statusEl = document.getElementById("lfd-fit-status");
+    var worstEl = document.getElementById("lfd-fit-worst");
+    var ALL = []; for (var ii = 0; ii < N; ii++) ALL.push(ii);
+
+    renderFit = function () {
+      var w = parseFloat(wSlider.value), b = parseFloat(bSlider.value);
+      wOut.textContent = w.toFixed(2);
+      bOut.textContent = b.toFixed(1);
+
+      var sse = 0, worst = 0, i;
+      for (i = 0; i < N; i++) {
+        var d = w * XS[i] + b - YS[i];
+        sse += d * d;
+        worst = Math.max(worst, Math.abs(d));
+      }
+      var mse = sse / N;
+      mseEl.textContent = mse.toFixed(2);
+      worstEl.textContent = "±" + worst.toFixed(2);
+      if (mse < 4) {
+        statusEl.textContent = "BEATEN — NICE FIT ✓";
+        statusEl.style.color = FM.C.MINT;
+      } else {
+        statusEl.textContent = "ABOVE TARGET — KEEP TUNING";
+        statusEl.style.color = FM.C.SEC;
+      }
+
+      var sc = FM.setupCanvas(fitCanvas, 320);
+      var r = drawFrame(sc);
+      var ctx = sc.ctx;
+      ctx.save();
+      ctx.beginPath(); ctx.rect(r.x, r.y, r.w, r.h); ctx.clip();
+      /* residual stalks */
+      ctx.strokeStyle = "rgba(255,65,54,0.55)"; ctx.lineWidth = 1;
+      for (i = 0; i < N; i++) {
+        ctx.beginPath();
+        ctx.moveTo(toPx(r, XS[i]), toPy(r, YS[i]));
+        ctx.lineTo(toPx(r, XS[i]), toPy(r, w * XS[i] + b));
+        ctx.stroke();
+      }
+      /* candidate line */
+      ctx.strokeStyle = FM.C.BLUE; ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.moveTo(toPx(r, XMIN), toPy(r, w * XMIN + b));
+      ctx.lineTo(toPx(r, XMAX), toPy(r, w * XMAX + b));
+      ctx.stroke();
+      drawPoints(ctx, r, ALL, FM.C.MINT);
+      ctx.restore();
+    };
+    wSlider.addEventListener("input", renderFit);
+    bSlider.addEventListener("input", renderFit);
+    renderFit();
+  }
+
+  /* ============================================================
+     INSTRUMENT M1.2 — TRAIN/TEST SPLIT
+     Split = np.random.default_rng(0).permutation(25): first 18 train, last 7 test.
+     Degree-9 coefficients precomputed offline: exact np.polyfit least-squares fit
+     to the 18 training points on z = x/10 (highest power first).
+     ============================================================ */
+  var splitRoot = document.getElementById("lfd-split");
+  var renderSplit = null;
+  if (splitRoot) {
+    var TRAIN = [19, 4, 10, 11, 24, 2, 23, 6, 16, 22, 3, 21, 8, 0, 20, 12, 18, 13];
+    var TEST = [7, 5, 17, 14, 9, 1, 15];
+    var C9 = [2491635.364, -11602650.98, 23145945.831, -25804624.504, 17567988.139,
+              -7477352.464, 1946569.526, -285816.593, 18972.367, -182.792];
+    /* degree-1: ordinary least squares on the 18 training points, computed live */
+    var n1 = TRAIN.length, sx = 0, sy = 0, sxx = 0, sxy = 0;
+    TRAIN.forEach(function (i) { sx += XS[i]; sy += YS[i]; sxx += XS[i] * XS[i]; sxy += XS[i] * YS[i]; });
+    var W1 = (n1 * sxy - sx * sy) / (n1 * sxx - sx * sx);
+    var B1 = (sy - W1 * sx) / n1;
+
+    var splitCanvas = document.getElementById("lfd-split-canvas");
+    var trainEl = document.getElementById("lfd-split-train");
+    var testEl = document.getElementById("lfd-split-test");
+    var gapEl = document.getElementById("lfd-split-gap");
+    var degBtns = splitRoot.querySelectorAll("[data-lfd-deg]");
+    var degree = 1;
+
+    function poly9(x) {
+      var z = x / 10, v = 0;
+      for (var k = 0; k < C9.length; k++) v = v * z + C9[k];
+      return v;
+    }
+    function predict(x) { return degree === 1 ? W1 * x + B1 : poly9(x); }
+    function mseOn(idx) {
+      var s = 0;
+      idx.forEach(function (i) { var d = predict(XS[i]) - YS[i]; s += d * d; });
+      return s / idx.length;
+    }
+
+    renderSplit = function () {
+      var mTr = mseOn(TRAIN), mTe = mseOn(TEST);
+      trainEl.textContent = mTr.toFixed(2);
+      testEl.textContent = mTe >= 100 ? mTe.toFixed(0) : mTe.toFixed(2);
+      testEl.style.color = degree === 9 ? FM.C.RED : "";
+      gapEl.textContent = (mTe / mTr).toFixed(1) + "×";
+
+      var sc = FM.setupCanvas(splitCanvas, 320);
+      var r = drawFrame(sc);
+      var ctx = sc.ctx;
+      ctx.save();
+      ctx.beginPath(); ctx.rect(r.x, r.y, r.w, r.h); ctx.clip();
+      /* fitted curve */
+      ctx.strokeStyle = degree === 1 ? "rgba(255,255,255,0.85)" : FM.C.RED;
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      var steps = 280;
+      for (var s2 = 0; s2 <= steps; s2++) {
+        var x = XMIN + (XMAX - XMIN) * s2 / steps;
+        var yv = predict(x);
+        if (s2 === 0) ctx.moveTo(toPx(r, x), toPy(r, yv));
+        else ctx.lineTo(toPx(r, x), toPy(r, yv));
+      }
+      ctx.stroke();
+      drawPoints(ctx, r, TRAIN, FM.C.MINT);
+      drawPoints(ctx, r, TEST, FM.C.BLUE);
+      ctx.restore();
+    };
+
+    degBtns.forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        degree = parseInt(btn.getAttribute("data-lfd-deg"), 10);
+        degBtns.forEach(function (b2) { b2.classList.toggle("on", b2 === btn); });
+        renderSplit();
+      });
+    });
+    renderSplit();
+  }
+
+  /* ---------- re-render on resize (canvases are width-responsive) ---------- */
+  var resizeTimer = null;
+  window.addEventListener("resize", function () {
+    if (resizeTimer) clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(function () {
+      if (renderFit) renderFit();
+      if (renderSplit) renderSplit();
+    }, 120);
+  });
+})();
+</script>
+</body>
+</html>

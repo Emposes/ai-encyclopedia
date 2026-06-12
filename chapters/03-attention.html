@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>03 · Attention — LLM Field Manual</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css" />
+</head>
+<body>
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ VOL II / 03 / ATTENTION</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="04-pretraining.html">NEXT: PRE-TRAINING →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">CHAPTER 03 / 10</div>
+    <h1>Attention</h1>
+    <p class="lede">Attention is a <strong>differentiable soft lookup</strong>: every position publishes what it has (keys, values) and what it wants (queries), and information flows wherever query meets key. This chapter covers the mechanism exactly, then every production variant — multi-head, MQA, GQA, MLA, sliding-window, FlashAttention — and the KV cache that dominates inference memory.</p>
+    <div class="ch-meta">
+      <span>READING TIME<b>≈ 30 MIN</b></span>
+      <span>BUILDS ON<b>CH 02</b></span>
+      <span>INSTRUMENTS<b>HEATMAP · KV CALC · GQA</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">3.1</span>The mechanism</a>
+      <a href="#s2"><span class="n">3.2</span>Why √d — and softmax</a>
+      <a href="#s3"><span class="n">3.3</span>Multi-head</a>
+      <a href="#s4"><span class="n">3.4</span>Causal masking</a>
+      <a href="#s5"><span class="n">3.5</span>The KV cache</a>
+      <a href="#s6"><span class="n">3.6</span>MQA · GQA · MLA</a>
+      <a href="#s7"><span class="n">3.7</span>FlashAttention &amp; friends</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 3.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">3.1</span><h2>Scaled dot-product attention</h2></div>
+        <p>From the normalized residual stream \(X \in \mathbb{R}^{T \times d}\), three learned projections produce <strong>queries</strong>, <strong>keys</strong> and <strong>values</strong>: \(Q = XW_Q\), \(K = XW_K\), \(V = XW_V\). Every query is compared against every key by dot product; the resulting scores, softmaxed, become mixing weights over the values:</p>
+
+        <div class="eq"><span class="eq-tag">EQ 3.1 — THE EQUATION OF THE DECADE</span>
+        $$ \mathrm{Attention}(Q, K, V) \;=\; \mathrm{softmax}\!\left( \frac{Q K^{\top}}{\sqrt{d_k}} + M \right) V $$
+        <div class="eq-note">\(QK^\top\) is a \(T \times T\) matrix of relevance scores. \(M\) is the causal mask (§3.4). Each output row is a <b>convex combination of value vectors</b> — attention never invents content, it routes and blends what positions already offer. Computational cost: \(O(T^2 d)\) — the quadratic that drives an entire sub-industry of optimizations.</div>
+        </div>
+
+        <div class="widget" id="attn-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT 3.1 — ATTENTION INSPECTOR</span><span class="w-sub">HOVER TOKENS · CAUSAL · 1 HEAD</span></div>
+          <div class="w-body">
+            <div class="attn-sentence" id="attn-sentence"></div>
+            <div class="ctl-row" style="margin-top:8px;">
+              <div class="ctl">
+                <label>SOFTMAX TEMPERATURE <output id="attn-temp-out">1.00</output></label>
+                <input type="range" id="attn-temp" min="0.2" max="3" step="0.05" value="1"/>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="attn-canvas" height="360"></canvas>
+          </div>
+          <div class="w-note">Hover a token to set the query row. Try “it” — the head resolves the pronoun to “ball” and “robot”. Lower the temperature and watch softmax sharpen toward a hard lookup; raise it and attention diffuses toward a uniform average. Upper triangle is the causal mask: futures are unreachable.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 3.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">3.2</span><h2>Why √d̄ — and what softmax is doing</h2></div>
+        <p>The \(\sqrt{d_k}\) is not cosmetic. If query and key components are independent with zero mean and unit variance, their dot product over \(d_k\) dimensions has variance \(d_k\):</p>
+
+        <div class="eq"><span class="eq-tag">EQ 3.2 — SCORE VARIANCE</span>
+        $$ \mathrm{Var}\!\left( q \cdot k \right) = \sum_{i=1}^{d_k} \mathrm{Var}(q_i k_i) = d_k \quad\Longrightarrow\quad \mathrm{Var}\!\left( \frac{q \cdot k}{\sqrt{d_k}} \right) = 1 $$
+        <div class="eq-note">Unscaled, scores grow like \(\sqrt{d_k}\) in magnitude, the softmax saturates to near one-hot, and gradients through it vanish. Dividing by \(\sqrt{d_k}\) keeps the score distribution in softmax's responsive regime — the same role temperature plays at sampling time.</div>
+        </div>
+
+        <p>Softmax with temperature \(\tau\) interpolates between two regimes you just explored in the instrument above: \(\tau \to 0\) recovers a hard \(\arg\max\) lookup (a dictionary); \(\tau \to \infty\) gives uniform averaging (a bag of words). Trained attention lives between — sharp enough to bind, soft enough to be differentiable.</p>
+      </section>
+
+      <!-- ====================== 3.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">3.3</span><h2>Multi-head attention</h2></div>
+        <p>One softmax produces one mixing pattern per position — but a token may simultaneously need its syntactic head, an earlier coreferent, and the previous token. <strong>Multi-head attention</strong> runs \(h\) attentions in parallel in subspaces of size \(d_k = d/h\), then concatenates and projects:</p>
+
+        <div class="eq"><span class="eq-tag">EQ 3.3 — MULTI-HEAD</span>
+        $$ \mathrm{head}_i = \mathrm{Attention}\!\left(XW_Q^{(i)},\, XW_K^{(i)},\, XW_V^{(i)}\right), \qquad \mathrm{MHA}(X) = \big[\mathrm{head}_1; \cdots; \mathrm{head}_h\big]\, W_O $$
+        <div class="eq-note">Same total FLOPs as one full-width head — the work is sliced, not multiplied. Trained heads specialize into recognizable roles: previous-token heads, syntactic heads, <b>induction heads</b> (find an earlier occurrence of the current pattern and copy what followed it — the circuit behind in-context learning), and many that resist naming.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 3.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">3.4</span><h2>Causal masking</h2></div>
+        <p>A language model must not see its own future — position \(t\) may only attend to positions \(\le t\). This is enforced <em>before</em> the softmax with an additive mask:</p>
+
+        <div class="eq"><span class="eq-tag">EQ 3.4 — CAUSAL MASK</span>
+        $$ M_{ij} = \begin{cases} 0 &amp; j \le i \\ -\infty &amp; j &gt; i \end{cases} $$
+        <div class="eq-note">\(e^{-\infty} = 0\): masked positions receive exactly zero weight after softmax. The same trick implements padding masks and (with a band pattern) sliding-window attention. The triangle of grey cells in Instrument 02 is \(M\) made visible.</div>
+        </div>
+
+        <p class="note">Masking is also why training parallelizes (Chapter 01): with the triangle in place, all \(T\) positions can be predicted simultaneously from one forward pass without information leaking backward from labels.</p>
+      </section>
+
+      <!-- ====================== 3.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">3.5</span><h2>The KV cache: inference's real currency</h2></div>
+        <p>During generation, step \(t\) needs the keys and values of <em>all</em> previous positions. Recomputing them every step would cost \(O(T^2)\) redundant work — so they are <strong>cached</strong>. The price is memory, and it grows linearly with everything:</p>
+
+        <div class="eq"><span class="eq-tag">EQ 3.5 — KV-CACHE SIZE</span>
+        $$ \mathrm{bytes} \;=\; 2 \times L \times h_{kv} \times d_k \times T \times b \times (\text{bytes/elem}) $$
+        <div class="eq-note">2 for K and V; \(L\) layers; \(h_{kv}\) key-value heads; \(d_k\) head dim; \(T\) sequence length; \(b\) batch size. This buffer — not the weights — is what limits how many concurrent users fit on a GPU, which is exactly why §3.6 exists.</div>
+        </div>
+
+        <div class="widget" id="kv-calc" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT 3.2 — KV-CACHE CALCULATOR</span><span class="w-sub">EQ 3.5 · LIVE</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>LAYERS L <output id="kv-layers-out">80</output></label><input type="range" id="kv-layers" min="12" max="128" step="2" value="80"/></div>
+              <div class="ctl"><label>KV HEADS h_kv <output id="kv-heads-out">8</output></label><input type="range" id="kv-heads" min="1" max="64" step="1" value="8"/></div>
+              <div class="ctl"><label>HEAD DIM d_k <output id="kv-dim-out">128</output></label><input type="range" id="kv-dim" min="64" max="256" step="64" value="128"/></div>
+            </div>
+            <div class="ctl-row">
+              <div class="ctl"><label>SEQ LENGTH T <output id="kv-seq-out">8K</output></label><input type="range" id="kv-seq" min="9" max="20" step="1" value="13"/></div>
+              <div class="ctl"><label>BATCH b <output id="kv-batch-out">16</output></label><input type="range" id="kv-batch" min="1" max="128" step="1" value="16"/></div>
+              <div class="ctl"><label>PRECISION</label>
+                <select id="kv-prec" class="w-input">
+                  <option value="2" selected>FP16 / BF16 — 2 bytes</option>
+                  <option value="1">FP8 — 1 byte</option>
+                  <option value="0.5">INT4 — 0.5 bytes</option>
+                </select>
+              </div>
+            </div>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">TOTAL KV CACHE</div><div class="r-value" id="kv-total">—</div></div>
+              <div class="readout"><div class="r-label">PER TOKEN (ALL LAYERS)</div><div class="r-value" id="kv-per-tok">—</div></div>
+              <div class="readout"><div class="r-label">FOOTPRINT</div><div class="r-value" id="kv-compare" style="font-size:13px;line-height:1.5;">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Defaults ≈ Llama-2-70B with GQA-8. Set KV heads to 64 to feel why pure MHA died at long context — then drop precision to FP8 and watch serving capacity double.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 3.6 ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">3.6</span><h2>Shrinking the cache: MQA → GQA → MLA</h2></div>
+        <p>Queries are free at decode time — only K and V are cached. So the variants attack \(h_{kv}\):</p>
+        <ul>
+          <li><strong>Multi-Query Attention (MQA).</strong> All \(h\) query heads share <em>one</em> K/V head: \(h_{kv} = 1\), a \(h\times\) cache reduction. Fast but measurably lossy at scale.</li>
+          <li><strong>Grouped-Query Attention (GQA).</strong> The production compromise: \(h_{kv} = h/g\) groups, with each group of query heads sharing one K/V pair. Llama-3 uses 128 query heads against 8 KV heads — a 16× reduction at near-zero quality cost.</li>
+          <li><strong>Multi-head Latent Attention (MLA).</strong> DeepSeek's reformulation: instead of caching K and V at all, cache a single low-rank <em>latent</em> \(c_t\) per position and reconstruct keys and values from it on the fly.</li>
+        </ul>
+
+        <div class="eq"><span class="eq-tag">EQ 3.6 — MLA: CACHE A LATENT, NOT K AND V</span>
+        $$ c_t = W_{DKV}\, h_t \in \mathbb{R}^{d_c}, \qquad k_t^{(i)} = W_{UK}^{(i)} c_t, \quad v_t^{(i)} = W_{UV}^{(i)} c_t \qquad (d_c \ll h \cdot d_k) $$
+        <div class="eq-note">DeepSeek-V3: \(d_c = 512\) versus \(h \cdot d_k = 16{,}384\) — a ~32× compression that <em>outperformed</em> full MHA in their ablations, because the up-projections \(W_{UK}, W_{UV}\) can be absorbed into neighboring matrices at inference. A decoupled RoPE component rides alongside the latent to preserve relative position.</div>
+        </div>
+
+        <table class="data">
+          <thead><tr><th>Variant</th><th>KV heads cached</th><th>Cache vs MHA</th><th>Used by</th></tr></thead>
+          <tbody>
+            <tr><td>MHA</td><td class="m">h (= 32–128)</td><td class="m">1×</td><td>GPT-2/3 era</td></tr>
+            <tr><td>MQA</td><td class="m">1</td><td class="hl">1/h</td><td>PaLM, Falcon</td></tr>
+            <tr><td>GQA</td><td class="m">h/g (= 8 typical)</td><td class="hl">g/h (e.g. 1/16)</td><td>Llama 2/3, Mistral, Qwen</td></tr>
+            <tr><td>MLA</td><td class="m">1 latent (d_c)</td><td class="hl">≈ 1/30</td><td>DeepSeek V2/V3/R1</td></tr>
+          </tbody>
+        </table>
+
+        <div class="widget" id="gqa-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT 3.3 — HEAD SHARING</span><span class="w-sub">32 QUERY HEADS · MHA → GQA → MQA</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl">
+                <label>KV HEADS <output id="gqa-kv-out">8</output></label>
+                <input type="range" id="gqa-kv" min="0" max="5" step="1" value="2"/>
+              </div>
+            </div>
+            <div style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.16em;color:#636363;margin-bottom:6px;">QUERY HEADS (COLOR = SHARED KV GROUP)</div>
+            <div id="gqa-q" style="display:flex;gap:3px;margin-bottom:16px;"></div>
+            <div style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.16em;color:#636363;margin-bottom:6px;">CACHED KV HEADS</div>
+            <div id="gqa-k" style="display:flex;gap:3px;"></div>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">REGIME</div><div class="r-value" id="gqa-mode">—</div></div>
+              <div class="readout acc"><div class="r-label">CACHE REDUCTION</div><div class="r-value" id="gqa-reduction">—</div></div>
+              <div class="readout acc"><div class="r-label">KV @ 8K CTX (70B-CLASS, FP16)</div><div class="r-value" id="gqa-gb">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Slide left to MQA (one KV head serving all 32 queries) and right back to full MHA. The middle — GQA-8 — is where nearly every model since 2023 has landed.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 3.7 ====================== -->
+      <section class="section" id="s7">
+        <div class="sec-head"><span class="sec-num">3.7</span><h2>FlashAttention, sliding windows, sparsity</h2></div>
+        <p><strong>FlashAttention</strong> changed nothing mathematically and everything practically. The insight: attention is bottlenecked not by FLOPs but by reading and writing the \(T \times T\) score matrix to GPU main memory (HBM). FlashAttention never materializes that matrix — it processes K/V in tiles resident in fast on-chip SRAM, maintaining a running softmax via the <em>online softmax</em> identities:</p>
+
+        <div class="eq"><span class="eq-tag">EQ 3.7 — ONLINE SOFTMAX (PER TILE UPDATE)</span>
+        $$ m^{\text{new}} = \max(m, \tilde{m}), \qquad \ell^{\text{new}} = e^{\,m - m^{\text{new}}}\,\ell + e^{\,\tilde{m} - m^{\text{new}}}\,\tilde{\ell}, \qquad O^{\text{new}} = \frac{e^{\,m - m^{\text{new}}}\,\ell\, O + e^{\,\tilde{m} - m^{\text{new}}}\,\tilde{\ell}\,\tilde{O}}{\ell^{\text{new}}} $$
+        <div class="eq-note">Running max \(m\), normalizer \(\ell\), and output \(O\) are corrected as each new tile \((\tilde{m}, \tilde{\ell}, \tilde{O})\) arrives — the exact softmax, computed without ever holding all scores at once. Memory drops from \(O(T^2)\) to \(O(T)\); wall-clock speedups of 2–4× and the backward pass recomputes rather than stores. FlashAttention-2/3 refine parallelism and exploit FP8 on Hopper.</div>
+        </div>
+
+        <h3>Restricting the pattern</h3>
+        <ul>
+          <li><strong>Sliding-window attention:</strong> attend only to the last \(w\) positions (Mistral: \(w = 4096\)). Cost becomes \(O(Tw)\); stacked layers extend effective reach to \(L \times w\). Often interleaved — e.g. 3 local layers : 1 global — in recent models (Gemma, GPT-OSS pattern).</li>
+          <li><strong>Attention sinks:</strong> keep the first few tokens always visible; their removal destabilizes streaming generation because softmax needs somewhere to park probability mass.</li>
+          <li><strong>Sparse / native sparse attention:</strong> learned or structured subsets of the full pattern (block-sparse, DeepSeek's NSA), trading exactness for near-linear scaling — increasingly important at million-token contexts (Chapter 09).</li>
+          <li><strong>Linear attention &amp; kernel methods:</strong> replace softmax with feature maps so attention becomes associative and \(O(T)\) — historically a quality trade-off, now resurfacing inside hybrid architectures (Chapter 09).</li>
+        </ul>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>Architecture is settled; now it must learn.</strong> Chapter 04: the data, the scaling laws that tell you how big to build, the optimizer, and the art of spreading one training run across tens of thousands of GPUs.</p>
+        </div>
+      </section>
+
+      <nav class="pager">
+        <a href="02-transformer.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">02</span> The Transformer</div></a>
+        <a class="next" href="04-pretraining.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">04</span> Pre-training</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — VOL II · CH 03</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/glossary.js"></script>
+<script src="../assets/js/shared.js"></script>
+<script src="../assets/js/search.js"></script>
+<script src="../assets/js/interactives.js"></script>
+</body>
+</html>

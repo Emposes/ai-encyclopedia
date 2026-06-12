@@ -1,0 +1,558 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>02 · The Scaffold: Role · Task · Context · Format · Constraints — AI Encyclopedia</title>
+<meta name="description" content="The five-part prompt scaffold — Role, Task, Context, Format, Constraints — and why structure beats vibes: the math, the evidence, three worked case studies, and a live builder." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css" />
+</head>
+<body>
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ VOL III / PROMPTING / 02 / THE SCAFFOLD</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="03-few-shot.html">NEXT: FEW-SHOT &amp; EXAMPLES →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">VOLUME III — PROMPTING · CHAPTER 02 / 07</div>
+    <h1>The Scaffold: Role · Task · Context · Format · Constraints</h1>
+    <p class="lede">A weak prompt is rarely missing cleverness — it is missing information. The scaffold is a five-part checklist that forces every piece of conditioning the model cannot infer onto the page: who is speaking, what to produce, what the world looks like, what shape the answer takes, and where the edges are. <strong>Structure beats vibes because the model can only condition on what you actually wrote.</strong></p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 24 MIN</b></span>
+      <span>BUILDS ON<b>VOL III · CH 01</b></span>
+      <span>INSTRUMENTS<b>SCAFFOLD BUILDER · B/A GALLERY</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">2.1</span>Structure beats vibes</a>
+      <a href="#s2"><span class="n">2.2</span>Role</a>
+      <a href="#s3"><span class="n">2.3</span>Task</a>
+      <a href="#s4"><span class="n">2.4</span>Context</a>
+      <a href="#s5"><span class="n">2.5</span>Format</a>
+      <a href="#s6"><span class="n">2.6</span>Constraints</a>
+      <a href="#s7"><span class="n">2.7</span>Assembled: case studies</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 2.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">2.1</span><h2>Why structure beats vibes</h2></div>
+        <p>Chapter 01 established the mechanics: a prompt is not an incantation, it is <em>conditioning evidence</em>. The model computes \(p_\theta(y \mid x)\) — a probability distribution over continuations given everything in the context window — and your prompt is the entire \(x\). Whatever you leave out, the model fills in from its priors, which means it fills in the <em>statistically average</em> audience, purpose, length, and tone. Average is exactly what a vague prompt gets back.</p>
+        <p>The scaffold turns that observation into a checklist. Five parts, each answering a question the model cannot answer for you:</p>
+        <table class="data">
+          <thead><tr><th>Part</th><th>Question it answers</th><th>Failure mode when missing</th></tr></thead>
+          <tbody>
+            <tr><td><strong>ROLE</strong></td><td class="m">who is producing this?</td><td>Default-assistant register: competent, generic, mid-formal</td></tr>
+            <tr><td><strong>TASK</strong></td><td class="m">what single deliverable?</td><td>The model guesses the verb — and hedges across several</td></tr>
+            <tr><td><strong>CONTEXT</strong></td><td class="m">what can't the model know?</td><td>Answers calibrated to a reader and situation that don't exist</td></tr>
+            <tr><td><strong>FORMAT</strong></td><td class="m">what shape is the output?</td><td>Unpredictable length and structure; re-prompting roulette</td></tr>
+            <tr><td><strong>CONSTRAINTS</strong></td><td class="m">where are the edges?</td><td>Boundary violations and 50/50 splits on every trade-off</td></tr>
+          </tbody>
+        </table>
+
+        <div class="eq"><span class="eq-tag">EQ P2.1 — SPECIFICATION AS CONDITIONING</span>
+        $$ H(Y \mid T) \;\ge\; H(Y \mid T, R) \;\ge\; H(Y \mid T, R, C) \;\ge\; H(Y \mid T, R, C, F, K) $$
+        <div class="eq-note">\(Y\) is the output; \(T, R, C, F, K\) are the task, role, context, format, and constraint components. Under any joint distribution — including the model's own — <b>conditioning on more variables can never raise expected entropy</b>. Each scaffold part you add narrows the distribution the model samples from. The honest caveat: the theorem is about averages, and narrower ≠ righter. A wrong fact narrows the distribution toward a wrong region with the same efficiency. The scaffold aims the funnel; you still have to point it at the truth.</div>
+        </div>
+
+        <p>Two honest clarifications before the parts. First, <strong>the labels are not magic syntax</strong>. Instruction-tuned models parse <code>ROLE:</code> headers, markdown sections, and XML tags about equally well, because their post-training data is full of all three; segmentation helps the model carve the prompt into spans, but the dominant effect of the scaffold is on <em>you</em> — a checklist is hard to half-fill without noticing. Second, the scaffold is a checklist, not a form: a part that adds no information should be omitted, not padded. "You are a helpful assistant" is a row of zeros.</p>
+
+        <div class="widget" id="scf-builder" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT P2.1 — SCAFFOLD BUILDER</span><span class="w-sub">TOGGLE PARTS · LIVE ASSEMBLY · 3 PRESETS</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>SCENARIO</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-scf-preset="0">DEADLINE EMAIL</button>
+                  <button class="w-btn ghost" data-scf-preset="1">CODE REVIEW</button>
+                  <button class="w-btn ghost" data-scf-preset="2">CHURN ANALYSIS</button>
+                </div>
+              </div>
+            </div>
+            <div id="scf-parts"></div>
+            <div style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.16em;color:#636363;margin:16px 0 6px;">SPECIFICATION COVERAGE (ILLUSTRATIVE — COUNTS PARTS, NOT QUALITY)</div>
+            <div id="scf-meter" style="display:flex;gap:4px;"></div>
+            <div style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.16em;color:#636363;margin:18px 0 6px;">ASSEMBLED PROMPT</div>
+            <pre id="scf-out" style="margin:0;white-space:pre-wrap;"></pre>
+            <div class="ctl-row" style="margin-top:14px;margin-bottom:0;">
+              <button class="w-btn" id="scf-copy">COPY PROMPT</button>
+            </div>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">PARTS ON</div><div class="r-value" id="scf-count">—</div></div>
+              <div class="readout"><div class="r-label">≈ PROMPT TOKENS</div><div class="r-value" id="scf-tokens">—</div></div>
+              <div class="readout"><div class="r-label">STILL UNSPECIFIED</div><div class="r-value" id="scf-missing" style="font-size:12px;line-height:1.5;">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Start with everything OFF — that single grey line is the prompt most people actually send. Toggle parts on as you read §2.2–2.6 and watch the assembled prompt grow teeth; every field is editable, and the three presets are the §2.7 case studies, so you can rebuild them part by part. The meter counts coverage, not quality: five mediocre parts still lose to three sharp ones.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 2.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">2.2</span><h2>ROLE — conditioning the author</h2></div>
+        <p>A pre-trained model is a superposition of every author it has read. A useful fiction for what a role line does: it shifts the model's posterior over <em>which</em> latent author is writing.</p>
+
+        <div class="eq"><span class="eq-tag">EQ P2.2 — ROLE AS A POSTERIOR OVER AUTHORS</span>
+        $$ p_\theta(y \mid x) \;=\; \sum_{z \in \mathcal{Z}} p_\theta(y \mid x, z)\; p_\theta(z \mid x) $$
+        <div class="eq-note">\(z\) ranges over latent author-personas; the prompt \(x\) determines how probability mass spreads across them, and the output marginalizes over that mixture. A role line moves mass in \(p_\theta(z \mid x)\) toward authors whose vocabulary, conventions, and priorities you want. <b>The mixture is a lens, not an implementation claim</b> — there is no discrete persona switch inside the network, only a continuous superposition this equation approximates.</div>
+        </div>
+
+        <p><strong>When roles genuinely help.</strong> A role pays rent when it changes what the words mean. "Review this contract <em>as opposing counsel</em>" loads an adversarial reading no instruction list fully captures. "Explain this <em>as a pediatrician talking to a worried parent</em>" sets vocabulary, sentence length, and what to leave out — three dials that would take a paragraph to set explicitly. The best roles smuggle in evaluation criteria: "a staff engineer reviewing for OWASP Top 10" is really a compressed checklist wearing a costume.</p>
+        <p><strong>When roles are cargo cult.</strong> On factual and reasoning accuracy, the evidence is bleak: the largest controlled study to date (162 personas across multiple model families on thousands of factual questions, 2023) found <em>no reliable accuracy gain</em> from adding personas — and occasional unpredictable harm. Stacking flattery ("world-class, award-winning, 30 years of experience") adds little a modern instruction-tuned model doesn't already default to, because post-training has already collapsed \(p_\theta(z \mid x)\) onto a competent-expert prior. The folklore add-ons — tips, threats, emotional appeals — show idiosyncratic, model-specific effects that fail to transfer: automatic prompt search has surfaced absurd winners (including Star Trek framings) that beat polite hand-tuning on one model and evaporate on the next. Treat any role text that would survive a find-and-replace of your task with someone else's as decoration.</p>
+        <p class="note"><strong>Rule of thumb:</strong> give the role a <em>function</em>, not a costume. "You are X" earns its tokens when X implies a vocabulary, a set of conventions, an audience posture, or a checklist — and is dead weight when it merely implies "be good at this."</p>
+      </section>
+
+      <!-- ====================== 2.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">2.3</span><h2>TASK — one verb, one deliverable</h2></div>
+        <p>The task line is the spine of the prompt: one verb, one deliverable, stated in the first sentence the model will treat as an instruction. The verb sets the <em>depth of transformation</em> — proofread &lt; edit &lt; rewrite; list &lt; summarize &lt; analyze &lt; recommend — and models take it more literally than humans do. Ask for "thoughts on this draft" and you get thoughts; ask for "a unified diff that fixes the three weakest paragraphs" and you get a diff. The deliverable should be a noun with a unit: <em>a 5-bullet summary</em>, <em>a SQL query</em>, <em>a subject line plus three paragraphs</em> — never "some ideas."</p>
+        <p>The case against compound tasks is arithmetic, not taste:</p>
+
+        <div class="eq"><span class="eq-tag">EQ P2.3 — THE CONJUNCTION TAX</span>
+        $$ P(\text{all } k \text{ requirements met}) \;=\; \prod_{i=1}^{k} p_i \;\le\; \min_i\, p_i $$
+        <div class="eq-note">If one response must satisfy \(k\) requirements and the model lands each with probability \(p_i\), the joint success is the product — at \(p_i = 0.9\) per requirement, six requirements give \(0.9^6 \approx 0.53\): a coin flip. The independence assumption is generous; in practice failures <b>correlate through interference</b> — instructions compete for the model's attention, and the deliverable drafted first steals effort from the ones drafted last. The product is the optimistic bound.</div>
+        </div>
+
+        <p><strong>Decompose or die.</strong> "Summarize this report, critique its methodology, and rewrite the executive summary" is three tasks sharing one context window and one attention budget. Run them as three prompts — each verified before its output feeds the next — and you convert one 53% coin flip into three 90% checks <em>with an inspection gate between each</em>. The chain costs more tokens; it buys you the ability to catch a bad summary before it poisons the critique. Single-prompt compounds are defensible only when the subtasks genuinely interlock (the critique must reference the summary's framing) or when latency dominates everything else.</p>
+        <div class="callout warn">
+          <span class="co-icon">PITFALL</span>
+          <p><strong>The hidden compound.</strong> "Improve this email" looks like one task but is secretly five — fix grammar, sharpen the ask, adjust tone, cut length, restructure — and the model picks its own subset, usually not yours. If you can't say which verb you mean, the model can't either.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 2.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">2.4</span><h2>CONTEXT — what the model cannot know</h2></div>
+        <p>Context is the part of the scaffold with the highest information content per token, because it is the only part the model <em>cannot possibly</em> reconstruct. It can guess a plausible format; it cannot guess that your reader is a skeptical CFO, that this is the second extension request on this project, or that the previous draft was rejected for sounding defensive. The standing checklist:</p>
+        <ul>
+          <li><strong>Audience</strong> — who reads the output, what they know, what they decide with it.</li>
+          <li><strong>Purpose</strong> — the decision or action downstream of the output. "This summary decides whether we renew the vendor" reshapes every sentence.</li>
+          <li><strong>Situation</strong> — the facts of the case: history, stakes, deadlines, what has already happened.</li>
+          <li><strong>Prior attempts</strong> — what was tried, and <em>why it was rejected</em>. This is the single highest-leverage item: without it the model will cheerfully regenerate the draft you already hate.</li>
+          <li><strong>House truths</strong> — internal names, conventions, definitions of success the public internet has never seen.</li>
+        </ul>
+        <p><strong>Context beats cleverness.</strong> A plain prompt carrying the five facts that change the answer outperforms an artfully worded prompt carrying none. This is the empirical center of gravity of the whole volume: across the prompting literature, gains from supplying missing information dwarf gains from rephrasing existing information. When a prompt underperforms, the productive question is almost never "how do I word this better?" — it is "what do I know that the model doesn't?"</p>
+        <p class="note"><strong>Relevance, not bulk.</strong> Context is not a dumping ground. Chapter 01's mechanics still apply: every token competes for attention, and burying the one decisive fact under ten incidental ones dilutes it. Select the facts that would change a competent human's answer; paste those; stop.</p>
+      </section>
+
+      <!-- ====================== 2.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">2.5</span><h2>FORMAT — show the shape</h2></div>
+        <p>Models are pattern completers before they are instruction followers. The most reliable way to get a shape is to <em>show</em> the shape — a skeleton the model fills rather than a description it interprets:</p>
+        <pre><code><span class="c"># Instead of "structure your answer clearly":</span>
+<span class="k">FORMAT</span> — fill this template exactly:
+
+  VERDICT: <span class="v">one sentence</span>
+  EVIDENCE: <span class="v">3 bullets, each citing a line number</span>
+  RISKS: <span class="v">2 bullets, worst first</span>
+  CONFIDENCE: <span class="v">high / medium / low + one-line reason</span></code></pre>
+        <p>Three rules of format engineering:</p>
+        <ul>
+          <li><strong>Bound length in structural units, not words.</strong> "3 bullets, ≤ 15 words each" is enforceable; "around 200 words" is a suggestion the model tracks only loosely. Tokenization makes exact word counts genuinely hard for models — they don't see words, they see tokens (Vol III · Ch 01). Frontier models have improved, but bounds in bullets, sentences, and paragraphs remain the reliable currency.</li>
+          <li><strong>Field order is computation order.</strong> Generation is left-to-right, so the template's sequence decides what the model commits to first. "Evidence, then verdict" forces the evidence to exist before the conclusion that must follow from it; "verdict, then evidence" invites a snap judgment followed by motivated reasoning. Format is a cheap lever on the reasoning itself.</li>
+          <li><strong>If a machine parses the output, don't rely on the prompt.</strong> Prompt-requested JSON holds up in the bulk of cases and fails at the tails — a stray apology before the brace, a trailing comment after it. When format is load-bearing, use the provider's structured-output / constrained-decoding features, which make invalid output impossible rather than unlikely. The prompt states the schema's <em>meaning</em>; the decoder enforces its syntax.</li>
+        </ul>
+      </section>
+
+      <!-- ====================== 2.6 ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">2.6</span><h2>CONSTRAINTS — boundaries, exclusions, tie-breakers</h2></div>
+        <p>Constraints are the scaffold part that prevents the failure you didn't think to forbid. Three species:</p>
+        <ul>
+          <li><strong>Boundaries</strong> — scope fences: "only modify the function below," "use only facts from the attached document."</li>
+          <li><strong>Exclusions</strong> — outputs that must not appear: topics, claims, styles, files.</li>
+          <li><strong>Tie-breakers</strong> — explicit precedence for the conflicts your goals will inevitably have: "if brevity and completeness conflict, cut the least decision-relevant material." Without a tie-breaker, the model splits the difference — and a 50/50 hedge between two goals usually serves neither.</li>
+        </ul>
+        <p><strong>Positive phrasing beats negative phrasing — with caveats.</strong> Two mechanisms argue for stating what to do rather than only what to avoid. First, negation is a documented weak spot: benchmark families built around negated questions have shown models — strikingly, sometimes <em>larger</em> models — agreeing with the negated form of statements they correctly reject in positive form. Second, salience: every token in a prohibition becomes attendable context (Ch 01), so "do not mention the outage" places <em>outage</em> squarely in the model's working set — the pink-elephant problem, mechanized. The honest caveats: the worst negation failures were measured on older and base models, and modern instruction-tuned models follow plain prohibitions reasonably well in short contexts. The brittleness returns under pressure — long contexts, many competing instructions, conversational drift. Best practice is therefore not "never say don't" but <strong>pair every don't with a do</strong>: "do not blame their team; attribute the delay to the access timeline, neutrally" gives the model a road, not just a wall.</p>
+        <p class="note"><strong>The constraint budget.</strong> EQ P2.3 applies to constraints too: each one is another requirement in the product, another claim on attention. Ten constraints comply worse than four. Prune to the ones whose violation you'd actually reject the output for — and promote the rest to a review checklist on your side of the table.</p>
+      </section>
+
+      <!-- ====================== 2.7 ====================== -->
+      <section class="section" id="s7">
+        <div class="sec-head"><span class="sec-num">2.7</span><h2>Assembled: three case studies</h2></div>
+        <p>The same five moves, three domains. Each AFTER block is annotated with what the part buys; none of them is clever, all of them are specific.</p>
+
+        <h3>A — The deadline email</h3>
+        <pre><code><span class="c"># BEFORE — the prompt most people actually send</span>
+write an email to the client telling them the project is delayed</code></pre>
+        <pre><code><span class="k">ROLE</span> — You are a senior account manager at a small consultancy.
+   <span class="c">← register: accountable, first-person-plural, no groveling</span>
+<span class="k">TASK</span> — Write an email to our client requesting a two-week extension
+   on the dashboard delivery.
+   <span class="c">← one verb, one deliverable, one concrete ask with a number</span>
+<span class="k">CONTEXT</span> — Reader: Dana, VP Ops — direct, values plans over apologies.
+   Cause: their API access arrived 11 days late. Relationship: 3 years,
+   good. This is the second extension on this project.
+   <span class="c">← four facts the model cannot guess; each reshapes a sentence</span>
+<span class="k">FORMAT</span> — Under 150 words. Subject line + 3 short paragraphs:
+   situation, revised plan with a date, one question to confirm.
+   <span class="c">← structural length bound; paragraph order is argument order</span>
+<span class="k">CONSTRAINTS</span> — Do not blame their team; attribute the delay to the
+   access timeline, neutrally. No discounts or scope cuts offered.
+   If apology and confidence conflict, choose confidence.
+   <span class="c">← exclusion + paired do/don't + an explicit tie-breaker</span></code></pre>
+        <p class="note">The BEFORE version produces a serviceable, slightly servile email of unpredictable length that apologizes too much and asks for nothing specific. The scaffold's biggest single contributor here is CONTEXT — "second extension" and "values plans over apologies" change the email's entire posture — followed by the tie-breaker, which kills the apologetic hedge outright.</p>
+
+        <h3>B — The code review</h3>
+        <pre><code><span class="c"># BEFORE</span>
+review this code</code></pre>
+        <pre><code><span class="k">ROLE</span> — You are a staff engineer reviewing a Python PR for a
+   payments service.
+   <span class="c">← "payments" loads a threat model; the role carries a checklist</span>
+<span class="k">TASK</span> — Review the diff below for correctness and security issues only.
+   <span class="c">← one verb, scoped: this is a defect hunt, not a style debate</span>
+<span class="k">CONTEXT</span> — The function moves money between accounts and runs inside
+   a Postgres transaction. Style is already enforced by linters.
+   Author is mid-level, second week on the team.
+   <span class="c">← stakes, environment, and the audience for the feedback's tone</span>
+<span class="k">FORMAT</span> — Numbered findings, most severe first. For each: line
+   reference, the risk, a concrete fix. End with a verdict:
+   APPROVE / REQUEST CHANGES.
+   <span class="c">← evidence before verdict — field order is computation order</span>
+<span class="k">CONSTRAINTS</span> — Skip style and naming; linters own those. Flag anything
+   that could double-charge as BLOCKER. If unsure an issue is real,
+   say so rather than inventing one.
+   <span class="c">← boundary + severity rule + an honesty valve against confabulated findings</span></code></pre>
+        <p class="note">BEFORE yields a polite tour of the code: a style nit, a docstring suggestion, a vague "consider adding error handling." The CONSTRAINTS block does the heavy lifting — banning style commentary redirects the entire attention budget to defects, and the honesty valve measurably cuts invented issues, the chronic failure of review prompts.</p>
+
+        <h3>C — The churn analysis</h3>
+        <pre><code><span class="c"># BEFORE</span>
+analyze this churn data</code></pre>
+        <pre><code><span class="k">ROLE</span> — You are a product analyst preparing evidence for a
+   pricing decision.
+   <span class="c">← the decision downstream selects which findings matter</span>
+<span class="k">TASK</span> — Identify the three strongest correlates of churn in the
+   table below.
+   <span class="c">← bounded deliverable: three, ranked — not "insights"</span>
+<span class="k">CONTEXT</span> — B2B SaaS, monthly plans. Columns: plan, seats,
+   tenure_months, support_tickets, churned. Leadership suspects the
+   Starter plan — check that hypothesis explicitly. Deadline Friday.
+   <span class="c">← schema + the live hypothesis the analysis must confirm or kill</span>
+<span class="k">FORMAT</span> — Per correlate: one sentence of evidence with numbers,
+   one caveat. Then a 3-sentence summary a non-analyst can read.
+   <span class="c">← forces quantified claims and pre-allocates space for caveats</span>
+<span class="k">CONSTRAINTS</span> — Correlation only — do not claim causation. If the data
+   cannot answer something, state what is missing instead of guessing.
+   <span class="c">← the two clauses that separate analysis from confident fiction</span></code></pre>
+        <p class="note">BEFORE produces a wandering narrative of every column, with causal language sprinkled freely ("churn is driven by..."). The scaffold's stars here are TASK — "three strongest correlates" converts an open prompt into a ranking problem — and the anti-causation constraint, which is the difference between a memo you can forward and one you have to retract.</p>
+
+        <div class="widget" id="scf-gallery" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT P2.2 — BEFORE/AFTER GALLERY</span><span class="w-sub">4 PAIRS · REPRESENTATIVE OUTPUTS</span></div>
+          <div class="w-body">
+            <div class="ctl-row" style="align-items:center;">
+              <button class="w-btn ghost" id="scf-g-prev">← PREV</button>
+              <div style="font-family:ui-monospace,Menlo,monospace;font-size:10px;letter-spacing:.16em;color:#9b9b9b;flex:1;text-align:center;" id="scf-g-count">—</div>
+              <button class="w-btn ghost" id="scf-g-next">NEXT →</button>
+            </div>
+            <div id="scf-g-cards" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;"></div>
+          </div>
+          <div class="w-note">Step through four task families. The "typical output" panels are representative summaries of common model behavior, not live calls — illustrative, but drawn from the failure modes this chapter has been cataloguing. Notice that no AFTER prompt uses all five parts: the scaffold is a checklist, and a part that adds nothing gets omitted.</div>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>The scaffold tells the model what you want; sometimes telling hits a ceiling.</strong> Chapter 03: few-shot prompting — when two good examples beat two hundred words of instruction, how models infer the rule from the cases, and the example-selection traps that quietly teach the wrong lesson.</p>
+        </div>
+      </section>
+
+      <nav class="pager">
+        <a href="01-how-prompts-work.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">01</span> How Models Read Prompts</div></a>
+        <a class="next" href="03-few-shot.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">03</span> Show, Don't Tell: Few-Shot &amp; Examples</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — VOL III · CH 02</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/glossary.js"></script>
+<script src="../assets/js/shared.js"></script>
+<script>
+/* chapter instruments — single IIFE, no globals */
+(function () {
+  "use strict";
+  var FM = window.FM;
+
+  function esc(s) {
+    return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  /* ============ INSTRUMENT P2.1 — SCAFFOLD BUILDER ============ */
+  (function () {
+    var root = document.getElementById("scf-builder");
+    if (!root) return;
+
+    var PARTS = ["role", "task", "context", "format", "constraints"];
+    var PRESETS = [
+      {
+        weak: "write an email to the client telling them the project is delayed",
+        role: "You are a senior account manager at a small consultancy.",
+        task: "Write an email to our client requesting a two-week extension on the dashboard delivery.",
+        context: "Reader: Dana, VP Ops — direct, values plans over apologies. Cause: their API access arrived 11 days late. Relationship: 3 years, good. This is the second extension on this project.",
+        format: "Under 150 words. Subject line + 3 short paragraphs: situation, revised plan with a date, one question to confirm.",
+        constraints: "Do not blame their team; attribute the delay to the access timeline, neutrally. No discounts or scope cuts offered. If apology and confidence conflict, choose confidence."
+      },
+      {
+        weak: "review this code",
+        role: "You are a staff engineer reviewing a Python PR for a payments service.",
+        task: "Review the diff below for correctness and security issues only.",
+        context: "The function moves money between accounts and runs inside a Postgres transaction. Style is already enforced by linters. Author is mid-level, second week on the team.",
+        format: "Numbered findings, most severe first. For each: line reference, the risk, a concrete fix. End with a verdict: APPROVE / REQUEST CHANGES.",
+        constraints: "Skip style and naming; linters own those. Flag anything that could double-charge as BLOCKER. If unsure an issue is real, say so rather than inventing one."
+      },
+      {
+        weak: "analyze this churn data",
+        role: "You are a product analyst preparing evidence for a pricing decision.",
+        task: "Identify the three strongest correlates of churn in the table below.",
+        context: "B2B SaaS, monthly plans. Columns: plan, seats, tenure_months, support_tickets, churned. Leadership suspects the Starter plan — check that hypothesis explicitly. Deadline Friday.",
+        format: "Per correlate: one sentence of evidence with numbers, one caveat. Then a 3-sentence summary a non-analyst can read.",
+        constraints: "Correlation only — do not claim causation. If the data cannot answer something, state what is missing instead of guessing."
+      }
+    ];
+
+    var cur = 0;
+    var on = { role: false, task: false, context: false, format: false, constraints: false };
+
+    var partsBox = document.getElementById("scf-parts");
+    var meterBox = document.getElementById("scf-meter");
+    var outPre = document.getElementById("scf-out");
+    var countEl = document.getElementById("scf-count");
+    var tokensEl = document.getElementById("scf-tokens");
+    var missingEl = document.getElementById("scf-missing");
+    var copyBtn = document.getElementById("scf-copy");
+
+    /* build the five part rows */
+    PARTS.forEach(function (p) {
+      var row = document.createElement("div");
+      row.style.cssText = "display:flex;gap:10px;align-items:flex-start;margin-bottom:8px;";
+      var btn = document.createElement("button");
+      btn.className = "w-btn ghost";
+      btn.setAttribute("data-scf-part", p);
+      btn.style.cssText = "flex:0 0 150px;text-align:left;";
+      btn.textContent = p.toUpperCase() + " — OFF";
+      var ta = document.createElement("textarea");
+      ta.className = "w-input";
+      ta.id = "scf-f-" + p;
+      ta.rows = 2;
+      ta.spellcheck = false;
+      ta.style.cssText = "flex:1;resize:vertical;font-size:12px;line-height:1.5;";
+      row.appendChild(btn);
+      row.appendChild(ta);
+      partsBox.appendChild(row);
+
+      btn.addEventListener("click", function () {
+        on[p] = !on[p];
+        btn.classList.toggle("on", on[p]);
+        btn.textContent = p.toUpperCase() + (on[p] ? " — ON" : " — OFF");
+        render();
+      });
+      ta.addEventListener("input", render);
+    });
+
+    /* build the 5-segment meter */
+    var segs = [];
+    for (var i = 0; i < 5; i++) {
+      var seg = document.createElement("div");
+      seg.style.cssText = "flex:1;height:12px;border-radius:2px;background:rgba(47,50,52,.5);transition:background .3s ease;";
+      meterBox.appendChild(seg);
+      segs.push(seg);
+    }
+
+    function field(p) { return document.getElementById("scf-f-" + p); }
+
+    function fillPreset() {
+      PARTS.forEach(function (p) {
+        field(p).value = PRESETS[cur][p];
+        on[p] = false;
+        var btn = partsBox.querySelector('[data-scf-part="' + p + '"]');
+        btn.classList.remove("on");
+        btn.textContent = p.toUpperCase() + " — OFF";
+      });
+      render();
+    }
+
+    function assembleText() {
+      var lines = [];
+      PARTS.forEach(function (p) {
+        if (on[p]) {
+          lines.push(p.toUpperCase() + ": " + field(p).value.trim());
+        } else if (p === "task") {
+          lines.push(PRESETS[cur].weak);
+        }
+      });
+      return lines.join("\n\n");
+    }
+
+    function render() {
+      var html = [];
+      PARTS.forEach(function (p) {
+        if (on[p]) {
+          html.push('<span class="k">' + p.toUpperCase() + ':</span> ' + esc(field(p).value.trim()));
+        } else if (p === "task") {
+          html.push('<span class="c">' + esc(PRESETS[cur].weak) + '   # ← the unscaffolded prompt</span>');
+        }
+      });
+      outPre.innerHTML = html.join("\n\n");
+
+      var n = PARTS.filter(function (p) { return on[p]; }).length;
+      segs.forEach(function (s, j) {
+        s.style.background = j < n ? "#a6f2cc" : "rgba(47,50,52,.5)";
+      });
+      countEl.textContent = n + " / 5";
+      tokensEl.textContent = "≈ " + FM.siFormat(Math.max(1, Math.round(assembleText().length / 4)), 0);
+      var off = PARTS.filter(function (p) { return !on[p]; });
+      missingEl.textContent = off.length ? off.map(function (p) { return p.toUpperCase(); }).join(" · ") : "NOTHING — SHIP IT";
+    }
+
+    /* preset switching */
+    var presetBtns = root.querySelectorAll("[data-scf-preset]");
+    presetBtns.forEach(function (b) {
+      b.addEventListener("click", function () {
+        cur = parseInt(b.getAttribute("data-scf-preset"), 10);
+        presetBtns.forEach(function (x) { x.classList.toggle("on", x === b); });
+        fillPreset();
+      });
+    });
+
+    /* copy */
+    copyBtn.addEventListener("click", function () {
+      var text = assembleText();
+      function done() {
+        copyBtn.textContent = "COPIED ✓";
+        setTimeout(function () { copyBtn.textContent = "COPY PROMPT"; }, 1400);
+      }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done, function () { fallback(); });
+      } else {
+        fallback();
+      }
+      function fallback() {
+        var ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.cssText = "position:fixed;opacity:0;";
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand("copy"); done(); } catch (e) { /* clipboard unavailable */ }
+        document.body.removeChild(ta);
+      }
+    });
+
+    fillPreset();
+  })();
+
+  /* ============ INSTRUMENT P2.2 — BEFORE/AFTER GALLERY ============ */
+  (function () {
+    var root = document.getElementById("scf-gallery");
+    if (!root) return;
+
+    var G = [
+      {
+        tag: "SUMMARIZATION",
+        before: "summarize this report",
+        beforeOut: "A generic abstract of unpredictable length that mirrors the report's own emphasis — so the vendor's self-praise survives and the one number you needed (renewal cost vs. usage) is buried in paragraph four, if it appears at all.",
+        after: [
+          ["TASK", "Summarize the attached vendor report for an exec deciding whether to renew."],
+          ["CONTEXT", "Decision: renew or drop the contract by Friday. The exec has not read the report and will not."],
+          ["FORMAT", "5 bullets, ≤ 20 words each, decision-relevant facts first. Final bullet: what the report does NOT answer."],
+          ["CONSTRAINTS", "Only facts from the document. If usage or cost figures are missing, say so explicitly."]
+        ],
+        afterOut: "Five tight, decision-shaped bullets that lead with cost and usage, ignore the marketing prose, and end by flagging the missing churn figure — the gap that actually decides the renewal."
+      },
+      {
+        tag: "TEST WRITING",
+        before: "write tests for this function",
+        beforeOut: "Three happy-path pytest tests that re-encode the implementation's own assumptions (testing that the code does what the code does), plus an invented import or fixture that doesn't exist in your repo.",
+        after: [
+          ["ROLE", "You are a test engineer who assumes the implementation is guilty until proven otherwise."],
+          ["TASK", "Write edge-case and failure-mode tests for parse_duration() below."],
+          ["CONTEXT", "Python 3.12, pytest only. A production bug last month: negative values silently wrapped to positive."],
+          ["FORMAT", "One test per behavior, named test_<behavior>. Group: valid inputs, invalid inputs, boundary values."],
+          ["CONSTRAINTS", "Imports limited to stdlib + pytest. Do not test private helpers. Include the negative-value regression explicitly."]
+        ],
+        afterOut: "A boundary-hunting suite: zero, negatives (the named regression), overflow, malformed strings, locale edge cases — each test independent, correctly named, and runnable as pasted."
+      },
+      {
+        tag: "REWRITING",
+        before: "make this sound better",
+        beforeOut: "Longer, glossier, and de-personalized: adjectives multiply, the author's voice is replaced with press-release cadence ('We are delighted to announce...'), and at least one factual claim gets smoothed into vagueness.",
+        after: [
+          ["TASK", "Tighten the draft below into plain professional register."],
+          ["CONTEXT", "Audience: skeptical senior engineers who distrust polish. The first-person voice should survive."],
+          ["FORMAT", "Same paragraph count. Total length ≤ the original."],
+          ["CONSTRAINTS", "Keep every factual claim intact. No exclamation marks. When in doubt, cut rather than pad."]
+        ],
+        afterOut: "A genuinely shorter draft in the author's own voice: hedges trimmed, claims untouched, the engineer-repelling gloss never applied because the constraint block forbade its raw materials."
+      },
+      {
+        tag: "NAMING",
+        before: "give me names for my app",
+        beforeOut: "Ten interchangeable startup blends — Snapify, Datally, SchemaGo — with no awareness of your domain, your install path, or what's already taken.",
+        after: [
+          ["TASK", "Generate 12 name candidates for a CLI tool that snapshots database schemas."],
+          ["CONTEXT", "Audience: developers. It will be typed daily: brew install <name>. Tone: terse Unix lineage, not startup-brandable."],
+          ["FORMAT", "Table: name · rationale (≤ 10 words) · collision risk (known tool/package with that name, or 'none found')."],
+          ["CONSTRAINTS", "Lowercase, one word, ≤ 8 chars. Avoid 'db' and 'data' prefixes. Flag any name you are unsure is unclaimed rather than asserting it's free."]
+        ],
+        afterOut: "Twelve short, typeable candidates with reasoning and an honest collision column — including two flagged 'unsure', which is exactly the column you'd otherwise have to build yourself."
+      }
+    ];
+
+    var idx = 0;
+    var cards = document.getElementById("scf-g-cards");
+    var counter = document.getElementById("scf-g-count");
+    var prev = document.getElementById("scf-g-prev");
+    var next = document.getElementById("scf-g-next");
+
+    var MONO = "font-family:ui-monospace,Menlo,monospace;";
+    var LBL = MONO + "font-size:9.5px;letter-spacing:.16em;margin-bottom:8px;";
+
+    function card(borderColor, headColor, headText, promptHtml, outText) {
+      return '<div style="border:1px solid ' + borderColor + ';border-radius:4px;padding:14px;">' +
+        '<div style="' + LBL + 'color:' + headColor + ';">' + headText + '</div>' +
+        '<div style="' + MONO + 'font-size:11.5px;line-height:1.6;color:#e5e5e5;white-space:pre-wrap;">' + promptHtml + '</div>' +
+        '<div style="border-top:1px solid #2f3234;margin:12px 0 10px;"></div>' +
+        '<div style="' + LBL + 'color:#636363;">TYPICAL OUTPUT — ILLUSTRATIVE</div>' +
+        '<div style="font-size:12.5px;line-height:1.6;color:#9b9b9b;">' + esc(outText) + '</div>' +
+        '</div>';
+    }
+
+    function render() {
+      var g = G[idx];
+      counter.textContent = "PAIR " + (idx + 1) + " / " + G.length + " · " + g.tag;
+      var afterHtml = g.after.map(function (pair) {
+        return '<span style="color:#a6f2cc;">' + esc(pair[0]) + ':</span> ' + esc(pair[1]);
+      }).join("\n\n");
+      cards.innerHTML =
+        card("rgba(255,65,54,.35)", "#ff4136", "BEFORE — VAGUE", esc(g.before), g.beforeOut) +
+        card("rgba(166,242,204,.35)", "#a6f2cc", "AFTER — SCAFFOLDED", afterHtml, g.afterOut);
+    }
+
+    prev.addEventListener("click", function () { idx = (idx + G.length - 1) % G.length; render(); });
+    next.addEventListener("click", function () { idx = (idx + 1) % G.length; render(); });
+
+    render();
+  })();
+
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>05 · Clustering &amp; Dimensionality — AI Encyclopedia</title>
+<meta name="description" content="Learning without labels: k-means stepped one Lloyd iteration at a time, PCA as organized variance-hunting, and the road from compression to the embeddings that power modern AI." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css" />
+</head>
+<body>
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ VOL I / ML FOUNDATIONS / 05 / CLUSTERING &amp; DIMENSIONALITY</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="06-generalization.html">NEXT: GENERALIZATION →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">VOLUME I — FOUNDATIONS OF ML · CHAPTER 05 / 08</div>
+    <h1>Clustering &amp; Dimensionality</h1>
+    <p class="lede">Every method so far was handed the right answers. This chapter takes them away. With no labels, the model must find structure the data carries on its own — groups that belong together, directions that matter, coordinates worth keeping. The deeper idea outlasts both algorithms taught here: <strong>data can describe itself</strong>, and a model that compresses data well has, in a measurable sense, understood it. That idea, scaled up, is how every modern language model learns.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 22 MIN</b></span>
+      <span>BUILDS ON<b>CH 01 · 02 · 04</b></span>
+      <span>INSTRUMENTS<b>LLOYD STEPPER · VARIANCE HUNT</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">5.1</span>Taking the labels away</a>
+      <a href="#s2"><span class="n">5.2</span>k-means: Lloyd's loop</a>
+      <a href="#s3"><span class="n">5.3</span>What k-means cannot see</a>
+      <a href="#s4"><span class="n">5.4</span>PCA: variance hunting</a>
+      <a href="#s5"><span class="n">5.5</span>From compression to embeddings</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 5.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">5.1</span><h2>Taking the labels away</h2></div>
+        <p>Supervised learning runs on a luxury: someone already did the job correctly, two million times, and wrote the answers down. That luxury is expensive — labels cost human hours, expert hours, sometimes biopsy results — and it is scarce in exactly the places data is abundant. Server logs, transaction streams, sensor traces, the text of the internet: almost everything ever recorded arrives <em>unlabeled</em>. <strong>Unsupervised learning</strong> is the discipline of extracting structure from \(x\) alone, with no \(y\) anywhere in the problem.</p>
+        <p>What can structure mean, when nobody defines success for you? Three recurring answers, two of which this chapter builds from scratch:</p>
+        <table class="data">
+          <thead><tr><th>Task</th><th>The question it asks</th><th>Canonical method</th><th>You have already met it as…</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Clustering</strong></td><td>Which points belong together?</td><td class="hl">k-means (§5.2)</td><td>k-NN's neighborhoods (Ch 04), minus the labels</td></tr>
+            <tr><td><strong>Dimensionality reduction</strong></td><td>Which directions carry the signal?</td><td class="hl">PCA (§5.4)</td><td>feature scaling's smarter sibling (Ch 02)</td></tr>
+            <tr><td><strong>Density estimation</strong></td><td>What does typical look like — and what doesn't?</td><td class="m">histograms, mixtures, …</td><td>the distribution \(\mathcal{D}\) behind EQ M1.3</td></tr>
+          </tbody>
+        </table>
+        <p>The honest difficulty is not algorithmic — both algorithms below fit in a dozen lines. It is that <strong>without labels there is no ground truth to be scored against</strong>. A supervised model is wrong when it disagrees with \(y\); a clustering is "wrong" only relative to a purpose nobody encoded in the data. Every unsupervised method therefore optimizes a <em>proxy</em> — compactness, variance, reconstruction — and the practitioner's job is judging whether the proxy matches the purpose. Keep that skepticism switched on for the rest of the chapter; both instruments below are built to reward it.</p>
+        <p class="note"><strong>One taxonomy note before we start.</strong> The regime that ate the world is a hybrid: <em>self-supervised</em> learning manufactures labels out of the raw data itself — mask a word and predict it, crop an image and match it, take a prefix and predict the next token. The loss is supervised machinery (cross-entropy, Ch 03); the labels cost nothing, exactly like the methods here. Section 5.5 traces the line from this chapter to that one.</p>
+      </section>
+
+      <!-- ====================== 5.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">5.2</span><h2>k-means: Lloyd's loop</h2></div>
+        <p>The oldest serious answer to "which points belong together" is geometric: choose \(k\) cluster centers, assign every point to its nearest center, and call a clustering good when points sit close to their assigned centers. That sentence is already the objective — the unsupervised stand-in for a loss function, with no label anywhere in it:</p>
+
+        <div class="eq"><span class="eq-tag">EQ M5.1 — THE K-MEANS OBJECTIVE (INERTIA)</span>
+        $$ J\big(c_{1..n},\, \mu_{1..k}\big) \;=\; \sum_{i=1}^{n} \big\lVert x_i - \mu_{c_i} \big\rVert^{2}, \qquad c_i \in \{1, \dots, k\} $$
+        <div class="eq-note">\(\mu_j\) are the \(k\) <b>centroids</b>; \(c_i\) names the cluster point \(i\) is assigned to; \(J\) — called <b>inertia</b>, or within-cluster sum of squares — totals every point's squared distance to its own centroid. Minimizing \(J\) jointly over assignments <em>and</em> centroids is NP-hard even for \(k = 2\). Nobody minimizes it exactly; everybody uses the 1957 heuristic below.</div>
+        </div>
+
+        <p><strong>Lloyd's algorithm</strong> attacks \(J\) the way you would untangle any two-variable problem: freeze one variable, optimize the other, alternate. Both half-steps have closed forms, and both can only push \(J\) down:</p>
+
+        <div class="eq"><span class="eq-tag">EQ M5.2 — LLOYD'S TWO STEPS</span>
+        $$ \textbf{ASSIGN:}\;\; c_i \,\leftarrow\, \arg\min_{j} \,\lVert x_i - \mu_j \rVert^{2} \qquad\qquad \textbf{UPDATE:}\;\; \mu_j \,\leftarrow\, \frac{1}{\lvert S_j \rvert} \sum_{i \in S_j} x_i $$
+        <div class="eq-note">ASSIGN is optimal for the current centroids by definition of "nearest"; UPDATE is optimal for the current assignments because <b>the mean is the point minimizing total squared distance to a set</b> — the same fact that made squared error pick the average in Chapter 01. Each half-step lowers \(J\) or leaves it fixed, \(J \ge 0\), and only finitely many assignments exist, so the loop <b>must converge</b> — in remarkably few sweeps, in practice. The fine print: it converges to a <em>local</em> minimum that depends entirely on where the centroids started.</div>
+        </div>
+
+        <p>Run the loop by hand. The instrument seeds three well-separated blobs, drops \(k\) centroids on random data points, and gives you the two half-steps as buttons. Watch \(J\) after every press — it never rises, which is the convergence proof happening in front of you.</p>
+
+        <div class="widget" id="us-km" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT M5.1 — LLOYD STEPPER</span><span class="w-sub">180 SEEDED POINTS · EQ M5.2 BY HAND · ✕ = CENTROID</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>CLUSTERS k <output id="us-km-k-out">3</output></label><input type="range" id="us-km-k" min="2" max="6" step="1" value="3"/></div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>CONTROL</label>
+                <div class="seg-row">
+                  <button class="w-btn" id="us-km-step">STEP</button>
+                  <button class="w-btn" id="us-km-auto">AUTO ▶</button>
+                  <button class="w-btn ghost" id="us-km-reinit">RE-INIT ↻</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="us-km-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">NEXT HALF-STEP</div><div class="r-value" id="us-km-phase" style="font-size:14px;">ASSIGN</div></div>
+              <div class="readout"><div class="r-label">FULL SWEEPS</div><div class="r-value" id="us-km-iter">0</div></div>
+              <div class="readout acc"><div class="r-label">INERTIA J — EQ M5.1</div><div class="r-value" id="us-km-inertia">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Step until the readout says CONVERGED — with k = 3 it takes only a handful of sweeps, and most starts land at J ≈ 47, the (lucky) global optimum. Now press RE-INIT a few times and re-run: some draws put two centroids in the same blob, and Lloyd converges — fully, honestly converged — at J ≈ 480, one centroid straddling two blobs forever. <b>Convergence is not correctness.</b> Then sweep k: at k = 2 a blob pair is forcibly merged; at k = 6 real blobs get carved into fragments — and J still goes down, because adding centroids always lowers inertia. J can compare runs at the same k; it cannot choose k for you (§5.3).</div>
+        </div>
+
+        <p>The same loop in numpy — eight lines of algorithm, fully vectorized. The printed inertia drops hard, then freezes: that plateau <em>is</em> convergence (no assignment changed, so nothing can move again).</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false">import numpy as np
+rng = np.random.default_rng(5)
+
+# three blobs, then k-means from scratch — Lloyd's two steps, verbatim
+centers = np.array([[-2.0, -1.0], [2.0, -1.2], [0.2, 1.8]])
+X = np.vstack([rng.normal(c, 0.55, (60, 2)) for c in centers])
+
+k = 3
+mu = X[rng.choice(len(X), k, replace=False)]          # init: k random points
+for it in range(6):
+    d = ((X[:, None, :] - mu[None, :, :]) ** 2).sum(-1)   # n x k distances
+    c = d.argmin(1)                                   # ASSIGN  (EQ M5.2)
+    J = d[np.arange(len(X)), c].sum()
+    mu = np.array([X[c == j].mean(0) for j in range(k)])  # UPDATE (EQ M5.2)
+    print(f"sweep {it}:  inertia J = {J:8.2f}")
+
+print("\nrecovered centroids (true: -2,-1 / 2,-1.2 / 0.2,1.8):")
+print(np.round(mu, 2))
+plot_scatter(X[:, 0], X[:, 1], c)
+</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — try k = 5, or rng seed 12 for a different init</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <p class="note"><strong>Production reality, in three habits.</strong> (1) Never one run: restart from many random inits and keep the lowest \(J\) — or use <strong>k-means++</strong> seeding (spread the initial centroids out proportionally to squared distance), which is the default in every serious library and carries an \(O(\log k)\) approximation guarantee. (2) Scale features first — squared Euclidean distance inherits every pathology Chapter 02 warned about, and an unscaled column silently owns the clustering. (3) At web scale, use minibatch k-means: same two steps, estimated on samples, for the same reason SGD exists.</p>
+      </section>
+
+      <!-- ====================== 5.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">5.3</span><h2>What k-means cannot see</h2></div>
+        <p>k-means is fast, simple, and everywhere — and it is opinionated in ways the output never confesses. The objective is built from squared Euclidean distance to a single center, so the method implicitly assumes every cluster is a <strong>compact, roughly spherical, roughly equal-sized ball</strong>. Hand it anything else and it will still return \(k\) tidy clusters, with total confidence, and they will be wrong:</p>
+        <table class="data">
+          <thead><tr><th>Baked-in assumption</th><th>How real data breaks it</th><th>What to reach for</th></tr></thead>
+          <tbody>
+            <tr><td>Clusters are spherical</td><td>elongated or curved groups — Chapter 04's two moons get sliced crosswise, not traced</td><td class="m">spectral clustering; DBSCAN</td></tr>
+            <tr><td>Similar size &amp; density</td><td>one dense core next to a sparse halo: the boundary lands where the <em>variances</em> balance, not where humans see it</td><td class="m">Gaussian mixtures (EM) — k-means with ellipses and soft assignments</td></tr>
+            <tr><td>Every point belongs somewhere</td><td>outliers drag centroids; a single rogue point can claim a centroid at large k</td><td class="m">DBSCAN (has a noise label); trim or robustify first</td></tr>
+            <tr><td>k is known</td><td>it almost never is</td><td class="m">elbow on J, silhouette score — both heuristics, neither decisive</td></tr>
+          </tbody>
+        </table>
+        <p>On choosing \(k\): inertia alone cannot do it — you proved in Instrument M5.1 that \(J\) falls monotonically as \(k\) grows, all the way to the absurd optimum of one centroid per point (\(J = 0\), the lookup table of Chapter 01 wearing a new disguise). The <strong>elbow method</strong> plots \(J\) against \(k\) and looks for the bend where added centroids stop paying; the <strong>silhouette score</strong> compares each point's distance to its own cluster against the nearest foreign one. Both are judgment calls dressed as numbers. When a downstream task exists — clusters feeding a classifier, segments feeding a campaign — let <em>its</em> metric choose \(k\); that converts an unanswerable unsupervised question back into a measurable supervised one, and it is the most honest trick in this chapter.</p>
+      </section>
+
+      <!-- ====================== 5.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">5.4</span><h2>PCA: organized variance-hunting</h2></div>
+        <p>Clustering compresses \(n\) points into \(k\) prototypes. The other great compression runs crosswise: keep every point, but shrink the number of <em>coordinates</em> used to describe it. Real datasets are wildly redundant — square footage and room count move together; pixel 2,001 mostly agrees with pixel 2,002. Redundancy means the data hugs a lower-dimensional sheet inside its nominal space, and <strong>principal component analysis</strong> finds the best flat sheet by a beautifully blunt criterion: <em>keep the directions along which the data varies most</em>. Center the data (always — PCA is blind without it), then ask for the unit direction that maximizes the variance of the projections:</p>
+
+        <div class="eq"><span class="eq-tag">EQ M5.3 — PCA AS VARIANCE MAXIMIZATION</span>
+        $$ u_1 \;=\; \arg\max_{\lVert u \rVert = 1} \; u^{\top} \Sigma\, u, \qquad \Sigma \;=\; \frac{1}{n} \sum_{i=1}^{n} \big(x_i - \bar{x}\big)\big(x_i - \bar{x}\big)^{\top} $$
+        <div class="eq-note">\(\Sigma\) is the covariance matrix; \(u^\top \Sigma u\) is exactly the variance of the data projected onto \(u\). The maximizer is the <b>top eigenvector of \(\Sigma\)</b>, and the variance it captures is its eigenvalue \(\lambda_1\); the second component is the best direction orthogonal to the first, and so on down the spectrum. The twin reading matters just as much: by Pythagoras, variance kept + variance lost = total, so <b>the direction that captures the most variance is the same direction that minimizes squared perpendicular reconstruction error</b>. Maximal information and minimal distortion are one criterion, not two.</div>
+        </div>
+
+        <p>Hunt the direction yourself before the eigensolver does. Below is a centered, correlated cloud; the slider aims a candidate axis, the red stalks are what projection onto that axis throws away, and the lower chart sweeps EQ M5.3's objective across every angle:</p>
+
+        <div class="widget" id="us-pca" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT M5.2 — VARIANCE HUNT</span><span class="w-sub">200 SEEDED POINTS · u<sup>T</sup>Σu LIVE · RED = WHAT PROJECTION DISCARDS</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>PROJECTION ANGLE θ <output id="us-pca-angle-out">0°</output></label><input type="range" id="us-pca-angle" min="0" max="180" step="0.5" value="0"/></div>
+            </div>
+            <canvas class="w-canvas" id="us-pca-canvas" height="300"></canvas>
+            <div style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.16em;color:#636363;margin:14px 0 6px;">VARIANCE CAPTURED vs ANGLE — EQ M5.3 SWEPT OVER ALL θ</div>
+            <canvas class="w-canvas" id="us-pca-curve" height="150"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">VARIANCE CAPTURED u<sup>T</sup>Σu</div><div class="r-value" id="us-pca-var">—</div></div>
+              <div class="readout acc"><div class="r-label">SHARE OF TOTAL</div><div class="r-value" id="us-pca-pct">—</div></div>
+              <div class="readout"><div class="r-label">DISCARDED (RED STALKS)</div><div class="r-value" id="us-pca-lost">—</div></div>
+              <div class="readout"><div class="r-label">PC1 — EIGENVECTOR ANSWER</div><div class="r-value" id="us-pca-best">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Drag θ and watch the two readouts trade against each other — captured + discarded is constant, the Pythagoras identity of EQ M5.3. At θ = 0° (plain "keep the x-axis") you keep 66% of the variance; the dashed mint axis, at 32.5°, keeps 87.9% — and no angle does better, because that is the top eigenvector of this sample's Σ. One honest wrinkle: the cloud was <em>generated</em> along 34°. The 1.5° gap is sampling noise — PCA recovers the truth of your sample, which is never quite the truth of the world (Chapter 06 is about exactly this gap).</div>
+        </div>
+
+        <p>How many components to keep? The eigenvalue spectrum is the budget sheet — and the dropped eigenvalues are not vaguely "lost information", they are <em>exactly</em> the reconstruction error:</p>
+
+        <div class="eq"><span class="eq-tag">EQ M5.4 — THE BUDGET SHEET</span>
+        $$ \text{variance kept by } d \text{ of } D \text{ components} \;=\; \frac{\sum_{j=1}^{d} \lambda_j}{\sum_{j=1}^{D} \lambda_j}, \qquad \frac{1}{n}\sum_{i=1}^{n} \big\lVert x_i - \hat{x}_i \big\rVert^{2} \;=\; \sum_{j=d+1}^{D} \lambda_j $$
+        <div class="eq-note">\(\hat{x}_i\) is the reconstruction from the kept \(d\) components. The right-hand identity is the Eckart–Young theorem in its friendliest costume: <b>among all linear projections to \(d\) dimensions, PCA's is the one with the smallest possible reconstruction error, and that error equals the sum of the eigenvalues you dropped</b>. Practitioners keep enough components for 90–99% of variance, or cut where the spectrum visibly cliffs.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false">import numpy as np
+rng = np.random.default_rng(11)
+
+# a correlated 2-D cloud: most variance lives along one hidden direction
+n = 300
+t = rng.normal(0, 1.9, n)                 # signal along the hidden axis
+s = rng.normal(0, 0.6, n)                 # noise across it
+ang = np.deg2rad(34)
+X = np.column_stack([t*np.cos(ang) - s*np.sin(ang),
+                     t*np.sin(ang) + s*np.cos(ang)])
+
+Xc = X - X.mean(0)                        # center first — always
+C = Xc.T @ Xc / n                         # covariance matrix (EQ M5.3)
+lam, U = np.linalg.eigh(C)                # eigh: ascending order...
+lam, U = lam[::-1], U[:, ::-1]            # ...so flip to largest-first
+
+print("eigenvalues          :", np.round(lam, 3))
+print("explained variance % :", np.round(100*lam/lam.sum(), 1))
+print("PC1 angle (true 34deg):", round(np.degrees(np.arctan2(U[1,0], U[0,0])) % 180, 1))
+
+Z  = Xc @ U[:, :1]                        # project to 1-D: the embedding
+Xr = Z @ U[:, :1].T                       # reconstruct from 1 component
+print("reconstruction MSE   :", round(float(((Xc - Xr)**2).mean()), 4))
+print("dropped eigenvalue/2 :", round(lam[1]/2, 4), "  <- EQ M5.4, per entry")
+</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">shrink the noise to 0.1 — watch PC1 snap to 34° and the MSE collapse</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="callout warn">
+          <span class="co-icon">FINE PRINT</span>
+          <p><strong>Three ways PCA lies to the unwary.</strong> (1) It is <em>scale-covariant</em>: measure one feature in millimeters instead of meters and it manufactures a fake principal direction — standardize first unless the units are genuinely shared. (2) <strong>Variance is not importance.</strong> PCA never saw your labels; the discriminating signal for a downstream task can sit in a low-variance direction PCA throws away first. (3) It is strictly linear: a sheet, never a curve. Data on Chapter 04's moons or a spiral has structure no single flat projection can keep — the cue for everything in the next section.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 5.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">5.5</span><h2>From compression to embeddings</h2></div>
+        <p>Look again at what the PCA cell printed: it took each point and re-expressed it as coordinates \(z\) in a learned system where the axes are ordered by how much they matter. That object has a modern name — an <strong>embedding</strong>: a compact vector representation in which <em>geometry encodes meaning</em>, so that nearby vectors are similar things. PCA is the simplest embedding machine ever built, and the lineage from here to the frontier is unusually direct:</p>
+        <ul>
+          <li><strong>Nonlinear map-making: t-SNE and UMAP.</strong> For looking at high-dimensional data, these bend the sheet, preserving local neighborhoods at the cost of global honesty. Use them for eyes, never for arithmetic: cluster sizes, inter-cluster distances, and density in such plots are artifacts of the optimizer as much as of the data, and both methods will draw confident-looking islands in pure noise.</li>
+          <li><strong>Autoencoders.</strong> Replace PCA's linear projection with Chapter 07's networks: an encoder squeezes \(x\) into a low-dimensional bottleneck, a decoder reconstructs, and the loss is reconstruction error — EQ M5.4's right-hand side, made trainable by gradient descent. A linear autoencoder provably recovers the PCA subspace; nonlinear ones learn curved sheets PCA cannot.</li>
+          <li><strong>Self-supervision: data labels itself.</strong> Delete part of the data and train a supervised model to restore it — next-token prediction is precisely this (Vol II · Ch 04). The "labels" are free, the scale is the internet, and the representations that fall out are the embeddings inside every LLM.</li>
+          <li><strong>Embeddings meet Chapter 04.</strong> Today's retrieval stack is this chapter's two ideas reassembled: a learned embedding (this section) plus nearest-neighbor search over it (Ch 04's k-NN) is vector search — the machinery under RAG and semantic search. Even the curse of dimensionality resolves on cue: embeddings work <em>because</em> real data concentrates near low-dimensional structure, which is the bet PCA placed first.</li>
+        </ul>
+        <p>The through-line deserves saying plainly. k-means compresses a dataset into \(k\) prototypes; PCA compresses it into \(d\) directions; an autoencoder into a bottleneck; a language model into weights that can regenerate the statistics of its corpus. In every case the test is the same — <em>how much of the data can the summary give back?</em> — and in every case better compression has meant something uncomfortably like better understanding. That is not a metaphor the field decorates itself with; it is the actual objective the largest training runs in history are minimizing.</p>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>Your toolbox is now complete enough to be dangerous</strong> — supervised and unsupervised, parametric and memory-based. Chapter 06 supplies the discipline that decides whether any of it survives contact with new data: bias against variance, the capacity U-curve and its modern double-descent twist, regularization, and the validation hygiene that separates a result from an artifact.</p>
+        </div>
+      </section>
+
+      <nav class="pager">
+        <a href="04-trees-and-neighbors.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">04</span> Trees, Forests &amp; Neighbors</div></a>
+        <a class="next" href="06-generalization.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">06</span> Generalization: Bias, Variance &amp; Regularization</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — VOL I · CH 05</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/glossary.js"></script>
+<script src="../assets/js/shared.js"></script>
+<script src="../assets/js/pyrunner.js"></script>
+<script>
+/* chapter instruments — single IIFE, no globals */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+
+  var RENDERS = [];
+
+  /* ============ INSTRUMENT M5.1 — LLOYD STEPPER ============ */
+  (function lloydStepper() {
+    var root = document.getElementById("us-km");
+    if (!root) return;
+    var canvas = document.getElementById("us-km-canvas");
+    var kIn = document.getElementById("us-km-k"), kOut = document.getElementById("us-km-k-out");
+    var stepBtn = document.getElementById("us-km-step");
+    var autoBtn = document.getElementById("us-km-auto");
+    var reinitBtn = document.getElementById("us-km-reinit");
+    var phaseEl = document.getElementById("us-km-phase");
+    var iterEl = document.getElementById("us-km-iter");
+    var inertiaEl = document.getElementById("us-km-inertia");
+
+    /* seeded data: three tight blobs (mulberry32 seed 505, Box–Muller) */
+    var rng = FM.mulberry32(505);
+    function gauss() {
+      var u = Math.max(rng(), 1e-12), v = rng();
+      return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+    }
+    var PTS = [], C0 = [[-2.1, -1.3], [2.1, -1.4], [0.0, 1.9]], b, i;
+    for (b = 0; b < 3; b++) {
+      for (i = 0; i < 60; i++) PTS.push([C0[b][0] + 0.38 * gauss(), C0[b][1] + 0.38 * gauss()]);
+    }
+
+    var XR0 = -3.3, XR1 = 3.5, YR0 = -2.8, YR1 = 3.3, CH = 320;
+    var COLS = [FM.C.MINT, FM.C.BLUE, FM.C.RED, FM.C.SEC, FM.C.DEEP, FM.C.BRIGHT];
+
+    var K, cents, assign, phase, sweeps, converged, seedBump = 0, timer = null;
+
+    function nearest(p) {
+      var best = 0, bd = Infinity, j;
+      for (j = 0; j < K; j++) {
+        var dx = p[0] - cents[j][0], dy = p[1] - cents[j][1], d = dx * dx + dy * dy;
+        if (d < bd) { bd = d; best = j; }
+      }
+      return best;
+    }
+    function inertia() {
+      var s = 0, i2;
+      for (i2 = 0; i2 < PTS.length; i2++) {
+        var j = assign[i2];
+        var dx = PTS[i2][0] - cents[j][0], dy = PTS[i2][1] - cents[j][1];
+        s += dx * dx + dy * dy;
+      }
+      return s;
+    }
+    function stopAuto() {
+      if (timer) { clearInterval(timer); timer = null; autoBtn.textContent = "AUTO ▶"; }
+    }
+    function init() {
+      stopAuto();
+      K = parseInt(kIn.value, 10);
+      kOut.textContent = String(K);
+      var r2 = FM.mulberry32(909 + seedBump * 131 + K * 7);
+      var used = {}, idx;
+      cents = [];
+      while (cents.length < K) {
+        idx = Math.floor(r2() * PTS.length);
+        if (used[idx]) continue;
+        used[idx] = 1;
+        cents.push([PTS[idx][0], PTS[idx][1]]);
+      }
+      assign = null; phase = "ASSIGN"; sweeps = 0; converged = false;
+      render();
+    }
+    function step() {
+      if (converged) { stopAuto(); return; }
+      if (phase === "ASSIGN") {
+        var na = [], changed = false, i2;
+        for (i2 = 0; i2 < PTS.length; i2++) {
+          na.push(nearest(PTS[i2]));
+          if (!assign || na[i2] !== assign[i2]) changed = true;
+        }
+        var hadAssign = !!assign;
+        assign = na;
+        if (hadAssign && !changed) { converged = true; stopAuto(); }
+        else phase = "UPDATE";
+      } else {
+        var sums = [], counts = [], j, i3;
+        for (j = 0; j < K; j++) { sums.push([0, 0]); counts.push(0); }
+        for (i3 = 0; i3 < PTS.length; i3++) {
+          sums[assign[i3]][0] += PTS[i3][0];
+          sums[assign[i3]][1] += PTS[i3][1];
+          counts[assign[i3]]++;
+        }
+        for (j = 0; j < K; j++) {
+          if (counts[j] > 0) cents[j] = [sums[j][0] / counts[j], sums[j][1] / counts[j]];
+        }
+        sweeps++;
+        phase = "ASSIGN";
+      }
+      render();
+    }
+
+    function render() {
+      var sc = FM.setupCanvas(canvas, CH), ctx = sc.ctx, W = sc.w, i2, j;
+      function PX(x) { return (x - XR0) / (XR1 - XR0) * W; }
+      function PY(y) { return (1 - (y - YR0) / (YR1 - YR0)) * CH; }
+      ctx.clearRect(0, 0, W, CH);
+      ctx.strokeStyle = FM.C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(0.5, 0.5, W - 1, CH - 1);
+
+      /* assignment tethers (only after first ASSIGN) — faint, so structure reads */
+      if (assign) {
+        ctx.lineWidth = 1; ctx.globalAlpha = 0.13;
+        for (i2 = 0; i2 < PTS.length; i2++) {
+          ctx.strokeStyle = COLS[assign[i2] % COLS.length];
+          ctx.beginPath();
+          ctx.moveTo(PX(PTS[i2][0]), PY(PTS[i2][1]));
+          ctx.lineTo(PX(cents[assign[i2]][0]), PY(cents[assign[i2]][1]));
+          ctx.stroke();
+        }
+        ctx.globalAlpha = 1;
+      }
+      /* points */
+      for (i2 = 0; i2 < PTS.length; i2++) {
+        ctx.fillStyle = assign ? COLS[assign[i2] % COLS.length] : FM.C.MUT;
+        ctx.globalAlpha = 0.9;
+        ctx.beginPath();
+        ctx.arc(PX(PTS[i2][0]), PY(PTS[i2][1]), 3, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+      /* centroids: ✕ in cluster color with white halo */
+      for (j = 0; j < K; j++) {
+        var cx = PX(cents[j][0]), cy = PY(cents[j][1]);
+        ctx.strokeStyle = FM.C.BRIGHT; ctx.lineWidth = 4.5;
+        ctx.beginPath();
+        ctx.moveTo(cx - 6, cy - 6); ctx.lineTo(cx + 6, cy + 6);
+        ctx.moveTo(cx + 6, cy - 6); ctx.lineTo(cx - 6, cy + 6);
+        ctx.stroke();
+        ctx.strokeStyle = COLS[j % COLS.length]; ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(cx - 6, cy - 6); ctx.lineTo(cx + 6, cy + 6);
+        ctx.moveTo(cx + 6, cy - 6); ctx.lineTo(cx - 6, cy + 6);
+        ctx.stroke();
+      }
+      ctx.font = FM.C.MONO; ctx.fillStyle = FM.C.MUT; ctx.textAlign = "left";
+      ctx.fillText(assign ? "COLOR = CURRENT ASSIGNMENT" : "GREY = NOT YET ASSIGNED — PRESS STEP", 10, 16);
+
+      phaseEl.textContent = converged ? "CONVERGED ✓" : phase;
+      phaseEl.style.color = converged ? FM.C.MINT : "";
+      iterEl.textContent = String(sweeps);
+      inertiaEl.textContent = assign ? inertia().toFixed(1) : "—";
+    }
+
+    stepBtn.addEventListener("click", function () { stopAuto(); step(); });
+    autoBtn.addEventListener("click", function () {
+      if (timer) { stopAuto(); return; }
+      if (converged) return;
+      autoBtn.textContent = "PAUSE ❚❚";
+      timer = setInterval(step, 480);
+    });
+    reinitBtn.addEventListener("click", function () { seedBump++; init(); });
+    kIn.addEventListener("input", init);
+
+    RENDERS.push(render);
+    init();
+  })();
+
+  /* ============ INSTRUMENT M5.2 — VARIANCE HUNT ============ */
+  (function varianceHunt() {
+    var root = document.getElementById("us-pca");
+    if (!root) return;
+    var cv = document.getElementById("us-pca-canvas");
+    var curveCv = document.getElementById("us-pca-curve");
+    var angIn = document.getElementById("us-pca-angle"), angOut = document.getElementById("us-pca-angle-out");
+    var varEl = document.getElementById("us-pca-var");
+    var pctEl = document.getElementById("us-pca-pct");
+    var lostEl = document.getElementById("us-pca-lost");
+    var bestEl = document.getElementById("us-pca-best");
+
+    /* seeded cloud: signal at 34°, noise across (mulberry32 seed 2026) */
+    var rng = FM.mulberry32(2026);
+    function gauss() {
+      var u = Math.max(rng(), 1e-12), v = rng();
+      return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+    }
+    var N = 200, RAW = [], TH = 34 * Math.PI / 180, i;
+    for (i = 0; i < N; i++) {
+      var t = 1.9 * gauss(), s = 0.62 * gauss();
+      RAW.push([t * Math.cos(TH) - s * Math.sin(TH), t * Math.sin(TH) + s * Math.cos(TH)]);
+    }
+    /* center (PCA's prerequisite — done once, honestly) */
+    var mx = 0, my = 0;
+    for (i = 0; i < N; i++) { mx += RAW[i][0]; my += RAW[i][1]; }
+    mx /= N; my /= N;
+    var P = RAW.map(function (p) { return [p[0] - mx, p[1] - my]; });
+    /* covariance */
+    var sxx = 0, syy = 0, sxy = 0;
+    for (i = 0; i < N; i++) { sxx += P[i][0] * P[i][0]; syy += P[i][1] * P[i][1]; sxy += P[i][0] * P[i][1]; }
+    sxx /= N; syy /= N; sxy /= N;
+    var TOTAL = sxx + syy;
+    var PC1 = 0.5 * Math.atan2(2 * sxy, sxx - syy);          /* top eigenvector angle */
+    var PC1DEG = ((PC1 * 180 / Math.PI) + 180) % 180;
+    function varAlong(th) {
+      var c = Math.cos(th), s2 = Math.sin(th);
+      return c * c * sxx + 2 * c * s2 * sxy + s2 * s2 * syy;
+    }
+
+    bestEl.textContent = PC1DEG.toFixed(1) + "°";
+
+    function drawScatter(theta) {
+      var CHh = 300;
+      var sc = FM.setupCanvas(cv, CHh), ctx = sc.ctx, W = sc.w;
+      ctx.clearRect(0, 0, W, CHh);
+      ctx.strokeStyle = FM.C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(0.5, 0.5, W - 1, CHh - 1);
+      /* isotropic mapping so perpendiculars LOOK perpendicular */
+      var scale = Math.min(W / 10.2, CHh / 8.8), cx = W / 2, cy = CHh / 2;
+      function PX(x) { return cx + x * scale; }
+      function PY(y) { return cy - y * scale; }
+
+      var ux = Math.cos(theta), uy = Math.sin(theta), L = 8;
+      ctx.save();
+      ctx.beginPath(); ctx.rect(1, 1, W - 2, CHh - 2); ctx.clip();
+
+      /* PC1 ghost axis (dashed mint) */
+      ctx.setLineDash([5, 4]); ctx.strokeStyle = "rgba(166,242,204,0.55)"; ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(PX(-L * Math.cos(PC1)), PY(-L * Math.sin(PC1)));
+      ctx.lineTo(PX(L * Math.cos(PC1)), PY(L * Math.sin(PC1)));
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.font = FM.C.MONO; ctx.fillStyle = FM.C.MINT; ctx.textAlign = "left";
+      ctx.fillText("PC1", PX(3.4 * Math.cos(PC1)) + 6, PY(3.4 * Math.sin(PC1)) - 6);
+
+      /* residual stalks: point → its projection onto u */
+      ctx.strokeStyle = "rgba(255,65,54,0.30)"; ctx.lineWidth = 1;
+      for (var k = 0; k < N; k++) {
+        var d = P[k][0] * ux + P[k][1] * uy;
+        ctx.beginPath();
+        ctx.moveTo(PX(P[k][0]), PY(P[k][1]));
+        ctx.lineTo(PX(d * ux), PY(d * uy));
+        ctx.stroke();
+      }
+      /* candidate axis (white) */
+      ctx.strokeStyle = FM.C.BRIGHT; ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(PX(-L * ux), PY(-L * uy));
+      ctx.lineTo(PX(L * ux), PY(L * uy));
+      ctx.stroke();
+      /* points + their shadows on the axis */
+      ctx.fillStyle = "rgba(43,89,69,0.95)";
+      for (k = 0; k < N; k++) {
+        var d2 = P[k][0] * ux + P[k][1] * uy;
+        ctx.beginPath(); ctx.arc(PX(d2 * ux), PY(d2 * uy), 1.6, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.fillStyle = FM.C.MINT; ctx.globalAlpha = 0.85;
+      for (k = 0; k < N; k++) {
+        ctx.beginPath(); ctx.arc(PX(P[k][0]), PY(P[k][1]), 2.4, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+      ctx.restore();
+      ctx.fillStyle = FM.C.MUT;
+      ctx.fillText("CENTERED CLOUD · WHITE = YOUR AXIS u · DEEP-GREEN = PROJECTIONS", 10, 16);
+    }
+
+    function drawCurve(theta) {
+      var CHh = 150;
+      var sc = FM.setupCanvas(curveCv, CHh), ctx = sc.ctx, W = sc.w;
+      ctx.clearRect(0, 0, W, CHh);
+      var padL = 44, padR = 14, padT = 12, padB = 26;
+      var pw = W - padL - padR, ph = CHh - padT - padB;
+      function X(deg) { return padL + deg / 180 * pw; }
+      function Y(frac) { return padT + (1 - frac) * ph; }
+      ctx.strokeStyle = FM.C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(padL, padT, pw, ph);
+      ctx.font = FM.C.MONO; ctx.fillStyle = FM.C.MUT;
+      ctx.textAlign = "center";
+      [0, 45, 90, 135, 180].forEach(function (d) { ctx.fillText(d + "°", X(d), padT + ph + 16); });
+      ctx.textAlign = "right";
+      [0, 0.5, 1].forEach(function (f) { ctx.fillText(Math.round(f * 100) + "%", padL - 6, Y(f) + 3); });
+      /* PC1 marker */
+      ctx.setLineDash([4, 4]); ctx.strokeStyle = "rgba(166,242,204,0.5)";
+      ctx.beginPath(); ctx.moveTo(X(PC1DEG), padT); ctx.lineTo(X(PC1DEG), padT + ph); ctx.stroke();
+      ctx.setLineDash([]);
+      /* current angle marker */
+      ctx.strokeStyle = "rgba(255,255,255,0.3)";
+      ctx.beginPath(); ctx.moveTo(X(theta * 180 / Math.PI), padT); ctx.lineTo(X(theta * 180 / Math.PI), padT + ph); ctx.stroke();
+      /* the objective swept over all angles */
+      ctx.strokeStyle = FM.C.BLUE; ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      for (var d = 0; d <= 180; d++) {
+        var f = varAlong(d * Math.PI / 180) / TOTAL;
+        if (d === 0) ctx.moveTo(X(d), Y(f)); else ctx.lineTo(X(d), Y(f));
+      }
+      ctx.stroke();
+      /* current operating point */
+      var fc = varAlong(theta) / TOTAL;
+      ctx.fillStyle = FM.C.BRIGHT;
+      ctx.beginPath(); ctx.arc(X(theta * 180 / Math.PI), Y(fc), 3.2, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = FM.C.MINT; ctx.textAlign = "center";
+      ctx.fillText("MAX @ PC1", X(PC1DEG), padT - 2 + 10);
+    }
+
+    function render() {
+      var deg = parseFloat(angIn.value);
+      var theta = deg * Math.PI / 180;
+      angOut.textContent = deg.toFixed(1).replace(/\.0$/, "") + "°";
+      drawScatter(theta);
+      drawCurve(theta);
+      var v = varAlong(theta);
+      varEl.textContent = v.toFixed(3);
+      pctEl.textContent = (100 * v / TOTAL).toFixed(1) + "%";
+      lostEl.textContent = (100 * (TOTAL - v) / TOTAL).toFixed(1) + "%";
+    }
+
+    angIn.addEventListener("input", render);
+    RENDERS.push(render);
+    render();
+  })();
+
+  /* ---------- re-render on resize (debounced) ---------- */
+  var rsT = null;
+  window.addEventListener("resize", function () {
+    if (rsT) clearTimeout(rsT);
+    rsT = setTimeout(function () {
+      for (var i = 0; i < RENDERS.length; i++) RENDERS[i]();
+    }, 150);
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>10 · Diffusion — LLM Field Manual</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css" />
+</head>
+<body>
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ VOL II / 10 / DIFFUSION</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="capstone.html">NEXT: CAPSTONE →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">CHAPTER 10 / 10</div>
+    <h1>Diffusion</h1>
+    <p class="lede">The second great family of generative models works nothing like next-token prediction: <strong>destroy data with noise, then learn to walk the destruction backwards</strong>. Diffusion owns images, audio and video; it powers every multimodal model's output side; and in masked form it is mounting the first credible challenge to autoregressive text generation itself.</p>
+    <div class="ch-meta">
+      <span>READING TIME<b>≈ 25 MIN</b></span>
+      <span>BUILDS ON<b>CH 01, 09</b></span>
+      <span>INSTRUMENTS<b>REVERSE-DIFFUSION SANDBOX · MASKED dLLM</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">10.1</span>The forward process</a>
+      <a href="#s2"><span class="n">10.2</span>Learning to reverse</a>
+      <a href="#s3"><span class="n">10.3</span>Sampling &amp; guidance</a>
+      <a href="#s4"><span class="n">10.4</span>Latent &amp; flow matching</a>
+      <a href="#s5"><span class="n">10.5</span>Text diffusion</a>
+      <a href="#s6"><span class="n">10.6</span>Diffusion × LLMs</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 10.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">10.1</span><h2>The forward process: scheduled destruction</h2></div>
+        <p>Take a data point \(x_0\) — an image, an audio clip, a latent — and corrupt it over \(T\) steps with small additions of Gaussian noise. Each step is trivial; the composition has a closed form, so any noise level is reachable in one jump:</p>
+
+        <div class="eq"><span class="eq-tag">EQ 10.1 — FORWARD (NOISING) PROCESS</span>
+        $$ q(x_t \mid x_{t-1}) = \mathcal{N}\!\big(\sqrt{1-\beta_t}\, x_{t-1},\; \beta_t I\big), \qquad q(x_t \mid x_0) = \mathcal{N}\!\big(\sqrt{\bar\alpha_t}\, x_0,\; (1-\bar\alpha_t)\, I\big) $$
+        <div class="eq-note">\(\beta_t\) is the noise schedule; \(\bar\alpha_t = \prod_{s \le t}(1 - \beta_s)\) decays from 1 to ≈0. Equivalently: \(x_t = \sqrt{\bar\alpha_t}\, x_0 + \sqrt{1-\bar\alpha_t}\, \varepsilon\) with \(\varepsilon \sim \mathcal{N}(0, I)\). At \(t = T\) every dataset becomes the same boring isotropic Gaussian — which is the point: we know how to sample <em>that</em>.</div>
+        </div>
+
+        <p>Drag the slider below to run EQ 10.1 on a real 2-D dataset — six Gaussian clusters arranged in a ring — and watch structure dissolve:</p>
+
+        <div class="widget" id="diff-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT 10.1 — DIFFUSION SANDBOX</span><span class="w-sub">REAL REVERSE DIFFUSION · ANALYTIC SCORE</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl" style="flex:2;">
+                <label>FORWARD NOISE LEVEL <output id="diff-t-out">t = 0.00</output></label>
+                <input type="range" id="diff-t" min="0" max="1" step="0.01" value="0"/>
+              </div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>&nbsp;</label>
+                <button class="w-btn" id="diff-sample">SAMPLE FROM NOISE</button>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="diff-canvas" height="340"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">REVERSE PROCESS</div><div class="r-value" id="diff-step" style="font-size:13px;">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The slider is the forward process. SAMPLE runs the genuine reverse process: 520 points drawn from pure noise descend the score field ∇log p (computable in closed form for this mixture — no neural network needed) through 60 annealed noise levels until the ring of clusters re-emerges. This is exactly what an image model does in a billion dimensions, with a U-Net/DiT estimating the score instead.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 10.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">10.2</span><h2>Learning to reverse: noise prediction = score matching</h2></div>
+        <p>Reversing the corruption requires only one ingredient: at every noise level, which direction points toward the data? That direction is the <strong>score</strong>, \( \nabla_x \log p_t(x) \). The DDPM training objective looks almost embarrassingly simple — predict the noise that was added:</p>
+
+        <div class="eq"><span class="eq-tag">EQ 10.2 — THE DIFFUSION LOSS</span>
+        $$ \mathcal{L} = \mathbb{E}_{x_0, \varepsilon, t} \Big[ \big\lVert \varepsilon - \varepsilon_\theta\big( \sqrt{\bar\alpha_t}\, x_0 + \sqrt{1-\bar\alpha_t}\, \varepsilon,\; t \big) \big\rVert^2 \Big] $$
+        <div class="eq-note">Sample a training image, a noise level, a noise vector; corrupt; ask the network to recover the noise; L2 loss. This is secretly <b>denoising score matching</b>: the optimal noise predictor and the score differ only by scale, \( s_\theta(x_t, t) = -\,\varepsilon_\theta(x_t, t) / \sqrt{1 - \bar\alpha_t} \). One network learns the score at <em>every</em> noise level, indexed by the timestep embedding.</div>
+        </div>
+
+        <div class="eq"><span class="eq-tag">EQ 10.3 — REVERSE (DENOISING) STEP</span>
+        $$ x_{t-1} = \frac{1}{\sqrt{\alpha_t}} \left( x_t - \frac{\beta_t}{\sqrt{1-\bar\alpha_t}}\, \varepsilon_\theta(x_t, t) \right) + \sigma_t\, z, \qquad z \sim \mathcal{N}(0, I) $$
+        <div class="eq-note">Subtract the predicted noise (rescaled), inject a little fresh randomness, repeat from \(t = T\) down to 0. DDIM makes the walk deterministic and skippable (50 steps instead of 1,000); the whole process can equivalently be written as an SDE or a probability-flow ODE — the formulation modern samplers and distillation methods build on.</div>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">CONTRAST</span>
+          <p><strong>Autoregression factors over sequence positions; diffusion factors over noise levels.</strong> An LLM makes T sequential decisions, one per token, each conditioned on a growing prefix. A diffusion model makes ~50 global refinements, each touching every pixel/token at once. That difference — local-and-sequential vs global-and-parallel — explains everything in §10.5.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 10.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">10.3</span><h2>Sampling &amp; classifier-free guidance</h2></div>
+        <p>Raw conditional diffusion follows the prompt loosely. The fix used by essentially every image generator is <strong>classifier-free guidance</strong>: train the model with the condition randomly dropped (so it learns both \( \varepsilon_\theta(x, c) \) and \( \varepsilon_\theta(x, \varnothing) \)), then at sampling time exaggerate the difference:</p>
+
+        <div class="eq"><span class="eq-tag">EQ 10.4 — CLASSIFIER-FREE GUIDANCE</span>
+        $$ \tilde{\varepsilon} = \varepsilon_\theta(x_t, \varnothing) \;+\; w \cdot \big( \varepsilon_\theta(x_t, c) - \varepsilon_\theta(x_t, \varnothing) \big) $$
+        <div class="eq-note">\(w = 1\) is plain conditioning; \(w \approx 5\text{–}10\) pushes samples toward regions where the condition is <em>most</em> informative — sharper prompt adherence, less diversity, and at extremes the over-saturated “AI look”. Guidance is diffusion's temperature dial: the single most user-visible sampling knob.</div>
+        </div>
+
+        <p class="note"><strong>Step-count compression</strong> is the active frontier: consistency models, progressive distillation, and adversarial distillation (SDXL-Turbo, SD3-Turbo lineage) collapse 50 steps into 1–4 by training a student to jump straight along the probability-flow ODE — diffusion's own version of Chapter 07.</p>
+      </section>
+
+      <!-- ====================== 10.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">10.4</span><h2>Latent diffusion &amp; flow matching</h2></div>
+        <p>Two upgrades define the modern stack:</p>
+        <ul>
+          <li><strong>Latent diffusion (Stable Diffusion's move):</strong> a VAE compresses 1024² RGB into a ~128² latent; diffusion runs there, 50–100× cheaper, and the VAE decoder restores pixels. Practically all production image/video diffusion is latent. The backbone meanwhile migrated from U-Nets to <strong>DiT</strong> — diffusion <em>transformers</em> — so the two halves of this manual now share an architecture.</li>
+          <li><strong>Flow matching / rectified flow (SD3, Flux, much of video):</strong> skip the stochastic-process scaffolding; define a straight path between noise and data and regress its constant velocity:</li>
+        </ul>
+
+        <div class="eq"><span class="eq-tag">EQ 10.5 — FLOW MATCHING (RECTIFIED FLOW)</span>
+        $$ x_t = (1-t)\, x_0 + t\, x_1, \qquad \mathcal{L}_{\text{FM}} = \mathbb{E}_{x_0, x_1, t} \Big[ \big\lVert v_\theta(x_t, t) - (x_1 - x_0) \big\rVert^2 \Big] $$
+        <div class="eq-note">\(x_0 \sim \mathcal{N}(0, I)\) is noise, \(x_1\) is data; the target velocity is just their difference. Straighter paths ⇒ fewer integration steps at sampling; a cleaner objective ⇒ easier scaling. Diffusion's EQ 10.2 is recoverable as a special case with curved paths — flow matching is the simplification that won.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 10.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">10.5</span><h2>Text diffusion: the parallel challenger</h2></div>
+        <p>Gaussian noise makes no sense for discrete tokens — so discrete diffusion corrupts differently: <strong>mask tokens</strong> with probability growing over the schedule (absorbing-state diffusion). The model — a plain <em>bidirectional</em> transformer — learns to fill every mask simultaneously; generation runs the corruption backwards:</p>
+
+        <div class="eq"><span class="eq-tag">EQ 10.6 — MASKED DIFFUSION LM OBJECTIVE</span>
+        $$ \mathcal{L} = \mathbb{E}_{t, x_0, x_t} \left[ \frac{1}{t} \sum_{i \,:\, x_t^i = \texttt{[M]}} -\log p_\theta\big( x_0^i \mid x_t \big) \right] $$
+        <div class="eq-note">Mask a random fraction \(t\) of positions, predict the originals given the rest, weight by the masking rate — a principled ELBO, and recognizably BERT's objective put to generative work. At sampling time: start fully masked, predict everything, keep the most confident fraction, re-mask the rest, repeat for \(K \ll n\) steps.</div>
+        </div>
+
+        <div class="widget" id="mask-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT 10.2 — MASKED DIFFUSION LM</span><span class="w-sub">PARALLEL UNMASKING · K STEPS</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl">
+                <label>DENOISING STEPS <output id="mask-k-out">4 steps</output></label>
+                <input type="range" id="mask-k" min="2" max="16" step="1" value="4"/>
+              </div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>&nbsp;</label>
+                <button class="w-btn" id="mask-play">GENERATE</button>
+              </div>
+            </div>
+            <div class="tok-stream" id="mask-out" style="min-height:76px;"></div>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">FORWARD PASSES: DIFFUSION vs AUTOREGRESSIVE</div><div class="r-value" id="mask-nfe">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">An autoregressive model needs one forward pass per token — strictly left to right. The diffusion LM fills the whole sequence in K passes, easy tokens first, hard ones last, with full bidirectional context throughout. Fewer steps = faster but rougher: the same compute/quality dial as image diffusion.</div>
+        </div>
+
+        <p>State of play: <strong>LLaDA-8B</strong> showed masked diffusion matching same-size autoregressive models on standard benchmarks; <strong>Mercury</strong> (Inception Labs) and <strong>Gemini Diffusion</strong> demonstrated 5–10× decode throughput on code; open efforts (Dream, LLaDA-MoE) are scaling the recipe. The honest ledger:</p>
+        <table class="data">
+          <thead><tr><th></th><th>Autoregressive</th><th>Masked diffusion</th></tr></thead>
+          <tbody>
+            <tr><td>Generation order</td><td class="m">strictly left→right</td><td class="hl">any order, parallel</td></tr>
+            <tr><td>Passes for n tokens</td><td class="m">n (cheap each, KV-cached)</td><td class="hl">K ≈ 4–64 (expensive each: full bidirectional attention, no trivial KV cache)</td></tr>
+            <tr><td>Infilling / editing</td><td class="m">awkward (needs special training)</td><td class="hl">native — it is the training task</td></tr>
+            <tr><td>Reversal curse, planning</td><td class="m">struggles</td><td class="hl">bidirectional context helps measurably</td></tr>
+            <tr><td>Streaming UX, ecosystem, scaling proof</td><td class="hl">mature at 10²⁶ FLOPs</td><td class="m">young — largest public runs ~10²³–10²⁴</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <!-- ====================== 10.6 ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">10.6</span><h2>Where diffusion meets the LLM stack</h2></div>
+        <ul>
+          <li><strong>The output side of multimodality.</strong> "Native image generation" in frontier assistants is predominantly a diffusion (or flow) decoder conditioned on the LLM's hidden states or generated tokens — the LLM plans, diffusion paints. Same pattern for music and increasingly video (Sora-class models: DiT over spacetime latent patches).</li>
+          <li><strong>Speech:</strong> flow-matching vocoders and TTS (Voicebox/F5 lineage) deliver the naturalness; the LLM supplies the words and prosody plan.</li>
+          <li><strong>Robotics &amp; agents:</strong> diffusion policies generate action trajectories (smooth, multimodal distributions over continuous controls) while a VLM/LLM does the task reasoning — the same division of labor.</li>
+          <li><strong>Drafting hybrids:</strong> a diffusion LM is a natural parallel <em>drafter</em> for speculative decoding (Chapter 08) — propose a whole block in one pass, let the AR model verify.</li>
+          <li><strong>World models:</strong> interactive video generation (Genie-class) uses diffusion as a learned simulator — a possible training ground for agents beyond text.</li>
+        </ul>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>Every piece is now on the table</strong> — two generative families, the full training stack, alignment, compression, serving. The Capstone assembles all of it: design a frontier model end-to-end with live numbers, then watch a prompt travel the entire pipeline you've just read.</p>
+        </div>
+      </section>
+
+      <nav class="pager">
+        <a href="09-frontier.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">09</span> The Frontier</div></a>
+        <a class="next" href="capstone.html"><div class="p-dir">FINALE</div><div class="p-title"><span class="p-num">⌘</span> Capstone: The Full Stack</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — VOL II · CH 10</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/glossary.js"></script>
+<script src="../assets/js/shared.js"></script>
+<script src="../assets/js/search.js"></script>
+<script src="../assets/js/interactives.js"></script>
+</body>
+</html>

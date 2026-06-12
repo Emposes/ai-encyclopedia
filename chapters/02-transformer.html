@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>02 · The Transformer — LLM Field Manual</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css" />
+</head>
+<body>
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ VOL II / 02 / THE TRANSFORMER</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="03-attention.html">NEXT: ATTENTION →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">CHAPTER 02 / 10</div>
+    <h1>The Transformer</h1>
+    <p class="lede">Every frontier model is a <strong>decoder-only transformer</strong>: a stack of identical blocks reading and writing a shared workspace called the residual stream. This chapter walks the data path of one block — normalization, attention, MLP — and accounts for where every parameter lives.</p>
+    <div class="ch-meta">
+      <span>READING TIME<b>≈ 25 MIN</b></span>
+      <span>BUILDS ON<b>CH 01</b></span>
+      <span>KEY OBJECTS<b>RESIDUAL STREAM · RMSNORM · SWIGLU · RoPE</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">2.1</span>Block anatomy</a>
+      <a href="#s2"><span class="n">2.2</span>The residual stream</a>
+      <a href="#s3"><span class="n">2.3</span>Normalization</a>
+      <a href="#s4"><span class="n">2.4</span>The MLP</a>
+      <a href="#s5"><span class="n">2.5</span>Position: RoPE</a>
+      <a href="#s6"><span class="n">2.6</span>Counting parameters</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 2.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">2.1</span><h2>Anatomy of a block</h2></div>
+        <p>A modern decoder block is two sub-layers — <strong>self-attention</strong> then a <strong>feed-forward MLP</strong> — each wrapped in a residual connection and preceded by a normalization (the “pre-norm” arrangement, universal since GPT-2 because it keeps gradients stable in deep stacks):</p>
+
+        <div class="eq"><span class="eq-tag">EQ 2.1 — ONE TRANSFORMER BLOCK (PRE-NORM)</span>
+        $$ \begin{aligned} h' &amp;= h + \mathrm{Attn}\big(\mathrm{Norm}(h)\big) \\[4px] h'' &amp;= h' + \mathrm{MLP}\big(\mathrm{Norm}(h')\big) \end{aligned} $$
+        <div class="eq-note">Note what the residual form implies: each sub-layer computes an <b>update</b> that is <em>added</em> to the running state \(h\), never a replacement for it. A block can choose to do almost nothing — and early in training, that is exactly what keeps optimization sane at 100+ layers.</div>
+        </div>
+
+        <figure class="figure" data-reveal>
+          <div class="fig-head"><span class="fig-id">FIG 2.A</span><span class="fig-title">DECODER BLOCK — DATA PATH</span></div>
+          <div class="fig-body">
+            <svg viewBox="0 0 880 340" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Transformer block diagram">
+              <!-- residual stream spine -->
+              <path class="dg-line-acc" d="M70 300 H810" stroke-width="2" data-draw/>
+              <text class="dg-label-acc" x="70" y="324">RESIDUAL STREAM  h ∈ ℝ^(T × d_model)</text>
+              <path class="dg-line-acc" d="M800 295 l10 5 -10 5" data-draw/>
+
+              <!-- attention branch -->
+              <path class="dg-line" d="M190 300 V232" data-draw/>
+              <rect class="dg-box" x="130" y="196" width="120" height="36" rx="4" data-pop/>
+              <text class="dg-label" x="190" y="219" text-anchor="middle">RMSNorm</text>
+              <path class="dg-line" d="M190 196 V160" data-draw/>
+              <rect class="dg-box-accent" x="110" y="96" width="160" height="64" rx="4" data-pop/>
+              <text class="dg-label" x="190" y="124" text-anchor="middle" fill="#a6f2cc">SELF-ATTENTION</text>
+              <text class="dg-label-sm" x="190" y="142" text-anchor="middle">h heads · CH 03</text>
+              <path class="dg-line" d="M270 128 H352 V295" data-draw/>
+              <circle cx="352" cy="300" r="9" fill="#000" stroke="#a6f2cc" data-pop/>
+              <text class="dg-label-acc" x="352" y="304" text-anchor="middle">+</text>
+              <text class="dg-label-mut" x="226" y="76">reads all positions</text>
+
+              <!-- mlp branch -->
+              <path class="dg-line" d="M520 300 V232" data-draw/>
+              <rect class="dg-box" x="460" y="196" width="120" height="36" rx="4" data-pop/>
+              <text class="dg-label" x="520" y="219" text-anchor="middle">RMSNorm</text>
+              <path class="dg-line" d="M520 196 V160" data-draw/>
+              <rect class="dg-box-accent" x="440" y="96" width="160" height="64" rx="4" data-pop/>
+              <text class="dg-label" x="520" y="124" text-anchor="middle" fill="#a6f2cc">MLP / SwiGLU</text>
+              <text class="dg-label-sm" x="520" y="142" text-anchor="middle">per-position · §2.4</text>
+              <path class="dg-line" d="M600 128 H682 V295" data-draw/>
+              <circle cx="682" cy="300" r="9" fill="#000" stroke="#a6f2cc" data-pop/>
+              <text class="dg-label-acc" x="682" y="304" text-anchor="middle">+</text>
+              <text class="dg-label-mut" x="556" y="76">acts on each position alone</text>
+
+              <!-- repeat bracket -->
+              <rect class="dg-box-ghost" x="92" y="56" width="618" height="268" rx="4" data-pop/>
+              <text class="dg-label-mut" x="92" y="48">× L LAYERS (32 – 128 AT FRONTIER SCALE)</text>
+            </svg>
+          </div>
+          <div class="fig-cap"><b>Two taps on one bus.</b> Attention is the only place positions exchange information; the MLP transforms each position independently. Both write their result back into the stream through addition.</div>
+        </figure>
+
+        <p>The full model is: embedding lookup → \(L\) of these blocks → final norm → unembedding to logits. That's the entire architecture. Everything else in modern LLM engineering is a refinement of one of these pieces.</p>
+      </section>
+
+      <!-- ====================== 2.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">2.2</span><h2>The residual stream is the model's workspace</h2></div>
+        <p>The most productive mental model (due to the mechanistic-interpretability literature): the residual stream is a <strong>communication bus</strong> of width \(d_{\text{model}}\) running through the network. Each attention head and each MLP <em>reads</em> from the bus through a linear projection, computes something, and <em>writes</em> its result back by addition into (approximately) its own subspace.</p>
+        <ul>
+          <li><strong>Superposition.</strong> The bus carries far more “features” than it has dimensions, packed as non-orthogonal directions. Sparse autoencoders (Chapter 09) decompress these into interpretable features.</li>
+          <li><strong>Iterative refinement.</strong> The token vector for “bank” enters as pure type information and is incrementally enriched: position, syntax, sense disambiguation, long-range bindings — each layer nudging the vector with a small additive update.</li>
+          <li><strong>Logit lens.</strong> Because every layer writes in the same coordinate system, you can apply the unembedding to <em>intermediate</em> states and watch the model's next-token guess sharpen layer by layer — direct evidence the stream is a progressively refined prediction.</li>
+        </ul>
+        <div class="callout">
+          <span class="co-icon">INTUITION</span>
+          <p><strong>Attention moves information between positions; the MLP transforms it in place.</strong> Roughly: attention answers “what should I look at?”, the MLP answers “what do I conclude from what I gathered?”. Knowledge recall behaves like key-value lookups stored in MLP weights; copying and binding behave like attention-head routing.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 2.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">2.3</span><h2>Normalization: LayerNorm → RMSNorm</h2></div>
+        <p>Deep residual stacks need their activations kept in a stable range. The original transformer used LayerNorm; nearly every modern LLM (Llama, Mistral, Qwen, DeepSeek) uses the cheaper <strong>RMSNorm</strong>, which drops mean-centering and the bias term:</p>
+
+        <div class="eq"><span class="eq-tag">EQ 2.2 — LAYERNORM vs RMSNORM</span>
+        $$ \mathrm{LN}(x) = \gamma \odot \frac{x - \mu}{\sqrt{\sigma^2 + \epsilon}} + \beta \qquad\Bigg|\qquad \mathrm{RMS}(x) = \gamma \odot \frac{x}{\sqrt{\tfrac{1}{d}\sum_{i=1}^{d} x_i^2 + \epsilon}} $$
+        <div class="eq-note">\(\mu, \sigma^2\) are the per-vector mean and variance; \(\gamma, \beta\) are learned. RMSNorm keeps only the <b>scale</b> normalization — empirically all that matters — saving a reduction pass and parameters. \(\epsilon \approx 10^{-5}\) guards against division by zero.</div>
+        </div>
+
+        <p class="note">Placement matters more than flavor: <em>pre</em>-norm (normalize the input of each sub-layer, as in EQ 2.1) yields a clean gradient path through the residual additions, enabling very deep models without the fragile learning-rate warmup gymnastics of the original post-norm design. Some recent models add extra norms (e.g., QK-norm on attention queries/keys) for further stability at scale.</p>
+      </section>
+
+      <!-- ====================== 2.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">2.4</span><h2>The MLP: where most parameters live</h2></div>
+        <p>The feed-forward sub-layer is a two-layer network applied to every position independently, expanding the representation to an inner width \(d_{\text{ff}}\) (classically \(4\,d_{\text{model}}\)) and projecting back. The modern default activation is <strong>SwiGLU</strong> — a gated linear unit using SiLU (“swish”):</p>
+
+        <div class="eq"><span class="eq-tag">EQ 2.3 — SWIGLU MLP</span>
+        $$ \mathrm{MLP}(x) \;=\; W_{\text{down}} \Big( \mathrm{SiLU}\big(W_{\text{gate}}\, x\big) \;\odot\; W_{\text{up}}\, x \Big), \qquad \mathrm{SiLU}(z) = z \cdot \sigma(z) $$
+        <div class="eq-note">Three matrices instead of two: a <b>gate</b> path squashed through SiLU multiplies an <b>up</b> projection element-wise, then <b>down</b> projects back to \(d_{\text{model}}\). To hold parameter count comparable to the classic 2-matrix design, \(d_{\text{ff}}\) is set to \(\tfrac{8}{3} d_{\text{model}}\) (rounded for hardware). GPT-2-era models used GELU, \( \mathrm{GELU}(z) = z\,\Phi(z) \), without the gate.</div>
+        </div>
+
+        <p>Interpretability work suggests MLPs implement <strong>key→value memories</strong>: the first projection detects patterns in the stream (keys), the nonlinearity gates which fire, and the second projection writes associated content (values) back. This is where “Paris is the capital of France” mostly resides — and why model-editing techniques target MLP weights.</p>
+      </section>
+
+      <!-- ====================== 2.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">2.5</span><h2>Position: from sinusoids to RoPE</h2></div>
+        <p>Attention is permutation-invariant — without help, the model cannot tell “dog bites man” from “man bites dog”. The original transformer added fixed sinusoidal vectors to embeddings; GPT-2 learned absolute position vectors. Modern LLMs almost universally use <strong>Rotary Position Embeddings (RoPE)</strong>, which encode position by <em>rotating</em> query and key vectors, pairwise, by position-proportional angles:</p>
+
+        <div class="eq"><span class="eq-tag">EQ 2.4 — ROPE ROTATION</span>
+        $$ \begin{pmatrix} q'_{2i} \\ q'_{2i+1} \end{pmatrix} = \begin{pmatrix} \cos m\theta_i &amp; -\sin m\theta_i \\ \sin m\theta_i &amp; \;\;\cos m\theta_i \end{pmatrix} \begin{pmatrix} q_{2i} \\ q_{2i+1} \end{pmatrix}, \qquad \theta_i = b^{-2i/d_k} $$
+        <div class="eq-note">Each consecutive pair of dimensions \((2i, 2i{+}1)\) of a query at position \(m\) is rotated by angle \(m\theta_i\); keys likewise. The base \(b\) (10,000 originally; 500,000 in Llama 3 for long context) sets the frequency spectrum: low-\(i\) pairs spin fast (fine positional detail), high-\(i\) pairs spin slowly (coarse, long-range).</div>
+        </div>
+
+        <div class="eq"><span class="eq-tag">EQ 2.5 — WHY IT WORKS: RELATIVITY</span>
+        $$ \langle \mathrm{R}_m q,\; \mathrm{R}_n k \rangle \;=\; \langle q,\; \mathrm{R}_{\,n-m}\, k \rangle $$
+        <div class="eq-note">The dot product after rotation depends only on the <b>offset</b> \(n - m\), never on absolute positions. Attention scores become translation-invariant functions of relative distance — exactly the right inductive bias for language, and the property every long-context extension method (Chapter 09) manipulates.</div>
+        </div>
+
+        <div class="widget" id="rope-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT 2.1 — RoPE FREQUENCY DIALS</span><span class="w-sub">8 OF d_k/2 ROTATION PAIRS</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl" style="flex:2;">
+                <label>TOKEN POSITION <output id="rope-m-out">m = 0</output></label>
+                <input type="range" id="rope-m" min="0" max="17" step="0.05" value="6"/>
+              </div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>ROPE BASE b</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-rope-base="10000">10K (CLASSIC)</button>
+                  <button class="w-btn ghost" data-rope-base="500000">500K (LLAMA 3)</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="rope-canvas" height="190"></canvas>
+          </div>
+          <div class="w-note">Each dial is one dimension pair of a query/key vector; its needle rotates at θᵢ radians per position. Fast dials (left) encode fine local order; slow dials (right) only complete a turn after thousands of tokens. Raising the base to 500K slows the whole spectrum — the first ingredient of long context (CH 09).</div>
+        </div>
+
+        <p class="note">ALiBi is the notable alternative: skip position vectors entirely and subtract a linear penalty \(m \cdot (i - j)\) from attention scores by head — simple, and it extrapolates to longer sequences gracefully. RoPE won on quality; its base-frequency scaling tricks won on context length.</p>
+      </section>
+
+      <!-- ====================== 2.6 ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">2.6</span><h2>Counting parameters</h2></div>
+        <p>Per block, with MHA and a SwiGLU MLP at \(d_{\text{ff}} = \tfrac{8}{3} d\) (writing \(d = d_{\text{model}}\)): attention contributes \(4d^2\) (the \(W_Q, W_K, W_V, W_O\) projections) and the MLP \(3 \times \tfrac{8}{3} d^2 = 8d^2\). So:</p>
+
+        <div class="eq"><span class="eq-tag">EQ 2.6 — PARAMETER BUDGET</span>
+        $$ N \;\approx\; \underbrace{12\, L\, d^2}_{\text{blocks}} \;+\; \underbrace{2\,|V|\, d}_{\text{embed + unembed}} $$
+        <div class="eq-note">Roughly <b>two-thirds of block parameters sit in the MLPs</b>, one-third in attention. GQA (Chapter 03) shrinks the K/V share further. The embedding term matters at small scale (a 1B model with a 256K vocabulary spends ~40% of its budget there) and fades at large scale.</div>
+        </div>
+
+        <div class="widget" id="param-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT 2.2 — PARAMETER BUDGET</span><span class="w-sub">EQ 2.6 · LIVE</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>LAYERS L <output id="param-l-out">80</output></label><input type="range" id="param-l" min="4" max="128" step="2" value="80"/></div>
+              <div class="ctl"><label>WIDTH d_model <output id="param-d-out">8,192</output></label><input type="range" id="param-d" min="9" max="14" step="1" value="13"/></div>
+              <div class="ctl"><label>VOCABULARY</label>
+                <select id="param-v" class="w-input">
+                  <option value="32000">32K (Llama 2)</option>
+                  <option value="128256" selected>128K (Llama 3)</option>
+                  <option value="262144">256K (Gemini-class)</option>
+                </select>
+              </div>
+            </div>
+            <div id="param-bars" style="margin-top:8px;"></div>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">TOTAL PARAMETERS N</div><div class="r-value" id="param-total">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Defaults reproduce Llama-2-70B's shape. Shrink d_model to 1,024 with the 256K vocabulary and watch the embedding table eat the model — the small-model regime where vocabulary choices dominate.</div>
+        </div>
+
+        <table class="data">
+          <thead><tr><th>Model</th><th>Params</th><th>L</th><th>d_model</th><th>Heads (KV)</th><th>Context</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td>GPT-2 XL (2019)</td><td class="m">1.5B</td><td class="m">48</td><td class="m">1,600</td><td class="m">25</td><td class="m">1K</td><td>Learned abs. pos., GELU, post-norm era ends</td></tr>
+            <tr><td>Llama-2-70B (2023)</td><td class="m">70B</td><td class="m">80</td><td class="m">8,192</td><td class="m">64 (8)</td><td class="m">4K</td><td>RoPE, SwiGLU, RMSNorm, GQA</td></tr>
+            <tr><td>Llama-3.1-405B (2024)</td><td class="m">405B</td><td class="m">126</td><td class="m">16,384</td><td class="m">128 (8)</td><td class="m">128K</td><td>15T training tokens, RoPE base 500K</td></tr>
+            <tr><td>DeepSeek-V3 (2024)</td><td class="m">671B total / 37B active</td><td class="m">61</td><td class="m">7,168</td><td class="m">128 (MLA)</td><td class="m">128K</td><td>MoE: 256 experts, 8 routed + 1 shared</td></tr>
+          </tbody>
+        </table>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>The block diagram leaves one box closed</strong> — the attention layer itself, the only place tokens talk to each other, and the component the industry has re-engineered most aggressively. Chapter 03 opens it completely.</p>
+        </div>
+      </section>
+
+      <nav class="pager">
+        <a href="01-foundations.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">01</span> Foundations</div></a>
+        <a class="next" href="03-attention.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">03</span> Attention</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — VOL II · CH 02</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/glossary.js"></script>
+<script src="../assets/js/shared.js"></script>
+<script src="../assets/js/search.js"></script>
+<script src="../assets/js/interactives.js"></script>
+</body>
+</html>

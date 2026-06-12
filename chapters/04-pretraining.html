@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>04 · Pre-training — LLM Field Manual</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css" />
+</head>
+<body>
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ VOL II / 04 / PRE-TRAINING</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="05-posttraining.html">NEXT: POST-TRAINING →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">CHAPTER 04 / 10</div>
+    <h1>Pre-training</h1>
+    <p class="lede">Pre-training is the act of spending a <strong>compute budget</strong> — months of time on tens of thousands of accelerators — to push cross-entropy as low as physics and economics allow. The decisions are few but enormous: what data, how many parameters versus how many tokens, which optimizer settings, and how to keep a building-sized computer numerically stable.</p>
+    <div class="ch-meta">
+      <span>READING TIME<b>≈ 30 MIN</b></span>
+      <span>BUILDS ON<b>CH 01–02</b></span>
+      <span>INSTRUMENTS<b>SCALING · LR DESIGNER · THE BILL</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">4.1</span>Data</a>
+      <a href="#s2"><span class="n">4.2</span>Scaling laws</a>
+      <a href="#s3"><span class="n">4.3</span>Optimization</a>
+      <a href="#s4"><span class="n">4.4</span>Mixed precision</a>
+      <a href="#s5"><span class="n">4.5</span>Parallelism</a>
+      <a href="#s6"><span class="n">4.6</span>The bill</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 4.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">4.1</span><h2>Data: the curriculum of the internet</h2></div>
+        <p>Frontier runs consume <strong>10–20 trillion tokens</strong>. Raw web crawl is mostly unusable; the pipeline that refines it is among the most guarded IP in the industry. The canonical stages:</p>
+        <ul>
+          <li><strong>Extraction.</strong> HTML → text (boilerplate, navigation, ads stripped). Quality of this step alone moves benchmarks.</li>
+          <li><strong>Language ID &amp; heuristic filters.</strong> Drop documents failing length, symbol-ratio, repetition and word-list tests (C4/Gopher rules).</li>
+          <li><strong>Deduplication.</strong> Exact (hashing) and near-dup (MinHash / LSH over shingles). Duplicates waste compute and amplify memorization.</li>
+          <li><strong>Model-based quality filtering.</strong> Classifiers trained to recognize “textbook-like” or high-utility pages now gate the majority of what survives (the FineWeb-Edu pattern).</li>
+          <li><strong>Mixing.</strong> The final recipe weights sources — web, code, math, papers, books, multilingual — and typically ends with a <em>midtraining / annealing</em> phase that up-weights the highest-quality and long-context data at low learning rate.</li>
+          <li><strong>Synthetic data.</strong> Increasingly, strong models generate or rewrite training text for weaker successors and specialized phases — with care, since uncurated self-training degrades distributions.</li>
+        </ul>
+        <div class="callout">
+          <span class="co-icon">RULE</span>
+          <p><strong>Data quality buys more than data quantity.</strong> Identical architectures separated only by corpus curation differ by the equivalent of a 2–5× compute multiplier. The “data wall” debate is really a question of how much refinable raw material and synthetic generation remain.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 4.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">4.2</span><h2>Scaling laws: how big, how long</h2></div>
+        <p>Loss falls as a smooth, shockingly reliable power law in model size \(N\) and data \(D\). The Chinchilla (Hoffmann et al., 2022) parametric form:</p>
+
+        <div class="eq"><span class="eq-tag">EQ 4.1 — CHINCHILLA LOSS SURFACE</span>
+        $$ L(N, D) \;=\; E \;+\; \frac{A}{N^{\alpha}} \;+\; \frac{B}{D^{\beta}} $$
+        <div class="eq-note">\(E\) is the irreducible entropy of text; the two power-law terms are the cost of finite capacity and finite data. Corrected fit (Epoch AI's 2024 replication of the paper): \(E = 1.82,\ A = 482.0,\ B = 2085.4,\ \alpha = 0.348,\ \beta = 0.366\) — the values the instrument below uses, which reproduce Chinchilla-70B/1.4T at the paper's own budget.</div>
+        </div>
+
+        <div class="eq"><span class="eq-tag">EQ 4.2 — THE BUDGET CONSTRAINT &amp; OPTIMUM</span>
+        $$ C \approx 6\,N D \qquad\Longrightarrow\qquad N^{*} \propto C^{\,0.46}, \quad D^{*} \propto C^{\,0.54}, \quad \frac{D^{*}}{N^{*}} \approx 20 \text{ tokens/param} $$
+        <div class="eq-note">Each parameter touched by each token costs ≈6 FLOPs (2 forward, 4 backward). Minimizing EQ 4.1 subject to the budget gives the famous rule of thumb: <b>scale data and parameters together, ~20:1</b>. Kaplan et al. (2020) had concluded ~1.7:1 — fixing that error is why Chinchilla-70B beat Gopher-280B with the same compute.</div>
+        </div>
+
+        <div class="widget" id="scaling-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT 4.1 — SPEND A COMPUTE BUDGET</span><span class="w-sub">EQ 4.1 + 4.2 · LIVE</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl">
+                <label>COMPUTE BUDGET C <output id="scale-c-out">10^24 FLOPs</output></label>
+                <input type="range" id="scale-c" min="20" max="26" step="0.1" value="24"/>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="scale-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">OPTIMAL PARAMS N*</div><div class="r-value" id="scale-n">—</div></div>
+              <div class="readout acc"><div class="r-label">OPTIMAL TOKENS D*</div><div class="r-value" id="scale-d">—</div></div>
+              <div class="readout"><div class="r-label">TOKENS / PARAM</div><div class="r-value" id="scale-ratio">—</div></div>
+              <div class="readout"><div class="r-label">ACHIEVABLE LOSS</div><div class="r-value" id="scale-loss">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Each curve: loss across all ways to split the budget C between parameters (x-axis) and tokens (implied, D = C/6N). The valley is broad — and real labs deliberately train smaller-than-optimal models on far more tokens (Llama-3-8B: ~1,875 tokens/param), overpaying in training compute to buy cheap inference forever after.</div>
+        </div>
+
+        <p class="note"><strong>Emergence and downstream scaling.</strong> Loss scales smoothly; specific capabilities can look discontinuous (“emergent”) because task metrics are step functions over smooth log-likelihood gains. Modern practice fits separate scaling curves for benchmark performance, and — since 2024 — treats <em>post-training compute</em> and <em>test-time compute</em> (Chapter 05/08) as additional scaling axes.</p>
+      </section>
+
+      <!-- ====================== 4.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">4.3</span><h2>Optimization: AdamW and the schedule</h2></div>
+        <p>The unchallenged default is <strong>AdamW</strong> — Adam with decoupled weight decay:</p>
+
+        <div class="eq"><span class="eq-tag">EQ 4.3 — ADAMW UPDATE</span>
+        $$ \begin{aligned} m_t &amp;= \beta_1 m_{t-1} + (1-\beta_1)\, g_t, \qquad v_t = \beta_2 v_{t-1} + (1-\beta_2)\, g_t^2 \\[4px] \hat{m}_t &amp;= \frac{m_t}{1-\beta_1^t}, \quad \hat{v}_t = \frac{v_t}{1-\beta_2^t}, \qquad \theta_{t+1} = \theta_t - \eta \left( \frac{\hat{m}_t}{\sqrt{\hat{v}_t} + \epsilon} + \lambda\, \theta_t \right) \end{aligned} $$
+        <div class="eq-note">First moment \(m\) smooths the gradient; second moment \(v\) normalizes per-parameter step size; decay \(\lambda\) is applied to weights directly rather than mixed into the gradient (the “W”). Typical: \(\beta_1 = 0.9, \beta_2 = 0.95, \lambda = 0.1\). Cost: <b>two extra FP32 states per parameter</b> — the reason optimizer memory, not weights, dominates training footprints, and a target of ZeRO sharding (§4.5). Newer optimizers (Muon, second-order-flavored methods) are credibly claiming 1.3–2× efficiency in recent open runs.</div>
+        </div>
+
+        <div class="eq"><span class="eq-tag">EQ 4.4 — LEARNING-RATE SCHEDULE</span>
+        $$ \eta(t) = \begin{cases} \eta_{\max}\, \dfrac{t}{t_w} &amp; t &lt; t_w \quad \text{(linear warmup)} \\[8px] \eta_{\min} + \tfrac{1}{2}\big(\eta_{\max}-\eta_{\min}\big)\Big(1 + \cos \pi \tfrac{t - t_w}{T - t_w}\Big) &amp; t \ge t_w \quad \text{(cosine decay)} \end{cases} $$
+        <div class="eq-note">Warmup (hundreds–thousands of steps) protects the fragile early phase; cosine decays to \(\eta_{\min} \approx 0.1\, \eta_{\max}\). The WSD (warmup–stable–decay) variant holds LR flat and decays only in a final phase — convenient for checkpoint reuse and continual pre-training. Gradient-norm clipping at 1.0 is universal; loss-spike lore (skip bad batches, restart from checkpoint) remains part of the craft.</div>
+        </div>
+
+        <div class="widget" id="lr-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT 4.2 — LR SCHEDULE DESIGNER</span><span class="w-sub">EQ 4.4 · LIVE</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>WARMUP <output id="lr-warm-out">3%</output></label><input type="range" id="lr-warm" min="0.5" max="15" step="0.5" value="3"/></div>
+              <div class="ctl"><label>FLOOR η_min / η_max <output id="lr-min-out">10%</output></label><input type="range" id="lr-min" min="0" max="50" step="1" value="10"/></div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>SHAPE</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-lr-mode="cosine">COSINE</button>
+                  <button class="w-btn ghost" data-lr-mode="wsd">WSD</button>
+                  <button class="w-btn ghost" data-lr-mode="linear">LINEAR</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="lr-canvas" height="220"></canvas>
+          </div>
+          <div class="w-note">WSD (warmup–stable–decay) holds the rate flat and decays only in the final 20% — checkpoints from the stable plateau can be branched into many decay runs, which is why continual-pre-training shops prefer it.</div>
+        </div>
+
+        <p class="note">Batch sizes are measured in tokens — frontier runs use 4M–60M tokens per step, often ramped during training. µP / “maximal update parametrization” style scaling rules let labs tune hyperparameters on small proxies and transfer them up.</p>
+      </section>
+
+      <!-- ====================== 4.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">4.4</span><h2>Numerics: mixed precision</h2></div>
+        <p>Nothing trains in FP32 anymore. The standard recipe is <strong>BF16 compute with FP32 master state</strong>: matmuls and activations in bfloat16 (8-bit exponent — FP32's range with less precision, hence no loss-scaling dance that FP16 required), while a master copy of weights and the Adam moments stay in FP32 for stable accumulation.</p>
+        <table class="data">
+          <thead><tr><th>Format</th><th>Bits (sign·exp·mantissa)</th><th>Range</th><th>Role</th></tr></thead>
+          <tbody>
+            <tr><td>FP32</td><td class="m">1 · 8 · 23</td><td class="m">~10^±38</td><td>Master weights, optimizer moments, softmax/norm accumulations</td></tr>
+            <tr><td>BF16</td><td class="m">1 · 8 · 7</td><td class="m">~10^±38</td><td>Default training compute since A100</td></tr>
+            <tr><td>FP16</td><td class="m">1 · 5 · 10</td><td class="m">~±65,504</td><td>Legacy training (needed loss scaling); still common in inference</td></tr>
+            <tr><td>FP8 (E4M3/E5M2)</td><td class="m">1 · 4 · 3 / 1 · 5 · 2</td><td class="m">±448 / ±57,344</td><td>Hopper/Blackwell matmuls; DeepSeek-V3 trained largely in FP8</td></tr>
+          </tbody>
+        </table>
+        <p class="note">Per-step training memory ≈ 16 bytes/param under this recipe (2 BF16 weight + 4 FP32 master + 8 Adam moments + gradient) — 70B parameters ⇒ ~1.1 TB before activations. Hence: parallelism.</p>
+      </section>
+
+      <!-- ====================== 4.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">4.5</span><h2>Parallelism: one model, twenty thousand GPUs</h2></div>
+        <p>No single accelerator holds a frontier model and its optimizer state, let alone trains it in tolerable time. Training is decomposed along complementary axes — composed together, this is “3-D (now 4-D+) parallelism”:</p>
+
+        <figure class="figure" data-reveal>
+          <div class="fig-head"><span class="fig-id">FIG 4.A</span><span class="fig-title">PARALLELISM AXES</span></div>
+          <div class="fig-body">
+            <svg viewBox="0 0 900 290" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Data, tensor and pipeline parallelism">
+              <!-- DP -->
+              <g data-pop>
+                <text class="dg-label-acc" x="40" y="34">DATA PARALLEL (DP)</text>
+                <rect class="dg-box" x="40" y="48" width="100" height="64" rx="4"/>
+                <rect class="dg-box" x="152" y="48" width="100" height="64" rx="4"/>
+                <text class="dg-label-sm" x="90" y="76" text-anchor="middle">replica 0</text>
+                <text class="dg-label-sm" x="90" y="92" text-anchor="middle">batch shard A</text>
+                <text class="dg-label-sm" x="202" y="76" text-anchor="middle">replica 1</text>
+                <text class="dg-label-sm" x="202" y="92" text-anchor="middle">batch shard B</text>
+                <path class="dg-line-acc" d="M90 112 V140 H202 V112" data-draw/>
+                <text class="dg-label-mut" x="146" y="158" text-anchor="middle">all-reduce grads</text>
+              </g>
+              <!-- TP -->
+              <g data-pop>
+                <text class="dg-label-acc" x="330" y="34">TENSOR PARALLEL (TP)</text>
+                <rect class="dg-box" x="330" y="48" width="100" height="64" rx="4"/>
+                <rect class="dg-box" x="442" y="48" width="100" height="64" rx="4"/>
+                <text class="dg-label-sm" x="380" y="76" text-anchor="middle">W[:, :d/2]</text>
+                <text class="dg-label-sm" x="380" y="92" text-anchor="middle">half of every matmul</text>
+                <text class="dg-label-sm" x="492" y="76" text-anchor="middle">W[:, d/2:]</text>
+                <text class="dg-label-sm" x="492" y="92" text-anchor="middle">other half</text>
+                <path class="dg-line-blue" d="M380 112 V140 H492 V112" data-draw/>
+                <text class="dg-label-mut" x="436" y="158" text-anchor="middle">all-reduce per layer (NVLink domain)</text>
+              </g>
+              <!-- PP -->
+              <g data-pop>
+                <text class="dg-label-acc" x="620" y="34">PIPELINE PARALLEL (PP)</text>
+                <rect class="dg-box" x="620" y="48" width="76" height="64" rx="4"/>
+                <rect class="dg-box" x="708" y="48" width="76" height="64" rx="4"/>
+                <rect class="dg-box" x="796" y="48" width="76" height="64" rx="4"/>
+                <text class="dg-label-sm" x="658" y="84" text-anchor="middle">layers 1–40</text>
+                <text class="dg-label-sm" x="746" y="84" text-anchor="middle">41–80</text>
+                <text class="dg-label-sm" x="834" y="84" text-anchor="middle">81–126</text>
+                <path class="dg-line" d="M696 80 H704" data-draw/><path class="dg-line" d="M784 80 H792" data-draw/>
+                <text class="dg-label-mut" x="746" y="140" text-anchor="middle">micro-batches stream through stages</text>
+              </g>
+              <!-- zero -->
+              <g data-pop>
+                <rect class="dg-box-ghost" x="40" y="196" width="832" height="72" rx="4"/>
+                <text class="dg-label-acc" x="56" y="222">ZeRO / FSDP — SHARD THE STATES, NOT THE MATH</text>
+                <text class="dg-label-sm" x="56" y="244">Stage 1: shard optimizer state · Stage 2: + gradients · Stage 3: + parameters (gather just-in-time per layer, then discard)</text>
+              </g>
+            </svg>
+          </div>
+          <div class="fig-cap"><b>Composition in practice (Llama-3-405B):</b> TP=8 inside each server (NVLink), PP=16 across servers, DP/FSDP over the remainder, plus context parallelism for 128K-token sequences — 16,384 H100s working as one optimizer.</div>
+        </figure>
+
+        <ul>
+          <li><strong>Data parallelism (DP):</strong> clone the model, split the batch, all-reduce gradients. Scales until the gradient sync saturates the network.</li>
+          <li><strong>ZeRO / FSDP:</strong> DP without the memory waste — optimizer state, gradients, and finally parameters are sharded across replicas and gathered transiently. Stage-3 memory per GPU falls ~linearly in replica count.</li>
+          <li><strong>Tensor parallelism (TP):</strong> split individual weight matrices across GPUs (column- then row-wise, Megatron-style) so each matmul runs jointly; needs all-reduce per layer — keep it inside the NVLink island.</li>
+          <li><strong>Pipeline parallelism (PP):</strong> split by depth into stages; micro-batches stream to keep the “bubble” (idle ramp-up/down fraction ≈ \( (p-1)/m \) for \(p\) stages, \(m\) micro-batches) small. Interleaved and zero-bubble schedules (DualPipe) push this further.</li>
+          <li><strong>Context/sequence parallelism:</strong> split the sequence dimension (ring attention) for very long inputs. <strong>Expert parallelism</strong> spreads MoE experts (Chapter 09).</li>
+          <li><strong>Activation checkpointing:</strong> store only block boundaries, recompute the inside on backward — ~30% extra compute for several-fold activation memory savings.</li>
+        </ul>
+      </section>
+
+      <!-- ====================== 4.6 ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">4.6</span><h2>The bill</h2></div>
+        <p>Plugging EQ 4.2 into real numbers grounds every strategic conversation about AI:</p>
+
+        <div class="eq"><span class="eq-tag">EQ 4.5 — TRAINING TIME ESTIMATE</span>
+        $$ \text{days} \;=\; \frac{6\,N D}{n_{\text{GPU}} \times \text{FLOPs}_{\text{peak}} \times \text{MFU} \times 86{,}400} $$
+        <div class="eq-note">MFU — model FLOPs utilization, the fraction of peak silicon throughput doing useful model math — runs 35–50% in well-tuned large runs. Example: \(N = 405\text{B},\ D = 15\text{T} \Rightarrow C \approx 3.6 \times 10^{25}\) FLOPs; on 16,384 H100s (≈990 TFLOPs BF16 each) at 41% MFU ⇒ ~63 days. At ~$2/GPU-hr that's ~$50M of compute — before the salaries, the failed runs, and the post-training.</div>
+        </div>
+
+        <div class="widget" id="bill-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT 4.3 — PRICE A TRAINING RUN</span><span class="w-sub">EQ 4.5 · H100 BF16 PEAK 989 TFLOPs</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>PARAMS N <output id="bill-n-out">405B</output></label><input type="range" id="bill-n" min="8" max="12" step="0.05" value="11.6"/></div>
+              <div class="ctl"><label>TOKENS D <output id="bill-d-out">15T</output></label><input type="range" id="bill-d" min="10" max="13.5" step="0.05" value="13.18"/></div>
+            </div>
+            <div class="ctl-row">
+              <div class="ctl"><label>GPUs <output id="bill-g-out">16,384</output></label><input type="range" id="bill-g" min="8" max="17" step="1" value="14"/></div>
+              <div class="ctl"><label>MFU <output id="bill-mfu-out">41%</output></label><input type="range" id="bill-mfu" min="20" max="60" step="1" value="41"/></div>
+              <div class="ctl"><label>RATE <output id="bill-usd-out">$2.00/hr</output></label><input type="range" id="bill-usd" min="1" max="6" step="0.25" value="2"/></div>
+            </div>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">COMPUTE C = 6ND</div><div class="r-value" id="bill-flops">—</div></div>
+              <div class="readout acc"><div class="r-label">WALL-CLOCK</div><div class="r-value" id="bill-days">—</div></div>
+              <div class="readout acc"><div class="r-label">COMPUTE COST</div><div class="r-value" id="bill-cost">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Defaults ≈ Llama-3.1-405B. Try GPT-2 (N=1.5B, D=10B tokens) on 256 GPUs — what took OpenAI weeks in 2019 is now an afternoon. Then price a 10²⁶-FLOP frontier run and see why these decisions reach board level.</div>
+        </div>
+
+        <div class="spec-grid" data-reveal-stagger>
+          <div class="spec-cell"><div class="s-label">GPT-2 (2019)</div><div class="s-value">~10<em>21</em></div><div class="s-sub">FLOPs — reproducible today for a few hundred dollars</div></div>
+          <div class="spec-cell"><div class="s-label">GPT-4 CLASS (2023)</div><div class="s-value">~2×10<em>25</em></div><div class="s-sub">FLOPs — tens of millions of dollars</div></div>
+          <div class="spec-cell"><div class="s-label">FRONTIER (2025–26)</div><div class="s-value">10<em>26+</em></div><div class="s-sub">FLOPs — gigawatt-scale clusters, $100M–$1B+ runs</div></div>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>What you have now is a base model</strong> — a magnificent autocomplete that will continue a question with three more questions. Chapter 05: the alignment stack that turns it into something you can actually talk to.</p>
+        </div>
+      </section>
+
+      <nav class="pager">
+        <a href="03-attention.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">03</span> Attention</div></a>
+        <a class="next" href="05-posttraining.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">05</span> Post-training</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — VOL II · CH 04</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/glossary.js"></script>
+<script src="../assets/js/shared.js"></script>
+<script src="../assets/js/search.js"></script>
+<script src="../assets/js/interactives.js"></script>
+</body>
+</html>

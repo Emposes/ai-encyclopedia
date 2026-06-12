@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>07 · Evaluation &amp; The Prompt Lab — AI Encyclopedia</title>
+<meta name="description" content="Golden sets, pairwise A/B, LLM-as-judge and its biases, prompt versioning, an anti-pattern catalog — and a live bring-your-own-key lab for testing every Volume III technique against a real model." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css" />
+</head>
+<body>
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ VOL III / PROMPTING / 07 / EVALUATION &amp; THE PROMPT LAB</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../agents/01-the-agentic-loop.html">NEXT: VOL IV · AGENTS →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">VOLUME III — PROMPTING · CHAPTER 07 / 07</div>
+    <h1>Evaluation &amp; The Prompt Lab</h1>
+    <p class="lede">Six chapters of this volume have made claim after claim: scaffolds beat bare asks, examples beat adjectives, critique loops catch what single passes miss. This closing chapter is where claims meet measurement — because <strong>an unevaluated prompt is a guess with good posture</strong>. We build the smallest eval that actually works, audit the judge you will inevitably hire, put prompts under version control, and then hand you a live laboratory wired to a real model.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>ADVANCED</b></span>
+      <span>READING TIME<b>≈ 26 MIN</b></span>
+      <span>BUILDS ON<b>VOL III CH 01–06</b></span>
+      <span>INSTRUMENTS<b>JUDGE BIAS · PROMPT LAB (BYOK)</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">7.1</span>Evals for prompts</a>
+      <a href="#s2"><span class="n">7.2</span>LLM-as-judge &amp; its biases</a>
+      <a href="#s3"><span class="n">7.3</span>Versioning &amp; regression</a>
+      <a href="#s4"><span class="n">7.4</span>Anti-patterns catalog</a>
+      <a href="#s5"><span class="n">7.5</span>The Prompt Lab</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 7.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">7.1</span><h2>Evals for prompts: 20 examples beat 0</h2></div>
+        <p>The standard failure mode of prompt work looks like this: edit the prompt, eyeball one output, decide it "feels better," ship. That is an experiment with \(n = 1\), no control, and a judge — you — who wants the change to work. The difference between prompt tinkering and prompt engineering is not cleverness; it is <strong>a number that moves when the prompt improves</strong>. Three eval designs cover nearly every case:</p>
+        <table class="data">
+          <thead><tr><th>Design</th><th>When</th><th>Scoring</th><th>Output</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Golden set</strong></td><td>The output is checkable: a label, a number, an extraction, a schema, code that runs</td><td class="m">exact match · contains · regex · schema-valid · tests pass</td><td class="hl">pass rate</td></tr>
+            <tr><td><strong>Pairwise A/B</strong></td><td>No single right answer — emails, summaries, explanations</td><td class="m">human or LLM judge picks the better of two outputs for the same input</td><td class="hl">win rate</td></tr>
+            <tr><td><strong>Rubric scoring</strong></td><td>Quality has named dimensions you can argue about</td><td class="m">per-criterion verdicts: accurate? cited? under length? right register?</td><td class="hl">per-criterion pass rates</td></tr>
+          </tbody>
+        </table>
+        <p>Build the golden set from <em>real traffic</em>, not invented inputs: pull 20–50 cases, deliberately oversample the weird tail (ambiguous tickets, hostile users, inputs in the wrong language), and write down the expected behavior at collection time — deciding what "correct" means after seeing the model's answer is how wishful grading creeps in. For rubric scoring, prefer many small boolean criteria over one holistic 1–10: "did it cite the source span? Y/N" is stable across graders; "rate the quality" is not.</p>
+        <p>Why does a set as small as 20 matter so much? Because the information gain from \(0 \to 20\) examples is the largest you will ever get — it converts "I think this is better" into "this broke 4 of 20 cases." But binomial noise sets a floor on what small sets can resolve:</p>
+
+        <div class="eq"><span class="eq-tag">EQ P7.1 — THE NOISE FLOOR OF A GOLDEN SET</span>
+        $$ \widehat{p} = \frac{1}{n}\sum_{i=1}^{n} \mathbb{1}\!\left[\,\text{pass}_i\,\right], \qquad \mathrm{SE}\!\left(\widehat{p}\right) = \sqrt{\frac{\widehat{p}\,(1-\widehat{p})}{n}}, \qquad \text{95\% CI} \;\approx\; \widehat{p} \pm 1.96\,\mathrm{SE} $$
+        <div class="eq-note">At \(n = 20\) and \(\widehat{p} = 0.7\), the standard error is \(\approx 0.10\) — the confidence interval spans <b>±20 points</b>. Twenty examples will catch a collapse (90% → 55%) and rank clearly-different prompts; they cannot certify a 5-point refinement. Inverting the formula, resolving a difference of \(h\) needs roughly \(n \approx (1.96/h)^2\, p(1-p)\) cases: ±10 points wants ~80, ±5 points wants ~320. <b>Twenty examples beat zero by more than a thousand beats twenty</b> — start small, grow as the deltas you chase shrink.</div>
+        </div>
+
+        <p>There is a cheap statistical upgrade most teams skip: run both prompts on the <em>same</em> items and compare per-item, rather than comparing two independent pass rates. Item difficulty is shared noise, and pairing cancels it:</p>
+
+        <div class="eq"><span class="eq-tag">EQ P7.2 — WHY PAIRED BEATS POOLED</span>
+        $$ \mathrm{Var}\!\left(\widehat{p}_A - \widehat{p}_B\right) \;=\; \frac{1}{n}\Big[\, p_A(1-p_A) + p_B(1-p_B) - 2\,\mathrm{Cov}(X_A, X_B) \,\Big] $$
+        <div class="eq-note">\(X_A, X_B\) are pass/fail indicators for the two prompts on the same item. Hard items sink both prompts and easy items lift both, so \(\mathrm{Cov} &gt; 0\) — and the subtraction <b>shrinks the variance of the difference</b>, often by half or more. The items that decide the comparison are the <em>discordant</em> ones (A passes where B fails, or vice versa); a sign test over just those pairs (McNemar's logic) is the correct significance check, and it is three lines of arithmetic.</div>
+        </div>
+
+        <div class="callout warn">
+          <span class="co-icon">CONTAMINATION</span>
+          <p><strong>If you iterate against your golden set, you become the overfit.</strong> Every time you read a failing case and patch the prompt for it, that case stops measuring generalization. Split even tiny sets — 30 for development, 10 you only touch before shipping — and refresh the holdout from live traffic on a schedule. This is Vol II's eval-decontamination discipline (Vol II · Ch 04) shrunk to prompt scale; the failure mode is identical, only faster.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 7.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">7.2</span><h2>LLM-as-judge — and the judge's rap sheet</h2></div>
+        <p>Pairwise and rubric evals need a grader, and humans do not scale to nightly CI. The fix is to hire a model: show a judge model the input, the two candidate outputs (or one output plus a rubric), and ask for a verdict. The canonical result (MT-Bench, Zheng et al., 2023) is that a frontier judge agrees with human majority preference roughly <strong>80–85% of the time — about as often as humans agree with each other</strong>. That made LLM-as-judge the default instrument of applied evaluation. It also imported a defendant's worth of biases:</p>
+        <table class="data">
+          <thead><tr><th>Bias</th><th>Symptom</th><th>Mitigation</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Position bias</strong></td><td>The same pair, presented in the other order, gets a different verdict; most judges systematically favor one slot (direction varies by model)</td><td class="hl">judge every pair in both orders — average the verdicts, or count only wins that survive the swap (EQ P7.3)</td></tr>
+            <tr><td><strong>Length bias</strong></td><td>Longer answers win regardless of content; verbosity reads as effort</td><td class="hl">length-controlled win rates (the AlpacaEval 2 fix), explicit rubric line "do not reward length", compare at matched lengths</td></tr>
+            <tr><td><strong>Self-preference</strong></td><td>Judges score their own family's outputs higher — they recognize and reward their own style</td><td class="hl">judge from a different model family; or a panel of judges across families, majority vote</td></tr>
+            <tr><td><strong>Style over substance</strong></td><td>Confident tone, headers, and bullet polish outscore a correct but plain answer; errors inside fluent prose go unnoticed</td><td class="hl">give the judge a <b>reference answer</b> to compare against; grade correctness as its own criterion, isolated from presentation</td></tr>
+          </tbody>
+        </table>
+        <p>The protocol that survives these biases is boring and effective: <strong>fixed rubric, reference answer when one exists, both orders, low temperature, verdict in a parseable field</strong>. Asking the judge to justify before deciding makes verdicts easier to audit; evidence that it makes them more <em>accurate</em> is mixed — treat the justification as a debugging artifact, not a guarantee (the faithfulness caveat of Ch 04 applies to judges too).</p>
+
+        <div class="eq"><span class="eq-tag">EQ P7.3 — ORDER-SWAP DEBIASING &amp; THE FLIP RATE</span>
+        $$ \widehat{w}(A) \;=\; \tfrac{1}{2}\Big[\, \widehat{w}_{A\text{-first}} + \widehat{w}_{A\text{-second}} \,\Big], \qquad \Phi \;=\; \Pr\!\Big[\, \text{verdict}_{AB} \neq \text{verdict}_{BA} \,\Big] $$
+        <div class="eq-note">\(\widehat{w}\) is A's win rate; averaging the two presentation orders cancels position bias to first order. \(\Phi\), the <b>flip rate</b>, is the audit you can run with zero ground truth: judge every pair twice with the order swapped and count changed verdicts. A flip means the judge read the seating chart, the dice, or both — not the quality. MT-Bench's stricter variant declares a win only if it survives both orders and calls everything else a tie.</div>
+        </div>
+
+        <div class="widget" id="ev-judge-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT P7.1 — JUDGE BIAS DEMO</span><span class="w-sub">SEEDED · 3,000 PAIRS PER SETTING · EQ P7.3</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>TRUE QUALITY GAP Δ (A − B) <output id="ev-jb-gap-out">+0.30</output></label><input type="range" id="ev-jb-gap" min="-1" max="1" step="0.05" value="0.3"/></div>
+              <div class="ctl"><label>POSITION BIAS β <output id="ev-jb-bias-out">0.35</output></label><input type="range" id="ev-jb-bias" min="0" max="0.8" step="0.05" value="0.35"/></div>
+              <div class="ctl"><label>JUDGE NOISE σ <output id="ev-jb-noise-out">0.50</output></label><input type="range" id="ev-jb-noise" min="0.1" max="1.5" step="0.05" value="0.5"/></div>
+            </div>
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>PROTOCOL — WHAT YOUR EVAL REPORTS</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-ev-order="af">A FIRST</button>
+                  <button class="w-btn ghost" data-ev-order="as">A SECOND</button>
+                  <button class="w-btn ghost" data-ev-order="swap">SWAP &amp; AVERAGE</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="ev-jb-canvas" height="250"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">REPORTED WIN%(A)</div><div class="r-value" id="ev-jb-reported">—</div></div>
+              <div class="readout"><div class="r-label">TRUE WIN%(A)</div><div class="r-value" id="ev-jb-true">—</div></div>
+              <div class="readout acc"><div class="r-label">FLIP RATE Φ ON SWAP</div><div class="r-value" id="ev-jb-flip">—</div></div>
+              <div class="readout"><div class="r-label">REPORTED − TRUE</div><div class="r-value" id="ev-jb-delta">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">A toy judge: on each item, A's real quality edge is Δ plus item-to-item spread; the judge adds β to whichever response it reads first, plus fresh noise σ per reading. At the defaults A genuinely wins ≈ 70% of items — but judged A-first the eval reports ≈ 81%, judged A-second ≈ 48%. <em>The seating chart outvotes the quality gap.</em> Toggle to SWAP &amp; AVERAGE: the asymmetry cancels, though judge noise still compresses the gap toward 50% — debiasing fixes the tilt, not the blur. Set Δ = 0 and watch a pure-bias "preference" appear from nothing. Note Φ stays above zero even at β = 0: independent re-reads disagree near the boundary, so the flip rate measures total verdict instability — position bias is its <em>systematic</em> part, visible as the gap between the two single-order bars.</div>
+        </div>
+
+        <p class="note"><strong>Calibrate the judge itself.</strong> Before trusting any judge pipeline, run it on 20–30 pairs you have hand-labeled and check agreement; published judge–human agreement transfers poorly across domains. And reuse the noise-floor logic of EQ P7.1: a judge-scored win rate over 50 pairs carries ±14-point error bars at \(w \approx 0.5\) — wide enough to swallow most prompt tweaks.</p>
+      </section>
+
+      <!-- ====================== 7.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">7.3</span><h2>Prompt versioning &amp; regression: prompts are code</h2></div>
+        <p>A production prompt is configuration that controls live system behavior — yet teams that would never push code without review and CI routinely edit prompts in a dashboard textbox at 6 p.m. on a Friday. The fix is to grant prompts the full citizenship of code:</p>
+        <pre><code><span class="c"># prompts-as-code — the minimum viable discipline</span>
+<span class="k">repo</span>:      prompts/support-triage/v3.2.1.md  + CHANGELOG.md
+<span class="k">semver</span>:    MAJOR task change · MINOR scaffold/technique change · PATCH wording
+<span class="k">pin</span>:       model ID + temperature + max_tokens versioned WITH the prompt —
+           a prompt is only reproducible as (text, model, params)
+<span class="k">gate</span>:      CI runs the golden set on every prompt diff; merge blocked when
+           the score drops by more than the noise floor (EQ P7.1 — know yours)
+<span class="k">review</span>:    prompt diffs get human review; "harmless rewording" is how
+           load-bearing constraints die
+<span class="k">canary</span>:    new version to 5% of traffic; compare online metrics before 100%
+<span class="k">re-eval</span>:   every model version bump re-runs ALL prompt evals —
+           the prompt didn't change, but its interpreter did</code></pre>
+        <p>Two details earn their lines. First, the <strong>noise floor</strong>: before a gate can blame a diff, you must know how much the score wobbles when <em>nothing</em> changes — run the unchanged prompt through the eval twice at your production temperature and record the spread. Gating on movements smaller than that spread generates alarms nobody trusts, and untrusted alarms get deleted. Second, <strong>model upgrades are silent prompt regressions</strong>. A prompt is an artifact tuned against one model's quirks; swap the model and the tuning is stale — formats drift, refusal boundaries move, the few-shot examples land differently. Pinning model IDs and re-running the full suite on every upgrade is the difference between discovering this in CI and discovering it from customers.</p>
+        <p class="note">The regression story is always the same shape: someone tightens a 400-word prompt to 340 because "it was bloated," format compliance quietly falls from 99% to 91%, and three systems downstream of the parser start retrying. With an eval gate, that is a red X on a pull request. Without one, it is an incident review. Same edit, different Tuesday.</p>
+      </section>
+
+      <!-- ====================== 7.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">7.4</span><h2>Anti-patterns catalog</h2></div>
+        <p>Every entry below survives in the wild for one reason: nobody measured it. Each is a real pattern from production prompts, with the failure mechanism and the repair.</p>
+        <table class="data">
+          <thead><tr><th>Anti-pattern</th><th>Specimen</th><th>Why it fails</th><th>The fix</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><strong>"World's-best-expert" inflation</strong></td>
+              <td class="m">"You are the world's greatest marketer with 50 years of experience and 17 industry awards…"</td>
+              <td>Role conditioning works by selecting a register and vocabulary distribution (Ch 02), not by rank. Superlatives carry zero task information and tilt output toward grandiose prose.</td>
+              <td>An information-bearing role: domain, seniority, audience. "Senior lifecycle marketer at a B2B SaaS, writing for trial users who stalled at step 2."</td>
+            </tr>
+            <tr>
+              <td><strong>Threat &amp; tip folklore</strong></td>
+              <td class="m">"I will tip you $200 for a perfect answer." · "If you fail, I will lose my job."</td>
+              <td>Effects were small, model-specific, and unstable even when first reported; current post-training largely normalizes them away. You spend tokens on theater and risk a weird, placating tone.</td>
+              <td>State the real stakes as usable context — "this summary goes to the CFO unedited" changes behavior because it carries information, not pressure.</td>
+            </tr>
+            <tr>
+              <td><strong>The mega-prompt</strong></td>
+              <td class="m">3,000 accumulated words; the actual task on line 41 of 90; three format rules from three authors, two of them contradictory</td>
+              <td>Instructions buried mid-context are recalled worst (Ch 01); patch-on-patch prompts accumulate contradictions the model resolves arbitrarily — differently each sample.</td>
+              <td>Refactor like legacy code: dedupe, delete rules that cite no failure, move reference material into tagged sections, state the task first or last — and keep an eval so the refactor is provably safe.</td>
+            </tr>
+            <tr>
+              <td><strong>Negative-only constraints</strong></td>
+              <td class="m">"Don't be verbose. Don't use jargon. Don't speculate. Don't mention competitors…"</td>
+              <td>A wall of don'ts says where not to go and nothing about where to go — and a negated concept is still an activated one: "don't mention competitors" raises their salience.</td>
+              <td>Pair every DON'T with a DO, then show one exemplar of the desired output. An example is worth twenty constraints (Ch 03).</td>
+            </tr>
+            <tr>
+              <td><strong>Vague qualifiers</strong></td>
+              <td class="m">"Be concise but comprehensive, professional yet warm, detailed where it matters."</td>
+              <td>Unfalsifiable adjective pairs: the model picks the trade-off point arbitrarily, and differently on every sample. You cannot eval compliance with a vibe.</td>
+              <td>Operationalize: word caps, named structure ("3 bullets + 1 risk"), reading level, or an exemplar that <em>embodies</em> the trade-off. If you can't write the check, the model can't hit the target.</td>
+            </tr>
+          </tbody>
+        </table>
+        <p class="note">The catalog compresses to one rule: <strong>every token must carry information the model can act on</strong>. Rank, flattery, threats, and vibes carry none. Context, constraints, examples, and checkable formats carry plenty — and everything that carries information can be measured, which is what the next section is for.</p>
+      </section>
+
+      <!-- ====================== 7.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">7.5</span><h2>The Prompt Lab — run the volume's claims live</h2></div>
+        <p>Everything above assumed you had outputs to score. Time to generate some. The lab below sends two prompts — A, a baseline; B, a technique from this volume — to a real Claude model and shows both outputs side by side. Four preset experiments reproduce the volume's central comparisons; the textareas stay fully editable, so the fifth experiment is yours.</p>
+
+        <div class="callout">
+          <span class="co-icon">PRIVACY</span>
+          <p><strong>Bring your own key; keep your own key.</strong> Your API key is held in this tab's <code>sessionStorage</code> only — it is never sent anywhere except <code>api.anthropic.com</code>, and requests travel directly from your browser to Anthropic over TLS. This page has no backend and no analytics on the lab. Closing the tab forgets the key. Use a key from <code>console.anthropic.com</code> with a low spend limit; a lab run costs a fraction of a cent.</p>
+        </div>
+
+        <div class="widget" id="prompt-lab" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT P7.2 — THE PROMPT LAB</span><span class="w-sub">BYOK · LIVE A/B AGAINST THE ANTHROPIC API</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl" style="flex:2;min-width:220px;">
+                <label>ANTHROPIC API KEY</label>
+                <input type="password" id="lab-key" class="w-input" style="width:100%;box-sizing:border-box;" placeholder="sk-ant-…  · stays in this tab" autocomplete="off" spellcheck="false"/>
+              </div>
+              <div class="ctl" style="flex:1;min-width:200px;">
+                <label>MODEL</label>
+                <select id="lab-model" class="w-input" style="width:100%;box-sizing:border-box;">
+                  <option value="claude-sonnet-4-6" selected>claude-sonnet-4-6 · balanced</option>
+                  <option value="claude-haiku-4-5-20251001">claude-haiku-4-5 · fast &amp; cheap</option>
+                  <option value="claude-opus-4-8">claude-opus-4-8 · frontier</option>
+                </select>
+              </div>
+            </div>
+
+            <div style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.16em;color:#636363;margin:10px 0 6px;">PRESET EXPERIMENTS — EACH MAPS TO A CHAPTER OF THIS VOLUME</div>
+            <div class="seg-row" style="margin-bottom:12px;">
+              <button class="w-btn ghost on" data-ev-preset="scaffold">SCAFFOLD VS BARE · CH 02</button>
+              <button class="w-btn ghost" data-ev-preset="fewshot">FEW-SHOT VS ZERO-SHOT · CH 03</button>
+              <button class="w-btn ghost" data-ev-preset="critique">CRITIQUE→REVISE VS SINGLE PASS · CH 06</button>
+              <button class="w-btn ghost" data-ev-preset="xml">XML STRUCTURE VS PROSE · CH 05</button>
+            </div>
+
+            <div style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.16em;color:#636363;margin-bottom:6px;">SYSTEM PROMPT — SHARED BY A AND B (THE CONTROLLED VARIABLE)</div>
+            <textarea id="lab-system" class="w-input" rows="2" spellcheck="false" style="width:100%;box-sizing:border-box;resize:vertical;min-height:44px;font-family:ui-monospace,Menlo,monospace;font-size:12px;line-height:1.55;"></textarea>
+
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px;margin-top:12px;">
+              <div>
+                <div style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.16em;color:#636363;margin-bottom:6px;">PROMPT A — BASELINE</div>
+                <textarea id="lab-prompt-a" class="w-input" spellcheck="false" style="width:100%;box-sizing:border-box;resize:vertical;min-height:170px;font-family:ui-monospace,Menlo,monospace;font-size:12px;line-height:1.55;">Write an email asking the client for a deadline extension.</textarea>
+              </div>
+              <div>
+                <div style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.16em;color:#636363;margin-bottom:6px;">PROMPT B — TECHNIQUE</div>
+                <textarea id="lab-prompt-b" class="w-input" spellcheck="false" style="width:100%;box-sizing:border-box;resize:vertical;min-height:170px;font-family:ui-monospace,Menlo,monospace;font-size:12px;line-height:1.55;">ROLE — Senior account manager at a 12-person consultancy.
+
+TASK — Write an email to our client requesting a two-week extension
+on the Q3 data-migration milestone.
+
+CONTEXT — Reader: Dana, VP Ops. Direct, dislikes apologies, values
+plans over excuses. This is our second extension request; the first
+(3 days, in June) was granted but noted. Cause: their API sandbox
+was down for 9 days; our share: we under-scoped integration testing.
+
+FORMAT — Subject line + 3 short paragraphs: (1) the ask with the new
+date, (2) one-sentence cause without blaming their team, (3) the
+revised plan with two checkpoint dates. Under 150 words.
+
+CONSTRAINTS — No "sorry for the inconvenience". If tone trades off
+against brevity, choose brevity.</textarea>
+              </div>
+            </div>
+
+            <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:12px;">
+              <button class="w-btn" id="lab-run">RUN A/B ▶</button>
+              <span id="lab-status" style="font-family:ui-monospace,Menlo,monospace;font-size:10px;letter-spacing:.14em;color:#9b9b9b;">IDLE — PASTE A KEY · PICK A PRESET · RUN</span>
+            </div>
+
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px;margin-top:12px;">
+              <div>
+                <div style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.16em;color:#636363;margin-bottom:6px;">OUTPUT A</div>
+                <pre id="lab-out-a" style="margin:0;background:rgba(0,0,0,.45);border:1px solid var(--hairline);border-radius:4px;padding:12px;min-height:120px;max-height:380px;overflow:auto;white-space:pre-wrap;font-size:12px;line-height:1.6;color:#e5e5e5;">—</pre>
+              </div>
+              <div>
+                <div style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.16em;color:#636363;margin-bottom:6px;">OUTPUT B</div>
+                <pre id="lab-out-b" style="margin:0;background:rgba(0,0,0,.45);border:1px solid var(--hairline);border-radius:4px;padding:12px;min-height:120px;max-height:380px;overflow:auto;white-space:pre-wrap;font-size:12px;line-height:1.6;color:#e5e5e5;">—</pre>
+              </div>
+            </div>
+          </div>
+          <div class="w-note">Run a preset, read both outputs against the technique's claim — then run it <em>again</em>. Sampling at the API's default temperature means each run is one draw; a conclusion from a single pair is the \(n = 1\) sin §7.1 opened with. And notice your own protocol: B always sits on the right and you know which is which — position bias and experimenter bias, live, in you. For a judgment you'd defend, decide the criterion <em>before</em> reading, and for real evals, blind and randomize (§7.2).</div>
+        </div>
+
+        <p class="note"><strong>What the presets test.</strong> Scaffold vs bare reruns Ch 02's central claim on your model of choice. Few-shot vs zero-shot (Ch 03) uses a deliberately MIXED-sentiment ticket — watch whether the examples transfer the output format and the label discipline. Critique-then-revise vs single pass (Ch 06) shows all three passes, so you can check whether the critique actually found anything. XML vs prose (Ch 05) feeds the same meeting notes as a run-on mess and as tagged sections — compare which one flags the unassigned action item.</p>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>A prompt that survives an eval gate is ready for responsibility.</strong> Volume IV hands it tools: the agentic loop — model calls a tool, reads the result, decides what to do next — where every technique in this volume becomes the control surface for software that acts, and every missing eval becomes an incident.</p>
+        </div>
+      </section>
+
+      <nav class="pager">
+        <a href="06-adversarial.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">06</span> Self-Critique, Red Teams &amp; Councils</div></a>
+        <a class="next" href="../agents/01-the-agentic-loop.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">01</span> Vol IV · From Chat to Agents</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — VOL III · CH 07</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/glossary.js"></script>
+<script src="../assets/js/shared.js"></script>
+<script src="../assets/js/byok.js"></script>
+<script>
+/* chapter instruments — single IIFE, no globals */
+(function () {
+  "use strict";
+  var FM = window.FM;
+
+  /* ============================================================
+     INSTRUMENT P7.1 — JUDGE BIAS DEMO
+     Toy pairwise judge, seeded. Per item i:
+       quality gap g_i = Δ + 0.6·z_item   (item spread fixed at 0.6)
+       verdict A-first : g_i + β + σ·z₁ > 0
+       verdict A-second: g_i − β + σ·z₂ > 0
+       true win        : g_i > 0
+     Reported = win rate under the selected protocol (EQ P7.3).
+     ============================================================ */
+  (function () {
+    var root = document.getElementById("ev-judge-demo");
+    if (!root) return;
+    var gapIn = document.getElementById("ev-jb-gap");
+    var gapOut = document.getElementById("ev-jb-gap-out");
+    var biasIn = document.getElementById("ev-jb-bias");
+    var biasOut = document.getElementById("ev-jb-bias-out");
+    var noiseIn = document.getElementById("ev-jb-noise");
+    var noiseOut = document.getElementById("ev-jb-noise-out");
+    var canvas = document.getElementById("ev-jb-canvas");
+    var repEl = document.getElementById("ev-jb-reported");
+    var trueEl = document.getElementById("ev-jb-true");
+    var flipEl = document.getElementById("ev-jb-flip");
+    var deltaEl = document.getElementById("ev-jb-delta");
+    var orderBtns = root.querySelectorAll("[data-ev-order]");
+    if (!gapIn || !biasIn || !noiseIn || !canvas) return;
+
+    var N = 3000, ITEM_SD = 0.6;
+    var mode = "af";
+    var R = { af: 0, as: 0, avg: 0, truth: 0, flip: 0 };
+
+    function gauss(rng) {
+      var u = 0;
+      do { u = rng(); } while (u <= 0);
+      return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rng());
+    }
+
+    function simulate() {
+      var d = parseFloat(gapIn.value);
+      var b = parseFloat(biasIn.value);
+      var s = parseFloat(noiseIn.value);
+      var seed = (0x9E3779B9 ^ (Math.round(d * 100) * 7919) ^
+        (Math.round(b * 100) * 104729) ^ (Math.round(s * 100) * 1299709)) >>> 0;
+      var rng = FM.mulberry32(seed);
+      var winAF = 0, winAS = 0, winT = 0, flips = 0;
+      for (var i = 0; i < N; i++) {
+        var g = d + ITEM_SD * gauss(rng);
+        var vAF = (g + b + s * gauss(rng)) > 0;
+        var vAS = (g - b + s * gauss(rng)) > 0;
+        if (vAF) winAF++;
+        if (vAS) winAS++;
+        if (g > 0) winT++;
+        if (vAF !== vAS) flips++;
+      }
+      R.af = winAF / N;
+      R.as = winAS / N;
+      R.avg = 0.5 * (R.af + R.as);
+      R.truth = winT / N;
+      R.flip = flips / N;
+    }
+
+    function draw() {
+      var st = FM.setupCanvas(canvas, 250);
+      var ctx = st.ctx, W = st.w, H = st.h;
+      ctx.clearRect(0, 0, W, H);
+      var mL = 46, mR = 16, mT = 18, mB = 34;
+      var pw = W - mL - mR, ph = H - mT - mB;
+      function Y(v) { return mT + (1 - v) * ph; }
+      ctx.font = FM.C.MONO;
+
+      /* grid */
+      for (var gl = 0; gl <= 4; gl++) {
+        var v = gl / 4;
+        ctx.strokeStyle = "rgba(47,50,52,.7)";
+        ctx.beginPath(); ctx.moveTo(mL, Y(v)); ctx.lineTo(W - mR, Y(v)); ctx.stroke();
+        ctx.fillStyle = FM.C.MUT;
+        ctx.textAlign = "right";
+        ctx.fillText((v * 100).toFixed(0) + "%", mL - 8, Y(v) + 3);
+      }
+
+      var bars = [
+        { key: "af", label: "A FIRST", v: R.af },
+        { key: "as", label: "A SECOND", v: R.as },
+        { key: "swap", label: "SWAP + AVG", v: R.avg }
+      ];
+      var slot = pw / bars.length, bw = Math.min(slot * 0.46, 90);
+      for (var i = 0; i < bars.length; i++) {
+        var cx = mL + slot * (i + 0.5);
+        var on = bars[i].key === mode;
+        ctx.fillStyle = on ? FM.C.MINT : "rgba(155,155,155,.28)";
+        ctx.fillRect(cx - bw / 2, Y(bars[i].v), bw, Y(0) - Y(bars[i].v));
+        ctx.strokeStyle = on ? FM.C.MINT : "rgba(86,86,86,.8)";
+        ctx.strokeRect(cx - bw / 2, Y(bars[i].v), bw, Y(0) - Y(bars[i].v));
+        ctx.textAlign = "center";
+        ctx.fillStyle = on ? FM.C.MINT : FM.C.SEC;
+        ctx.fillText((bars[i].v * 100).toFixed(1) + "%", cx, Y(bars[i].v) - 6);
+        ctx.fillStyle = on ? FM.C.MINT : FM.C.MUT;
+        ctx.fillText(bars[i].label, cx, H - mB + 16);
+      }
+
+      /* true quality line */
+      ctx.strokeStyle = "rgba(255,255,255,.8)";
+      ctx.setLineDash([5, 4]);
+      ctx.beginPath(); ctx.moveTo(mL, Y(R.truth)); ctx.lineTo(W - mR, Y(R.truth)); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = FM.C.BRIGHT;
+      ctx.textAlign = "right";
+      ctx.fillText("TRUE QUALITY WIN " + (R.truth * 100).toFixed(1) + "%", W - mR - 4, Y(R.truth) - 6);
+    }
+
+    function readouts() {
+      var rep = mode === "af" ? R.af : mode === "as" ? R.as : R.avg;
+      var dlt = (rep - R.truth) * 100;
+      repEl.textContent = (rep * 100).toFixed(1) + "%";
+      trueEl.textContent = (R.truth * 100).toFixed(1) + "%";
+      flipEl.textContent = (R.flip * 100).toFixed(1) + "%";
+      deltaEl.textContent = (dlt >= 0 ? "+" : "") + dlt.toFixed(1) + " PTS";
+      deltaEl.style.color = Math.abs(dlt) > 5 ? "#ff4136" : "";
+    }
+
+    function refresh() {
+      gapOut.textContent = (parseFloat(gapIn.value) >= 0 ? "+" : "") + parseFloat(gapIn.value).toFixed(2);
+      biasOut.textContent = parseFloat(biasIn.value).toFixed(2);
+      noiseOut.textContent = parseFloat(noiseIn.value).toFixed(2);
+      simulate(); draw(); readouts();
+    }
+
+    gapIn.addEventListener("input", refresh);
+    biasIn.addEventListener("input", refresh);
+    noiseIn.addEventListener("input", refresh);
+    for (var ob = 0; ob < orderBtns.length; ob++) {
+      orderBtns[ob].addEventListener("click", function () {
+        for (var k = 0; k < orderBtns.length; k++) orderBtns[k].classList.remove("on");
+        this.classList.add("on");
+        mode = this.getAttribute("data-ev-order");
+        draw(); readouts();
+      });
+    }
+    window.addEventListener("resize", draw);
+    refresh();
+  })();
+
+  /* ============================================================
+     PROMPT LAB — PRESET EXPERIMENTS
+     Fills lab-system / lab-prompt-a / lab-prompt-b. The API call
+     itself lives in assets/js/byok.js — not reimplemented here.
+     ============================================================ */
+  (function () {
+    var lab = document.getElementById("prompt-lab");
+    if (!lab) return;
+    var sysEl = document.getElementById("lab-system");
+    var aEl = document.getElementById("lab-prompt-a");
+    var bEl = document.getElementById("lab-prompt-b");
+    var outA = document.getElementById("lab-out-a");
+    var outB = document.getElementById("lab-out-b");
+    var statusEl = document.getElementById("lab-status");
+    var btns = lab.querySelectorAll("[data-ev-preset]");
+    if (!sysEl || !aEl || !bEl) return;
+
+    var PRESETS = {
+      scaffold: {
+        msg: "PRESET: SCAFFOLD VS BARE (CH 02) — RUN A/B ▶",
+        sys: "",
+        a: "Write an email asking the client for a deadline extension.",
+        b: [
+          "ROLE — Senior account manager at a 12-person consultancy.",
+          "",
+          "TASK — Write an email to our client requesting a two-week extension",
+          "on the Q3 data-migration milestone.",
+          "",
+          "CONTEXT — Reader: Dana, VP Ops. Direct, dislikes apologies, values",
+          "plans over excuses. This is our second extension request; the first",
+          "(3 days, in June) was granted but noted. Cause: their API sandbox",
+          "was down for 9 days; our share: we under-scoped integration testing.",
+          "",
+          "FORMAT — Subject line + 3 short paragraphs: (1) the ask with the new",
+          "date, (2) one-sentence cause without blaming their team, (3) the",
+          "revised plan with two checkpoint dates. Under 150 words.",
+          "",
+          "CONSTRAINTS — No “sorry for the inconvenience”. If tone trades off",
+          "against brevity, choose brevity."
+        ].join("\n")
+      },
+      fewshot: {
+        msg: "PRESET: FEW-SHOT VS ZERO-SHOT (CH 03) — RUN A/B ▶",
+        sys: "You label customer support tickets.",
+        a: [
+          "Classify this ticket's sentiment as POSITIVE, NEGATIVE, or MIXED,",
+          "and name the product area.",
+          "",
+          "Ticket: “The new dashboard is gorgeous — which makes it worse that",
+          "it forgets my saved filters every single session. I rebuild them",
+          "every morning.”"
+        ].join("\n"),
+        b: [
+          "Classify each ticket. Output exactly: LABEL · AREA · one-line reason.",
+          "",
+          "Ticket: “Checkout died twice during the sale. We lost orders.”",
+          "→ NEGATIVE · payments · outage with revenue impact",
+          "",
+          "Ticket: “Love the new export button. Tiny thing: it’s hidden behind",
+          "two menus.”",
+          "→ MIXED · reports · praise plus discoverability complaint",
+          "",
+          "Ticket: “Onboarding took 4 minutes flat. Whole team active same day.”",
+          "→ POSITIVE · onboarding · fast setup, full adoption",
+          "",
+          "Ticket: “The new dashboard is gorgeous — which makes it worse that",
+          "it forgets my saved filters every single session. I rebuild them",
+          "every morning.”",
+          "→"
+        ].join("\n")
+      },
+      critique: {
+        msg: "PRESET: CRITIQUE→REVISE VS SINGLE PASS (CH 06) — RUN A/B ▶",
+        sys: "",
+        a: [
+          "Write a 4-sentence product description for a titanium travel mug",
+          "that keeps drinks hot for 12 hours."
+        ].join("\n"),
+        b: [
+          "Write a 4-sentence product description for a titanium travel mug",
+          "that keeps drinks hot for 12 hours.",
+          "",
+          "Do it in three passes, and show all three:",
+          "",
+          "DRAFT — first attempt.",
+          "",
+          "CRITIQUE — grade the draft against this checklist:",
+          "(1) zero cliches (“game-changer”, “elevate”, “crafted”),",
+          "(2) at least two concrete numbers,",
+          "(3) every sentence earns its place,",
+          "(4) the last sentence creates urgency without an exclamation mark.",
+          "",
+          "FINAL — rewrite, fixing every failure the critique found."
+        ].join("\n")
+      },
+      xml: {
+        msg: "PRESET: XML STRUCTURE VS PROSE (CH 05) — RUN A/B ▶",
+        sys: "",
+        a: [
+          "Read the meeting notes below and pull out action items I need the",
+          "owner and deadline for each one also note any decisions that were",
+          "made, the notes: Sara said the pricing page rewrite ships Friday,",
+          "Marcus will draft the enterprise tier copy by Wednesday, we agreed",
+          "to kill the free trial extension experiment, someone needs to tell",
+          "legal about the new claims before launch probably Priya, oh and",
+          "the launch is moved to the 24th."
+        ].join("\n"),
+        b: [
+          "<instructions>",
+          "Extract from the transcript:",
+          "1. ACTION ITEMS — owner · task · deadline (write NONE if absent)",
+          "2. DECISIONS — final calls made, one line each",
+          "Output the two sections with those exact headers. Flag any action",
+          "item with no clear owner as ⚠ UNASSIGNED.",
+          "</instructions>",
+          "",
+          "<transcript>",
+          "Sara: pricing page rewrite ships Friday.",
+          "Marcus: will draft enterprise-tier copy by Wednesday.",
+          "Group: agreed to kill the free-trial-extension experiment.",
+          "Unattributed: someone should tell legal about the new claims",
+          "before launch — probably Priya.",
+          "Note: launch moved to the 24th.",
+          "</transcript>"
+        ].join("\n")
+      }
+    };
+
+    for (var i = 0; i < btns.length; i++) {
+      btns[i].addEventListener("click", function () {
+        var p = PRESETS[this.getAttribute("data-ev-preset")];
+        if (!p) return;
+        for (var k = 0; k < btns.length; k++) btns[k].classList.remove("on");
+        this.classList.add("on");
+        sysEl.value = p.sys;
+        aEl.value = p.a;
+        bEl.value = p.b;
+        if (outA) { outA.textContent = "—"; outA.style.color = ""; }
+        if (outB) { outB.textContent = "—"; outB.style.color = ""; }
+        if (statusEl) statusEl.textContent = p.msg;
+      });
+    }
+  })();
+})();
+</script>
+</body>
+</html>

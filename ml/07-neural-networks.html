@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>07 · Neural Networks: The MLP — AI Encyclopedia</title>
+<meta name="description" content="Stack linear maps with nonlinear bends and you can fit anything: the perceptron's limit, the MLP, activation functions, universal approximation — and a real neural network you train in the page." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css" />
+</head>
+<body>
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ VOL I / ML FOUNDATIONS / 07 / NEURAL NETWORKS: THE MLP</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="08-backpropagation.html">NEXT: BACKPROPAGATION →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">VOLUME I — FOUNDATIONS OF ML · CHAPTER 07 / 08</div>
+    <h1>Neural Networks: The MLP</h1>
+    <p class="lede">A linear model can draw exactly one flat boundary, and four points are enough to defeat it. The fix is almost embarrassingly small: <strong>stack two linear maps with a nonlinear bend between them, and the model starts inventing its own features</strong>. This chapter builds the multi-layer perceptron — the unit cell of every network in this encyclopedia — and trains one live, in this page, on the problem the perceptron provably cannot solve.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 26 MIN</b></span>
+      <span>BUILDS ON<b>CH 02–03 · CH 06</b></span>
+      <span>INSTRUMENTS<b>XOR PLAYGROUND · ACTIVATION GALLERY</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">7.1</span>The perceptron's limit</a>
+      <a href="#s2"><span class="n">7.2</span>The MLP</a>
+      <a href="#s3"><span class="n">7.3</span>Activation functions</a>
+      <a href="#s4"><span class="n">7.4</span>Universal approximation</a>
+      <a href="#s5"><span class="n">7.5</span>Width vs depth</a>
+      <a href="#s6"><span class="n">7.6</span>Shapes discipline</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 7.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">7.1</span><h2>The perceptron and its limit</h2></div>
+        <p>Rosenblatt's 1958 <strong>perceptron</strong> is a thresholded weighted sum: \( \hat{y} = \mathbf{1}[\, w^\top x + b > 0 \,] \). Geometrically it is a single hyperplane — everything on one side is class 1, everything on the other is class 0. The logistic regression of Chapter 03 softens the threshold into a sigmoid, but the geometry is identical: <em>one flat cut through input space</em>. For sixty years of statistics that was usually enough, because humans hand-engineered features until the classes became linearly separable.</p>
+        <p>Then consider the smallest dataset in this encyclopedia — exclusive-or:</p>
+        <table class="data">
+          <thead><tr><th>x₁</th><th>x₂</th><th>x₁ XOR x₂</th><th>corner</th></tr></thead>
+          <tbody>
+            <tr><td class="m">0</td><td class="m">0</td><td class="m">0</td><td>bottom-left</td></tr>
+            <tr><td class="m">0</td><td class="m">1</td><td class="hl">1</td><td>top-left</td></tr>
+            <tr><td class="m">1</td><td class="m">0</td><td class="hl">1</td><td>bottom-right</td></tr>
+            <tr><td class="m">1</td><td class="m">1</td><td class="m">0</td><td>top-right</td></tr>
+          </tbody>
+        </table>
+        <p>The 1s sit on one diagonal, the 0s on the other. No line separates them, and the proof takes four inequalities. Suppose weights \(w_1, w_2, b\) existed. The four points demand:</p>
+        <ul>
+          <li>\((0,0)\to 0\): &nbsp; \( b \le 0 \)</li>
+          <li>\((1,0)\to 1\): &nbsp; \( w_1 + b > 0 \)</li>
+          <li>\((0,1)\to 1\): &nbsp; \( w_2 + b > 0 \)</li>
+          <li>\((1,1)\to 0\): &nbsp; \( w_1 + w_2 + b \le 0 \)</li>
+        </ul>
+        <p>Add the middle two: \( w_1 + w_2 + 2b > 0 \), so \( w_1 + w_2 + b > -b \ge 0 \) — directly contradicting the fourth. <strong>No linear model, however trained, can represent XOR.</strong> Minsky and Papert published this in 1969, funding for neural networks evaporated, and the result stood as the field's cautionary tale until people accepted the obvious-but-then-untrainable fix: more layers. Note the honest framing — the limitation was about <em>single-layer</em> machines; multi-layer ones were known to be more powerful but nobody could train them until backpropagation spread in 1986 (Chapter 08).</p>
+      </section>
+
+      <!-- ====================== 7.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">7.2</span><h2>The MLP: linear, bend, linear</h2></div>
+        <p>The <strong>multi-layer perceptron</strong> inserts a hidden layer of \(d_h\) units between input and output, with an elementwise nonlinearity \(\varphi\) — the <em>activation function</em> — applied in between:</p>
+
+        <div class="eq"><span class="eq-tag">EQ M7.1 — THE TWO-LAYER MLP</span>
+        $$ h = \varphi\!\big( W_1 x + b_1 \big), \qquad \hat{y} = W_2\, h + b_2, \qquad W_1 \in \mathbb{R}^{d_h \times d_{\text{in}}},\; W_2 \in \mathbb{R}^{d_{\text{out}} \times d_h} $$
+        <div class="eq-note">Each row of \(W_1\) defines one hyperplane; hidden unit \(h_j = \varphi(w_j^\top x + b_j)\) is a squashed signed distance to it — a soft linear feature detector. The output layer is then an ordinary linear model <em>in the feature space the network chose for itself</em>. The bend is load-bearing: <b>without \(\varphi\), the stack collapses — \(W_2(W_1 x + b_1) + b_2\) is just another linear model</b>, no matter how many layers you pile up. We write a network's sizes as d<sub>in</sub>-d<sub>h</sub>-d<sub>out</sub>: the instrument below trains a 2-8-1.</div>
+        </div>
+
+        <div class="figure" data-reveal>
+          <div class="fig-head"><span class="fig-id">FIG 7.1</span><span class="fig-title">A 2-4-1 MLP — TWO MATRICES AND ONE BEND</span></div>
+          <div class="fig-body">
+            <svg viewBox="0 0 680 280" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Diagram of a 2-4-1 multi-layer perceptron">
+              <line class="dg-line" data-draw x1="96" y1="95" x2="284" y2="48"/><line class="dg-line" data-draw x1="96" y1="95" x2="284" y2="106"/>
+              <line class="dg-line" data-draw x1="96" y1="95" x2="284" y2="164"/><line class="dg-line" data-draw x1="96" y1="95" x2="284" y2="222"/>
+              <line class="dg-line" data-draw x1="96" y1="175" x2="284" y2="48"/><line class="dg-line" data-draw x1="96" y1="175" x2="284" y2="106"/>
+              <line class="dg-line" data-draw x1="96" y1="175" x2="284" y2="164"/><line class="dg-line" data-draw x1="96" y1="175" x2="284" y2="222"/>
+              <line class="dg-line-acc" data-draw x1="316" y1="48" x2="544" y2="135"/><line class="dg-line-acc" data-draw x1="316" y1="106" x2="544" y2="135"/>
+              <line class="dg-line-acc" data-draw x1="316" y1="164" x2="544" y2="135"/><line class="dg-line-acc" data-draw x1="316" y1="222" x2="544" y2="135"/>
+              <g data-pop>
+                <circle class="dg-box" cx="80" cy="95" r="16"/><circle class="dg-box" cx="80" cy="175" r="16"/>
+                <text class="dg-label" x="80" y="99" text-anchor="middle">x₁</text><text class="dg-label" x="80" y="179" text-anchor="middle">x₂</text>
+              </g>
+              <g data-pop>
+                <circle class="dg-box" cx="300" cy="48" r="16"/><circle class="dg-box" cx="300" cy="106" r="16"/>
+                <circle class="dg-box" cx="300" cy="164" r="16"/><circle class="dg-box" cx="300" cy="222" r="16"/>
+                <text class="dg-label" x="300" y="52" text-anchor="middle">h₁</text><text class="dg-label" x="300" y="110" text-anchor="middle">h₂</text>
+                <text class="dg-label" x="300" y="168" text-anchor="middle">h₃</text><text class="dg-label" x="300" y="226" text-anchor="middle">h₄</text>
+              </g>
+              <g data-pop>
+                <circle class="dg-box-accent" cx="560" cy="135" r="16"/>
+                <text class="dg-label" x="560" y="139" text-anchor="middle">ŷ</text>
+              </g>
+              <g data-pop>
+                <text class="dg-label-sm" x="190" y="56" text-anchor="middle">W₁ (4×2) + b₁</text>
+                <text class="dg-label-sm" x="430" y="92" text-anchor="middle">W₂ (1×4) + b₂</text>
+                <text class="dg-label-acc" x="300" y="18" text-anchor="middle">hⱼ = φ(wⱼ·x + bⱼ)</text>
+                <text class="dg-label-mut" x="80" y="268" text-anchor="middle">INPUT ℝ²</text>
+                <text class="dg-label-mut" x="300" y="268" text-anchor="middle">HIDDEN — 4 LEARNED FEATURES</text>
+                <text class="dg-label-mut" x="560" y="268" text-anchor="middle">OUTPUT</text>
+              </g>
+            </svg>
+          </div>
+          <div class="fig-cap">Every edge is one learned number. The first layer's rows are four hyperplanes; φ turns signed distances into soft features; the second layer is a plain linear model over those features. <b>The network's only new trick is choosing its features itself.</b></div>
+        </div>
+
+        <p>What does training do with this freedom? Watch it happen. The instrument below is a complete neural network — forward pass, backpropagation, gradient updates — implemented in this page with no library. It trains a 2-H-1 MLP (tanh hidden units, sigmoid output, cross-entropy loss, full-batch gradient descent) on seeded datasets a linear model cannot touch.</p>
+
+        <div class="widget" id="nn-xor" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT M7.1 — XOR PLAYGROUND</span><span class="w-sub">REAL 2-H-1 MLP · FULL BACKPROP IN-PAGE · SEEDED</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>DATASET</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-nn-data="xor">XOR BLOBS</button>
+                  <button class="w-btn ghost" data-nn-data="rings">TWO CIRCLES</button>
+                </div>
+              </div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>CONTROL</label>
+                <div class="seg-row">
+                  <button class="w-btn" id="nn-train">TRAIN ▶</button>
+                  <button class="w-btn ghost" id="nn-reset">RESET</button>
+                </div>
+              </div>
+            </div>
+            <div class="ctl-row">
+              <div class="ctl"><label>LEARNING RATE η (LOG) <output id="nn-lr-out">0.50</output></label><input type="range" id="nn-lr" min="-2" max="2" step="0.05" value="-0.3"/></div>
+              <div class="ctl"><label>HIDDEN UNITS H <output id="nn-h-out">8</output></label><input type="range" id="nn-h" min="2" max="16" step="1" value="8"/></div>
+            </div>
+            <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:stretch;">
+              <div style="flex:1 1 300px;min-width:260px;"><canvas class="w-canvas" id="nn-region" height="320"></canvas></div>
+              <div style="flex:1 1 210px;min-width:200px;max-width:340px;"><canvas class="w-canvas" id="nn-loss" height="320"></canvas></div>
+            </div>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">EPOCH</div><div class="r-value" id="nn-ep">0</div></div>
+              <div class="readout acc"><div class="r-label">LOSS (BCE)</div><div class="r-value" id="nn-loss-val">—</div></div>
+              <div class="readout acc"><div class="r-label">TRAIN ACCURACY</div><div class="r-value" id="nn-acc">—</div></div>
+              <div class="readout"><div class="r-label">PARAMETERS (4H+1)</div><div class="r-value" id="nn-params">33</div></div>
+            </div>
+          </div>
+          <div class="w-note">Press TRAIN and watch a straight prejudice bend into the right shape — with H = 8 and η = 0.5, XOR falls inside a few hundred epochs. Switch to TWO CIRCLES and the net closes a loop around the inner cluster. Now drop H to 2 on the circles: enclosing a region needs at least three half-planes, so it provably cannot — and H = 2 on XOR <em>can</em> represent the answer yet gradient descent often fails to find it (representable ≠ learnable, the theme of §7.4). Then push η toward 100: the loss curve goes ragged as each step overshoots the valley it is aiming for, and the boundary thrashes — full-batch descent on this bounded loss rarely explodes outright, but it stops descending. The loss curve tells you before the picture does.</div>
+        </div>
+
+        <p>Before training finds weights, it helps to see that good weights <em>exist</em>. The cell below hard-codes a 2-8-1 ReLU network in which only two of the eight hidden units do any work — and XOR falls exactly. This is the existence proof; the instrument above is the search; Chapter 08 is the algebra of the search.</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false">import numpy as np
+
+def relu(z): return np.maximum(0, z)
+
+# 2-8-1 MLP, weights set by hand: 2 of the 8 hidden units solve XOR, 6 idle
+W1 = np.zeros((8, 2)); b1 = np.zeros(8)
+W1[0] = [1, 1]; b1[0] =  0.0     # h0 = ReLU(x1 + x2)
+W1[1] = [1, 1]; b1[1] = -1.0     # h1 = ReLU(x1 + x2 - 1)
+W2 = np.zeros((1, 8)); W2[0, 0] = 1.0; W2[0, 1] = -2.0
+b2 = np.zeros(1)                  # y = h0 - 2*h1
+
+X = np.array([[0,0],[0,1],[1,0],[1,1]], dtype=float)
+H = relu(X @ W1.T + b1)           # (4, 8)
+Y = H @ W2.T + b2                 # (4, 1)
+for x, y in zip(X, Y):
+    print(f"x = {x.astype(int)}  ->  yhat = {y[0]:.1f}   XOR = {int(x[0]) ^ int(x[1])}")
+print("\nhidden layer H (4 inputs x 8 units):")
+print(H)
+</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 7.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">7.3</span><h2>Activation functions</h2></div>
+        <p>The choice of \(\varphi\) looks cosmetic and decided a decade of history. An activation must be nonlinear (or the stack collapses), nearly free to compute (it runs once per unit per example), and — the part nobody appreciated until networks got deep — it must <em>pass gradients</em>. The learning signal reaching layer 1 is a product of one factor per layer crossed:</p>
+
+        <div class="eq"><span class="eq-tag">EQ M7.2 — WHY GRADIENTS VANISH</span>
+        $$ \frac{\partial \mathcal{L}}{\partial h^{(1)}} \;=\; \Bigg( \prod_{\ell=2}^{L} W_{\ell}^{\top}\, \mathrm{diag}\!\big( \varphi'(z^{(\ell)}) \big) \Bigg) \frac{\partial \mathcal{L}}{\partial h^{(L)}} $$
+        <div class="eq-note">Every layer multiplies the backward signal by its weight matrix and by \(\varphi'\) evaluated where each unit currently sits. Sigmoid's derivative peaks at \(1/4\) — so through \(L\) sigmoid layers the signal shrinks like \((1/4)^L\) <em>at best</em>, and far faster once units saturate. Ten layers: \(\sim 10^{-6}\) of the gradient survives. <b>ReLU's derivative is exactly 1 on the entire active half — gradients pass through unshrunk</b>, which is most of why deep networks became trainable in 2012.</div>
+        </div>
+
+        <table class="data">
+          <thead><tr><th>Activation</th><th>φ(z)</th><th>Range</th><th>max φ′</th><th>Verdict</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Sigmoid σ</strong></td><td class="m">1 / (1 + e⁻ᶻ)</td><td class="m">(0, 1)</td><td class="m">0.25</td><td>Saturates on both sides; killed deep stacks. Survives as the output for probabilities and inside gates.</td></tr>
+            <tr><td><strong>Tanh</strong></td><td class="m">2σ(2z) − 1</td><td class="m">(−1, 1)</td><td class="m">1.00</td><td>Zero-centered sigmoid; the RNN-era default; still saturates at both ends.</td></tr>
+            <tr><td><strong>ReLU</strong></td><td class="m">max(0, z)</td><td class="m">[0, ∞)</td><td class="hl">1.00</td><td>Derivative is 1 everywhere active; cheap; sparse. Risk: <em>dead units</em> stuck at φ′ = 0 forever.</td></tr>
+            <tr><td><strong>GELU</strong></td><td class="m">z · Φ(z)</td><td class="m">≈ (−0.17, ∞)</td><td class="m">≈ 1.08</td><td>Smooth ReLU weighted by the Gaussian CDF; default of the GPT-2/BERT era of transformers.</td></tr>
+          </tbody>
+        </table>
+
+        <div class="widget" id="nn-gallery" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT M7.2 — ACTIVATION GALLERY</span><span class="w-sub">f AND f′ ON [−5, 5] · SATURATION SHADED</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>ACTIVATION</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-nn-act="sigmoid">SIGMOID</button>
+                  <button class="w-btn ghost" data-nn-act="tanh">TANH</button>
+                  <button class="w-btn ghost" data-nn-act="relu">RELU</button>
+                  <button class="w-btn ghost" data-nn-act="gelu">GELU</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="nn-act-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">MAX f′ ON [−5, 5]</div><div class="r-value" id="nn-g-max">—</div></div>
+              <div class="readout"><div class="r-label">SATURATED SHARE (f′ &lt; 0.05)</div><div class="r-value" id="nn-g-sat">—</div></div>
+              <div class="readout acc"><div class="r-label">f′(2.5)¹⁰ — 10-LAYER SIGNAL</div><div class="r-value" id="nn-g-deep">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The red bands are where the derivative is effectively zero — a unit parked there learns nothing. Click through the four and watch the last readout: it is the gradient surviving ten stacked layers for a unit sitting at z = 2.5. Sigmoid: ~10⁻¹². Tanh: ~10⁻¹⁶. ReLU: exactly 1. That single number is the argument that ended the sigmoid era. Note ReLU's own red zone — the entire negative half — which is the dead-unit risk in the table above.</div>
+        </div>
+
+        <p class="note"><strong>Where the lineage goes next.</strong> Modern LLMs use a <em>gated</em> refinement: SwiGLU (Vol II · EQ 2.3) multiplies a SiLU-squashed gate elementwise against a linear up-projection, letting the MLP modulate its own features. It is the direct descendant of the choices in this table — same constraint set, one more multiplicative trick.</p>
+      </section>
+
+      <!-- ====================== 7.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">7.4</span><h2>Universal approximation — and its fine print</h2></div>
+        <p>The classical justification for all of this is the <strong>universal approximation theorem</strong>, in words: <em>a feed-forward network with a single hidden layer and any non-polynomial activation can approximate any continuous function on a bounded region to any accuracy you name — provided you may make the hidden layer wide enough</em> (Cybenko 1989 for sigmoids; Hornik 1991 in general). One layer of bends, in principle, suffices for everything.</p>
+        <div class="callout warn">
+          <span class="co-icon">FINE PRINT</span>
+          <p><strong>Existence is not learnability.</strong> The theorem is non-constructive on every axis that matters: (1) it does not say how many units — worst-case width grows <em>exponentially</em> in the input dimension, the curse of dimensionality again; (2) it does not say the weights are <em>findable</em> — gradient descent on a non-convex loss carries no guarantee of reaching them (you watched H = 2 fail on a representable problem in Instrument M7.1); (3) it says nothing about <em>generalization</em> from finite data. In Chapter 06's language, it bounds approximation error only — estimation and optimization error are untouched.</p>
+        </div>
+        <p>Read it, then, as a license rather than an explanation: MLPs are a hypothesis class with no permanent blind spots, unlike the perceptron. <em>Why</em> gradient-trained deep networks work as well as they do on real data remains a partially open research question in 2026 — be suspicious of anyone who cites this theorem as the answer.</p>
+      </section>
+
+      <!-- ====================== 7.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">7.5</span><h2>Width, depth, and why depth wins</h2></div>
+        <p>If one wide layer suffices in principle, why is every serious network deep? Because depth buys <strong>composition</strong>. A second hidden layer computes features <em>of features</em>: layer 1 finds edges in pixels, layer 2 assembles edges into textures and parts, layer 3 into objects. In text models the same hierarchy runs characters → morphemes → syntax → semantics. A wide-shallow network must build every high-level feature from raw inputs in one step; a deep one builds a vocabulary at each level and <em>reuses</em> it everywhere above — the same economy that makes subroutines beat straight-line code.</p>
+        <table class="data">
+          <thead><tr><th></th><th>Wider (same depth)</th><th>Deeper (same width)</th></tr></thead>
+          <tbody>
+            <tr><td><strong>What you get</strong></td><td>More parallel features at one level of abstraction</td><td class="hl">A hierarchy — features of features</td></tr>
+            <tr><td><strong>Expressive power</strong></td><td class="m">grows polynomially</td><td class="m">some functions need exponentially fewer units</td></tr>
+            <tr><td><strong>Trainability</strong></td><td>Benign; gradients stay healthy</td><td>EQ M7.2's product bites — needs ReLU-family φ, careful init, later residuals &amp; normalization (Vol II · CH 02)</td></tr>
+          </tbody>
+        </table>
+        <p>The middle row has real theorems behind it: deep ReLU networks fold input space repeatedly, producing a number of linear regions that grows exponentially with depth but only polynomially with width (Montúfar 2014), and there exist functions computable by a deep network that no shallow network of sub-exponential width can match (Telgarsky 2016). Honesty requires the caveat: those are worst-case constructions, not descriptions of your dataset. The practical reasons depth wins are that real data <em>is</em> compositional, and that a decade of engineering — initialization, normalization, residual connections — removed depth's optimization penalty. On flat tabular data, Chapter 04's gradient-boosted trees still routinely beat both wide and deep.</p>
+      </section>
+
+      <!-- ====================== 7.6 ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">7.6</span><h2>The forward pass is matrix multiplication</h2></div>
+        <p>Everything above was written for one input vector. Real computation is batched: stack \(B\) examples as rows of \(X\), and the entire forward pass becomes two matrix multiplications — which is the only operation GPUs are truly built for, and the reason the whole field runs on them:</p>
+
+        <div class="eq"><span class="eq-tag">EQ M7.3 — THE BATCHED FORWARD PASS</span>
+        $$ \underset{B \times d_h}{H} \;=\; \varphi\!\Big( \underset{B \times d_{\text{in}}}{X} \;\; \underset{d_{\text{in}} \times d_h}{W_1^{\top}} \;+\; \underset{1 \times d_h}{b_1} \Big), \qquad \underset{B \times d_{\text{out}}}{\hat{Y}} \;=\; H\, W_2^{\top} + b_2 $$
+        <div class="eq-note">The single rule of shape discipline: <b>inner dimensions must agree, and the batch dimension rides along untouched in the leftmost slot</b>. The bias \(b_1\) is a single row, broadcast down all \(B\) rows. Frameworks store weights as (out, in) — hence the transposes. In Volume II the same ledger gains one axis, (B, T, d<sub>model</sub>), and otherwise nothing changes.</div>
+        </div>
+
+        <p>Professionals debug networks by reciting shapes, not by reading values. Build the habit now — run the drill, then change <code>d_h</code> or <code>batch</code> and predict every line before re-running. If you can write the shape ledger of a network from memory, you understand its forward pass; there is nothing else in it.</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false">import numpy as np
+rng = np.random.default_rng(7)
+
+B, d_in, d_h, d_out = 32, 2, 8, 1     # batch 32 through a 2-8-1
+X  = rng.normal(size=(B, d_in))
+W1 = rng.normal(size=(d_h, d_in)) * 0.5   # (out, in) convention
+b1 = rng.normal(size=d_h) * 0.1
+W2 = rng.normal(size=(d_out, d_h)) * 0.5
+b2 = np.zeros(d_out)
+
+Z1 = X @ W1.T + b1            # inner dims: (B,d_in)(d_in,d_h)
+H  = np.maximum(0, Z1)        # ReLU, elementwise: shape unchanged
+Y  = H @ W2.T + b2
+
+ledger = [("X", X), ("W1", W1), ("Z1 = X @ W1.T + b1", Z1),
+          ("H = ReLU(Z1)", H), ("W2", W2), ("Y = H @ W2.T + b2", Y)]
+for name, A in ledger:
+    print(f"{name:24s} {A.shape}")
+print(f"\nReLU zeroed {(H == 0).mean():.0%} of H — sparsity is the default")
+</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">predict each shape, then run</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>The forward pass is two matmuls; learning is the question of how blame flows backward through them.</strong> Chapter 08: the chain rule organized on a computational graph — backpropagation — plus momentum and Adam, the optimizers that turn raw gradients into progress. Instrument M7.1 already ran every line of it; next chapter you read its algebra.</p>
+        </div>
+      </section>
+
+      <nav class="pager">
+        <a href="06-generalization.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">06</span> Generalization: Bias, Variance &amp; Regularization</div></a>
+        <a class="next" href="08-backpropagation.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">08</span> Backpropagation &amp; Optimization</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — VOL I · CH 07</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/glossary.js"></script>
+<script src="../assets/js/shared.js"></script>
+<script src="../assets/js/pyrunner.js"></script>
+<script>
+/* chapter instruments — single IIFE, no globals */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+
+  /* ============ INSTRUMENT M7.1 — XOR PLAYGROUND ============ */
+  (function () {
+    var root = document.getElementById("nn-xor");
+    if (!root) return;
+    var regionCv = document.getElementById("nn-region");
+    var lossCv   = document.getElementById("nn-loss");
+    var trainBtn = document.getElementById("nn-train");
+    var resetBtn = document.getElementById("nn-reset");
+    var lrIn  = document.getElementById("nn-lr"),  lrOut  = document.getElementById("nn-lr-out");
+    var hIn   = document.getElementById("nn-h"),   hOut   = document.getElementById("nn-h-out");
+    var epEl  = document.getElementById("nn-ep"),  lossEl = document.getElementById("nn-loss-val");
+    var accEl = document.getElementById("nn-acc"), parEl  = document.getElementById("nn-params");
+    var dataBtns = root.querySelectorAll("[data-nn-data]");
+
+    var RANGE = 2.6, N = 240, EPB = 12, TICK = 90;   /* EPB epochs per repaint tick */
+    var dataset = "xor", X = [], Y = [], W1, b1, W2, b2;
+    var H = parseInt(hIn.value, 10), lr = Math.pow(10, parseFloat(lrIn.value));
+    var epoch = 0, hist = [], running = false, timer = null, diverged = false;
+
+    function gauss(rng) {  /* Box–Muller on the seeded RNG */
+      return Math.sqrt(-2 * Math.log(Math.max(rng(), 1e-12))) * Math.cos(2 * Math.PI * rng());
+    }
+
+    function makeData() {
+      var rng = FM.mulberry32(dataset === "xor" ? 20260612 : 7077);
+      X = []; Y = [];
+      for (var i = 0; i < N; i++) {
+        if (dataset === "xor") {
+          var cx = (i % 2 ? 1 : -1) * 1.3, cy = ((i >> 1) % 2 ? 1 : -1) * 1.3;
+          X.push([cx + 0.48 * gauss(rng), cy + 0.48 * gauss(rng)]);
+          Y.push((cx > 0) === (cy > 0) ? 1 : 0);
+        } else {
+          var inner = i % 2 === 0;
+          var r = inner ? 0.85 * Math.sqrt(rng()) : 1.8 + 0.16 * gauss(rng);
+          var th = rng() * Math.PI * 2;
+          X.push([r * Math.cos(th), r * Math.sin(th)]);
+          Y.push(inner ? 1 : 0);
+        }
+      }
+    }
+
+    function initNet() {  /* Xavier-style init, deterministic per H */
+      var rng = FM.mulberry32(1337 + H * 17);
+      W1 = []; b1 = []; W2 = []; b2 = 0;
+      var s1 = Math.sqrt(1 / 2), s2 = Math.sqrt(1 / H);
+      for (var j = 0; j < H; j++) {
+        W1.push([gauss(rng) * s1, gauss(rng) * s1]);
+        b1.push(0); W2.push(gauss(rng) * s2);
+      }
+      epoch = 0; hist = []; diverged = false;
+    }
+
+    function forward(x, y) {
+      var z2 = b2;
+      for (var j = 0; j < H; j++) z2 += W2[j] * Math.tanh(W1[j][0] * x + W1[j][1] * y + b1[j]);
+      return 1 / (1 + Math.exp(-z2));
+    }
+
+    function trainEpochs(k) {  /* full-batch GD; returns mean BCE of last epoch */
+      var n = X.length, L = 0;
+      for (var e = 0; e < k; e++) {
+        var gW1 = [], gb1 = [], gW2 = [], gb2 = 0, j;
+        for (j = 0; j < H; j++) { gW1.push([0, 0]); gb1.push(0); gW2.push(0); }
+        L = 0;
+        for (var i = 0; i < n; i++) {
+          var x = X[i][0], y = X[i][1], t = Y[i];
+          var hs = [], z2 = b2;
+          for (j = 0; j < H; j++) {
+            hs.push(Math.tanh(W1[j][0] * x + W1[j][1] * y + b1[j]));
+            z2 += W2[j] * hs[j];
+          }
+          var p = 1 / (1 + Math.exp(-z2));
+          L -= t * Math.log(p + 1e-9) + (1 - t) * Math.log(1 - p + 1e-9);
+          var d2 = p - t;                                  /* dL/dz2 — backprop starts here */
+          gb2 += d2;
+          for (j = 0; j < H; j++) {
+            gW2[j] += d2 * hs[j];
+            var d1 = d2 * W2[j] * (1 - hs[j] * hs[j]);     /* chain through tanh */
+            gW1[j][0] += d1 * x; gW1[j][1] += d1 * y; gb1[j] += d1;
+          }
+        }
+        var s = lr / n; b2 -= s * gb2;
+        for (j = 0; j < H; j++) {
+          W2[j] -= s * gW2[j]; b1[j] -= s * gb1[j];
+          W1[j][0] -= s * gW1[j][0]; W1[j][1] -= s * gW1[j][1];
+        }
+        epoch++;
+      }
+      return L / n;
+    }
+
+    function meanLoss() {
+      var L = 0;
+      for (var i = 0; i < X.length; i++) {
+        var p = forward(X[i][0], X[i][1]);
+        L -= Y[i] * Math.log(p + 1e-9) + (1 - Y[i]) * Math.log(1 - p + 1e-9);
+      }
+      return L / X.length;
+    }
+
+    function accuracy() {
+      var ok = 0;
+      for (var i = 0; i < X.length; i++) if ((forward(X[i][0], X[i][1]) > 0.5 ? 1 : 0) === Y[i]) ok++;
+      return ok / X.length;
+    }
+
+    function drawRegion() {
+      var sc = FM.setupCanvas(regionCv, 320), ctx = sc.ctx, W = sc.w;
+      var scale = 320 / (2 * RANGE), cell = 6, i;
+      ctx.clearRect(0, 0, W, 320);
+      for (var px = 0; px < W; px += cell) {
+        for (var py = 0; py < 320; py += cell) {
+          var dx = (px + cell / 2 - W / 2) / scale, dy = (160 - py - cell / 2) / scale;
+          var p = forward(dx, dy);
+          if (!isFinite(p)) p = 0.5;
+          var a = (0.05 + 0.6 * Math.abs(p - 0.5)).toFixed(3);
+          ctx.fillStyle = p > 0.5 ? "rgba(166,242,204," + a + ")" : "rgba(78,138,247," + a + ")";
+          ctx.fillRect(px, py, cell, cell);
+        }
+      }
+      ctx.strokeStyle = FM.C.HAIR; ctx.lineWidth = 1; ctx.beginPath();
+      ctx.moveTo(W / 2, 0); ctx.lineTo(W / 2, 320); ctx.moveTo(0, 160); ctx.lineTo(W, 160); ctx.stroke();
+      for (i = 0; i < X.length; i++) {
+        ctx.fillStyle = Y[i] ? FM.C.MINT : FM.C.BLUE; ctx.strokeStyle = "#000";
+        ctx.beginPath();
+        ctx.arc(W / 2 + X[i][0] * scale, 160 - X[i][1] * scale, 3.2, 0, Math.PI * 2);
+        ctx.fill(); ctx.stroke();
+      }
+      ctx.font = FM.C.MONO; ctx.fillStyle = FM.C.MUT;
+      ctx.fillText("DECISION REGION — p(class = mint)", 10, 16);
+    }
+
+    function drawLoss() {
+      var sc = FM.setupCanvas(lossCv, 320), ctx = sc.ctx, W = sc.w, i;
+      ctx.clearRect(0, 0, W, 320);
+      var padL = 12, padR = 12, padT = 30, padB = 24, pw = W - padL - padR, ph = 320 - padT - padB;
+      ctx.font = FM.C.MONO; ctx.fillStyle = FM.C.MUT;
+      ctx.fillText("TRAINING LOSS · BCE", 10, 16);
+      var ymax = 0.8;
+      for (i = 0; i < hist.length; i++) if (isFinite(hist[i][1])) ymax = Math.max(ymax, hist[i][1]);
+      ymax = Math.min(ymax, 4);
+      var yC = padT + (1 - 0.6931 / ymax) * ph;
+      ctx.strokeStyle = FM.C.MUT; ctx.setLineDash([3, 4]);
+      ctx.beginPath(); ctx.moveTo(padL, yC); ctx.lineTo(W - padR, yC); ctx.stroke();
+      ctx.setLineDash([]); ctx.fillText("ln 2 — coin flip", padL + 4, yC - 5);
+      if (hist.length > 1) {
+        var e0 = hist[0][0], e1 = hist[hist.length - 1][0];
+        ctx.strokeStyle = FM.C.MINT; ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        for (i = 0; i < hist.length; i++) {
+          var hx = padL + (hist[i][0] - e0) / Math.max(1, e1 - e0) * pw;
+          var hl = isFinite(hist[i][1]) ? Math.min(hist[i][1], ymax) : ymax;
+          var hy = padT + (1 - hl / ymax) * ph;
+          if (i === 0) ctx.moveTo(hx, hy); else ctx.lineTo(hx, hy);
+        }
+        ctx.stroke();
+      }
+      ctx.fillStyle = FM.C.MUT;
+      ctx.fillText("EPOCH 0 → " + epoch, 10, 320 - 8);
+    }
+
+    function readouts(lossVal) {
+      epEl.textContent = String(epoch);
+      lossEl.textContent = diverged ? "DIVERGED" : (lossVal === undefined ? "—" : lossVal.toFixed(4));
+      accEl.textContent = diverged ? "—" : (accuracy() * 100).toFixed(1) + "%";
+      parEl.textContent = String(4 * H + 1);
+    }
+
+    function redrawAll() { drawRegion(); drawLoss(); readouts(meanLoss()); }
+
+    function tick() {
+      if (!running) return;
+      var L = trainEpochs(EPB);
+      if (!isFinite(L)) {
+        diverged = true; running = false; trainBtn.textContent = "TRAIN ▶";
+        hist.push([epoch, NaN]);
+        drawRegion(); drawLoss(); readouts();
+        return;
+      }
+      hist.push([epoch, L]);
+      if (hist.length > 360) hist = hist.filter(function (_, idx) { return idx % 2 === 0; });
+      drawRegion(); drawLoss(); readouts(L);
+      timer = setTimeout(tick, TICK);
+    }
+
+    trainBtn.addEventListener("click", function () {
+      if (diverged) return;  /* RESET first */
+      running = !running;
+      trainBtn.textContent = running ? "PAUSE ❚❚" : "TRAIN ▶";
+      if (running) { clearTimeout(timer); timer = setTimeout(tick, 16); }
+    });
+    resetBtn.addEventListener("click", function () {
+      running = false; clearTimeout(timer); trainBtn.textContent = "TRAIN ▶";
+      initNet(); redrawAll();
+    });
+    lrIn.addEventListener("input", function () {
+      lr = Math.pow(10, parseFloat(lrIn.value));
+      lrOut.textContent = lr >= 10 ? lr.toFixed(0) : lr >= 1 ? lr.toFixed(1) : lr.toFixed(2);
+    });
+    hIn.addEventListener("input", function () {
+      H = parseInt(hIn.value, 10); hOut.textContent = String(H);
+      initNet(); redrawAll();
+    });
+    dataBtns.forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        dataset = btn.getAttribute("data-nn-data");
+        dataBtns.forEach(function (b) { b.classList.toggle("on", b === btn); });
+        running = false; clearTimeout(timer); trainBtn.textContent = "TRAIN ▶";
+        makeData(); initNet(); redrawAll();
+      });
+    });
+
+    makeData(); initNet(); redrawAll();
+    setTimeout(redrawAll, 350);  /* re-measure once layout fully settles */
+    window.addEventListener("resize", function () { drawRegion(); drawLoss(); });
+  })();
+
+  /* ============ INSTRUMENT M7.2 — ACTIVATION GALLERY ============ */
+  (function () {
+    var root = document.getElementById("nn-gallery");
+    if (!root) return;
+    var cv = document.getElementById("nn-act-canvas");
+    var maxEl = document.getElementById("nn-g-max");
+    var satEl = document.getElementById("nn-g-sat");
+    var deepEl = document.getElementById("nn-g-deep");
+    var btns = root.querySelectorAll("[data-nn-act]");
+    var K = Math.sqrt(2 / Math.PI), GC = 0.044715;
+
+    function sig(z) { return 1 / (1 + Math.exp(-z)); }
+    function gu(z) { return K * (z + GC * z * z * z); }
+    var ACTS = {
+      sigmoid: { name: "σ(z) = 1 / (1 + e⁻ᶻ)", yMin: -0.3, yMax: 1.3,
+        f: sig, df: function (z) { var s = sig(z); return s * (1 - s); } },
+      tanh: { name: "tanh(z)", yMin: -1.4, yMax: 1.4,
+        f: Math.tanh, df: function (z) { var t = Math.tanh(z); return 1 - t * t; } },
+      relu: { name: "ReLU(z) = max(0, z)", yMin: -1.4, yMax: 5.2,
+        f: function (z) { return Math.max(0, z); }, df: function (z) { return z > 0 ? 1 : 0; } },
+      gelu: { name: "GELU(z) ≈ 0.5 z (1 + tanh u(z))", yMin: -1.4, yMax: 5.2,
+        f: function (z) { return 0.5 * z * (1 + Math.tanh(gu(z))); },
+        df: function (z) {
+          var t = Math.tanh(gu(z));
+          return 0.5 * (1 + t) + 0.5 * z * (1 - t * t) * K * (1 + 3 * GC * z * z);
+        } }
+    };
+    var cur = "sigmoid";
+
+    function draw() {
+      var A = ACTS[cur];
+      var sc = FM.setupCanvas(cv, 300), ctx = sc.ctx, W = sc.w;
+      ctx.clearRect(0, 0, W, 300);
+      var padL = 14, padR = 14, padT = 26, padB = 22, pw = W - padL - padR, ph = 300 - padT - padB;
+      function PX(z) { return padL + (z + 5) / 10 * pw; }
+      function PY(v) { return padT + (1 - (v - A.yMin) / (A.yMax - A.yMin)) * ph; }
+
+      /* saturation bands: |f'| < 0.05, drawn under the curves */
+      var NS = 400, inBand = false, z0 = 0, sat = 0, maxd = 0, i, z;
+      for (i = 0; i <= NS; i++) {
+        z = -5 + 10 * i / NS;
+        var d = Math.abs(A.df(z));
+        maxd = Math.max(maxd, d);
+        var isSat = d < 0.05;
+        if (isSat) sat++;
+        if (isSat && !inBand) { inBand = true; z0 = z; }
+        if ((!isSat || i === NS) && inBand) {
+          inBand = false;
+          var x0 = PX(z0), x1 = PX(z);
+          ctx.fillStyle = "rgba(255,65,54,0.07)";
+          ctx.fillRect(x0, padT, x1 - x0, ph);
+          if (x1 - x0 > 60) {
+            ctx.fillStyle = "rgba(255,65,54,0.75)";
+            ctx.font = FM.C.MONO;
+            ctx.fillText("SATURATED · f′ ≈ 0", x0 + 6, padT + 14);
+          }
+        }
+      }
+      /* axes */
+      ctx.strokeStyle = FM.C.HAIR; ctx.lineWidth = 1; ctx.beginPath();
+      ctx.moveTo(PX(0), padT); ctx.lineTo(PX(0), padT + ph);
+      ctx.moveTo(padL, PY(0)); ctx.lineTo(padL + pw, PY(0)); ctx.stroke();
+      /* f' (blue) under f (mint) */
+      function trace(fn, color, lw) {
+        ctx.strokeStyle = color; ctx.lineWidth = lw; ctx.beginPath();
+        for (var k = 0; k <= NS; k++) {
+          var zz = -5 + 10 * k / NS;
+          var yy = PY(Math.max(A.yMin, Math.min(A.yMax, fn(zz))));
+          if (k === 0) ctx.moveTo(PX(zz), yy); else ctx.lineTo(PX(zz), yy);
+        }
+        ctx.stroke();
+      }
+      trace(A.df, FM.C.BLUE, 1.4);
+      trace(A.f, FM.C.MINT, 2);
+      /* legend */
+      ctx.font = FM.C.MONO;
+      ctx.fillStyle = FM.C.SEC; ctx.fillText(A.name, 10, 16);
+      ctx.fillStyle = FM.C.MINT; ctx.fillText("f(z)", W - 86, 16);
+      ctx.fillStyle = FM.C.BLUE; ctx.fillText("f′(z)", W - 46, 16);
+      ctx.fillStyle = FM.C.MUT;
+      ctx.fillText("-5", PX(-5), padT + ph + 14); ctx.fillText("0", PX(0) - 3, padT + ph + 14); ctx.fillText("+5", PX(5) - 14, padT + ph + 14);
+
+      var deep = Math.pow(A.df(2.5), 10);
+      maxEl.textContent = maxd.toFixed(2);
+      satEl.textContent = Math.round(100 * sat / (NS + 1)) + "%";
+      deepEl.textContent = (deep !== 0 && deep < 0.01) ? deep.toExponential(1) : deep.toFixed(2);
+    }
+
+    btns.forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        cur = btn.getAttribute("data-nn-act");
+        btns.forEach(function (b) { b.classList.toggle("on", b === btn); });
+        draw();
+      });
+    });
+    draw();
+    setTimeout(draw, 350);  /* re-measure once layout settles */
+    window.addEventListener("resize", draw);
+  })();
+})();
+</script>
+</body>
+</html>
