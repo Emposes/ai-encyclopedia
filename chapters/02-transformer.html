@@ -7,7 +7,7 @@
 <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
 <meta name="theme-color" content="#000000" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-<link rel="stylesheet" href="../assets/css/manual.css?v=3" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=49d672cc" />
 </head>
 <body>
 
@@ -52,6 +52,38 @@
         <div class="eq"><span class="eq-tag">EQ 2.1 — ONE TRANSFORMER BLOCK (PRE-NORM)</span>
         $$ \begin{aligned} h' &amp;= h + \mathrm{Attn}\big(\mathrm{Norm}(h)\big) \\[4px] h'' &amp;= h' + \mathrm{MLP}\big(\mathrm{Norm}(h')\big) \end{aligned} $$
         <div class="eq-note">Note what the residual form implies: each sub-layer computes an <b>update</b> that is <em>added</em> to the running state \(h\), never a replacement for it. A block can choose to do almost nothing — and early in training, that is exactly what keeps optimization sane at 100+ layers.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># one transformer block, forward, in pure numpy (EQ 2.1)
+import numpy as np
+rng = np.random.default_rng(0)
+T, d, dff = 4, 16, 43                     # toy: 4 tokens, d_model 16, dff ~ 8/3 d
+
+def rms(x): return x / np.sqrt((x * x).mean(-1, keepdims=True) + 1e-5)
+def ledger(name, x): print(f"{name:&lt;24}{str(x.shape):>10}   norm {np.linalg.norm(x):7.2f}")
+
+h = rng.normal(0, 1, (T, d));             ledger("residual stream in", h)
+Wq, Wk, Wv, Wo = rng.normal(0, d ** -0.5, (4, d, d))
+x = rms(h);                               ledger("RMSNorm(h)", x)
+Q, K, V = x @ Wq, x @ Wk, x @ Wv;         ledger("Q  (K, V same)", Q)
+S = Q @ K.T / np.sqrt(d) + np.triu(np.full((T, T), -1e9), 1)
+A = np.exp(S - S.max(-1, keepdims=True)); A /= A.sum(-1, keepdims=True)
+ledger("attn weights (causal)", A)
+h = h + (A @ V) @ Wo;                     ledger("h + Attn   [residual]", h)
+
+Wg, Wu = rng.normal(0, d ** -0.5, (2, d, dff))
+Wd = rng.normal(0, dff ** -0.5, (dff, d))
+x = rms(h)
+g = x @ Wg
+m = ((g / (1 + np.exp(-g))) * (x @ Wu)) @ Wd   # SwiGLU: SiLU(gate) * up, down
+ledger("SwiGLU MLP out", m)
+h = h + m;                                ledger("h + MLP    [residual]", h)
+print("\nthe block ADDED its work to h -- the stream is nudged, never replaced")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
         </div>
 
         <figure class="figure" data-reveal>
@@ -156,6 +188,32 @@
         <div class="eq-note">The dot product after rotation depends only on the <b>offset</b> \(n - m\), never on absolute positions. Attention scores become translation-invariant functions of relative distance — exactly the right inductive bias for language, and the property every long-context extension method (Chapter 09) manipulates.</div>
         </div>
 
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># RoPE relativity: dot(R_m q, R_n k) depends only on n - m  (EQ 2.5)
+import numpy as np
+rng = np.random.default_rng(0)
+theta = 0.35                                  # one frequency dial
+
+def R(pos):                                   # 2x2 rotation by pos*theta
+    c, s = np.cos(pos * theta), np.sin(pos * theta)
+    return np.array([[c, -s], [s, c]])
+
+q, k = rng.normal(0, 1, (2, 2))               # one 2-D query/key pair
+print("dot(R_m q, R_n k):    key n=0    n=4    n=8")
+for m in (0, 4, 8):
+    row = [(R(m) @ q) @ (R(n) @ k) for n in (0, 4, 8)]
+    print(f"  query m={m}        " + "  ".join(f"{v:6.3f}" for v in row))
+print("\nconstant along diagonals: (0,4) = (4,8); (0,0) = (4,4) = (8,8).")
+print("absolute position cancels in the dot product; only n - m survives.")
+
+offs = np.arange(-16, 17)                     # score as a function of offset
+plot_xy(offs, [q @ (R(o) @ k) for o in offs])</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
         <div class="widget" id="rope-demo" data-reveal>
           <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT 2.1 — RoPE FREQUENCY DIALS</span><span class="w-sub">8 OF d_k/2 ROTATION PAIRS</span></div>
           <div class="w-body">
@@ -245,9 +303,11 @@
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
-<script src="../assets/js/glossary.js"></script>
-<script src="../assets/js/shared.js"></script>
-<script src="../assets/js/search.js"></script>
-<script src="../assets/js/interactives.js"></script>
+<script src="../assets/js/glossary.js?v=de942868"></script>
+<script src="../assets/js/shared.js?v=2ab4fc41"></script>
+<script src="../assets/js/pyrunner.js?v=0a6c02e0"></script>
+<script src="../assets/js/search.js?v=b56ede0c"></script>
+<script src="../assets/js/interactives.js?v=f738a9df"></script>
+<script defer src="/_vercel/insights/script.js"></script>
 </body>
 </html>

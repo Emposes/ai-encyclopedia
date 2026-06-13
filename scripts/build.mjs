@@ -109,12 +109,49 @@ writeFileSync(join(ROOT, "sitemap.xml"),
 
 writeFileSync(join(ROOT, "robots.txt"), `User-agent: *\nAllow: /\nSitemap: ${SITE}/sitemap.xml\n`);
 
+/* ---------- asset cache-busting: content-hash every local asset ref ---------- */
+import { createHash } from "node:crypto";
+const hashCache = {};
+function hashOf(relAsset) {
+  if (hashCache[relAsset] !== undefined) return hashCache[relAsset];
+  const p = join(ROOT, relAsset);
+  hashCache[relAsset] = existsSync(p)
+    ? createHash("md5").update(readFileSync(p)).digest("hex").slice(0, 8)
+    : null;
+  return hashCache[relAsset];
+}
+const ASSET_RE = /(href|src)="((?:\.\.\/|\/)?(assets\/(?:css|js)\/[\w.-]+\.(?:css|js)|gym\/(?:gym|decks\/[\w-]+)\.js))(\?v=[^"]*)?"/g;
+const htmlFiles = ["index.html", "404.html", ...VOLUMES.flatMap(v => pagesIn(v.dir)), ...(existsSync(join(ROOT, "gym/index.html")) ? ["gym/index.html"] : [])];
+let stamped = 0;
+for (const rel of htmlFiles) {
+  if (!existsSync(join(ROOT, rel))) continue;
+  const before = readFileSync(join(ROOT, rel), "utf8");
+  const after = before.replace(ASSET_RE, (m, attr, url, assetPath) => {
+    const h = hashOf(assetPath);
+    return h ? `${attr}="${url}?v=${h}"` : m;
+  });
+  if (after !== before) { writeFileSync(join(ROOT, rel), after); stamped++; }
+}
+console.log("cache-bust: rewrote asset versions in", stamped, "pages");
+
+/* ---------- MCQ length-tell regression guard (warning-only) ---------- */
+try {
+  const { execSync } = await import("node:child_process");
+  const out = execSync("node " + JSON.stringify(join(ROOT, "scripts/mcq-tell.mjs")), { cwd: ROOT, encoding: "utf8" });
+  const overall = out.split("\n").find(l => l.startsWith("OVERALL")) || "";
+  console.log("mcq-tell:", overall.trim() || "ran");
+} catch (e) {
+  const out = (e.stdout || "").toString();
+  const overall = out.split("\n").find(l => l.startsWith("OVERALL")) || "";
+  console.log("⚠ MCQ LENGTH-TELL REGRESSION —", overall.trim() || "gate failed; run node scripts/mcq-tell.mjs");
+}
+
 /* ---------- link check ---------- */
 const broken = [];
 const allPages = ["index.html", ...VOLUMES.flatMap(v => pagesIn(v.dir)), ...(existsSync(join(ROOT, "gym/index.html")) ? ["gym/index.html"] : [])];
 for (const rel of allPages) {
   const html = readFileSync(join(ROOT, rel), "utf8");
-  const hrefs = [...html.matchAll(/href="([^"#]+?\.(?:html|txt|json|css))(?:#[^"]*)?"/g)].map(x => x[1]);
+  const hrefs = [...html.matchAll(/href="([^"#?]+?\.(?:html|txt|json|css))(?:[?#][^"]*)?"/g)].map(x => x[1]);
   for (const href of hrefs) {
     if (/^https?:|^mailto:/.test(href)) continue;
     const target = href.startsWith("/") ? join(ROOT, href) : join(ROOT, dirname(rel), href);

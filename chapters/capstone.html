@@ -7,7 +7,7 @@
 <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
 <meta name="theme-color" content="#000000" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-<link rel="stylesheet" href="../assets/css/manual.css?v=3" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=49d672cc" />
 </head>
 <body>
 
@@ -131,6 +131,39 @@
         <div class="sec-head"><span class="sec-num">C.2</span><h2>The Forge: design a model</h2></div>
         <p>Six decisions take a model from thesis to dossier: how much compute, dense or sparse, how far past Chinchilla to push the data, how much context, what precision, and which silicon serves it. Everything downstream is arithmetic you now know.</p>
 
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># The Forge as one function: budget -&gt; full model dossier
+import numpy as np
+E, A, B, al, be = 1.82, 482.0, 2085.4, 0.3478, 0.3658  # Chinchilla refit
+C, f = 1e25, 4                       # 10^25 FLOPs, 4x over-trained (default)
+BW, MEM = 3.35e12, 80e9              # H100: HBM bandwidth, capacity
+
+Nopt = ((al*A)/(be*B))**(1/(al+be)) * (C/6)**(be/(al+be))   # EQ 4.2
+N = Nopt / np.sqrt(f)                # over-train: shrink N, grow D
+D = C / (6 * N)                      # EQ 4.1's budget C = 6ND
+loss = E + A/N**al + B/D**be         # EQ 4.1 predicted loss
+
+weights = N * 1                      # dense, FP8 = 1 byte/param
+toks    = BW / weights               # EQ 7.1 single-stream ceiling
+shards  = int(np.ceil(weights / (MEM * 0.9)))
+kv_user = 2*96*8*128*2 * 131072      # 96 layers, GQA-8, fp16 KV, 128K ctx
+users   = int((MEM*0.9*shards - weights) // kv_user)
+gpu_h   = C / (0.45 * 989e12) / 3600 # H100-hours at 45% MFU
+
+print(f"params N         : {N/1e9:.0f} B dense   tokens D : {D/1e12:.1f} T  ({D/N:.0f} tok/param)")
+print(f"predicted loss   : {loss:.3f}")
+print(f"training bill    : {gpu_h/1e6:.1f}M H100-hours  ~ ${gpu_h*2/1e6:.1f}M at $2/hr")
+print(f"weights, FP8     : {weights/1e9:.0f} GB  -&gt;  shard across {shards} x H100")
+print(f"decode ceiling   : {toks:.0f} tok/s single-stream (EQ 7.1)")
+print(f"KV / user @ 128K : {kv_user/1e9:.1f} GB  -&gt;  {users} concurrent user(s)/node")
+print("\nset Instrument C.1 to 10^25 / dense / FP8 / H100 and watch every")
+print("number above reappear on the dossier. the whole stack is one chain.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
         <div class="widget" id="forge-demo" data-reveal>
           <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT C.1 — THE FORGE</span><span class="w-sub">EQ 4.1 · 4.2 · 4.5 · 3.5 · 7.1 CHAINED</span></div>
           <div class="w-body">
@@ -206,6 +239,41 @@
         <div class="sec-head"><span class="sec-num">C.3</span><h2>Token journey: one step of the loop</h2></div>
         <p>This is the entire manual in one breath: text becomes tokens (CH 01), tokens become vectors (01), attention mixes positions (03) and MLPs transform them (02) through every layer, the unembedding produces logits (01), the sampler chooses (08), and the choice rejoins the context for the next round. A toy bigram model plays the transformer's role — the <em>plumbing</em> is exactly real.</p>
 
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Token journey in code: a bigram LM and the temperature dial
+import numpy as np
+LM = {
+ "the":      {"robot": 2.2, "cat": 1.6, "gradient": 1.0, "moon": 0.4},
+ "robot":    {"picked": 2.0, "saw": 1.0, "dropped": 0.6},
+ "cat":      {"saw": 1.8, "chased": 1.2},
+ "gradient": {"exploded": 1.5, "vanished": 1.5},
+ "moon":     {"rose": 1.5},
+ "picked":   {"up": 2.5},     "up":       {"the": 2.0},
+ "saw":      {"the": 2.0},    "chased":   {"the": 2.0},
+ "dropped":  {"the": 2.0},    "rose":     {"and": 1.5},
+ "exploded": {"and": 1.5},    "vanished": {"and": 1.5},
+ "and":      {"the": 2.0},
+}
+
+def generate(tau, seed=0):
+    rng = np.random.default_rng(seed)
+    seq = ["the"]
+    for _ in range(15):
+        nxt, z = zip(*LM[seq[-1]].items())
+        p = np.exp(np.array(z) / tau); p /= p.sum()   # softmax(z/tau)
+        seq.append(str(rng.choice(list(nxt), p=p)))   # sample, append, repeat
+    return " ".join(seq)
+
+print("tau = 0.3 :", generate(0.3))
+print("tau = 1.5 :", generate(1.5))
+print("\nscore successors -&gt; softmax(z/tau) -&gt; sample -&gt; append: the exact")
+print("loop of Instrument C.2, and of every serving GPU on earth tonight.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
         <div class="widget" id="journey-demo" data-reveal>
           <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT C.2 — TOKEN JOURNEY</span><span class="w-sub">ONE FORWARD PASS, ANIMATED</span></div>
           <div class="w-body">
@@ -274,9 +342,11 @@
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
-<script src="../assets/js/glossary.js"></script>
-<script src="../assets/js/shared.js"></script>
-<script src="../assets/js/search.js"></script>
-<script src="../assets/js/capstone.js"></script>
+<script src="../assets/js/glossary.js?v=de942868"></script>
+<script src="../assets/js/shared.js?v=2ab4fc41"></script>
+<script src="../assets/js/pyrunner.js?v=0a6c02e0"></script>
+<script src="../assets/js/search.js?v=b56ede0c"></script>
+<script src="../assets/js/capstone.js?v=74ab026d"></script>
+<script defer src="/_vercel/insights/script.js"></script>
 </body>
 </html>

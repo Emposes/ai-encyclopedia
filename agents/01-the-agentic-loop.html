@@ -8,7 +8,7 @@
 <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
 <meta name="theme-color" content="#000000" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-<link rel="stylesheet" href="../assets/css/manual.css?v=3" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=49d672cc" />
 </head>
 <body>
 
@@ -84,6 +84,41 @@
         <span class="k">return</span> reply.text                      <span class="c"># the model decided it is done</span>
 <span class="k">return</span> escalate(<span class="v">"budget exhausted — hand back to a human"</span>)</code></pre>
         <p>One turn = one model emission. The model returns either <strong>tool calls</strong> — structured, schema-conforming action requests (Vol III · Ch 05) — or plain text, which the loop reads as “finished.” The <strong>harness</strong> executes the calls it approves, in a sandbox it controls, and appends whatever came back — stdout, an error trace, a screenshot, a search result — as an <strong>observation</strong>. Then the model is called again on the longer transcript. That is the entire trick: the model never touches the world, and the world never touches the model; they only exchange tokens through the context.</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># a complete working agent: mock LLM policy + two tools + the loop
+def search(q):  return {"speed of light km/s": "299792.458"}.get(q, "no results")
+def calc(expr): return str(eval(expr, {"__builtins__": {}}, {}))
+TOOLS = {"search": search, "calc": calc}
+
+def llm(context):                              # rule-based stand-in for pi_theta
+    seen = " ".join(context)
+    if "1079252848" in seen:
+        return ("answer observed and verified — stop", None,
+                "light covers 1,079,252,848.8 km in one hour")
+    if "299792.458" in seen:
+        return ("have km/s, need km/h: multiply by 3600", "calc", "299792.458 * 3600")
+    return ("no constant in context yet — look it up", "search", "speed of light km/s")
+
+context, turn = ["GOAL: how far does light travel in one hour, in km?"], 0
+while turn &lt; 6:                                # the harness's hard budget
+    turn += 1
+    thought, tool, arg = llm(context)
+    print(f"turn {turn} | THOUGHT {thought}")
+    if tool is None:
+        print(f"turn {turn} | ANSWER  {arg}")
+        break
+    obs = TOOLS[tool](arg)
+    print(f"turn {turn} | ACT     {tool}({arg!r}) -&gt; OBS {obs}")
+    context.append(f"OBS: {obs}")
+
+print()
+print("an agent is a while-loop with judgment")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
 
         <figure class="figure" data-reveal>
           <div class="fig-head"><span class="fig-id">FIG A1.A</span><span class="fig-title">THE AGENTIC LOOP — DATA PATH</span></div>
@@ -184,6 +219,33 @@
         </table>
         <p>The design rule is unfashionable and correct: <strong>take the lowest rung that solves the task</strong>. Every rung you climb without needing to converts a debuggable system into a stochastic one. A fixed sequence of LLM calls is still rung 0 — <em>multiple steps are not autonomy</em>; autonomy begins when the number or identity of the steps is decided at runtime. And rung 4 is justified by exactly two things — parallelism across independent subtasks, and context isolation when one window can't hold the job — not by the theater of models “collaborating.” The evidence on multi-agent debate and role-play is mixed at best: at matched token budgets, a single strong agent frequently wins. When someone proposes rung 4, ask which of the two real justifications applies.</p>
 
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># the cost of climbing the ladder: single-shot vs a 5-turn agent
+base = 800 + 150                 # system prompt + user goal, tokens
+out_per_turn, obs_per_turn = 120, 350    # action text + tool observation
+
+single = base + 300              # rung 0: one call, one answer
+total_in = total_out = 0
+ctx = base
+print("turn   context resent   output")
+for t in range(1, 6):
+    total_in += ctx
+    total_out += out_per_turn
+    print(f"  {t}          {ctx:6,d}      {out_per_turn}")
+    ctx += out_per_turn + obs_per_turn   # this turn's action + obs ride along forever
+
+agent = total_in + total_out
+print(f"\nsingle-shot call : {single:6,d} tokens")
+print(f"5-turn agent     : {agent:6,d} tokens")
+print(f"multiplier       : x{agent/single:.1f}")
+print("the transcript is the state, so every turn re-buys all previous turns —")
+print("autonomy compounds cost quadratically, and the model picks the turn count")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
         <div class="widget" id="al-lad" data-reveal>
           <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT A1.2 — AUTONOMY LADDER</span><span class="w-sub">6 USE CASES · HAND-MAPPED · TEACHES RESTRAINT</span></div>
           <div class="w-body">
@@ -268,8 +330,10 @@
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
-<script src="../assets/js/glossary.js"></script>
-<script src="../assets/js/shared.js"></script>
+<script src="../assets/js/glossary.js?v=de942868"></script>
+<script src="../assets/js/shared.js?v=2ab4fc41"></script>
+<script src="../assets/js/pyrunner.js?v=0a6c02e0"></script>
+<script src="../assets/js/search.js?v=b56ede0c"></script>
 <script>
 /* chapter instruments — single IIFE, no globals */
 (function () {
@@ -550,5 +614,6 @@
   })();
 })();
 </script>
+<script defer src="/_vercel/insights/script.js"></script>
 </body>
 </html>

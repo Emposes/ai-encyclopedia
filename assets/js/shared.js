@@ -231,6 +231,44 @@
     });
   }
 
+  /* ---------- search is universal: self-heal if a page forgot the tag ----------
+     Runs after full parse so an explicit tag later in the document is seen
+     (running early caused a double-load → doubled ⌘K button). search.js is
+     also idempotent now, as a second line of defense. */
+  var sharedSrc = document.currentScript && document.currentScript.src;
+  function ensureSearch() {
+    if (document.querySelector('script[src*="search.js"]')) return;
+    var me = sharedSrc;
+    if (!me) {
+      var tags = document.querySelectorAll('script[src*="shared.js"]');
+      if (tags.length) me = tags[tags.length - 1].src;
+    }
+    if (!me) return;
+    var s = document.createElement("script");
+    s.src = me.replace(/shared\.js/, "search.js");
+    document.head.appendChild(s);
+  }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", ensureSearch);
+  else ensureSearch();
+
+  /* ---------- instrument permalinks ---------- */
+  function initPermalinks() {
+    document.querySelectorAll(".widget[id] .w-head").forEach(function (head) {
+      var id = head.closest(".widget").id;
+      var btn = document.createElement("button");
+      btn.className = "w-link";
+      btn.title = "Copy direct link to this instrument";
+      btn.textContent = "¶";
+      btn.addEventListener("click", function () {
+        var url = location.origin + location.pathname + "#" + id;
+        function flash() { btn.textContent = "COPIED"; setTimeout(function () { btn.textContent = "¶"; }, 1200); }
+        if (navigator.clipboard) navigator.clipboard.writeText(url).then(flash, flash);
+        else { location.hash = id; flash(); }
+      });
+      head.appendChild(btn);
+    });
+  }
+
   /* ---------- equation worked-example toggles ---------- */
   function initEqExamples() {
     document.querySelectorAll(".eq-x-toggle").forEach(function (btn) {
@@ -249,6 +287,7 @@
     initMotion();
     initSpy();
     initEqExamples();
+    initPermalinks();
     /* belt-and-braces: fonts, KaTeX and the Lab all shift layout after
        triggers are measured — one final refresh once everything settles */
     window.addEventListener("load", function () {

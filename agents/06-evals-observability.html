@@ -8,7 +8,7 @@
 <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
 <meta name="theme-color" content="#000000" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-<link rel="stylesheet" href="../assets/css/manual.css?v=3" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=49d672cc" />
 </head>
 <body>
 
@@ -120,6 +120,35 @@
         <div class="eq-note">Per task: draw \(n \ge k\) samples, count \(c\) correct. \(\binom{n-c}{k}/\binom{n}{k}\) is exactly the probability that a uniformly random \(k\)-subset of your \(n\) samples contains <em>zero</em> successes — so its complement is the chance at least one of \(k\) passes. <b>This is unbiased for any \(n \ge k\)</b>; the plug-in \(1-(1-c/n)^k\) systematically underestimates. If \(n - c &lt; k\), the numerator is zero and the estimate is exactly 1. Compute it as the product \(\prod_{i=0}^{k-1}\frac{n-c-i}{\,n-i\,}\) — never with raw factorials, which overflow past \(n \approx 170\).</div>
         </div>
 
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># the unbiased pass@k estimator (EQ A6.1), exact, via math.comb
+from math import comb
+
+def pass_at_k(n, c, k):              # 1 - C(n-c, k) / C(n, k)
+    if n - c &lt; k: return 1.0
+    return 1.0 - comb(n - c, k) / comb(n, k)
+
+n = 20
+print(f"n = {n} samples per task")
+print(f"{'c':&gt;4s}{'pass@1':&gt;9s}{'pass@5':&gt;9s}{'pass@10':&gt;9s}")
+for c in (2, 5, 10):
+    p1, p5, p10 = (pass_at_k(n, c, k) for k in (1, 5, 10))
+    print(f"{c:4d}{p1:9.1%}{p5:9.1%}{p10:9.1%}")
+
+ks = list(range(1, 16))
+plot_xy(ks, [pass_at_k(n, 5, k) for k in ks])   # the c = 5 curve
+
+p1, p8 = pass_at_k(n, 5, 1), pass_at_k(n, 5, 8)
+print(f"\nc = 5: pass@1 = {p1:.1%} but pass@8 = {p8:.1%} — "
+      f"a {p8/p1:.1f}x flattery factor")
+print("pass@8 measures the harness's attempt budget plus an oracle to pick")
+print("the winner — a headline that omits k is marketing, not measurement")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
         <p><strong>Now the honesty clause.</strong> pass@1 is what a production agent experiences: one attempt, no second chances. pass@8 is what a system with eight attempts <em>and a free oracle to pick the winner</em> experiences. A model that solves a task 5% of the time per attempt posts pass@1 = 5% but pass@8 ≈ 34% — a 7× flattery factor, earned entirely by the harness, not the model. pass@8 is a legitimate number when you actually run best-of-\(k\) with a cheap verifier (unit tests, schema checks) to select among attempts. It is marketing when the headline omits the \(k\). When you read any benchmark claim, demand four facts: <em>k</em>, <em>n</em>, the sampling temperature (pass@1 at \(T=0\) and pass@1 averaged over \(T=0.8\) samples are different quantities), and the scaffold.</p>
         <p>That last one dominates more than most people expect. <strong>SWE-bench-style harness evals</strong> are the L3 gold standard for coding agents: the harness drops the agent into a containerized repo at a pinned commit, the agent produces a patch, and the harness runs the repo's own tests — the previously failing ones must now pass (<code>FAIL_TO_PASS</code>) without breaking the rest (<code>PASS_TO_PASS</code>). Resolution is verified by execution, not by judgment. But the published number is a property of the <em>agent system</em> — model + scaffold + tools + retry budget — and leaderboard climbs mix all four. The Verified subset exists because hundreds of original tasks turned out to be unsolvable or under-specified; contamination remains a live concern for any repo that predates a model's training cutoff. Read harness numbers as: "this scaffold, this model, this k." Nothing more transfers.</p>
 
@@ -204,6 +233,36 @@
         <div class="eq-note">\(S\) steps; \(n^{(s)}_{\text{in}}, n^{(s)}_{\text{out}}\) input/output tokens at step \(s\); \(h\) the cache hit rate; \(p_{\text{cached}} \approx 0.1\, p_{\text{in}}\) on most current pricing. Because context accumulates, \(n^{(s)}_{\text{in}}\) grows roughly linearly in \(s\) — so without compaction, <b>run cost grows quadratically in step count</b>: the sum of a linearly growing context is \(O(S^2)\). And the right-hand identity is the one executives should see: dividing by the resolution rate converts "cost per attempt" into <b>cost per task actually solved</b> — the only number comparable across models, scaffolds, and vendors.</div>
         </div>
 
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># EQ A6.2 end to end: cost per run is vanity, cost per resolved is truth
+S, IN_TOK, OUT_TOK, H = 20, 12_000, 700, 0.60   # steps, in/out per step, cache hit
+TIERS = {"frontier": (3.00, 15.00, 0.65),       # $/Mtok in, $/Mtok out, resolution
+         "mid":      (0.80,  4.00, 0.55),
+         "small":    (0.15,  0.60, 0.30)}
+
+def run_cost(p_in, p_out):                      # cached input billed at 10%
+    inp = S * IN_TOK * (H * 0.1 * p_in + (1 - H) * p_in) / 1e6
+    return inp + S * OUT_TOK * p_out / 1e6
+
+print(f"{'tier':10s}{'$/run':&gt;8s}{'resolve':&gt;9s}{'$/resolved':&gt;12s}{'monthly@10K':&gt;13s}")
+for name, (p_in, p_out, resolve) in TIERS.items():
+    c = run_cost(p_in, p_out)
+    print(f"{name:10s}{c:8.3f}{resolve:9.0%}{c/resolve:12.3f}{10_000*c:13,.0f}")
+
+# tier routing: 14 mechanical steps on small, 6 decision steps on frontier
+c_routed = (14 / S) * run_cost(0.15, 0.60) + (6 / S) * run_cost(3.00, 15.00)
+for resolve in (0.60, 0.20):
+    print(f"routed, resolution {resolve:.0%}: ${c_routed:.3f}/run "
+          f"-&gt; ${c_routed/resolve:.3f}/resolved")
+print("\nrouting at held resolution beats frontier ($0.30 vs $0.83); the same")
+print("routing at collapsed resolution loses to it ($0.90) — never approve a")
+print("routing change on cost per run; approve it on cost per resolved task")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
         <p><strong>Cost per resolved task is the real KPI</strong> because it correctly punishes false economies. A worked example with the instrument's illustrative prices — 20 steps, 12K average input and 700 output tokens per step, 60% cache hit rate. All-frontier ($3.00 in / $15.00 out per Mtok): about <strong>$0.54 per run</strong>; at a 65% resolution rate, <strong>≈ $0.83 per resolved task</strong>, or ≈ $5,400 a month at 10K runs. Now route the 14 mechanical steps (file reads, greps, summarization) to the small tier ($0.15 / $0.60) and keep the 6 decision steps on frontier: the run drops to <strong>≈ $0.18 — 3× cheaper</strong>. If resolution holds near 60%, cost per resolved task falls to ≈ $0.30 and the routing pays. If resolution collapses to 20% — which sloppy down-tiering absolutely can do — cost per resolved task is ≈ $0.90 and the "savings" made you worse off than frontier-everywhere. <strong>Never approve a routing change on cost per run; approve it on cost per resolved task, re-measured.</strong></p>
 
         <div class="widget" id="ev-ct" data-reveal>
@@ -278,8 +337,10 @@
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
-<script src="../assets/js/glossary.js"></script>
-<script src="../assets/js/shared.js"></script>
+<script src="../assets/js/glossary.js?v=de942868"></script>
+<script src="../assets/js/shared.js?v=2ab4fc41"></script>
+<script src="../assets/js/pyrunner.js?v=0a6c02e0"></script>
+<script src="../assets/js/search.js?v=b56ede0c"></script>
 <script>
 /* chapter instruments — single IIFE, no globals */
 (function () {
@@ -541,5 +602,6 @@
   })();
 })();
 </script>
+<script defer src="/_vercel/insights/script.js"></script>
 </body>
 </html>

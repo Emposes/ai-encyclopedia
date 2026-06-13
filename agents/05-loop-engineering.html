@@ -8,7 +8,7 @@
 <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
 <meta name="theme-color" content="#000000" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-<link rel="stylesheet" href="../assets/css/manual.css?v=3" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=49d672cc" />
 </head>
 <body>
 
@@ -74,6 +74,31 @@
         <div class="eq"><span class="eq-tag">EQ A5.2 — RETRY WITH A VERIFIER</span>
         $$ P_{\text{step}} \;=\; 1 - (1 - p)^{k} $$
         <div class="eq-note">\(k\) attempts per step (so \(k-1\) retries), under a <b>perfect verifier</b> — something that always tells success from failure: a test suite, a schema validator, a compiler. At \(p = 0.9\), three attempts give \(P_{\text{step}} = 0.999\); the exponential now works <em>for</em> you. The fine print is the verifier. Without one, this equation is fiction — see EQ A5.3.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># compounding failure (EQ A5.1) and the verified-retry rescue (EQ A5.2)
+import numpy as np
+steps = np.arange(1, 101)
+
+print(" p/step    P(50 steps)   P(100 steps)")
+for p in (0.95, 0.99, 0.999):
+    plot_xy(steps, p ** steps)
+    print(f"  {p:5.3f}    {p**50:10.1%}   {p**100:11.1%}")
+
+# the rescue: 2 retries behind a perfect verifier, base p = 0.95
+p, k = 0.95, 3                       # k attempts per step
+p_eff = 1 - (1 - p) ** k             # EQ A5.2
+plot_xy(steps, p_eff ** steps)
+print(f"\nrescued: p = 0.95 with {k - 1} verified retries -&gt; p_eff = {p_eff:.6f}")
+print(f"         P(50 steps) = {p_eff**50:.1%}   vs   {0.95**50:.1%} raw")
+print(f"\npunchline: 0.99^50 = {0.99**50:.3f} — a 1% per-step error rate is")
+print("roughly a coin flip at fifty steps; the verifier, not the model,")
+print("is what bends the curve back toward 1")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
         </div>
 
         <p>The formula hides two assumptions that fail independently in practice. First, <strong>attempts must be detectably wrong</strong>. An agent with no verifier cannot trigger a retry on a step it believes succeeded — and a model that just produced a wrong answer usually believes exactly that. Blind regeneration without a selection signal leaves you sampling from the same marginal distribution: success probability \(p\), no matter how many times you roll. Second, <strong>attempts must be independent-ish</strong>. Same model, same prompt, same poisoned context — the second attempt fails for the same reason the first did. You retry into the same wall.</p>
@@ -201,6 +226,35 @@
             <tr><td><strong>Swarm</strong></td><td class="m">homogeneous workers, shared queue</td><td>many independent, near-identical units of work</td><td>shared mutable state — coupled edits become merge conflicts</td></tr>
           </tbody>
         </table>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># what a topology costs: one task, four shapes, tokens + wall-clock
+UNIT = 30_000     # tokens a single agent burns solving the task alone
+RESULT = 300      # a structured result handed back (never a transcript)
+
+shapes = {"single agent": (UNIT, 1.00)}
+# orchestrator + 3 parallel workers, each ~40% of the exploring + handback
+shapes["orchestrator-workers"] = (int(0.25*UNIT + 3*0.4*UNIT + 3*RESULT), 0.25 + 0.40 + 0.10)
+# pipeline: 4 serial stages at ~30% each, artifact checks at the seams
+shapes["pipeline"] = (int(4*0.3*UNIT + 3*RESULT), 4 * 0.30)
+# council: 3 full independent attempts + a judge reading three results
+shapes["council + judge"] = (int(3*UNIT + 3*RESULT + 2_000), 1.00 + 0.10)
+
+print(f"{'topology':22s}{'tokens':&gt;8s}{'vs single':&gt;10s}{'wall-clock':&gt;11s}")
+for name, (tok, wall) in shapes.items():
+    print(f"{name:22s}{tok:8,d}{tok/UNIT:9.2f}x{wall:10.2f}")
+
+o_tok, o_wall = shapes["orchestrator-workers"]
+c_tok = shapes["council + judge"][0]
+print(f"\nfan-out buys wall-clock, never tokens: the orchestrator runs "
+      f"{1 - o_wall:.0%} faster for {o_tok/UNIT - 1:.0%} more tokens;")
+print(f"the council pays {c_tok/UNIT:.1f}x for independent judgment — worth it only")
+print("when no ground-truth verifier exists, because tests beat votes")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
 
         <p>Two rules govern every topology, and violating either converts multi-agent from a speedup into a liability:</p>
         <ul>
@@ -382,8 +436,10 @@
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
-<script src="../assets/js/glossary.js"></script>
-<script src="../assets/js/shared.js"></script>
+<script src="../assets/js/glossary.js?v=de942868"></script>
+<script src="../assets/js/shared.js?v=2ab4fc41"></script>
+<script src="../assets/js/pyrunner.js?v=0a6c02e0"></script>
+<script src="../assets/js/search.js?v=b56ede0c"></script>
 <script>
 /* chapter instruments — single IIFE, no globals */
 (function () {
@@ -637,5 +693,6 @@
   })();
 })();
 </script>
+<script defer src="/_vercel/insights/script.js"></script>
 </body>
 </html>

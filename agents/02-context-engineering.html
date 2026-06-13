@@ -8,7 +8,7 @@
 <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
 <meta name="theme-color" content="#000000" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-<link rel="stylesheet" href="../assets/css/manual.css?v=3" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=49d672cc" />
 </head>
 <body>
 
@@ -55,6 +55,33 @@
         <div class="eq"><span class="eq-tag">EQ A2.1 — THE CONTEXT BUDGET</span>
         $$ \underbrace{T_{\text{sys}} + T_{\text{tool}} + T_{\text{mem}}}_{\text{stable prefix}} \;+\; \underbrace{T_{\text{ret}} + T_{\text{hist}} + T_{\text{pad}}}_{\text{per-step dynamics}} \;\le\; \rho \, L_{\max}, \qquad \rho \approx 0.5\text{–}0.7 $$
         <div class="eq-note">The six terms are system prompt, tool definitions, memory, retrieval, history, and scratchpad; \(L_{\max}\) is the advertised window. The factor \(\rho\) is the honest part: you budget against an <b>effective</b> limit well below the advertised one, partly to leave headroom for the next tool result, partly because attention quality degrades long before the hard wall. The grouping into stable prefix and per-step dynamics is not cosmetic — it is the entire basis of §2.6.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># the context budget: six components against a 200K window (EQ A2.1, A2.2)
+parts = {"system": 4000, "tools": 12000, "memory": 2000,
+         "history": 60000, "retrieval": 30000, "scratchpad": 8000}
+LIMIT, PRICE, KAPPA = 200_000, 3.00, 0.1   # window, $/Mtok input, cache discount
+
+total = sum(parts.values())
+for name, tok in parts.items():
+    bar = "#" * round(40 * tok / LIMIT)
+    print(f"{name:10s} {tok:7,d}  {tok/total:6.1%}  {bar}")
+print(f"{'TOTAL':10s} {total:7,d}  -&gt; {total/LIMIT:.0%} of the 200K window")
+
+# EQ A2.2: the stable prefix P is served from cache; only the tail D is fresh
+P = parts["system"] + parts["tools"] + parts["memory"] + parts["history"]
+D = total - P
+cold = total * PRICE / 1e6
+warm = (KAPPA * P + D) * PRICE / 1e6
+print(f"\ncold call (no cache): ${cold:.3f}     warm call: ${warm:.3f}")
+print(f"warm/cold = (kP+D)/(P+D) = {warm/cold:.2f}  -&gt;  {cold/warm:.1f}x cheaper per step")
+print("history dominates the budget, but append-only history is cache-hit —")
+print("the expensive tokens are the ones you change, not the ones you keep")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
         </div>
 
         <p>Why \(\rho \ll 1\)? Because the window is a physical limit but attention is a budget of its own. A transformer relates \(T\) tokens through \(T^2\) pairwise scores (Vol II · EQ 3.1), softmax spreads a fixed unit of probability mass over an ever-longer row, and training data contains far fewer million-token dependency patterns than thousand-token ones. The result is <strong>context rot</strong>: needle-in-a-haystack benchmarks saturate near 100%, while realistic tasks — multi-fact reasoning, instructions stated once at turn 3 and needed at turn 47, relevant passages buried mid-window among plausible distractors — degrade measurably as the window fills. Frontier models in 2026 hold up far better than the 2023 generation that made &ldquo;lost in the middle&rdquo; a famous phrase, but none are flat, and the degradation profile varies by model, by task, and by where the needle sits (Vol II · Ch 09). Treat the advertised window as an engineering maximum, not an operating point.</p>
@@ -132,6 +159,36 @@
       <section class="section" id="s5">
         <div class="sec-head"><span class="sec-num">2.5</span><h2>Compaction: summarize and continue</h2></div>
         <p>A long-running agent will hit the budget no matter how disciplined the curation. <strong>Compaction</strong> is the standard escape: when fill crosses a threshold (typically 70–90% of the effective budget), replace the oldest span of history with a structured summary and keep the recent tail verbatim. The session continues; the transcript does not.</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># compaction vs monotone growth: context size across a 60-turn session
+BASE = 6_000        # stable prefix: system + tools + memory
+PER_TURN = 1_400    # average tokens one turn adds (action + observation)
+SUMMARY = 900       # what a structured compaction leaves behind
+EVERY = 10          # compact every N turns, keep a 2-turn tail verbatim
+
+turns, raw, compacted = [], [], []
+ctx_r = ctx_c = BASE
+for t in range(1, 61):
+    ctx_r += PER_TURN
+    ctx_c += PER_TURN
+    if t % EVERY == 0:
+        ctx_c = BASE + SUMMARY + 2 * PER_TURN
+    turns.append(t); raw.append(ctx_r); compacted.append(ctx_c)
+
+print(f"turn 60 without compaction: {raw[-1]:6,d} tokens "
+      f"({raw[-1]/200_000:.0%} of a 200K window, still climbing)")
+print(f"turn 60 with compaction   : peaks at {max(compacted):6,d}, "
+      f"resets to {min(compacted[9:]):5,d}")
+print(f"tokens re-sent on the next call: {raw[-1]/compacted[-1]:.0f}x more without it")
+print("the sawtooth is the win; what the summary DROPS is the risk (Instrument A2.2)")
+plot_xy(turns, raw)         # mint: monotone growth
+plot_xy(turns, compacted)   # blue: the compaction sawtooth</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
         <p>Compaction is a lossy codec, and the entire craft is choosing the loss function. The loss is brutally asymmetric: dropping a pleasantry costs nothing; dropping a constraint costs the task. What must survive, in rough priority order: the <strong>goal</strong> as currently understood; every <strong>constraint</strong>, stated once and never repeated; <strong>decisions with their reasons</strong> (so they are not silently relitigated); exact <strong>identifiers</strong> — file paths, function names, ids, commands; and <strong>unresolved state</strong> — what failed, what was tried, what is pending. What can die: greetings and acknowledgments, superseded drafts, and raw tool payloads whose conclusions have already been distilled into a decision. A summary that reads like a friendly recap and tests like amnesia is the most common failure in production agents — which is exactly what the instrument below lets you reproduce.</p>
 
         <div class="widget" id="ce-compact" data-reveal>
@@ -265,8 +322,10 @@
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
-<script src="../assets/js/glossary.js"></script>
-<script src="../assets/js/shared.js"></script>
+<script src="../assets/js/glossary.js?v=de942868"></script>
+<script src="../assets/js/shared.js?v=2ab4fc41"></script>
+<script src="../assets/js/pyrunner.js?v=0a6c02e0"></script>
+<script src="../assets/js/search.js?v=b56ede0c"></script>
 <script>
 /* chapter instruments — single IIFE, no globals */
 (function () {
@@ -627,5 +686,6 @@
   })();
 })();
 </script>
+<script defer src="/_vercel/insights/script.js"></script>
 </body>
 </html>

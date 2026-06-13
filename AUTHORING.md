@@ -19,8 +19,11 @@ Read this entire file, then skim the reference chapter `chapters/06-finetuning.h
    (see below) with an `eq-tag`.
 4. **No lorem, no placeholders, no "TODO".** Every section fully written, technically
    correct, current as of 2026. When a claim is contested, say so honestly.
-5. **≥ 2 interactive instruments per chapter** (3 is better). Volume I chapters also
-   need **≥ 2 runnable Python cells** (`.pycell`, spec below).
+5. **≥ 2 interactive instruments per chapter** (3 is better). EVERY chapter in EVERY
+   volume also needs **≥ 2 runnable Python cells** (`.pycell`, spec below) — toy
+   NumPy implementations of the chapter's core mechanism. If a concept truly cannot
+   run in a browser, run its arithmetic (cost models, estimators, simulators) instead.
+   Pages with pycells must include pyrunner.js (after shared.js).
 6. **Glossary**: do NOT edit glossary.js. Instead return 3–8 new term definitions in
    your structured report (term + 1–2 sentence definition, matching existing tone).
 7. Reduced-motion users: never gate content behind animation. Widgets must render a

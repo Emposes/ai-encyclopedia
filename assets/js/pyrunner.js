@@ -216,6 +216,14 @@
       if (ev.key === "Escape") close();
     });
     activate(0);
+    /* code lives ON the right by default — the Lab opens with the page
+       (unless the reader closed it here before: remembered per session) */
+    var dismissed = false;
+    try { dismissed = sessionStorage.getItem("aie-lab-closed") === location.pathname; } catch (e) {}
+    panel.querySelector(".lh-close").addEventListener("click", function () {
+      try { sessionStorage.setItem("aie-lab-closed", location.pathname); } catch (e) {}
+    });
+    if (!dismissed) setTimeout(function () { open(0); }, 250);
   }
 
   /* ---------- inline fallback (narrow screens) ---------- */
@@ -241,6 +249,7 @@
   function boot() {
     var cells = Array.prototype.slice.call(document.querySelectorAll(".pycell[data-py]"));
     if (!cells.length) return;
+    cells.forEach(function (c) { c.classList.add("wired"); });
     cells.forEach(wire);
     if (DESKTOP) buildLab(cells); else buildInline(cells);
     /* docking the cells collapses ~400px each out of the prose flow —

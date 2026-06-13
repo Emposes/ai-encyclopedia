@@ -6,6 +6,10 @@
 (function () {
   "use strict";
 
+  /* idempotent: pages may load this twice (explicit tag + self-heal) */
+  if (window.__AIE_SEARCH__) return;
+  window.__AIE_SEARCH__ = true;
+
   var INDEX_URL = "/search-index.json";
   var index = null, overlay = null, input = null, list = null, items = [], sel = 0;
 
@@ -100,7 +104,7 @@
   /* topbar button */
   function injectButton() {
     var bar = document.querySelector(".topbar");
-    if (!bar) return;
+    if (!bar || bar.querySelector(".pal-trigger")) return;
     var spacer = bar.querySelector(".spacer");
     var btn = document.createElement("button");
     btn.className = "bar-link pal-trigger";

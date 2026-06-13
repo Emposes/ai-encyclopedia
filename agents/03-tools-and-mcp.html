@@ -8,7 +8,7 @@
 <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
 <meta name="theme-color" content="#000000" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-<link rel="stylesheet" href="../assets/css/manual.css?v=3" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=49d672cc" />
 </head>
 <body>
 
@@ -99,6 +99,43 @@
           <div class="w-note">The pre-loaded schema fails on purpose: camelCase vague name, two-word description, seven parameters, no per-parameter docs, free-string fields that should be enums, a catch-all <code>options</code> object, and raw-SQL plumbing instead of a task. Hit <b>LINT</b> to see each check; hit <b>LOAD FIXED EXAMPLE</b> for a task-level schema that scores clean.</div>
         </div>
 
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># a tool-schema linter in 29 lines: the surface defects models feel
+import re
+VERBS = "get search find list create update delete send run cancel read write".split()
+
+def lint(s):
+    name, desc = s.get("name", ""), s.get("description", "")
+    props = s.get("params", {})
+    enumish = ("status", "mode", "format", "sort", "kind")
+    checks = [
+        ("snake_case name",        bool(re.fullmatch(r"[a-z]+(_[a-z0-9]+)*", name))),
+        ("verb_noun name",         name.split("_")[0] in VERBS and "_" in name),
+        ("description 30+ chars",  len(desc) &gt;= 30),
+        ("5 params or fewer",      len(props) &lt;= 5),
+        ("every param documented", all("doc" in p for p in props.values())),
+        ("categoricals are enums", all("enum" in p for k, p in props.items() if k in enumish)),
+    ]
+    fails = sum(not ok for _, ok in checks)
+    print(f"\n{name or '(unnamed)'}")
+    for label, ok in checks:
+        print(f"  {'PASS' if ok else 'FAIL'}  {label}")
+    print(f"  verdict: {'CLEAN' if fails == 0 else str(fails) + ' failures — REJECT'}")
+
+bad = {"name": "doDatabaseStuff", "description": "Runs a query.",
+       "params": {k: {} for k in ["sql", "db", "mode", "format", "limit", "verbose", "options"]}}
+good = {"name": "search_orders",
+        "description": "Search a customer's order history; returns orders with status and totals. Read-only.",
+        "params": {"customer_id": {"doc": "stable id, e.g. cus_8842"},
+                   "status": {"doc": "filter", "enum": ["any", "open", "shipped"]},
+                   "limit": {"doc": "max orders returned, 1-50"}}}
+lint(bad); lint(good)</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
         <p class="note"><strong>What a linter can't see.</strong> It cannot judge whether your description is <em>true</em>, whether the tool's behavior matches its promise, or whether the set of tools is collectively orthogonal. Those need a human and an eval suite. The linter buys you the cheap 80% — the surface defects that reliably mislead a model — so your review time goes to the 20% that needs judgment.</p>
       </section>
 
@@ -112,6 +149,35 @@
         <div class="eq"><span class="eq-tag">EQ A3.2 — ACTIONABLE DENSITY (CONCEPTUAL)</span>
         $$ \rho \;=\; \frac{u}{r}, \qquad u = \text{decision-relevant tokens returned}, \quad r = \text{total tokens returned} $$
         <div class="eq-note">An <em>illustrative</em> framing, not a measured quantity: a good result drives \(\rho\) toward 1 by returning what the model needs to act and nothing else. Raw API payloads sit near \(\rho \approx 0.05\) — pagination cursors, internal IDs, null fields, ISO timestamps the model will never reference. The engineering move is to <b>transform at the tool boundary</b>: filter, rename to human-legible fields, round, summarize, and return a compact structured object. The cost you pay in code is repaid every turn the result sits in context.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># one API result, two returns: raw dump vs curated — token arithmetic
+import json
+raw = {"data": [{"id": f"ord_{1000+i}", "customer": {"id": "cus_8842", "segment": None},
+                 "status": "shipped", "total_cents": 4999 + 137 * i, "currency": "USD",
+                 "created_at": f"2026-05-{i % 28 + 1:02d}T08:14:{i:02d}.000Z",
+                 "meta": None, "_links": {"self": f"/v2/orders/ord_{1000+i}"}}
+                for i in range(40)],
+       "pagination": {"cursor": "eyJvZmZzZXQiOjQwfQ==", "has_more": True}}
+
+curated = {"orders_shown": 3, "total_matches": 40,
+           "top": [{"id": "ord_1000", "status": "shipped", "total": "$49.99"},
+                   {"id": "ord_1001", "status": "shipped", "total": "$51.36"},
+                   {"id": "ord_1002", "status": "shipped", "total": "$52.73"}],
+           "note": "all 40 shipped; call again with a date filter to page deeper"}
+
+tok = lambda obj: len(json.dumps(obj)) // 4    # ~4 chars per token, rough but fair
+t_raw, t_cur = tok(raw), tok(curated)
+print(f"raw API dump   : ~{t_raw:5,d} tokens — and it rides along on EVERY later call")
+print(f"curated return : ~{t_cur:5,d} tokens")
+print(f"savings        : {1 - t_cur/t_raw:.0%}  ({t_raw/t_cur:.0f}x denser)")
+print("actionable density (EQ A3.2): the three fields the model needed exist")
+print("in both returns — only one buries them under cursors and nulls")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
         </div>
 
         <p><strong>Structured and dense.</strong> Return the smallest object that answers the call: the fields the model asked about, in stable names it can rely on, with units and currencies explicit. Drop nulls. Round floats that don't need precision. If a result is a list, return the top-k that matter and a count of the rest — <code>{"shown": 5, "total_matches": 218}</code> — rather than all 218.</p>
@@ -283,8 +349,10 @@
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
-<script src="../assets/js/glossary.js"></script>
-<script src="../assets/js/shared.js"></script>
+<script src="../assets/js/glossary.js?v=de942868"></script>
+<script src="../assets/js/shared.js?v=2ab4fc41"></script>
+<script src="../assets/js/pyrunner.js?v=0a6c02e0"></script>
+<script src="../assets/js/search.js?v=b56ede0c"></script>
 <script>
 /* chapter instruments — single IIFE, no globals */
 (function () {
@@ -583,5 +651,6 @@
 
 })();
 </script>
+<script defer src="/_vercel/insights/script.js"></script>
 </body>
 </html>

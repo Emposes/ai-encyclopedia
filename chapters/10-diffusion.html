@@ -7,7 +7,7 @@
 <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
 <meta name="theme-color" content="#000000" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-<link rel="stylesheet" href="../assets/css/manual.css?v=3" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=49d672cc" />
 </head>
 <body>
 
@@ -54,6 +54,33 @@
         <div class="eq-note">\(\beta_t\) is the noise schedule; \(\bar\alpha_t = \prod_{s \le t}(1 - \beta_s)\) decays from 1 to ≈0. Equivalently: \(x_t = \sqrt{\bar\alpha_t}\, x_0 + \sqrt{1-\bar\alpha_t}\, \varepsilon\) with \(\varepsilon \sim \mathcal{N}(0, I)\). At \(t = T\) every dataset becomes the same boring isotropic Gaussian — which is the point: we know how to sample <em>that</em>.</div>
         </div>
 
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Forward noising in 1-D: a bimodal dataset dissolving (EQ 10.1)
+import numpy as np
+rng = np.random.default_rng(0)
+n = 300
+x0 = np.concatenate([rng.normal(-2, 0.3, n//2), rng.normal(2, 0.3, n//2)])
+
+ts = [0.0, 0.25, 0.5, 1.0]
+xs, rows, labels = [], [], []
+for i, t in enumerate(ts):
+    abar = np.exp(-6 * t)                # noise schedule: abar 1 -&gt; ~0
+    xt = np.sqrt(abar)*x0 + np.sqrt(1-abar)*rng.normal(0, 1, n)
+    sep = xt[x0 &gt; 0].mean() - xt[x0 &lt; 0].mean()
+    print(f"t={t:4.2f}  abar={abar:5.3f}  mode separation {sep:5.2f}  "
+          f"noise sd {np.sqrt(1-abar):4.2f}")
+    xs += list(xt); rows += [i]*n; labels += [i]*n
+
+print("\nthe modes start 4.0 apart; separation shrinks as 4*sqrt(abar)")
+print("while the noise floor grows to sd 1. by t=1 both modes have")
+print("melted into N(0,1) -- the state every sampler will start from.")
+plot_scatter(xs, rows, labels)</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
         <p>Drag the slider below to run EQ 10.1 on a real 2-D dataset — six Gaussian clusters arranged in a ring — and watch structure dissolve:</p>
 
         <div class="widget" id="diff-demo" data-reveal>
@@ -91,6 +118,37 @@
         <div class="eq"><span class="eq-tag">EQ 10.3 — REVERSE (DENOISING) STEP</span>
         $$ x_{t-1} = \frac{1}{\sqrt{\alpha_t}} \left( x_t - \frac{\beta_t}{\sqrt{1-\bar\alpha_t}}\, \varepsilon_\theta(x_t, t) \right) + \sigma_t\, z, \qquad z \sim \mathcal{N}(0, I) $$
         <div class="eq-note">Subtract the predicted noise (rescaled), inject a little fresh randomness, repeat from \(t = T\) down to 0. DDIM makes the walk deterministic and skippable (50 steps instead of 1,000); the whole process can equivalently be written as an SDE or a probability-flow ODE — the formulation modern samplers and distillation methods build on.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Reverse diffusion for real: annealed Langevin, analytic score
+import numpy as np
+rng = np.random.default_rng(0)
+mu, s0 = np.array([-2.0, 2.0]), 0.3      # the true two-mode GMM
+
+def score(x, sig):                       # exact grad log p of smoothed GMM
+    s2 = s0**2 + sig**2
+    d = x[:, None] - mu[None, :]
+    w = np.exp(-d**2 / (2*s2)); w /= w.sum(1, keepdims=True)
+    return -(w * d).sum(1) / s2
+
+x = rng.normal(0, 3.0, 600)              # start from pure noise
+for sig in np.geomspace(3.0, 0.05, 25):  # anneal the noise level down
+    eps = 0.5 * sig**2
+    for _ in range(20):                  # Langevin steps at this level
+        x += eps * score(x, sig) + np.sqrt(2*eps) * rng.normal(0, 1, len(x))
+
+m_lo, m_hi = x[x &lt; 0].mean(), x[x &gt; 0].mean()
+print(f"recovered mode means : {m_lo:+.3f}  {m_hi:+.3f}   (true -2.000 +2.000)")
+print(f"both within +/-0.05  : {bool(abs(m_lo+2) &lt; 0.05 and abs(m_hi-2) &lt; 0.05)}")
+print(f"mass split lo/hi     : {np.mean(x &lt; 0):.2f} / {np.mean(x &gt; 0):.2f}")
+print("\n600 points walked from N(0,9) back to the bimodal density using")
+print("nothing but the score -- what a U-Net/DiT learns to estimate.")
+plot_scatter(x, rng.normal(0, 0.2, len(x)), (x &gt; 0).astype(int))</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
         </div>
 
         <div class="callout">
@@ -205,9 +263,11 @@
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
-<script src="../assets/js/glossary.js"></script>
-<script src="../assets/js/shared.js"></script>
-<script src="../assets/js/search.js"></script>
-<script src="../assets/js/interactives.js"></script>
+<script src="../assets/js/glossary.js?v=de942868"></script>
+<script src="../assets/js/shared.js?v=2ab4fc41"></script>
+<script src="../assets/js/pyrunner.js?v=0a6c02e0"></script>
+<script src="../assets/js/search.js?v=b56ede0c"></script>
+<script src="../assets/js/interactives.js?v=f738a9df"></script>
+<script defer src="/_vercel/insights/script.js"></script>
 </body>
 </html>

@@ -7,7 +7,7 @@
 <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
 <meta name="theme-color" content="#000000" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-<link rel="stylesheet" href="../assets/css/manual.css?v=3" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=49d672cc" />
 </head>
 <body>
 
@@ -59,6 +59,36 @@
         <div class="eq-note">Routers left alone collapse onto a few favorite experts, stranding the rest as dead weight. The auxiliary loss penalizes the dot product of <em>realized</em> load and <em>intended</em> probability — minimized when both are uniform. DeepSeek-V3 instead tunes a per-expert bias online (“aux-loss-free” balancing) to avoid distorting the main objective. Expert parallelism (§4.5) then spreads experts across GPUs, paying all-to-all communication per layer.</div>
         </div>
 
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Top-2 MoE router: load balance loss, fair vs biased (EQ 9.2)
+import numpy as np
+rng = np.random.default_rng(0)
+E, k, T = 8, 2, 64
+x  = rng.normal(0, 1, (T, 16))           # 64 token hidden states
+Wr = rng.normal(0, 0.4, (16, E))         # router weights
+
+def route(bias):
+    g = np.exp(x @ Wr + bias)
+    g /= g.sum(1, keepdims=True)         # softmax gates (EQ 9.1)
+    top2 = np.argsort(g, 1)[:, -2:]      # route each token to its top-2
+    f = np.bincount(top2.ravel(), minlength=E) / (T * k)  # realized load
+    P = g.mean(0)                        # mean router probability
+    return f, E * np.sum(f * P)          # EQ 9.2 (lambda = 1)
+
+for name, bias in [("fair  ", np.zeros(E)),
+                   ("biased", np.array([2.5, 2.0, 0, 0, 0, 0, 0, 0.]))]:
+    f, L = route(bias)
+    print(f"{name} router  L_aux = {L:.3f}   (uniform ideal = 1.000)")
+    print("   load/expert:", " ".join(f"{v:.2f}" for v in f))
+
+print("\nthe biased router funnels every token to two favourites; the")
+print("f.P product rises and EQ 9.2's gradient pushes it back to uniform.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
         <div class="widget" id="moe-demo" data-reveal>
           <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT 9.1 — TOP-2 ROUTER</span><span class="w-sub">8 EXPERTS · LOAD ACCUMULATION</span></div>
           <div class="w-body">
@@ -84,6 +114,29 @@
           <li><strong>Attention cost.</strong> \(O(T^2)\) prefill at \(T = 10^6\) is ~10⁶× a 1K prompt. Mitigations: FlashAttention (exact), interleaved sliding-window layers, context parallelism (ring attention across GPUs), and learned sparse patterns (NSA-style) approaching \(O(T)\).</li>
           <li><strong>KV memory.</strong> EQ 3.5 at 1M tokens is brutal — hence GQA/MLA, KV quantization, token eviction/compression heuristics, and tiered KV offload in serving stacks.</li>
         </ul>
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># The price of context: KV + attention share at 8K / 128K / 1M
+import numpy as np
+L, H_kv, d_k, d, N = 80, 8, 128, 8192, 70e9   # 70B-class, GQA-8, fp16 KV
+
+print("    T   | KV cache/seq | prefill PFLOPs | attention share")
+for T in [8_192, 131_072, 1_048_576]:
+    kv_gb = 2 * L * H_kv * d_k * T * 2 / 1e9  # K and V, 2 bytes each (EQ 3.5)
+    lin   = 2 * N * T                         # weight matmuls
+    attn  = 4 * L * d * T**2                  # QK^T + AV
+    share = 100 * attn / (attn + lin)
+    label = f"{T//1024}K" if T &lt; 1e6 else "1M"
+    print(f"  {label:&gt;4}  | {kv_gb:9.1f} GB | {(lin+attn)/1e15:11.1f}    | {share:8.1f} %")
+
+print("\nat 8K the quadratic term is a rounding error. at 1M the KV cache")
+print("alone outweighs four H100s and attention IS the forward pass --")
+print("every technique in this section exists because of this table.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
         <div class="widget" id="ctx-demo" data-reveal>
           <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT 9.2 — THE PRICE OF CONTEXT</span><span class="w-sub">70B-CLASS · GQA-8 · FP16 KV</span></div>
           <div class="w-body">
@@ -190,9 +243,11 @@
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
-<script src="../assets/js/glossary.js"></script>
-<script src="../assets/js/shared.js"></script>
-<script src="../assets/js/search.js"></script>
-<script src="../assets/js/interactives.js"></script>
+<script src="../assets/js/glossary.js?v=de942868"></script>
+<script src="../assets/js/shared.js?v=2ab4fc41"></script>
+<script src="../assets/js/pyrunner.js?v=0a6c02e0"></script>
+<script src="../assets/js/search.js?v=b56ede0c"></script>
+<script src="../assets/js/interactives.js?v=f738a9df"></script>
+<script defer src="/_vercel/insights/script.js"></script>
 </body>
 </html>

@@ -7,7 +7,7 @@
 <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
 <meta name="theme-color" content="#000000" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-<link rel="stylesheet" href="../assets/css/manual.css?v=3" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=49d672cc" />
 </head>
 <body>
 
@@ -54,6 +54,32 @@
         <div class="eq-note">An H100 needs \(I^* \approx 300\) FLOPs/byte to keep its tensor cores fed. Prefill clears it easily; single-stream decode manages ~2. Consequences: <b>TTFT</b> (time to first token) is set by prefill compute, <b>TPOT</b> (time per output token) by memory bandwidth, and every serving trick below is an attempt to raise decode's intensity — batching raises \(b\), speculation amortizes reads over several tokens, quantization shrinks the bytes.</div>
         </div>
 
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Decode roofline: aggregate tok/s vs batch, 70B bf16 on H100
+import numpy as np
+BW, PEAK, N, BYTES = 3.35e12, 989e12, 70e9, 2   # HBM B/s, FLOP/s, params, bf16
+
+batches = 2 ** np.arange(0, 11)                 # 1 ... 1024
+agg = []
+print("batch | intensity I | regime          | aggregate tok/s")
+for b in batches:
+    I = 2.0 * b / BYTES                         # ~2b FLOPs per 2 bytes moved
+    attained = min(PEAK, BW * I)                # the roofline (EQ 8.1)
+    toks = attained / (2 * N)                   # 2N FLOPs per token
+    agg.append(toks)
+    regime = "compute-bound  " if attained &gt;= PEAK else "bandwidth-bound"
+    print(f"{b:5d} | {I:11.0f} | {regime} | {toks:12,.0f}")
+
+print(f"\nridge at I* = {PEAK/BW:.0f} FLOPs/byte (batch ~295): below it each")
+print("batch doubling doubles aggregate tok/s for free; above it you only")
+print("trade per-user latency. This table is the economics of every API.")
+plot_xy(np.log2(batches), agg)</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
         <div class="widget" id="roofline-demo" data-reveal>
           <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT 8.1 — RIDE THE ROOFLINE</span><span class="w-sub">70B BF16 · H100 · DECODE</span></div>
           <div class="w-body">
@@ -82,6 +108,37 @@
         <div class="eq"><span class="eq-tag">EQ 8.2 — TEMPERATURE, TOP-K, TOP-P</span>
         $$ p_i^{(\tau)} = \frac{e^{z_i / \tau}}{\sum_j e^{z_j / \tau}}, \qquad \text{keep } S = \text{smallest set with} \sum_{i \in S} p_i \ge p_{\text{top}} \;\text{ (∩ top-}k\text{)}, \;\text{ renormalize} $$
         <div class="eq-note">\(\tau &lt; 1\) sharpens (factual/code), \(\tau &gt; 1\) flattens (brainstorming). Top-p (“nucleus”) adapts the cutoff to the model's confidence — wide when uncertain, narrow when sure; top-k caps the candidate count outright; <b>min-p</b> (keep tokens above a fraction of the max probability) is the newer favorite for high-temperature creativity without nonsense. Repetition/frequency/presence penalties damp loops. Reasoning models usually want gentle settings (τ ≈ 0.6–1.0) and <em>no</em> aggressive truncation on thinking tokens.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># The sampler: temperature + top-p, 2000 draws vs the ideal
+import numpy as np
+rng = np.random.default_rng(0)
+toks = ["Paris", "the", "a", "located", "Lyon", "Berlin"]
+z = np.array([5.0, 2.6, 2.2, 1.4, 0.8, -1.0])    # toy logits
+
+def shape(z, tau, top_p):
+    p = np.exp(z / tau); p /= p.sum()
+    order = np.argsort(p)[::-1]
+    keep = order[: np.searchsorted(np.cumsum(p[order]), top_p) + 1]
+    q = np.zeros_like(p); q[keep] = p[keep]
+    return q / q.sum()                            # EQ 8.2: shape, cut, renorm
+
+for tau, top_p in [(0.5, 0.95), (1.5, 0.95)]:
+    q = shape(z, tau, top_p)
+    draws = rng.choice(len(z), 2000, p=q).astype(np.intp)
+    freq = np.bincount(draws, minlength=len(z)) / 2000
+    print(f"tau={tau}  top-p={top_p}")
+    for t, qi, fi in zip(toks, q, freq):
+        print(f"  {t:8s} ideal {qi:.3f}  drawn {fi:.3f}  {'#' * int(40*fi)}")
+
+print("cold tau collapses onto 'Paris'; hot tau lets the tail into the")
+print("lottery (Lyon survives, Berlin is cut by top-p) -- exactly how a")
+print("hallucination does or does not get sampled into existence.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
         </div>
 
         <div class="widget" id="samp-demo" data-reveal>
@@ -140,6 +197,31 @@
         <div class="eq"><span class="eq-tag">EQ 8.4 — ACCEPTANCE RULE (LOSSLESS)</span>
         $$ \text{accept } \tilde{x}_t \text{ with probability } \min\!\left(1,\; \frac{p(\tilde{x}_t)}{q(\tilde{x}_t)}\right); \quad \text{on reject, resample } x_t \sim \mathrm{norm}\big(\max(0,\, p - q)\big) $$
         <div class="eq-note">\(q\) = draft distribution, \(p\) = target. The correction term on rejection is what makes the scheme <b>provably distribution-preserving</b> — speculative decoding is a pure latency win, not an approximation. Expected speedup ≈ acceptance rate × draft length, minus draft overhead: 2–3× in practice on predictable text (code!), less on high-entropy prose.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Speculative decoding simulator -- K=4 draft, accept p=0.8
+import numpy as np
+rng = np.random.default_rng(0)
+p, K, rounds = 0.8, 4, 1000
+
+produced = 0
+for _ in range(rounds):
+    accepts = rng.random(K) &lt; p              # draft tokens the target agrees with
+    n_acc = K if accepts.all() else int(np.argmin(accepts))
+    produced += n_acc + 1                    # accepted run + 1 (correction/bonus)
+
+sim = produced / rounds
+formula = (1 - p**(K + 1)) / (1 - p)
+print(f"simulated tokens per target pass : {sim:.3f}")
+print(f"closed form (1-p^(K+1))/(1-p)    : {formula:.3f}")
+print(f"speedup vs one-token decode      : {sim:.2f}x (minus draft overhead)")
+print("\non a reject the rest of the draft is discarded, but the target's")
+print("own correction still lands -- a verify pass never yields under 1.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
         </div>
 
         <div class="widget" id="spec-demo" data-reveal>
@@ -238,9 +320,11 @@
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
-<script src="../assets/js/glossary.js"></script>
-<script src="../assets/js/shared.js"></script>
-<script src="../assets/js/search.js"></script>
-<script src="../assets/js/interactives.js"></script>
+<script src="../assets/js/glossary.js?v=de942868"></script>
+<script src="../assets/js/shared.js?v=2ab4fc41"></script>
+<script src="../assets/js/pyrunner.js?v=0a6c02e0"></script>
+<script src="../assets/js/search.js?v=b56ede0c"></script>
+<script src="../assets/js/interactives.js?v=f738a9df"></script>
+<script defer src="/_vercel/insights/script.js"></script>
 </body>
 </html>

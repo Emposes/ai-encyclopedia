@@ -7,7 +7,7 @@
 <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
 <meta name="theme-color" content="#000000" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-<link rel="stylesheet" href="../assets/css/manual.css?v=3" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=49d672cc" />
 </head>
 <body>
 
@@ -120,6 +120,30 @@
         <div class="eq-note">\(y_w\) = chosen, \(y_l\) = rejected. The model only learns reward <em>differences</em> — absolute scale is unidentified. Reward models are imperfect proxies, which makes them gameable: over-optimize and you harvest sycophancy, verbosity, and confident nonsense. That failure mode is called <b>reward hacking</b>, and the KL term in EQ 5.3 is its leash.</div>
         </div>
 
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Bradley-Terry P(win) and the DPO gradient: solved pairs stop teaching
+import numpy as np
+
+def sigmoid(z): return 1 / (1 + np.exp(-z))
+
+print("margin   P(y_w wins)   loss -log P   |dL/dmargin| = sigma(-margin)")
+for m in (-4.0, -2.0, -1.0, 0.0, 1.0, 2.0, 4.0, 8.0):
+    p = sigmoid(m)
+    print(f"{m:6.1f} {p:12.4f} {-np.log(p):13.4f} {sigmoid(-m):18.4f}")
+
+print("\nmargin = r(y_w) - r(y_l) for a reward model (EQ 5.2);")
+print("margin = beta*(logratio_w - logratio_l) for DPO (EQ 5.5) -- same sigmoid.")
+print("at margin 8 the gradient is 0.0003: a confidently-ordered pair is inert.")
+print("misordered pairs (margin &lt; 0) carry weight ~1 and dominate every update.")
+
+xs = np.linspace(-6, 6, 100)          # the gradient-magnitude curve
+plot_xy(xs, sigmoid(-xs))</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
         <div class="widget" id="bt-demo" data-reveal>
           <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT 5.1 — PREFERENCE MARGIN</span><span class="w-sub">EQ 5.2 · σ(Δr)</span></div>
           <div class="w-body">
@@ -175,6 +199,35 @@
         <div class="eq"><span class="eq-tag">EQ 5.6 — GROUP-RELATIVE ADVANTAGE</span>
         $$ \hat{A}_i \;=\; \frac{r_i - \mathrm{mean}\big(r_1, \ldots, r_G\big)}{\mathrm{std}\big(r_1, \ldots, r_G\big)} $$
         <div class="eq-note">Each response is scored against its siblings: better than the group average ⇒ positive advantage, all its tokens reinforced (with PPO-style clipping and a KL term). Half the networks, half the memory of PPO — and a natural fit for verifiable rewards, where sampling 8–64 attempts per problem is exactly what you want anyway. This is the algorithm behind DeepSeek-R1; successors (DAPO, Dr. GRPO, GSPO) patch its length and difficulty biases.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># what a topology costs: one task, four shapes, tokens + wall-clock
+UNIT = 30_000     # tokens a single agent burns solving the task alone
+RESULT = 300      # a structured result handed back (never a transcript)
+
+shapes = {"single agent": (UNIT, 1.00)}
+# orchestrator + 3 parallel workers, each ~40% of the exploring + handback
+shapes["orchestrator-workers"] = (int(0.25*UNIT + 3*0.4*UNIT + 3*RESULT), 0.25 + 0.40 + 0.10)
+# pipeline: 4 serial stages at ~30% each, artifact checks at the seams
+shapes["pipeline"] = (int(4*0.3*UNIT + 3*RESULT), 4 * 0.30)
+# council: 3 full independent attempts + a judge reading three results
+shapes["council + judge"] = (int(3*UNIT + 3*RESULT + 2_000), 1.00 + 0.10)
+
+print(f"{'topology':22s}{'tokens':>8s}{'vs single':>10s}{'wall-clock':>11s}")
+for name, (tok, wall) in shapes.items():
+    print(f"{name:22s}{tok:8,d}{tok/UNIT:9.2f}x{wall:10.2f}")
+
+o_tok, o_wall = shapes["orchestrator-workers"]
+c_tok = shapes["council + judge"][0]
+print(f"\nfan-out buys wall-clock, never tokens: the orchestrator runs "
+      f"{1 - o_wall:.0%} faster for {o_tok/UNIT - 1:.0%} more tokens;")
+print(f"the council pays {c_tok/UNIT:.1f}x for independent judgment — worth it only")
+print("when no ground-truth verifier exists, because tests beat votes")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
         </div>
 
         <div class="widget" id="grpo-demo" data-reveal>
@@ -239,9 +292,11 @@
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
-<script src="../assets/js/glossary.js"></script>
-<script src="../assets/js/shared.js"></script>
-<script src="../assets/js/search.js"></script>
-<script src="../assets/js/interactives.js"></script>
+<script src="../assets/js/glossary.js?v=de942868"></script>
+<script src="../assets/js/shared.js?v=2ab4fc41"></script>
+<script src="../assets/js/pyrunner.js?v=0a6c02e0"></script>
+<script src="../assets/js/search.js?v=b56ede0c"></script>
+<script src="../assets/js/interactives.js?v=f738a9df"></script>
+<script defer src="/_vercel/insights/script.js"></script>
 </body>
 </html>

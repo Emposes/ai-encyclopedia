@@ -7,7 +7,7 @@
 <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
 <meta name="theme-color" content="#000000" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-<link rel="stylesheet" href="../assets/css/manual.css?v=3" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=49d672cc" />
 </head>
 <body>
 
@@ -68,6 +68,34 @@
         <div class="eq-note">\(A\) starts Gaussian, \(B\) starts at <b>zero</b> — so training begins exactly at the pre-trained model and drifts smoothly away. \(\alpha/r\) rescales so behavior is stable across ranks. Trainable parameters per matrix drop from \(d_{\text{out}} d_{\text{in}}\) to \(r(d_{\text{in}} + d_{\text{out}})\). After training, \(BA\) can be <b>merged into \(W_0\)</b> — zero inference overhead — or kept separate and hot-swapped, letting one server multiplex hundreds of LoRA “personalities” over a single base model.</div>
         </div>
 
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># LoRA algebra: full vs 2dr trainable params, merge check
+import numpy as np
+rng = np.random.default_rng(0)
+d_in, d_out, r = 256, 256, 8
+
+W0 = rng.normal(0, 0.02, (d_out, d_in))   # frozen base weight
+A  = rng.normal(0, 0.02, (r, d_in))       # adapter A (starts gaussian)
+B  = rng.normal(0, 0.02, (d_out, r))      # adapter B ("after training": nonzero)
+
+full = d_out * d_in
+lora = r * (d_in + d_out)
+print(f"full fine-tune params : {full:,}")
+print(f"LoRA params (2dr)     : {lora:,}")
+print(f"trainable fraction    : {100*lora/full:.2f} %")
+
+x = rng.normal(0, 1, (5, d_in))           # a batch of 5 activations
+y_two_path = x @ W0.T + (x @ A.T) @ B.T   # frozen path + adapter path
+W_merged   = W0 + B @ A                   # EQ 6.1 merged, alpha/r = 1
+y_merged   = x @ W_merged.T
+print("merged == two-path    :", np.allclose(y_two_path, y_merged))
+print("max abs difference    :", float(np.abs(y_two_path - y_merged).max()))</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
         <div class="widget" id="lora-demo" data-reveal>
           <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT 6.1 — LoRA PARAMETER COUNTER</span><span class="w-sub">ONE d×d PROJECTION · EQ 6.1</span></div>
           <div class="w-body">
@@ -91,6 +119,31 @@
         </div>
 
         <p class="note"><strong>Where to attach, what rank.</strong> Original practice targeted only \(W_Q, W_V\); current default is <em>all linear layers</em> (Q, K, V, O, gate, up, down), which beats raising the rank at equal parameter count. Ranks 8–64 cover most tasks; style transfers sit low, new skills (code dialects, tool-calling formats) sit higher. rsLoRA fixes the scale to \(\alpha/\sqrt{r}\) for stability at high rank; DoRA decomposes magnitude from direction for a small quality bump.</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Rank vs capacity: truncated SVD of a rank-16 target update
+import numpy as np
+rng = np.random.default_rng(0)
+d = 256
+U = rng.normal(0, 1, (d, 16)); V = rng.normal(0, 1, (16, d))
+dW = U @ V / np.sqrt(d)                   # a "true" update of intrinsic rank 16
+
+u, s, vt = np.linalg.svd(dW)
+ranks, errs = [1, 4, 16, 64], []
+for r in ranks:
+    approx = (u[:, :r] * s[:r]) @ vt[:r]  # best rank-r fit (Eckart-Young)
+    e = np.linalg.norm(dW - approx) / np.linalg.norm(dW)
+    errs.append(e)
+    print(f"rank {r:3d}: relative Frobenius error {e:.4f}")
+
+print("\nerror hits zero exactly at the target's intrinsic rank (16);")
+print("rank 64 buys nothing. LoRA's bet is that real dW looks like this.")
+plot_xy(ranks, errs)</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
       </section>
 
       <!-- ====================== 6.3 ====================== -->
@@ -183,9 +236,11 @@
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
-<script src="../assets/js/glossary.js"></script>
-<script src="../assets/js/shared.js"></script>
-<script src="../assets/js/search.js"></script>
-<script src="../assets/js/interactives.js"></script>
+<script src="../assets/js/glossary.js?v=de942868"></script>
+<script src="../assets/js/shared.js?v=2ab4fc41"></script>
+<script src="../assets/js/pyrunner.js?v=0a6c02e0"></script>
+<script src="../assets/js/search.js?v=b56ede0c"></script>
+<script src="../assets/js/interactives.js?v=f738a9df"></script>
+<script defer src="/_vercel/insights/script.js"></script>
 </body>
 </html>

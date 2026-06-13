@@ -7,7 +7,7 @@
 <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
 <meta name="theme-color" content="#000000" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-<link rel="stylesheet" href="../assets/css/manual.css?v=3" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=49d672cc" />
 </head>
 <body>
 
@@ -102,6 +102,36 @@
         </div></div>
         </div>
 
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Chinchilla solver: closed-form N*, D* from the corrected-fit constants
+import numpy as np
+E, A, B, alpha, beta = 1.82, 482.0, 2085.4, 0.348, 0.366   # Epoch AI refit
+
+a, b = beta / (alpha + beta), alpha / (alpha + beta)
+G = (alpha * A / (beta * B)) ** (1 / (alpha + beta))
+
+def optimum(C):                       # minimize EQ 4.1 subject to C = 6ND
+    N = G * (C / 6) ** a
+    D = (C / 6) / N
+    return N, D, E + A / N**alpha + B / D**beta
+
+print("        C          N*          D*   tok/param   loss L")
+for C in (1e22, 5.76e23, 1e24, 1e26):
+    N, D, L = optimum(C)
+    print(f"  {C:8.1e} {N:11.2e} {D:11.2e} {D/N:9.1f} {L:9.3f}")
+
+print("\n5.76e23 = Chinchilla's own budget: ~70B / ~1.4T recovered on a napkin.")
+print("note the refit bends tokens/param below 20 as C grows -- the 20:1 rule")
+print("is a Chinchilla-scale snapshot, not a law.")
+
+Cs = np.logspace(20, 27, 50)
+plot_xy(np.log10(Cs), np.log10([optimum(C)[0] for C in Cs]))  # slope = 0.51</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
         <div class="widget" id="scaling-demo" data-reveal>
           <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT 4.1 — SPEND A COMPUTE BUDGET</span><span class="w-sub">EQ 4.1 + 4.2 · LIVE</span></div>
           <div class="w-body">
@@ -138,6 +168,32 @@
         <div class="eq"><span class="eq-tag">EQ 4.4 — LEARNING-RATE SCHEDULE</span>
         $$ \eta(t) = \begin{cases} \eta_{\max}\, \dfrac{t}{t_w} &amp; t &lt; t_w \quad \text{(linear warmup)} \\[8px] \eta_{\min} + \tfrac{1}{2}\big(\eta_{\max}-\eta_{\min}\big)\Big(1 + \cos \pi \tfrac{t - t_w}{T - t_w}\Big) &amp; t \ge t_w \quad \text{(cosine decay)} \end{cases} $$
         <div class="eq-note">Warmup (hundreds–thousands of steps) protects the fragile early phase; cosine decays to \(\eta_{\min} \approx 0.1\, \eta_{\max}\). The WSD (warmup–stable–decay) variant holds LR flat and decays only in a final phase — convenient for checkpoint reuse and continual pre-training. Gradient-norm clipping at 1.0 is universal; loss-spike lore (skip bad batches, restart from checkpoint) remains part of the craft.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># EQ A4.1 in dollars: identical mistake probabilities, two harnesses
+actions = [  # (action class, P[harmful attempt], $cost raw, $cost sandboxed)
+    ("bad file edit",        0.050,     2_000,  5),   # git reset vs lost work
+    ("rm in the wrong dir",  0.010,    25_000,  5),   # container fs vs your homedir
+    ("curl|sh from a README",0.004,   250_000, 50),   # egress allowlist blocks exfil
+    ("prod credential use",  0.002, 1_000_000,  0),   # secret never mounted: c(a)=0
+]
+
+print(f"{'action class':24s}{'P[attempt]':>11s}{'E[raw]':>9s}{'E[sandboxed]':>14s}")
+raw_total = box_total = 0.0
+for name, p, c_raw, c_box in actions:
+    raw_total += p * c_raw
+    box_total += p * c_box
+    print(f"{name:24s}{p:11.3f}{p * c_raw:9,.0f}{p * c_box:14.2f}")
+print("-" * 58)
+print(f"{'expected damage, one attempt of each':35s}{raw_total:9,.0f}{box_total:14.2f}")
+print(f"\nsame model, same first factor — the harness cuts E[damage] by "
+      f"{raw_total / box_total:,.0f}x")
+print("you cannot zero P[harmful attempt]; you fully control max cost c(a)")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
         </div>
 
         <div class="widget" id="lr-demo" data-reveal>
@@ -262,6 +318,32 @@
         </div></div>
         </div>
 
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># the bill: days and dollars for a pre-training run (EQ 4.5)
+def bill(N, D, gpus, mfu, peak=989e12, usd_hr=2.0):     # H100 BF16 peak
+    C = 6 * N * D                                       # total FLOPs
+    days = C / (gpus * peak * mfu) / 86_400
+    return C, days, gpus * days * 24 * usd_hr
+
+runs = [("GPT-2 redo (2019->now)", 1.5e9,    1e10,   256,     0.35),
+        ("Llama-3.1-405B        ", 4.05e11,  1.5e13, 16_384,  0.41),
+        ("1e26-FLOP frontier    ", 1.5e12,   1.1e13, 100_000, 0.40)]
+
+print("run                        FLOPs      days          cost")
+for name, N, D, g, mfu in runs:
+    C, days, cost = bill(N, D, g, mfu)
+    print(f"{name} {C:9.2e} {days:9.2f}  ${cost:>12,.0f}")
+
+print("\n405B check: 3.65e25 FLOPs / (16,384 x 989e12 x 0.41) = 63.5 days, ~$50M.")
+print("Meta reported ~54 days of actual pre-training: napkin lands within 20%.")
+print("GPT-2 is now a ~quarter-hour, ~$150 run. The frontier line is why")
+print("training decisions reach the board.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
         <div class="widget" id="bill-demo" data-reveal>
           <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT 4.3 — PRICE A TRAINING RUN</span><span class="w-sub">EQ 4.5 · H100 BF16 PEAK 989 TFLOPs</span></div>
           <div class="w-body">
@@ -312,10 +394,11 @@
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
-<script src="../assets/js/glossary.js"></script>
-<script src="../assets/js/shared.js"></script>
-<script src="../assets/js/search.js"></script>
-<script src="../assets/js/interactives.js"></script>
+<script src="../assets/js/glossary.js?v=de942868"></script>
+<script src="../assets/js/shared.js?v=2ab4fc41"></script>
+<script src="../assets/js/pyrunner.js?v=0a6c02e0"></script>
+<script src="../assets/js/search.js?v=b56ede0c"></script>
+<script src="../assets/js/interactives.js?v=f738a9df"></script>
 <script>
 (function () {
   "use strict";
@@ -350,5 +433,6 @@
   upd();
 })();
 </script>
+<script defer src="/_vercel/insights/script.js"></script>
 </body>
 </html>

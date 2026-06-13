@@ -7,7 +7,7 @@
 <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
 <meta name="theme-color" content="#000000" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-<link rel="stylesheet" href="../assets/css/manual.css?v=3" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=49d672cc" />
 </head>
 <body>
 
@@ -65,6 +65,30 @@
         <div class="eq-note">A full distribution per token is a vastly richer signal than a single label — “the next token is <em>cat</em>, but <em>kitten</em> was nearly as good and <em>carburetor</em> was absurd” — which is why students train far more sample-efficiently than from raw text.</div>
         </div>
 
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Dark knowledge: teacher logits softened at temperature tau
+import numpy as np
+classes = ["cat", "kitten", "lynx", "dog", "loaf", "carburetor"]
+z = np.array([9.0, 6.5, 4.0, 2.5, 1.0, -4.0])   # teacher logits, cat photo
+
+taus, ents = [1, 2, 5, 10], []
+for tau in taus:
+    p = np.exp(z / tau); p /= p.sum()           # EQ 7.2's softened softmax
+    H = float(-np.sum(p * np.log2(p)))
+    ents.append(H)
+    row = "  ".join(f"{c} {q:.3f}" for c, q in zip(classes, p))
+    print(f"tau={tau:2d}  H={H:.3f} bits | {row}")
+
+print("\nat tau=1 the target is ~one-hot: a glorified label. by tau=5")
+print("the ranking over WRONG answers (kitten &gt;&gt; carburetor) is visible --")
+print("that structure is the extra signal the student trains on.")
+plot_xy(taus, ents)</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
         <div class="widget" id="distill-demo" data-reveal>
           <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT 7.1 — DARK KNOWLEDGE</span><span class="w-sub">TEACHER SOFTMAX AT TEMPERATURE τ</span></div>
           <div class="w-body">
@@ -102,6 +126,35 @@
         <div class="eq"><span class="eq-tag">EQ 7.3 — SYMMETRIC UNIFORM QUANTIZATION</span>
         $$ \hat{w} = s \cdot \mathrm{clamp}\!\Big( \mathrm{round}\big( w / s \big),\, -2^{b-1},\, 2^{b-1}-1 \Big), \qquad s = \frac{\max_i |w_i|}{2^{b-1}-1} $$
         <div class="eq-note">One FP scale \(s\) per <b>group</b> of weights; the integers are stored, the scale rides along. The whole game is choosing the granularity of \(s\): per-tensor (cheapest, coarsest) → per-channel → per-group of 64–128 (the GGUF/GPTQ standard) — smaller groups isolate outliers at slightly more bits/param overhead.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Absmax INT-k roundtrip: one global scale vs groups of 64
+import numpy as np
+rng = np.random.default_rng(0)
+w = rng.normal(0, 0.02, 10_000)
+w[rng.random(10_000) &lt; 0.004] *= 6        # rare outliers, like real layers
+
+def rmse(w, bits, group):
+    qmax = 2**(bits - 1) - 1
+    out = np.empty_like(w)
+    for i in range(0, len(w), group):
+        blk = w[i:i+group]
+        s = np.abs(blk).max() / qmax          # EQ 7.3's scale, per group
+        out[i:i+group] = np.clip(np.round(blk / s), -qmax - 1, qmax) * s
+    return np.sqrt(np.mean((out - w)**2))
+
+print("bits | one global scale | group-wise (g=64)")
+for bits in [8, 4, 3, 2]:
+    print(f"  {bits}  |    {rmse(w, bits, len(w)):.6f}      |    {rmse(w, bits, 64):.6f}")
+
+print("\nthe outliers stretch the single scale s and crush the gaussian")
+print("bulk onto a few levels; per-group scales quarantine them -- the")
+print("whole reason GGUF/GPTQ ship a scale every 64-128 weights.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
         </div>
 
         <div class="widget" id="quant-demo" data-reveal>
@@ -206,9 +259,11 @@
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
-<script src="../assets/js/glossary.js"></script>
-<script src="../assets/js/shared.js"></script>
-<script src="../assets/js/search.js"></script>
-<script src="../assets/js/interactives.js"></script>
+<script src="../assets/js/glossary.js?v=de942868"></script>
+<script src="../assets/js/shared.js?v=2ab4fc41"></script>
+<script src="../assets/js/pyrunner.js?v=0a6c02e0"></script>
+<script src="../assets/js/search.js?v=b56ede0c"></script>
+<script src="../assets/js/interactives.js?v=f738a9df"></script>
+<script defer src="/_vercel/insights/script.js"></script>
 </body>
 </html>

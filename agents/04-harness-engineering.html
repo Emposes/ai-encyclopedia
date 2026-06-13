@@ -8,7 +8,7 @@
 <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
 <meta name="theme-color" content="#000000" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-<link rel="stylesheet" href="../assets/css/manual.css?v=3" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=49d672cc" />
 </head>
 <body>
 
@@ -84,6 +84,32 @@
         <div class="eq"><span class="eq-tag">EQ A4.1 — THE BLAST-RADIUS BOUND</span>
         $$ \mathbb{E}[\text{damage}] \;\le\; \underbrace{\Pr\big[\text{harmful action executes}\big]}_{\text{model + adversary — never } 0} \;\times\; \underbrace{\max_{a \,\in\, \mathcal{A}_{\text{exec}}} c(a)}_{\text{blast radius — set by the harness}} $$
         <div class="eq-note">\(\mathcal{A}_{\text{exec}}\) is the set of actions that can actually reach the world after sandboxing and permissions; \(c(a)\) is the worst-case cost of action \(a\), which checkpoints and reversibility shrink. <b>You cannot drive the first factor to zero under adversarial input — so engineering effort goes into clamping the second.</b> A "safe" agent with system-wide write access is one jailbreak from catastrophe; a mediocre agent in a disposable worktree is one <code>git branch -D</code> from harmless.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># EQ A4.1 in dollars: identical mistake probabilities, two harnesses
+actions = [  # (action class, P[harmful attempt], $cost raw, $cost sandboxed)
+    ("bad file edit",        0.050,     2_000,  5),   # git reset vs lost work
+    ("rm in the wrong dir",  0.010,    25_000,  5),   # container fs vs your homedir
+    ("curl|sh from a README",0.004,   250_000, 50),   # egress allowlist blocks exfil
+    ("prod credential use",  0.002, 1_000_000,  0),   # secret never mounted: c(a)=0
+]
+
+print(f"{'action class':24s}{'P[attempt]':&gt;11s}{'E[raw]':&gt;9s}{'E[sandboxed]':&gt;14s}")
+raw_total = box_total = 0.0
+for name, p, c_raw, c_box in actions:
+    raw_total += p * c_raw
+    box_total += p * c_box
+    print(f"{name:24s}{p:11.3f}{p * c_raw:9,.0f}{p * c_box:14.2f}")
+print("-" * 58)
+print(f"{'expected damage, one attempt of each':35s}{raw_total:9,.0f}{box_total:14.2f}")
+print(f"\nsame model, same first factor — the harness cuts E[damage] by "
+      f"{raw_total / box_total:,.0f}x")
+print("you cannot zero P[harmful attempt]; you fully control max cost c(a)")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
         </div>
 
         <table class="data">
@@ -210,6 +236,32 @@
         <div class="eq-note">\(p\) is single-attempt success probability against a sound verifier; attempts stop at first green or after \(k\). At \(p = 0.45\) and \(k = 3\): an 83% completion rate from a model that is right less than half the time — <b>the verifier converts mediocre per-shot accuracy into high task reliability</b>. Caveat: attempts are not independent. Error feedback usually raises later \(p_i\) (the failure text is evidence), but failures also correlate — an agent missing the concept loops on variants of the same wrong idea, which is why production harnesses cap retries and escalate to a human instead of burning tokens.</div>
         </div>
 
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># the ground-truth principle: 2000 patch tasks, verifier on vs off
+import numpy as np
+rng = np.random.default_rng(0)
+P, K, TRIALS = 0.4, 5, 2000          # per-attempt success, retry cap, tasks
+
+correct = rng.random((TRIALS, K)) &lt; P        # correct[t, i]: attempt i would pass
+first_ok = correct[:, 0]                     # no verifier: ship attempt 1, unchecked
+any_ok = correct.any(axis=1)                 # verifier: retry to green, cap K
+attempts = np.where(any_ok, correct.argmax(axis=1) + 1, K)
+
+print(f"no verifier  : ships 100% of tasks, {(~first_ok).mean():.1%} of them broken")
+print(f"with verifier: ships {any_ok.mean():.1%} green, 0.0% broken, "
+      f"{(~any_ok).mean():.1%} escalated to a human")
+print(f"mean attempts per task : {attempts.mean():.2f} "
+      f"(theory (1-(1-p)^k)/p = {(1 - (1 - P)**K) / P:.2f})")
+print(f"green within {K} (EQ A4.2): simulated {any_ok.mean():.1%}, "
+      f"theory 1-(1-p)^k = {1 - (1 - P)**K:.1%}")
+print("identical model in both rows — a 40% per-shot coder plus a sound")
+print("verifier ships nothing red; the same coder alone ships 60% breakage")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
         <p>Everything depends on verifier quality, and "quality" decomposes into two error rates: \(\alpha\), the chance a correct patch is rejected (flaky tests — wasteful but safe), and \(\beta\), the chance a broken patch passes (weak tests — silently fatal). Bayes gives the ceiling:</p>
 
         <div class="eq"><span class="eq-tag">EQ A4.3 — THE LEAKY-VERIFIER CEILING</span>
@@ -331,8 +383,10 @@
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
-<script src="../assets/js/glossary.js"></script>
-<script src="../assets/js/shared.js"></script>
+<script src="../assets/js/glossary.js?v=de942868"></script>
+<script src="../assets/js/shared.js?v=2ab4fc41"></script>
+<script src="../assets/js/pyrunner.js?v=0a6c02e0"></script>
+<script src="../assets/js/search.js?v=b56ede0c"></script>
 <script>
 /* chapter instruments — single IIFE, no globals */
 (function () {
@@ -648,5 +702,6 @@
   })();
 })();
 </script>
+<script defer src="/_vercel/insights/script.js"></script>
 </body>
 </html>

@@ -7,7 +7,7 @@
 <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
 <meta name="theme-color" content="#000000" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-<link rel="stylesheet" href="../assets/css/manual.css?v=3" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=49d672cc" />
 </head>
 <body>
 
@@ -141,6 +141,41 @@
         <div class="eq-note">At every step, merge the most frequent adjacent pair. SentencePiece's <b>unigram-LM</b> alternative instead starts from a large candidate set and prunes pieces to maximize corpus likelihood under a mixture model — same goal, top-down instead of bottom-up.</div>
         </div>
 
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># BPE from scratch: 8 greedy merge rounds on a toy corpus
+from collections import Counter
+
+corpus = "low "*5 + "lower "*2 + "newer "*6 + "newest "*3 + "widest "*3
+words = Counter(tuple(w) + ("_",) for w in corpus.split())   # _ = end of word
+
+def merge(word, a, b):
+    out, i = [], 0
+    while i &lt; len(word):
+        if i + 1 &lt; len(word) and (word[i], word[i+1]) == (a, b):
+            out.append(a + b); i += 2
+        else:
+            out.append(word[i]); i += 1
+    return tuple(out)
+
+vocab = sorted({ch for w in words for ch in w})
+print("base symbols:", " ".join(vocab))
+for step in range(8):
+    pairs = Counter()
+    for w, f in words.items():
+        for pair in zip(w, w[1:]): pairs[pair] += f
+    (a, b), f = max(pairs.items(), key=lambda kv: kv[1])
+    vocab.append(a + b)
+    words = Counter({merge(w, a, b): f for w, f in words.items()})
+    print(f"merge {step+1}: '{a}' + '{b}' -> '{a+b}'   ({f} occurrences)")
+
+print("\nlearned tokens:", [v for v in vocab if len(v) > 1])
+print("words now segment as:", ["|".join(w) for w in words])</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
         <div class="widget" id="tok-demo" data-reveal>
           <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT 1.1 — BPE-STYLE TOKENIZER</span><span class="w-sub">GREEDY LONGEST-MATCH · TOY VOCAB</span></div>
           <div class="w-body">
@@ -222,6 +257,28 @@
         </div></div>
         </div>
 
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># cross-entropy by hand: -log p(true token), then PPL = e^L
+import numpy as np
+
+p_true = np.array([0.50, 0.25, 0.80, 0.10])   # model's p on the TRUE next token
+nll = -np.log(p_true)
+for t, (p, l) in enumerate(zip(p_true, nll)):
+    print(f"pos {t}:  p(true) = {p:.2f}   -log p = {l:.3f} nats")
+
+L = nll.mean()
+print(f"\nL   = {L:.3f} nats   (the one p=0.10 miss is {nll[3]/nll.sum():.0%} of the total)")
+print(f"PPL = e^L = {np.exp(L):.2f}  -> like guessing among ~3 equally likely tokens")
+print(f"geometric mean of p = {p_true.prod() ** 0.25:.3f} = 1/PPL  (check: {1/np.exp(L):.3f})")
+
+L_axis = np.linspace(1.0, 5.0, 60)            # the exponential dial of EQ 1.7
+plot_xy(L_axis, np.exp(L_axis))</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
         <div class="widget" id="ppl-demo" data-reveal>
           <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT 1.2 — PERPLEXITY DIAL</span><span class="w-sub">EQ 1.7 · LIVE</span></div>
           <div class="w-body">
@@ -283,10 +340,11 @@
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
-<script src="../assets/js/glossary.js"></script>
-<script src="../assets/js/shared.js"></script>
-<script src="../assets/js/search.js"></script>
-<script src="../assets/js/interactives.js"></script>
+<script src="../assets/js/glossary.js?v=de942868"></script>
+<script src="../assets/js/shared.js?v=2ab4fc41"></script>
+<script src="../assets/js/pyrunner.js?v=0a6c02e0"></script>
+<script src="../assets/js/search.js?v=b56ede0c"></script>
+<script src="../assets/js/interactives.js?v=f738a9df"></script>
 <script>
 (function () {
   "use strict";
@@ -306,5 +364,6 @@
   upd();
 })();
 </script>
+<script defer src="/_vercel/insights/script.js"></script>
 </body>
 </html>
