@@ -191,6 +191,11 @@
     if (!cells.length) return;
     cells.forEach(function (c) { c.classList.add("wired"); });
     cells.forEach(wire);
+    /* in Learn mode the lesson player owns code placement (Code stage tab),
+       so leave the wired cells in their sections for it to collect */
+    var learn = false;
+    try { learn = (localStorage.getItem("aie-view") || "learn") !== "read"; } catch (e) { learn = true; }
+    if (learn && document.querySelector(".chapter-grid main")) return;
     if (DESKTOP && window.AIEDock) buildChips(cells); else buildInline(cells);
     /* docking the cells collapses ~400px each out of the prose flow —
        scroll-trigger positions measured before this are stale */
