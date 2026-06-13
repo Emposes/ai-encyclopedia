@@ -8,7 +8,7 @@
 <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
 <meta name="theme-color" content="#000000" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-<link rel="stylesheet" href="../assets/css/manual.css?v=f46aff47" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=289516f7" />
 </head>
 <body>
 
@@ -66,6 +66,11 @@
         <div class="eq-note">At \(n = 20\) and \(\widehat{p} = 0.7\), the standard error is \(\approx 0.10\) — the confidence interval spans <b>±20 points</b>. Twenty examples will catch a collapse (90% → 55%) and rank clearly-different prompts; they cannot certify a 5-point refinement. Inverting the formula, resolving a difference of \(h\) needs roughly \(n \approx (1.96/h)^2\, p(1-p)\) cases: ±10 points wants ~80, ±5 points wants ~320. <b>Twenty examples beat zero by more than a thousand beats twenty</b> — start small, grow as the deltas you chase shrink.</div>
         </div>
 
+        <div class="exercise" data-answer="0.1" data-tol="0.02" data-hint="SE = √(p̂(1−p̂)/n); here p̂(1−p̂) = 0.21 and n = 21">
+          <div class="ex-q">A golden set of \(n = 21\) examples gives a pass rate of \(\widehat{p} = 0.7\). Using EQ P7.1, what is the standard error \(\mathrm{SE}(\widehat{p})\)?</div>
+          <div class="ex-reveal-src">\(\mathrm{SE} = \sqrt{\dfrac{\widehat{p}(1-\widehat{p})}{n}} = \sqrt{\dfrac{0.7\times 0.3}{21}} = \sqrt{\dfrac{0.21}{21}} = \sqrt{0.01} =\) <b>0.10</b>. The 95% CI is \(\pm 1.96\times 0.10 \approx \pm 20\) points — wide enough to catch a collapse but never a 5-point refinement. That is the noise floor a single green run ignores.</div>
+        </div>
+
         <p>There is a cheap statistical upgrade most teams skip: run both prompts on the <em>same</em> items and compare per-item, rather than comparing two independent pass rates. Item difficulty is shared noise, and pairing cancels it:</p>
 
         <div class="eq"><span class="eq-tag">EQ P7.2 — WHY PAIRED BEATS POOLED</span>
@@ -100,6 +105,11 @@ print(f"naive normal  : {100*p:.1f}% +/- {100*naive:.1f}  -- 50% is inside: tie 
         </div>
         <p class="note">B wins 23 of 40 — a 57.5% win rate that <em>looks</em> like a result. The Wilson interval is [42.2%, 71.5%]: nearly 30 points wide, and it straddles 50%. With true skill of 65%, forty comparisons still cannot rule out a coin flip. This is EQ P7.1's noise floor in its most common operational form — the wide bar is why a single green run does not close the ticket. Push <code>n</code> to 200 and the interval finally lifts off 50%.</p>
 
+        <div class="exercise" data-answer="0.575" data-tol="0.02" data-hint="win rate = wins / comparisons = 23 / 40">
+          <div class="ex-q">In a paired A/B eval, prompt B beats prompt A on \(23\) of \(40\) head-to-head comparisons. What is B's observed win rate?</div>
+          <div class="ex-reveal-src">\(23 / 40 = 0.575 =\) <b>57.5%</b>. It looks like a win — but the Wilson 95% interval around it is roughly [42%, 72%] and straddles 50%, so forty comparisons have not yet earned the right to call B better. Grow \(n\) until the interval clears the coin flip.</div>
+        </div>
+
         <div class="callout warn">
           <span class="co-icon">CONTAMINATION</span>
           <p><strong>If you iterate against your golden set, you become the overfit.</strong> Every time you read a failing case and patch the prompt for it, that case stops measuring generalization. Split even tiny sets — 30 for development, 10 you only touch before shipping — and refresh the holdout from live traffic on a schedule. This is Vol II's eval-decontamination discipline (Vol II · Ch 04) shrunk to prompt scale; the failure mode is identical, only faster.</p>
@@ -124,6 +134,11 @@ print(f"naive normal  : {100*p:.1f}% +/- {100*naive:.1f}  -- 50% is inside: tie 
         <div class="eq"><span class="eq-tag">EQ P7.3 — ORDER-SWAP DEBIASING &amp; THE FLIP RATE</span>
         $$ \widehat{w}(A) \;=\; \tfrac{1}{2}\Big[\, \widehat{w}_{A\text{-first}} + \widehat{w}_{A\text{-second}} \,\Big], \qquad \Phi \;=\; \Pr\!\Big[\, \text{verdict}_{AB} \neq \text{verdict}_{BA} \,\Big] $$
         <div class="eq-note">\(\widehat{w}\) is A's win rate; averaging the two presentation orders cancels position bias to first order. \(\Phi\), the <b>flip rate</b>, is the audit you can run with zero ground truth: judge every pair twice with the order swapped and count changed verdicts. A flip means the judge read the seating chart, the dice, or both — not the quality. MT-Bench's stricter variant declares a win only if it survives both orders and calls everything else a tie.</div>
+        </div>
+
+        <div class="exercise" data-answer="0.65" data-tol="0.02" data-hint="order-swap debias: ŵ(A) = ½(win%_A-first + win%_A-second)">
+          <div class="ex-q">Judged A-first, prompt A wins \(80\%\) of pairs; judged A-second, A wins only \(50\%\). Using the order-swap debias in EQ P7.3, what is A's position-corrected win rate \(\widehat{w}(A)\)?</div>
+          <div class="ex-reveal-src">\(\widehat{w}(A) = \tfrac{1}{2}\big(0.80 + 0.50\big) = \tfrac{1}{2}(1.30) =\) <b>0.65</b>. The 30-point gap between the two orders was pure seating bias; averaging cancels it to first order, leaving the true ~65% edge (judge noise still blurs it toward 50%).</div>
         </div>
 
         <div class="widget" id="ev-judge-demo" data-reveal>
@@ -186,6 +201,11 @@ print(f"verdict FLIP rate on order swap  : {100*flip:.1f}%   &lt;- this is bias,
           <canvas class="py-plot" hidden height="260"></canvas>
         </div>
         <p class="note">Naive reports A winning 66%; order-averaged says 53% — a thirteen-point phantom edge, pure seating. The 36.6% flip rate is the alarm: more than a third of verdicts changed under nothing but a swap. Set <code>b = 0</code> and the naive and averaged rates converge, but the flip rate stays well above zero — independent re-reads disagree near the boundary regardless. Position bias is the <em>systematic</em> slice of that instability, and it is the slice swapping removes.</p>
+
+        <div class="exercise" data-answer="0.3" data-tol="0.02" data-hint="flip rate Φ = pairs whose verdict changed on swap / total pairs">
+          <div class="ex-q">You judge \(20\) candidate pairs twice — once in each presentation order. On \(6\) of the pairs the verdict changes when the order is swapped. What is the flip rate \(\Phi\) (EQ P7.3)?</div>
+          <div class="ex-reveal-src">\(\Phi = 6 / 20 = 0.30 =\) <b>30%</b>. Nearly a third of verdicts were an artifact of seating, not quality — a flip rate you can measure with zero ground truth, just by swapping and re-judging. High \(\Phi\) means trust the both-orders protocol, not any single run.</div>
+        </div>
       </section>
 
       <!-- ====================== 7.3 ====================== -->
@@ -438,7 +458,7 @@ against brevity, choose brevity.</textarea>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
 <script src="../assets/js/glossary.js?v=a9bc4f7e"></script>
-<script src="../assets/js/shared.js?v=badceda4"></script>
+<script src="../assets/js/shared.js?v=b22ff755"></script>
 <script src="../assets/js/exercises.js?v=56a8ee64"></script>
 <script src="../assets/js/search.js?v=b56ede0c"></script>
 <script src="../assets/js/pyrunner.js?v=501f0a15"></script>
@@ -811,8 +831,8 @@ against brevity, choose brevity.</textarea>
   });
 })();
 </script>
-<script src="../assets/js/videos.js?v=b7bcc79c"></script>
-<script src="../assets/js/lesson.js?v=ed2e768e"></script>
+<script src="../assets/js/videos.js?v=50ffd865"></script>
+<script src="../assets/js/lesson.js?v=3a58e097"></script>
 <script defer src="/_vercel/insights/script.js"></script>
 </body>
 </html>

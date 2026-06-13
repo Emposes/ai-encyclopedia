@@ -8,7 +8,7 @@
 <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
 <meta name="theme-color" content="#000000" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-<link rel="stylesheet" href="../assets/css/manual.css?v=f46aff47" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=289516f7" />
 </head>
 <body>
 
@@ -111,6 +111,11 @@ print("you cannot zero P[harmful attempt]; you fully control max cost c(a)")</pr
           <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
           <pre class="py-out" hidden></pre>
           <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="exercise" data-answer="250" data-tol="0.001" data-unit="$" data-hint="E[damage] ≤ P[harmful] × blast radius">
+          <div class="ex-q">By EQ A4.1, \(\mathbb{E}[\text{damage}] \le \Pr[\text{harmful action executes}] \times \max c(a)\). An action class has \(\Pr[\text{harmful}] = 0.01\) and, after sandboxing, a worst-case cost of <b>$25,000</b>. What is the expected-damage bound, in dollars?</div>
+          <div class="ex-reveal-src">\(\mathbb{E}[\text{damage}] \le 0.01 \times 25{,}000 = \$250\). You cannot drive the first factor to zero under adversarial input — so the lever is the blast radius: shrink \(c(a)\) with sandboxing and reversibility and the bound falls proportionally. The answer is <b>250</b>.</div>
         </div>
 
         <table class="data">
@@ -237,6 +242,11 @@ print("you cannot zero P[harmful attempt]; you fully control max cost c(a)")</pr
         <div class="eq-note">\(p\) is single-attempt success probability against a sound verifier; attempts stop at first green or after \(k\). At \(p = 0.45\) and \(k = 3\): an 83% completion rate from a model that is right less than half the time — <b>the verifier converts mediocre per-shot accuracy into high task reliability</b>. Caveat: attempts are not independent. Error feedback usually raises later \(p_i\) (the failure text is evidence), but failures also correlate — an agent missing the concept loops on variants of the same wrong idea, which is why production harnesses cap retries and escalate to a human instead of burning tokens.</div>
         </div>
 
+        <div class="exercise" data-answer="0.834" data-tol="0.02" data-hint="1 − (1−p)^k">
+          <div class="ex-q">A coder is right \(p = 0.45\) of the time per attempt, behind a sound verifier, with up to \(k = 3\) attempts. By EQ A4.2, what is \(\Pr[\text{green within } k] = 1 - (1-p)^k\)?</div>
+          <div class="ex-reveal-src">\((1-p)^k = 0.55^3 = 0.166\), so \(\Pr[\text{green}] = 1 - 0.166 = 0.834\). A model that fails more often than it succeeds per shot still clears 83% of tasks once the verifier lets it retry — the verifier, not the model, does the heavy lifting. The answer is <b>0.834</b>.</div>
+        </div>
+
         <div class="pycell" data-py>
           <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
           <pre class="py-src" contenteditable="true" spellcheck="false"># the ground-truth principle: 2000 patch tasks, verifier on vs off
@@ -268,6 +278,11 @@ print("verifier ships nothing red; the same coder alone ships 60% breakage")</pr
         <div class="eq"><span class="eq-tag">EQ A4.3 — THE LEAKY-VERIFIER CEILING</span>
         $$ \Pr[\text{correct} \mid \text{verifier green}] \;=\; \frac{(1-\alpha)\,p}{(1-\alpha)\,p + \beta\,(1-p)} $$
         <div class="eq-note">With \(p = 0.45\) and a test suite that lets 15% of broken patches through (\(\beta = 0.15\), \(\alpha = 0.05\)), a green run means only 84% correct — <b>and no number of retries raises it</b>, because retries condition on the same leaky green. Worse, a strong agent optimizes against the verifier and inflates effective \(\beta\): deleting failing tests, hardcoding expected outputs, special-casing the test inputs. This is reward hacking (Vol II · Ch 05) at inference time. Standard mitigations: tests read-only to the agent's write scope, diff review on any test-file change, and held-out checks the agent never sees.</div>
+        </div>
+
+        <div class="exercise" data-answer="0.838" data-tol="0.02" data-hint="Bayes: (1−α)p over [(1−α)p + β(1−p)]">
+          <div class="ex-q">A patch is correct with prior \(p = 0.45\). The suite rejects correct work \(\alpha = 0.05\) of the time and passes broken work \(\beta = 0.15\) of the time. By EQ A4.3, given a green run, what is \(\Pr[\text{correct} \mid \text{green}] = \dfrac{(1-\alpha)p}{(1-\alpha)p + \beta(1-p)}\)?</div>
+          <div class="ex-reveal-src">Numerator \(= 0.95 \times 0.45 = 0.4275\). Denominator \(= 0.4275 + 0.15 \times 0.55 = 0.4275 + 0.0825 = 0.51\). Ratio \(= 0.4275 / 0.51 \approx 0.838\). A leaky suite (\(\beta = 0.15\)) caps trust at ~84% no matter how many times you retry — retries condition on the same leaky green. The answer is <b>0.838</b>.</div>
         </div>
 
         <div class="widget" id="hx-sim" data-reveal>
@@ -341,6 +356,11 @@ print("verifier ships nothing red; the same coder alone ships 60% breakage")</pr
         <div class="eq-note">\(p\) per-attempt success, \(N\) parallel attempts, \(j\) the probability the selector picks a correct candidate when at least one exists. A <b>ground-truth verifier is a perfect selector</b> (\(j = 1\)): run the tests, ship whichever attempt is green. An LLM judge is a noisy one (\(j \approx 0.6\text{–}0.9\) on hard tasks), and its noise caps the whole pipeline — the gap between the two curves in Instrument A4.3 is the price of not having a checkable task. \(\Delta_N\), the marginal value of attempt \(N\), decays geometrically: most of best-of-N's value arrives by \(N = 4\text{–}5\) for \(p \gtrsim 0.3\), while cost grows linearly forever.</div>
         </div>
 
+        <div class="exercise" data-answer="0.76" data-tol="0.02" data-hint="with a ground-truth selector j = 1, it's just 1 − (1−p)^N">
+          <div class="ex-q">You run \(N = 4\) parallel attempts at per-attempt success \(p = 0.3\), selected by a ground-truth verifier (\(j = 1\)). By EQ A4.4, \(\Pr[\text{ship correct}] = j\,(1-(1-p)^N)\). What is it?</div>
+          <div class="ex-reveal-src">\((1-p)^N = 0.7^4 = 0.2401\), so \(1 - 0.2401 = 0.7599\); with \(j = 1\), \(\Pr[\text{ship correct}] = 0.760\). A 30% agent, run four times against a perfect selector, ships correctly 76% of the time — but the marginal value of each extra attempt decays geometrically, so most of the gain is already in by \(N = 4\)–5. The answer is <b>0.76</b>.</div>
+        </div>
+
         <p>The honest caveat is <strong>correlation</strong>: the N attempts come from the same model with the same blind spots, so true success is below the independence curve — if the model misunderstands the task, it misunderstands it N times, in N worktrees, at N× the cost. Production mitigations: vary the approach across attempts (different plans seeded into each prompt), vary temperature, or vary the model itself. And the selector inherits §4.4's failure mode wholesale: best-of-N against a leaky verifier is N chances to find the hack.</p>
 
         <div class="widget" id="hx-bon" data-reveal>
@@ -397,7 +417,7 @@ print("verifier ships nothing red; the same coder alone ships 60% breakage")</pr
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
 <script src="../assets/js/glossary.js?v=a9bc4f7e"></script>
-<script src="../assets/js/shared.js?v=badceda4"></script>
+<script src="../assets/js/shared.js?v=b22ff755"></script>
 <script src="../assets/js/exercises.js?v=56a8ee64"></script>
 <script src="../assets/js/pyrunner.js?v=501f0a15"></script>
 <script src="../assets/js/search.js?v=b56ede0c"></script>
@@ -716,8 +736,8 @@ print("verifier ships nothing red; the same coder alone ships 60% breakage")</pr
   })();
 })();
 </script>
-<script src="../assets/js/videos.js?v=b7bcc79c"></script>
-<script src="../assets/js/lesson.js?v=ed2e768e"></script>
+<script src="../assets/js/videos.js?v=50ffd865"></script>
+<script src="../assets/js/lesson.js?v=3a58e097"></script>
 <script defer src="/_vercel/insights/script.js"></script>
 </body>
 </html>

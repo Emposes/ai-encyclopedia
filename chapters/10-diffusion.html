@@ -7,7 +7,7 @@
 <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
 <meta name="theme-color" content="#000000" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-<link rel="stylesheet" href="../assets/css/manual.css?v=f46aff47" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=289516f7" />
 </head>
 <body>
 
@@ -53,6 +53,16 @@
         <div class="eq"><span class="eq-tag">EQ 10.1 — FORWARD (NOISING) PROCESS</span>
         $$ q(x_t \mid x_{t-1}) = \mathcal{N}\!\big(\sqrt{1-\beta_t}\, x_{t-1},\; \beta_t I\big), \qquad q(x_t \mid x_0) = \mathcal{N}\!\big(\sqrt{\bar\alpha_t}\, x_0,\; (1-\bar\alpha_t)\, I\big) $$
         <div class="eq-note">\(\beta_t\) is the noise schedule; \(\bar\alpha_t = \prod_{s \le t}(1 - \beta_s)\) decays from 1 to ≈0. Equivalently: \(x_t = \sqrt{\bar\alpha_t}\, x_0 + \sqrt{1-\bar\alpha_t}\, \varepsilon\) with \(\varepsilon \sim \mathcal{N}(0, I)\). At \(t = T\) every dataset becomes the same boring isotropic Gaussian — which is the point: we know how to sample <em>that</em>.</div>
+        </div>
+
+        <div class="exercise" data-answer="0.0498" data-tol="0.02" data-hint="Plug t into ᾱ(t) = e^(−6t); e^(−3) ≈ 0.0498.">
+          <div class="ex-q">The sandbox uses the schedule \(\bar\alpha(t) = e^{-6t}\). At noise level \(t = 0.5\), what is \(\bar\alpha\)?</div>
+          <div class="ex-reveal-src">\(\bar\alpha(0.5) = e^{-6\times 0.5} = e^{-3} = \) <b>0.0498</b>. The signal coefficient \(\sqrt{\bar\alpha}\approx 0.22\) is already small — halfway through the schedule the data is mostly noise.</div>
+        </div>
+
+        <div class="exercise" data-answer="2.0" data-tol="0.01" data-hint="x_t = √ᾱ·x₀ + √(1−ᾱ)·ε. With ᾱ=0.36, the roots are 0.6 and 0.8.">
+          <div class="ex-q">Using \(x_t = \sqrt{\bar\alpha}\,x_0 + \sqrt{1-\bar\alpha}\,\varepsilon\) with \(\bar\alpha = 0.36\), a clean value \(x_0 = 2\), and noise draw \(\varepsilon = 1\), what is the noised value \(x_t\)?</div>
+          <div class="ex-reveal-src">\(\sqrt{0.36} = 0.6\) and \(\sqrt{1-0.36} = \sqrt{0.64} = 0.8\). So \(x_t = 0.6\times 2 + 0.8\times 1 = 1.2 + 0.8 = \) <b>2.0</b>.</div>
         </div>
 
         <div class="pycell" data-py>
@@ -168,6 +178,11 @@ plot_scatter(x, rng.normal(0, 0.2, len(x)), (x &gt; 0).astype(int))</pre>
         <div class="eq-note">\(w = 1\) is plain conditioning; \(w \approx 5\text{–}10\) pushes samples toward regions where the condition is <em>most</em> informative — sharper prompt adherence, less diversity, and at extremes the over-saturated “AI look”. Guidance is diffusion's temperature dial: the single most user-visible sampling knob.</div>
         </div>
 
+        <div class="exercise" data-answer="1.7" data-tol="0.02" data-hint="ε̃ = ε∅ + w(ε_c − ε∅).">
+          <div class="ex-q">Classifier-free guidance forms \(\tilde\varepsilon = \varepsilon_\varnothing + w\,(\varepsilon_c - \varepsilon_\varnothing)\). With unconditional prediction \(\varepsilon_\varnothing = 0.2\), conditional \(\varepsilon_c = 0.5\), and guidance scale \(w = 5\), what is the guided prediction \(\tilde\varepsilon\)?</div>
+          <div class="ex-reveal-src">\(\tilde\varepsilon = 0.2 + 5\,(0.5 - 0.2) = 0.2 + 5\times 0.3 = 0.2 + 1.5 = \) <b>1.7</b>. The guided estimate is extrapolated far past the conditional one — sharper adherence at the cost of diversity.</div>
+        </div>
+
         <p class="note"><strong>Step-count compression</strong> is the active frontier: consistency models, progressive distillation, and adversarial distillation (SDXL-Turbo, SD3-Turbo lineage) collapse 50 steps into 1–4 by training a student to jump straight along the probability-flow ODE — diffusion's own version of Chapter 07.</p>
       </section>
 
@@ -184,6 +199,16 @@ plot_scatter(x, rng.normal(0, 0.2, len(x)), (x &gt; 0).astype(int))</pre>
         $$ x_t = (1-t)\, x_0 + t\, x_1, \qquad \mathcal{L}_{\text{FM}} = \mathbb{E}_{x_0, x_1, t} \Big[ \big\lVert v_\theta(x_t, t) - (x_1 - x_0) \big\rVert^2 \Big] $$
         <div class="eq-note">\(x_0 \sim \mathcal{N}(0, I)\) is noise, \(x_1\) is data; the target velocity is just their difference. Straighter paths ⇒ fewer integration steps at sampling; a cleaner objective ⇒ easier scaling. Diffusion's EQ 10.2 is recoverable as a special case with curved paths — flow matching is the simplification that won.</div>
         </div>
+
+        <div class="exercise" data-answer="2" data-tol="0.01" data-hint="x_t = (1−t)x₀ + t·x₁.">
+          <div class="ex-q">Rectified flow interpolates linearly: \(x_t = (1-t)\,x_0 + t\,x_1\). With noise endpoint \(x_0 = 0\), data endpoint \(x_1 = 8\), at \(t = 0.25\), what is \(x_t\)?</div>
+          <div class="ex-reveal-src">\(x_t = (1-0.25)\times 0 + 0.25\times 8 = 0 + 2 = \) <b>2</b>. A quarter of the way along the straight path from noise to data.</div>
+        </div>
+
+        <div class="exercise" data-answer="6" data-tol="0.01" data-hint="The regression target is the constant velocity x₁ − x₀.">
+          <div class="ex-q">In flow matching the network regresses the target velocity \(x_1 - x_0\). For data \(x_1 = 8\) and noise \(x_0 = 2\), what velocity should it predict?</div>
+          <div class="ex-reveal-src">\(x_1 - x_0 = 8 - 2 = \) <b>6</b>. Because the path is a straight line, this velocity is constant along it — the property that makes sampling need so few steps.</div>
+        </div>
       </section>
 
       <!-- ====================== 10.5 ====================== -->
@@ -194,6 +219,11 @@ plot_scatter(x, rng.normal(0, 0.2, len(x)), (x &gt; 0).astype(int))</pre>
         <div class="eq"><span class="eq-tag">EQ 10.6 — MASKED DIFFUSION LM OBJECTIVE</span>
         $$ \mathcal{L} = \mathbb{E}_{t, x_0, x_t} \left[ \frac{1}{t} \sum_{i \,:\, x_t^i = \texttt{[M]}} -\log p_\theta\big( x_0^i \mid x_t \big) \right] $$
         <div class="eq-note">Mask a random fraction \(t\) of positions, predict the originals given the rest, weight by the masking rate — a principled ELBO, and recognizably BERT's objective put to generative work. At sampling time: start fully masked, predict everything, keep the most confident fraction, re-mask the rest, repeat for \(K \ll n\) steps.</div>
+        </div>
+
+        <div class="exercise" data-answer="8" data-tol="0.001" data-hint="Autoregressive needs n passes; diffusion needs K. Take the ratio.">
+          <div class="ex-q">To produce a \(64\)-token sequence, an autoregressive model needs one forward pass per token; a masked diffusion LM finishes in \(K = 8\) parallel passes. How many times fewer forward passes does the diffusion model use (the ratio \(n/K\))?</div>
+          <div class="ex-reveal-src">\(\dfrac{n}{K} = \dfrac{64}{8} = \) <b>8</b>× fewer passes. Each diffusion pass is heavier (full bidirectional attention, no cheap KV cache), so wall-clock speedup is smaller than 8× — but the parallelism is real.</div>
         </div>
 
         <div class="widget" id="mask-demo" data-reveal>
@@ -278,13 +308,13 @@ plot_scatter(x, rng.normal(0, 0.2, len(x)), (x &gt; 0).astype(int))</pre>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
 <script src="../assets/js/glossary.js?v=a9bc4f7e"></script>
-<script src="../assets/js/shared.js?v=badceda4"></script>
+<script src="../assets/js/shared.js?v=b22ff755"></script>
 <script src="../assets/js/exercises.js?v=56a8ee64"></script>
 <script src="../assets/js/pyrunner.js?v=501f0a15"></script>
 <script src="../assets/js/search.js?v=b56ede0c"></script>
 <script src="../assets/js/interactives.js?v=f738a9df"></script>
-<script src="../assets/js/videos.js?v=b7bcc79c"></script>
-<script src="../assets/js/lesson.js?v=ed2e768e"></script>
+<script src="../assets/js/videos.js?v=50ffd865"></script>
+<script src="../assets/js/lesson.js?v=3a58e097"></script>
 <script defer src="/_vercel/insights/script.js"></script>
 </body>
 </html>

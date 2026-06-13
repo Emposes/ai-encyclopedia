@@ -7,7 +7,7 @@
 <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
 <meta name="theme-color" content="#000000" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-<link rel="stylesheet" href="../assets/css/manual.css?v=f46aff47" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=289516f7" />
 </head>
 <body>
 
@@ -55,9 +55,19 @@
         <div class="eq-note">Only \(k\) of \(E\) experts run per token: <b>parameters scale with \(E\); FLOPs scale with \(k\)</b>. Mixtral 8×7B: 47B total, 13B active. DeepSeek-V3: 256 fine-grained experts + 1 always-on shared expert, 8 routed — 671B total, 37B active. The same economics drive the strongly-rumored MoE backbones of current closed frontier models. Decode-time win (recall EQ 7.1): only active-expert weights stream per token.</div>
         </div>
 
+        <div class="exercise" data-answer="25" data-tol="0.01" data-hint="Active expert FLOPs scale with k routed out of E total.">
+          <div class="ex-q">An MoE layer has \(E = 8\) experts and routes each token to its top-\(k = 2\). What percent of the expert parameters are active per token? (Enter <b>25</b> for 25%.)</div>
+          <div class="ex-reveal-src">Active fraction \(= \dfrac{k}{E} = \dfrac{2}{8} = 0.25 = \) <b>25</b>%. The other 75% sit idle for this token — capacity stored but not streamed (the decode-time win of EQ 7.1).</div>
+        </div>
+
         <div class="eq"><span class="eq-tag">EQ 9.2 — LOAD BALANCING</span>
         $$ \mathcal{L}_{\text{aux}} = \lambda\, E \sum_{i=1}^{E} f_i\, P_i \qquad \big(f_i = \text{fraction of tokens routed to } i,\;\; P_i = \text{mean router prob}\big) $$
         <div class="eq-note">Routers left alone collapse onto a few favorite experts, stranding the rest as dead weight. The auxiliary loss penalizes the dot product of <em>realized</em> load and <em>intended</em> probability — minimized when both are uniform. DeepSeek-V3 instead tunes a per-expert bias online (“aux-loss-free” balancing) to avoid distorting the main objective. Expert parallelism (§4.5) then spreads experts across GPUs, paying all-to-all communication per layer.</div>
+        </div>
+
+        <div class="exercise" data-answer="1" data-tol="0.001" data-hint="With perfectly uniform routing, f_i = P_i = 1/E for every expert; sum and multiply by λE.">
+          <div class="ex-q">The load-balancing loss is \(\mathcal{L}_{\text{aux}} = \lambda E \sum_{i=1}^{E} f_i P_i\). With \(\lambda = 1\), \(E = 8\), and perfectly balanced routing (\(f_i = P_i = \tfrac{1}{8}\) for all experts), what is \(\mathcal{L}_{\text{aux}}\)?</div>
+          <div class="ex-reveal-src">Each term \(f_i P_i = \tfrac{1}{8}\cdot\tfrac{1}{8} = \tfrac{1}{64}\); summed over 8 experts \(= \tfrac{8}{64} = \tfrac18\). Then \(\mathcal{L}_{\text{aux}} = 1\cdot 8 \cdot \tfrac18 = \) <b>1</b> — the floor value. Any imbalance pushes it above 1.</div>
         </div>
 
         <div class="pycell" data-py>
@@ -168,6 +178,11 @@ print("every technique in this section exists because of this table.")</pre>
         $$ x_{\text{img}} \in \mathbb{R}^{H \times W \times 3} \;\longrightarrow\; \Big\{ W_p\, \mathrm{vec}\big(\text{patch}_{16\times16}^{(j)}\big) \Big\}_{j=1}^{HW/256} \in \mathbb{R}^{d_{\text{model}}} $$
         <div class="eq-note">Slice the image into 16×16 patches, flatten, project — each patch is now just another embedding in the sequence. A 1024×1024 image ≈ 4K tokens (hence image inputs' token pricing). Architectures differ in coupling: a pre-trained vision encoder bridged by a projector (LLaVA-style, cheap), cross-attention taps (Flamingo lineage), or early-fusion single-stack training on mixed data (the frontier default).</div>
         </div>
+
+        <div class="exercise" data-answer="4096" data-tol="0.001" data-hint="Patches per side = 1024/16; total = that squared.">
+          <div class="ex-q">A \(1024\times1024\) image is cut into \(16\times16\) patches. How many patch tokens does it become?</div>
+          <div class="ex-reveal-src">Per side: \(1024/16 = 64\) patches. Total: \(64^2 = \) <b>4096</b> tokens — which is why a single high-res image can cost as much context as several pages of text.</div>
+        </div>
         <ul>
           <li><strong>Generation side:</strong> discrete image/audio tokens from learned codecs (VQ-VAE/RVQ descendants) let the same autoregressive machinery <em>emit</em> media; diffusion heads remain common for high-fidelity images.</li>
           <li><strong>Speech:</strong> native audio-to-audio loops (realtime APIs) replace the ASR→LLM→TTS pipeline, cutting latency below conversational thresholds.</li>
@@ -192,6 +207,11 @@ print("every technique in this section exists because of this table.")</pre>
           <li><strong>Reasoning × acting compounds:</strong> thinking models that plan, act, observe, and revise (the ReAct pattern, now internalized) turn test-time compute into real-world task completion — coding agents being the proof case.</li>
           <li><strong>The hard parts are systemic:</strong> error compounding over long horizons (0.99⁵⁰ ≈ 0.6), sandboxing and permissioning, prompt injection from hostile content, and evaluation of open-ended tasks.</li>
         </ul>
+
+        <div class="exercise" data-answer="0.605" data-tol="0.02" data-hint="Independent steps multiply: reliability^steps.">
+          <div class="ex-q">An agent completes each step correctly with probability \(0.99\), and a task needs \(50\) sequential steps with no recovery. What is the probability the whole task succeeds? (\(0.99^{50}\).)</div>
+          <div class="ex-reveal-src">\(0.99^{50} = \) <b>0.605</b>. A 99%-reliable step still leaves a ~40% chance of failure across 50 of them — why long-horizon agents need verification, retries, and checkpoints rather than raw per-step accuracy.</div>
+        </div>
       </section>
 
       <!-- ====================== 9.5 ====================== -->
@@ -257,13 +277,13 @@ print("every technique in this section exists because of this table.")</pre>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
 <script src="../assets/js/glossary.js?v=a9bc4f7e"></script>
-<script src="../assets/js/shared.js?v=badceda4"></script>
+<script src="../assets/js/shared.js?v=b22ff755"></script>
 <script src="../assets/js/exercises.js?v=56a8ee64"></script>
 <script src="../assets/js/pyrunner.js?v=501f0a15"></script>
 <script src="../assets/js/search.js?v=b56ede0c"></script>
 <script src="../assets/js/interactives.js?v=f738a9df"></script>
-<script src="../assets/js/videos.js?v=b7bcc79c"></script>
-<script src="../assets/js/lesson.js?v=ed2e768e"></script>
+<script src="../assets/js/videos.js?v=50ffd865"></script>
+<script src="../assets/js/lesson.js?v=3a58e097"></script>
 <script defer src="/_vercel/insights/script.js"></script>
 </body>
 </html>

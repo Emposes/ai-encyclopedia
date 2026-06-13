@@ -72,10 +72,10 @@
         vpane.className = "lv-pane lv-pane-media";
         vpane.innerHTML = "<div class='lv-video-wrap'><video class='lv-video' controls preload='metadata' " +
           "playsinline src='" + vid + "'></video></div>";
-        tabs.push({ kind: "video", label: "▶ Video", pane: vpane });
+        tabs.push({ kind: "video", label: "▶ Watch", pane: vpane });
       }
-      collect(sec, ".widget", "demo", "◈ Demo", tabs);
-      collect(sec, ".exercise", "exercise", "✎ Exercise", tabs);
+      collect(sec, ".widget", "demo", "◈ Play", tabs);
+      collect(sec, ".exercise", "exercise", "✎ Try it", tabs);
       collect(sec, ".figure", "figure", "◳ Diagram", tabs);
       collect(sec, ".pycell", "code", "λ Code", tabs);
 
@@ -101,7 +101,9 @@
       "<div class='lv-top'><span class='le' id='lv-eyebrow'></span><span class='lt' id='lv-ctx'></span>" +
       "<span class='spacer'></span><button class='view-toggle' id='lv-read'>⇄ Read as one page</button></div>" +
       "<div class='lv-split'><div class='lv-stage'><div class='lv-stage-tabs' id='lv-tabs'></div>" +
-      "<div class='lv-stage-body' id='lv-stagebody'></div></div>" +
+      "<div class='lv-stage-hint' id='lv-stagehint'></div>" +
+      "<div class='lv-stage-body' id='lv-stagebody'></div>" +
+      "<div class='lv-stage-foot' id='lv-stagefoot'></div></div>" +
       "<div class='lv-panel' id='lv-panel'></div></div>" +
       "<div class='lv-rail'><button class='nav' id='lv-prev'>‹ Prev</button>" +
       "<div class='dots' id='lv-dots'></div><button class='nav next' id='lv-next'>Next ›</button></div>";
@@ -130,19 +132,26 @@
       var l = lessons[i];
       view.querySelector("#lv-eyebrow").textContent = "— Lesson " + (i + 1) + " / " + lessons.length;
       view.querySelector("#lv-ctx").textContent = l.title;
-      /* stage tabs + panes */
+      /* stage tabs + panes — rendered as a Watch → Play → Try progression */
       tabsEl.innerHTML = ""; bodyEl.innerHTML = "";
+      l._visited = {};
+      var CORE = { video: 1, demo: 1, exercise: 1 };
       l.tabs.forEach(function (t, ti) {
+        if (ti > 0 && CORE[t.kind] && CORE[l.tabs[ti - 1].kind]) {
+          var arr = document.createElement("span"); arr.className = "lv-tab-arrow"; arr.textContent = "›";
+          tabsEl.appendChild(arr);
+        }
         var b = document.createElement("button");
-        b.textContent = t.label;
+        b.innerHTML = "<span class='lv-tab-check'>✓</span>" + esc(t.label);
         b.addEventListener("click", function () { activate(l, ti); });
         tabsEl.appendChild(b);
         bodyEl.appendChild(t.pane);
         t._btn = b;
       });
-      if (l.tabs.length > 1) {
-        var sp = document.createElement("span"); sp.className = "spacer"; tabsEl.appendChild(sp);
-      }
+      var coreCount = l.tabs.filter(function (t) { return CORE[t.kind]; }).length;
+      var hintEl = view.querySelector("#lv-stagehint");
+      hintEl.style.display = coreCount >= 2 ? "block" : "none";
+      hintEl.textContent = "Watch it, play with it, then prove it — switch any time.";
       activate(l, 0);
       /* text panel */
       panelEl.innerHTML = "";
@@ -161,10 +170,30 @@
       window.scrollTo({ top: 0, behavior: reduced ? "auto" : "smooth" });
     }
     function activate(l, ti) {
+      l._visited[ti] = true;
       l.tabs.forEach(function (t, k) {
         t.pane.classList.toggle("on", k === ti);
-        if (t._btn) t._btn.classList.toggle("on", k === ti);
+        if (t._btn) {
+          t._btn.classList.toggle("on", k === ti);
+          t._btn.classList.toggle("visited", !!l._visited[k] && k !== ti);
+          t._btn.classList.remove("lv-next");
+        }
       });
+      /* the contextual "next step" button — drives Watch → Play → Try */
+      var foot = view.querySelector("#lv-stagefoot");
+      var nextTab = ti + 1 < l.tabs.length ? l.tabs[ti + 1] : null;
+      if (nextTab && nextTab._btn && !l._visited[ti + 1]) nextTab._btn.classList.add("lv-next");
+      var verb = { video: "Watch", demo: "Play with it", exercise: "Try the exercise", figure: "See the diagram", code: "Read the code" };
+      if (nextTab) {
+        foot.innerHTML = "<button class='lv-nextstep'>Next: " + esc(verb[nextTab.kind] || nextTab.label) + " ▸</button>";
+        foot.querySelector(".lv-nextstep").addEventListener("click", function () { activate(l, ti + 1); });
+      } else if (cur < lessons.length - 1) {
+        foot.innerHTML = "<button class='lv-nextstep'>Next lesson: " + esc(lessons[cur + 1].title.slice(0, 32)) + " ›</button>";
+        foot.querySelector(".lv-nextstep").addEventListener("click", function () { show(cur + 1); });
+      } else {
+        foot.innerHTML = "<button class='lv-nextstep'>Finish chapter ✓</button>";
+        foot.querySelector(".lv-nextstep").addEventListener("click", function () { setView("read"); location.reload(); });
+      }
       setTimeout(function () { window.dispatchEvent(new Event("resize")); }, 30);
     }
 

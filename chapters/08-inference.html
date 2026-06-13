@@ -7,7 +7,7 @@
 <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
 <meta name="theme-color" content="#000000" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-<link rel="stylesheet" href="../assets/css/manual.css?v=f46aff47" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=289516f7" />
 </head>
 <body>
 
@@ -53,6 +53,16 @@
         <div class="eq"><span class="eq-tag">EQ 8.1 — ARITHMETIC INTENSITY &amp; THE ROOFLINE</span>
         $$ I = \frac{\text{FLOPs}}{\text{bytes moved}}, \qquad I_{\text{prefill}} \sim O(T) \gg I^{*} \quad\text{vs}\quad I_{\text{decode}} \sim O(b) \ll I^{*} $$
         <div class="eq-note">An H100 needs \(I^* \approx 300\) FLOPs/byte to keep its tensor cores fed. Prefill clears it easily; single-stream decode manages ~2. Consequences: <b>TTFT</b> (time to first token) is set by prefill compute, <b>TPOT</b> (time per output token) by memory bandwidth, and every serving trick below is an attempt to raise decode's intensity — batching raises \(b\), speculation amortizes reads over several tokens, quantization shrinks the bytes.</div>
+        </div>
+
+        <div class="exercise" data-answer="4" data-tol="0.001" data-hint="Each batched sequence does ~2b FLOPs per 2 bytes of weight read.">
+          <div class="ex-q">At batch size \(b = 4\), decode does ≈\(2b\) FLOPs for every 2 bytes of weight streamed (bf16). What is the arithmetic intensity \(I = \dfrac{2b}{2}\) (FLOPs/byte)?</div>
+          <div class="ex-reveal-src">\(I = \dfrac{2b}{2} = b = \) <b>4</b> FLOPs/byte. Far below the H100 ridge of ~300, so decode at batch 4 is still firmly bandwidth-bound — every batch doubling buys throughput for free until \(I\) reaches the ridge.</div>
+        </div>
+
+        <div class="exercise" data-answer="23.9" data-tol="0.02" data-unit="tok/s" data-hint="Single-stream tok/s = bandwidth / (bytes-per-param × N). bf16 = 2 bytes.">
+          <div class="ex-q">Single-stream decode of a \(70\text{B}\) model in bf16 (2 bytes/param) on an H100 (\(3.35\times10^{12}\) B/s). What is the tokens/s ceiling?</div>
+          <div class="ex-reveal-src">Bytes per token \(= 2 \times 70\times10^9 = 1.4\times10^{11}\). Ceiling \(= \dfrac{3.35\times10^{12}}{1.4\times10^{11}} = \) <b>23.9</b> tok/s — the bandwidth wall a single user hits before any batching.</div>
         </div>
 
         <div class="pycell" data-py>
@@ -109,6 +119,11 @@ plot_xy(np.log2(batches), agg)</pre>
         <div class="eq"><span class="eq-tag">EQ 8.2 — TEMPERATURE, TOP-K, TOP-P</span>
         $$ p_i^{(\tau)} = \frac{e^{z_i / \tau}}{\sum_j e^{z_j / \tau}}, \qquad \text{keep } S = \text{smallest set with} \sum_{i \in S} p_i \ge p_{\text{top}} \;\text{ (∩ top-}k\text{)}, \;\text{ renormalize} $$
         <div class="eq-note">\(\tau &lt; 1\) sharpens (factual/code), \(\tau &gt; 1\) flattens (brainstorming). Top-p (“nucleus”) adapts the cutoff to the model's confidence — wide when uncertain, narrow when sure; top-k caps the candidate count outright; <b>min-p</b> (keep tokens above a fraction of the max probability) is the newer favorite for high-temperature creativity without nonsense. Repetition/frequency/presence penalties damp loops. Reasoning models usually want gentle settings (τ ≈ 0.6–1.0) and <em>no</em> aggressive truncation on thinking tokens.</div>
+        </div>
+
+        <div class="exercise" data-answer="3" data-tol="0.001" data-hint="Add probabilities from the largest down until the running sum first reaches p_top.">
+          <div class="ex-q">A model's next-token probabilities, sorted, are \([0.50,\, 0.25,\, 0.15,\, 0.10]\). With top-p \(= 0.90\), how many tokens fall inside the nucleus (the smallest set whose mass \(\ge 0.90\))?</div>
+          <div class="ex-reveal-src">Cumulate from the top: \(0.50\) → \(0.75\) → \(0.90\). The running sum first reaches \(0.90\) at the third token, so the nucleus holds <b>3</b> tokens; the \(0.10\) tail is dropped and the kept mass renormalized.</div>
         </div>
 
         <div class="pycell" data-py>
@@ -188,6 +203,11 @@ print("hallucination does or does not get sampled into existence.")</pre>
         $$ \mathrm{TTFT} \approx t_{\text{queue}} + \frac{\text{prefill FLOPs}}{\text{compute}}, \qquad \mathrm{TPOT} \approx \frac{\text{bytes}_{\text{weights}} + \text{bytes}_{\text{KV}}(T)}{\text{bandwidth} \cdot b_{\text{eff}}}, \qquad \mathrm{E2E} = \mathrm{TTFT} + n \cdot \mathrm{TPOT} $$
         <div class="eq-note">Goodput — requests/s <em>within SLO</em> — is the number that matters commercially, and it's why prefill and decode are increasingly <b>disaggregated</b> onto separate GPU pools (compute-heavy cards prefill, bandwidth-heavy cards decode, KV shipped between them).</div>
         </div>
+
+        <div class="exercise" data-answer="2.5" data-tol="0.01" data-unit="s" data-hint="E2E = TTFT + n × TPOT.">
+          <div class="ex-q">A request has TTFT \(= 0.5\) s and TPOT \(= 0.02\) s, and produces \(n = 100\) output tokens. What is the end-to-end latency \(\mathrm{E2E} = \mathrm{TTFT} + n\cdot\mathrm{TPOT}\)?</div>
+          <div class="ex-reveal-src">\(\mathrm{E2E} = 0.5 + 100 \times 0.02 = 0.5 + 2.0 = \) <b>2.5</b> s. For long generations the \(n\cdot\mathrm{TPOT}\) term dominates, which is why decode bandwidth — not prefill — governs the felt latency of chat.</div>
+        </div>
       </section>
 
       <!-- ====================== 8.5 ====================== -->
@@ -198,6 +218,11 @@ print("hallucination does or does not get sampled into existence.")</pre>
         <div class="eq"><span class="eq-tag">EQ 8.4 — ACCEPTANCE RULE (LOSSLESS)</span>
         $$ \text{accept } \tilde{x}_t \text{ with probability } \min\!\left(1,\; \frac{p(\tilde{x}_t)}{q(\tilde{x}_t)}\right); \quad \text{on reject, resample } x_t \sim \mathrm{norm}\big(\max(0,\, p - q)\big) $$
         <div class="eq-note">\(q\) = draft distribution, \(p\) = target. The correction term on rejection is what makes the scheme <b>provably distribution-preserving</b> — speculative decoding is a pure latency win, not an approximation. Expected speedup ≈ acceptance rate × draft length, minus draft overhead: 2–3× in practice on predictable text (code!), less on high-entropy prose.</div>
+        </div>
+
+        <div class="exercise" data-answer="3.36" data-tol="0.02" data-hint="Expected tokens per verify pass = (1 − p^(K+1)) / (1 − p).">
+          <div class="ex-q">A draft model proposes \(K = 4\) tokens, each accepted independently with probability \(p = 0.8\). Expected tokens produced per target verify pass is \(\dfrac{1 - p^{K+1}}{1 - p}\). Evaluate it.</div>
+          <div class="ex-reveal-src">\(p^{K+1} = 0.8^5 = 0.32768\). So \(\dfrac{1 - 0.32768}{1 - 0.8} = \dfrac{0.67232}{0.2} = \) <b>3.36</b> tokens per pass — a ~3.4× decode speedup before subtracting draft overhead.</div>
         </div>
 
         <div class="pycell" data-py>
@@ -334,13 +359,13 @@ print("own correction still lands -- a verify pass never yields under 1.")</pre>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
 <script src="../assets/js/glossary.js?v=a9bc4f7e"></script>
-<script src="../assets/js/shared.js?v=badceda4"></script>
+<script src="../assets/js/shared.js?v=b22ff755"></script>
 <script src="../assets/js/exercises.js?v=56a8ee64"></script>
 <script src="../assets/js/pyrunner.js?v=501f0a15"></script>
 <script src="../assets/js/search.js?v=b56ede0c"></script>
 <script src="../assets/js/interactives.js?v=f738a9df"></script>
-<script src="../assets/js/videos.js?v=b7bcc79c"></script>
-<script src="../assets/js/lesson.js?v=ed2e768e"></script>
+<script src="../assets/js/videos.js?v=50ffd865"></script>
+<script src="../assets/js/lesson.js?v=3a58e097"></script>
 <script defer src="/_vercel/insights/script.js"></script>
 </body>
 </html>

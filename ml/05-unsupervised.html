@@ -8,7 +8,7 @@
 <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
 <meta name="theme-color" content="#000000" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-<link rel="stylesheet" href="../assets/css/manual.css?v=f46aff47" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=289516f7" />
 </head>
 <body>
 
@@ -85,11 +85,21 @@
         </div></div>
         </div>
 
+        <div class="exercise" data-answer="4" data-tol="0.001" data-hint="Square each point's distance to its own centroid, then add the four terms.">
+          <div class="ex-q">Four 1-D points: 0, 2, 10, 12, with two centroids fixed at \(\mu_1 = 1\) and \(\mu_2 = 11\). Each point joins its nearest centroid. What is the inertia \(J = \sum_i (x_i - \mu_{c_i})^2\)?</div>
+          <div class="ex-reveal-src">Assign by nearness: 0 and 2 go to \(\mu_1 = 1\); 10 and 12 go to \(\mu_2 = 11\). Squared distances: \((0-1)^2 = 1\), \((2-1)^2 = 1\), \((10-11)^2 = 1\), \((12-11)^2 = 1\). Each centroid sits exactly one unit from both of its points, so \(J = 1+1+1+1 = \) <b>4</b>.</div>
+        </div>
+
         <p><strong>Lloyd's algorithm</strong> attacks \(J\) the way you would untangle any two-variable problem: freeze one variable, optimize the other, alternate. Both half-steps have closed forms, and both can only push \(J\) down:</p>
 
         <div class="eq"><span class="eq-tag">EQ M5.2 — LLOYD'S TWO STEPS</span>
         $$ \textbf{ASSIGN:}\;\; c_i \,\leftarrow\, \arg\min_{j} \,\lVert x_i - \mu_j \rVert^{2} \qquad\qquad \textbf{UPDATE:}\;\; \mu_j \,\leftarrow\, \frac{1}{\lvert S_j \rvert} \sum_{i \in S_j} x_i $$
         <div class="eq-note">ASSIGN is optimal for the current centroids by definition of "nearest"; UPDATE is optimal for the current assignments because <b>the mean is the point minimizing total squared distance to a set</b> — the same fact that made squared error pick the average in Chapter 01. Each half-step lowers \(J\) or leaves it fixed, \(J \ge 0\), and only finitely many assignments exist, so the loop <b>must converge</b> — in remarkably few sweeps, in practice. The fine print: it converges to a <em>local</em> minimum that depends entirely on where the centroids started.</div>
+        </div>
+
+        <div class="exercise" data-answer="5" data-tol="0.001" data-hint="The UPDATE step sets the new centroid to the mean of its cluster's x-coordinates.">
+          <div class="ex-q">After ASSIGN, one cluster holds these four points (x-coordinate only): 3, 4, 6, 7. The UPDATE step moves the centroid to \(\mu = \frac{1}{|S|}\sum_{i \in S} x_i\). What is the new centroid's x-coordinate?</div>
+          <div class="ex-reveal-src">UPDATE replaces a centroid with the mean of its assigned points: \(\mu = (3 + 4 + 6 + 7)/4 = 20/4 = \) <b>5</b>. This is the point minimizing total squared distance to the set — the closed form that makes UPDATE optimal for fixed assignments.</div>
         </div>
 
         <p>Run the loop by hand. The instrument seeds three well-separated blobs, drops \(k\) centroids on random data points, and gives you the two half-steps as buttons. Watch \(J\) after every press — it never rises, which is the convergence proof happening in front of you.</p>
@@ -187,6 +197,11 @@ plot_scatter(X[:, 0], X[:, 1], c)
         </div></div>
         </div>
 
+        <div class="exercise" data-answer="2.08" data-tol="0.001" data-hint="With a diagonal Σ, uᵀΣu = u₁²·Σ₁₁ + u₂²·Σ₂₂.">
+          <div class="ex-q">A diagonal covariance \(\Sigma = \begin{psmallmatrix}4 & 0\\ 0 & 1\end{psmallmatrix}\) and a unit direction \(u = (0.6,\, 0.8)\) (note \(0.6^2 + 0.8^2 = 1\)). How much variance does \(u\) capture, \(u^\top \Sigma u\)?</div>
+          <div class="ex-reveal-src">For a diagonal \(\Sigma\) the cross-terms vanish, so \(u^\top \Sigma u = u_1^2\,\Sigma_{11} + u_2^2\,\Sigma_{22} = 0.6^2 \cdot 4 + 0.8^2 \cdot 1 = 0.36 \cdot 4 + 0.64 \cdot 1 = 1.44 + 0.64 = \) <b>2.08</b>. (The top eigenvector here is \((1,0)\) with eigenvalue 4; this off-axis \(u\) captures less.)</div>
+        </div>
+
         <p>Hunt the direction yourself before the eigensolver does. Below is a centered, correlated cloud; the slider aims a candidate axis, the red stalks are what projection onto that axis throws away, and the lower chart sweeps EQ M5.3's objective across every angle:</p>
 
         <div class="widget" id="us-pca" data-reveal>
@@ -220,6 +235,11 @@ plot_scatter(X[:, 0], X[:, 1], c)
           <div class="x-step"><span class="x-n">04</span><div>Read the cliff: the first coordinate buys 90 points of variance, the second buys 8, the third buys 2. The budget sheet says where to stop — here, \(d = 2\).</div></div>
           <span class="x-result">RESULT: d = 2 → 98% KEPT · MSE = 0.1</span>
         </div></div>
+        </div>
+
+        <div class="exercise" data-answer="90" data-unit="%" data-tol="0.001" data-hint="Variance kept = (sum of kept eigenvalues) / (sum of all eigenvalues), as a percentage.">
+          <div class="ex-q">An eigenvalue spectrum \(\lambda = (6,\, 3,\, 1)\). You keep the top \(d = 2\) components. What percentage of the total variance is retained?</div>
+          <div class="ex-reveal-src">Total variance \(= 6 + 3 + 1 = 10\). Kept by the top 2: \(6 + 3 = 9\). Fraction \(= 9/10 = 0.90\), i.e. <b>90</b>%. The discarded \(\lambda_3 = 1\) is exactly the reconstruction error (the Eckart–Young identity of EQ M5.4).</div>
         </div>
 
         <div class="pycell" data-py>
@@ -306,7 +326,7 @@ print("dropped eigenvalue/2 :", round(lam[1]/2, 4), "  <- EQ M5.4, per entry")
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
 <script src="../assets/js/glossary.js?v=a9bc4f7e"></script>
-<script src="../assets/js/shared.js?v=badceda4"></script>
+<script src="../assets/js/shared.js?v=b22ff755"></script>
 <script src="../assets/js/exercises.js?v=56a8ee64"></script>
 <script src="../assets/js/search.js?v=b56ede0c"></script>
 <script src="../assets/js/pyrunner.js?v=501f0a15"></script>
@@ -685,8 +705,8 @@ print("dropped eigenvalue/2 :", round(lam[1]/2, 4), "  <- EQ M5.4, per entry")
   })();
 })();
 </script>
-<script src="../assets/js/videos.js?v=b7bcc79c"></script>
-<script src="../assets/js/lesson.js?v=ed2e768e"></script>
+<script src="../assets/js/videos.js?v=50ffd865"></script>
+<script src="../assets/js/lesson.js?v=3a58e097"></script>
 <script defer src="/_vercel/insights/script.js"></script>
 </body>
 </html>

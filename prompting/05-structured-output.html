@@ -8,7 +8,7 @@
 <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
 <meta name="theme-color" content="#000000" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-<link rel="stylesheet" href="../assets/css/manual.css?v=f46aff47" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=289516f7" />
 </head>
 <body>
 
@@ -59,6 +59,11 @@
         </div>
 
         <p class="note">There is a real tension to keep in view throughout: the tighter you clamp the format, the less room the model has to think <em>en route</em> to the answer (Chapter 04). The professional pattern is to separate the two — free-form reasoning first, clamped answer last — and every technique below composes with that split.</p>
+
+        <div class="exercise" data-answer="0.60" data-tol="0.02" data-hint="independent per-call validity multiplies: survival = p^k with p = 0.95, k = 10">
+          <div class="ex-q">An agent makes \(10\) tool calls per task, each yielding schema-valid output with probability \(p = 0.95\). Using EQ P5.1, what is the probability the whole pipeline survives on formatting alone?</div>
+          <div class="ex-reveal-src">\(\Pr[\text{survives}] = p^{k} = 0.95^{10} = 0.5987\ldots \approx\) <b>0.60</b>. Four in ten runs die on formatting before a single reasoning error is counted — which is why structure work is reliability work, and why rung 6 (a decoder that <i>cannot</i> emit invalid output) earns its latency cost.</div>
+        </div>
       </section>
 
       <!-- ====================== 5.2 ====================== -->
@@ -303,6 +308,11 @@ print(f"\nrepaired {ok}/{len(cases)}; only the Python-literal case defeats synta
         </div>
         <p class="note">Five of six recover, and the sixth fails <em>loudly</em> — which is the point. The single-quote / <code>True</code> / <code>None</code> dialect from code-heavy training data is genuinely ambiguous (an apostrophe inside a value will break any quote-swapping regex), so the disciplined move is to surface the failure and re-prompt with the parser's error rather than paper over it. Repair what is mechanical; escalate what is semantic.</p>
 
+        <div class="exercise" data-answer="0.833" data-tol="0.02" data-hint="recovery rate = cases the pipeline parses / total cases = 5 / 6">
+          <div class="ex-q">The defensive parsing pipeline runs over \(6\) messy model replies. Mechanical repair (strip fences, fix trailing commas, grab the outermost braces) recovers \(5\); the Python-literal case defeats it and gets escalated to a retry. What fraction does the pipeline recover without a retry?</div>
+          <div class="ex-reveal-src">\(5 / 6 \approx\) <b>0.833</b>. Five recover silently; the sixth fails loudly and re-prompts — the discipline is to repair what is mechanical and escalate what is semantic, never to paper over an ambiguous dialect with a cleverer regex.</div>
+        </div>
+
         <div class="callout warn">
           <span class="co-icon">RULE</span>
           <p><strong>Repair syntax mechanically; never repair semantics silently.</strong> Stripping a fence loses nothing. Mapping <code>"slightly_negative"</code> to <code>"negative"</code> changes the answer — do it only with a log line, or better, send the validator error back to the model and let it correct itself (Chapter 06 builds this into a full critique loop).</p>
@@ -351,6 +361,11 @@ print("invalid output is not unlikely under masking — it is unrepresentable")<
         </div>
         <p class="note">The model's single most-wanted token here is <code>{</code> — structurally useless for an enum field — yet the masked column emits only the three legal values, 0/200 violations. That is the whole promise of rung 6: validity is a property of the decoder, not of the model's cooperation. Now read the second subtlety below in that light — the mask <em>renormalizes</em> the model's distribution, it does not improve it, so a model that wanted <code>{</code> is being dragged somewhere it assigns low joint probability.</p>
 
+        <div class="exercise" data-answer="0.75" data-tol="0.001" data-hint="grammar mask renormalizes over allowed tokens only: p̃ = p_allowed / (sum of allowed probs)">
+          <div class="ex-q">At one decode step the model's softmax puts probability \(0.30\) on the legal token <code>"negative"</code> and \(0.10\) on the legal token <code>"neutral"</code>; every other token is masked out by the grammar. After the renormalization in EQ P5.3, what probability does <code>"negative"</code> get?</div>
+          <div class="ex-reveal-src">\(\tilde p(\texttt{negative}) = \dfrac{0.30}{0.30 + 0.10} = \dfrac{0.30}{0.40} =\) <b>0.75</b>. The mask keeps the model's <i>relative</i> preference among legal moves and discards the \(1 - 0.40 = 0.60\) of mass it wanted to spend on illegal tokens — renormalizing the distribution, not improving it.</div>
+        </div>
+
         <p>Two subtleties separate the good implementations from the slow or broken ones:</p>
         <ul>
           <li><strong>Token–grammar misalignment.</strong> The grammar is defined over characters, but the model emits tokens — and <code>"true"</code> might be one token or four, with thousands of vocabulary entries spanning any given character boundary. Engines precompute, for each automaton state, which of the ~100K+ tokens are admissible (Outlines' FSM indexing, XGrammar's adaptive token-mask cache), turning a per-step vocabulary scan into a lookup. Done naively, masking dominates decode latency; done well, it is near-free.</li>
@@ -395,7 +410,7 @@ print("invalid output is not unlikely under masking — it is unrepresentable")<
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
 <script src="../assets/js/glossary.js?v=a9bc4f7e"></script>
-<script src="../assets/js/shared.js?v=badceda4"></script>
+<script src="../assets/js/shared.js?v=b22ff755"></script>
 <script src="../assets/js/exercises.js?v=56a8ee64"></script>
 <script src="../assets/js/pyrunner.js?v=501f0a15"></script>
 <script src="../assets/js/search.js?v=b56ede0c"></script>
@@ -731,8 +746,8 @@ print("invalid output is not unlikely under masking — it is unrepresentable")<
 
 })();
 </script>
-<script src="../assets/js/videos.js?v=b7bcc79c"></script>
-<script src="../assets/js/lesson.js?v=ed2e768e"></script>
+<script src="../assets/js/videos.js?v=50ffd865"></script>
+<script src="../assets/js/lesson.js?v=3a58e097"></script>
 <script defer src="/_vercel/insights/script.js"></script>
 </body>
 </html>

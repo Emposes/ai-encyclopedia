@@ -7,7 +7,7 @@
 <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
 <meta name="theme-color" content="#000000" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-<link rel="stylesheet" href="../assets/css/manual.css?v=f46aff47" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=289516f7" />
 </head>
 <body>
 
@@ -121,6 +121,11 @@
         <div class="eq-note">\(y_w\) = chosen, \(y_l\) = rejected. The model only learns reward <em>differences</em> — absolute scale is unidentified. Reward models are imperfect proxies, which makes them gameable: over-optimize and you harvest sycophancy, verbosity, and confident nonsense. That failure mode is called <b>reward hacking</b>, and the KL term in EQ 5.3 is its leash.</div>
         </div>
 
+        <div class="exercise" data-answer="0.731" data-tol="0.01" data-hint="under Bradley–Terry the win probability is the sigmoid of the reward margin">
+          <div class="ex-q">A reward model scores the chosen answer \( r(y_w) = 2.5 \) and the rejected one \( r(y_l) = 1.5 \). Under Bradley–Terry, what is \( \sigma(\Delta r) = P(\text{prefer } y_w) \)? (Use \( e^{-1} = 0.3679 \).)</div>
+          <div class="ex-reveal-src">Margin \( \Delta r = 2.5 - 1.5 = 1.0 \). Then \( \sigma(1) = \dfrac{1}{1 + e^{-1}} = \dfrac{1}{1.3679} = \) <b>0.731</b>.</div>
+        </div>
+
         <div class="pycell" data-py>
           <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
           <pre class="py-src" contenteditable="true" spellcheck="false"># Bradley-Terry P(win) and the DPO gradient: solved pairs stop teaching
@@ -190,6 +195,11 @@ plot_xy(xs, sigmoid(-xs))</pre>
         $$ \mathcal{L}_{\text{DPO}} = -\,\mathbb{E}_{(x, y_w, y_l)} \left[ \log \sigma\!\left( \beta \log \frac{\pi_\theta(y_w \mid x)}{\pi_{\text{ref}}(y_w \mid x)} \;-\; \beta \log \frac{\pi_\theta(y_l \mid x)}{\pi_{\text{ref}}(y_l \mid x)} \right) \right] $$
         <div class="eq-note">A plain classification loss over preference pairs: push the chosen response's likelihood ratio up, the rejected one's down. <b>The language model is secretly its own reward model.</b> No sampling loop, no value network, no RM — just two forward passes per pair. Variants abound (IPO, KTO for unpaired thumbs-up/down, ORPO without a reference, SimPO length-normalized); DPO-family methods dominate open-weight post-training, while frontier labs still lean on online RL for the final stretch.</div>
         </div>
+
+        <div class="exercise" data-answer="0.5" data-tol="0.001" data-hint="the DPO margin inside the sigmoid is β times the difference of the two log-ratios">
+          <div class="ex-q">In DPO with \( \beta = 0.1 \), the chosen log-ratio is \( \log\frac{\pi_\theta}{\pi_{\text{ref}}}(y_w) = 2 \) and the rejected log-ratio is \( -3 \). What is the margin \( \beta\big(\text{logratio}_w - \text{logratio}_l\big) \) fed to the sigmoid?</div>
+          <div class="ex-reveal-src">Difference \( = 2 - (-3) = 5 \). Margin \( = \beta \times 5 = 0.1 \times 5 = \) <b>0.5</b> — the same quantity \( \Delta \) that Bradley–Terry's sigmoid consumes.</div>
+        </div>
       </section>
 
       <!-- ====================== 5.6 ====================== -->
@@ -200,6 +210,11 @@ plot_xy(xs, sigmoid(-xs))</pre>
         <div class="eq"><span class="eq-tag">EQ 5.6 — GROUP-RELATIVE ADVANTAGE</span>
         $$ \hat{A}_i \;=\; \frac{r_i - \mathrm{mean}\big(r_1, \ldots, r_G\big)}{\mathrm{std}\big(r_1, \ldots, r_G\big)} $$
         <div class="eq-note">Each response is scored against its siblings: better than the group average ⇒ positive advantage, all its tokens reinforced (with PPO-style clipping and a KL term). Half the networks, half the memory of PPO — and a natural fit for verifiable rewards, where sampling 8–64 attempts per problem is exactly what you want anyway. This is the algorithm behind DeepSeek-R1; successors (DAPO, Dr. GRPO, GSPO) patch its length and difficulty biases.</div>
+        </div>
+
+        <div class="exercise" data-answer="1" data-tol="0.001" data-hint="advantage = (r_i − group mean) / group std; for this group mean = 0.5 and std = 0.5">
+          <div class="ex-q">A GRPO group of \( G = 4 \) responses earns verifiable rewards \( (1,\ 0,\ 1,\ 0) \). The group mean is \( 0.5 \) and the (population) std is \( 0.5 \). What is the advantage \( \hat{A}_i \) of a response that scored \( r_i = 1 \)?</div>
+          <div class="ex-reveal-src">\( \hat{A}_i = \dfrac{r_i - \text{mean}}{\text{std}} = \dfrac{1 - 0.5}{0.5} = \) <b>1</b> — a correct answer sits one standard deviation above its siblings, so all its tokens get reinforced.</div>
         </div>
 
         <div class="pycell" data-py>
@@ -257,6 +272,11 @@ print("when no ground-truth verifier exists, because tests beat votes")</pre>
         $$ r(x, y) = \mathbb{1}\big[\, \mathrm{verify}(x, y) \,\big] \;+\; \lambda_{\text{fmt}}\, \mathbb{1}\big[\,\text{format ok}\,\big] $$
         <div class="eq-note">Unhackable (to first order), infinitely scalable, no human raters. Trained with GRPO at scale, models <em>spontaneously</em> learn to emit long chains of thought, check their own work, backtrack, and try alternatives — DeepSeek-R1's training curves show response length and accuracy growing together, the “aha moment” emerging rather than being taught.</div>
         </div>
+
+        <div class="exercise" data-answer="1.2" data-tol="0.001" data-hint="add the correctness indicator (1 if it verifies) to λ_fmt times the format indicator">
+          <div class="ex-q">RLVR reward with \( \lambda_{\text{fmt}} = 0.2 \): an answer passes the verifier (\( \mathrm{verify} = 1 \)) and is correctly formatted (\( \text{format ok} = 1 \)). What total reward \( r(x,y) \) does EQ 5.7 assign?</div>
+          <div class="ex-reveal-src">\( r = \mathbb{1}[\text{verify}] + \lambda_{\text{fmt}}\,\mathbb{1}[\text{format}] = 1 + 0.2 \times 1 = \) <b>1.2</b>. A correct-but-unformatted answer would score only \( 1.0 \); a formatted-but-wrong one only \( 0.2 \).</div>
+        </div>
         <ul>
           <li><strong>Test-time compute as a new scaling axis.</strong> o1/R1-class models trade tokens for accuracy: more thinking tokens, better answers — a dial (reasoning effort) exposed to users and a curve that compounds with train-time scaling.</li>
           <li><strong>Distilled reasoning.</strong> SFT on traces sampled from a strong reasoning model transfers a surprising fraction of the skill to small models (R1-distill family) — cheaper than running RL on the small model itself (Chapter 07).</li>
@@ -307,13 +327,13 @@ print("when no ground-truth verifier exists, because tests beat votes")</pre>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
 <script src="../assets/js/glossary.js?v=a9bc4f7e"></script>
-<script src="../assets/js/shared.js?v=badceda4"></script>
+<script src="../assets/js/shared.js?v=b22ff755"></script>
 <script src="../assets/js/exercises.js?v=56a8ee64"></script>
 <script src="../assets/js/pyrunner.js?v=501f0a15"></script>
 <script src="../assets/js/search.js?v=b56ede0c"></script>
 <script src="../assets/js/interactives.js?v=f738a9df"></script>
-<script src="../assets/js/videos.js?v=b7bcc79c"></script>
-<script src="../assets/js/lesson.js?v=ed2e768e"></script>
+<script src="../assets/js/videos.js?v=50ffd865"></script>
+<script src="../assets/js/lesson.js?v=3a58e097"></script>
 <script defer src="/_vercel/insights/script.js"></script>
 </body>
 </html>

@@ -7,7 +7,7 @@
 <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
 <meta name="theme-color" content="#000000" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-<link rel="stylesheet" href="../assets/css/manual.css?v=f46aff47" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=289516f7" />
 </head>
 <body>
 
@@ -158,6 +158,11 @@ print("\nthe block ADDED its work to h -- the stream is nudged, never replaced")
         <div class="eq-note">\(\mu, \sigma^2\) are the per-vector mean and variance; \(\gamma, \beta\) are learned. RMSNorm keeps only the <b>scale</b> normalization — empirically all that matters — saving a reduction pass and parameters. \(\epsilon \approx 10^{-5}\) guards against division by zero.</div>
         </div>
 
+        <div class="exercise" data-answer="1.2" data-tol="0.01" data-hint="RMS divides each component by the root-mean-square of the whole vector; here that denominator is 2.5">
+          <div class="ex-q">Apply RMSNorm (with \( \gamma = 1 \), \( \epsilon \) negligible) to \( x = (3,\ 4,\ 0,\ 0) \), \( d = 4 \). What is the <b>first</b> component of the output?</div>
+          <div class="ex-reveal-src">Denominator \( = \sqrt{\tfrac{1}{4}(3^2 + 4^2 + 0 + 0)} = \sqrt{25/4} = \sqrt{6.25} = 2.5 \). First output component \( = 3 / 2.5 = \) <b>1.2</b>.</div>
+        </div>
+
         <p class="note">Placement matters more than flavor: <em>pre</em>-norm (normalize the input of each sub-layer, as in EQ 2.1) yields a clean gradient path through the residual additions, enabling very deep models without the fragile learning-rate warmup gymnastics of the original post-norm design. Some recent models add extra norms (e.g., QK-norm on attention queries/keys) for further stability at scale.</p>
       </section>
 
@@ -171,6 +176,11 @@ print("\nthe block ADDED its work to h -- the stream is nudged, never replaced")
         <div class="eq-note">Three matrices instead of two: a <b>gate</b> path squashed through SiLU multiplies an <b>up</b> projection element-wise, then <b>down</b> projects back to \(d_{\text{model}}\). To hold parameter count comparable to the classic 2-matrix design, \(d_{\text{ff}}\) is set to \(\tfrac{8}{3} d_{\text{model}}\) (rounded for hardware). GPT-2-era models used GELU, \( \mathrm{GELU}(z) = z\,\Phi(z) \), without the gate.</div>
         </div>
 
+        <div class="exercise" data-answer="1.762" data-tol="0.01" data-hint="SiLU(z) = z · sigmoid(z); first compute sigmoid(2)">
+          <div class="ex-q">Evaluate the SwiGLU activation \( \mathrm{SiLU}(z) = z\,\sigma(z) \) at \( z = 2 \). (Use \( e^{-2} = 0.1353 \).)</div>
+          <div class="ex-reveal-src">\( \sigma(2) = \dfrac{1}{1 + e^{-2}} = \dfrac{1}{1.1353} = 0.8808 \). Then \( \mathrm{SiLU}(2) = 2 \times 0.8808 = \) <b>1.762</b>.</div>
+        </div>
+
         <p>Interpretability work suggests MLPs implement <strong>key→value memories</strong>: the first projection detects patterns in the stream (keys), the nonlinearity gates which fire, and the second projection writes associated content (values) back. This is where “Paris is the capital of France” mostly resides — and why model-editing techniques target MLP weights.</p>
       </section>
 
@@ -182,6 +192,11 @@ print("\nthe block ADDED its work to h -- the stream is nudged, never replaced")
         <div class="eq"><span class="eq-tag">EQ 2.4 — ROPE ROTATION</span>
         $$ \begin{pmatrix} q'_{2i} \\ q'_{2i+1} \end{pmatrix} = \begin{pmatrix} \cos m\theta_i &amp; -\sin m\theta_i \\ \sin m\theta_i &amp; \;\;\cos m\theta_i \end{pmatrix} \begin{pmatrix} q_{2i} \\ q_{2i+1} \end{pmatrix}, \qquad \theta_i = b^{-2i/d_k} $$
         <div class="eq-note">Each consecutive pair of dimensions \((2i, 2i{+}1)\) of a query at position \(m\) is rotated by angle \(m\theta_i\); keys likewise. The base \(b\) (10,000 originally; 500,000 in Llama 3 for long context) sets the frequency spectrum: low-\(i\) pairs spin fast (fine positional detail), high-\(i\) pairs spin slowly (coarse, long-range).</div>
+        </div>
+
+        <div class="exercise" data-answer="0.5" data-tol="0.001" data-hint="first find θ_i = b^(−2i/d_k), then multiply by the position m">
+          <div class="ex-q">RoPE with base \( b = 10{,}000 \), \( d_k = 4 \). For the pair \( i = 1 \), the frequency is \( \theta_1 = b^{-2i/d_k} = 10000^{-0.5} = 0.01 \). What rotation angle \( m\theta_1 \) (in radians) does a query at position \( m = 50 \) receive on that pair?</div>
+          <div class="ex-reveal-src">\( \theta_1 = 10000^{-2\cdot1/4} = 10000^{-0.5} = 1/100 = 0.01 \) rad/position. At \( m = 50 \): angle \( = 50 \times 0.01 = \) <b>0.5</b> radians.</div>
         </div>
 
         <div class="eq"><span class="eq-tag">EQ 2.5 — WHY IT WORKS: RELATIVITY</span>
@@ -247,6 +262,11 @@ plot_xy(offs, [q @ (R(o) @ k) for o in offs])</pre>
         <div class="eq"><span class="eq-tag">EQ 2.6 — PARAMETER BUDGET</span>
         $$ N \;\approx\; \underbrace{12\, L\, d^2}_{\text{blocks}} \;+\; \underbrace{2\,|V|\, d}_{\text{embed + unembed}} $$
         <div class="eq-note">Roughly <b>two-thirds of block parameters sit in the MLPs</b>, one-third in attention. GQA (Chapter 03) shrinks the K/V share further. The embedding term matters at small scale (a 1B model with a 256K vocabulary spends ~40% of its budget there) and fades at large scale.</div>
+        </div>
+
+        <div class="exercise" data-answer="84.93" data-tol="0.01" data-hint="just the block term: 12 · L · d², then divide by one million">
+          <div class="ex-q">Estimate the block parameters \( 12\,L\,d^2 \) for a model with \( L = 12 \) layers and \( d = 768 \). Give your answer in <b>millions</b> (M). (Use \( 768^2 = 589{,}824 \).)</div>
+          <div class="ex-reveal-src">\( 12 \times 12 \times 589{,}824 = 144 \times 589{,}824 = 84{,}934{,}656 \approx \) <b>84.93</b> M parameters — roughly the GPT-2-base block budget.</div>
         </div>
 
         <div class="widget" id="param-demo" data-reveal>
@@ -317,13 +337,13 @@ plot_xy(offs, [q @ (R(o) @ k) for o in offs])</pre>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
 <script src="../assets/js/glossary.js?v=a9bc4f7e"></script>
-<script src="../assets/js/shared.js?v=badceda4"></script>
+<script src="../assets/js/shared.js?v=b22ff755"></script>
 <script src="../assets/js/exercises.js?v=56a8ee64"></script>
 <script src="../assets/js/pyrunner.js?v=501f0a15"></script>
 <script src="../assets/js/search.js?v=b56ede0c"></script>
 <script src="../assets/js/interactives.js?v=f738a9df"></script>
-<script src="../assets/js/videos.js?v=b7bcc79c"></script>
-<script src="../assets/js/lesson.js?v=ed2e768e"></script>
+<script src="../assets/js/videos.js?v=50ffd865"></script>
+<script src="../assets/js/lesson.js?v=3a58e097"></script>
 <script defer src="/_vercel/insights/script.js"></script>
 </body>
 </html>

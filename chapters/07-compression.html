@@ -7,7 +7,7 @@
 <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
 <meta name="theme-color" content="#000000" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-<link rel="stylesheet" href="../assets/css/manual.css?v=f46aff47" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=289516f7" />
 </head>
 <body>
 
@@ -54,6 +54,11 @@
         $$ \text{tokens/s per sequence} \;\lesssim\; \frac{\text{memory bandwidth}}{\text{bytes per parameter} \times N_{\text{active}}} $$
         <div class="eq-note">H100: 3.35 TB/s. A 70B dense model in FP16 (140 GB… already &gt; one GPU) streams at best ~24 tok/s; in INT4 (35 GB) the ceiling is ~96 tok/s <em>on one card</em>. Halve the bits, double the speed <em>and</em> double the KV-cache room — quantization is the rare optimization that pays twice. (\(N_{\text{active}}\) matters: MoE models only read routed experts — Chapter 09.)</div>
         </div>
+
+        <div class="exercise" data-answer="95.7" data-tol="0.02" data-unit="tok/s" data-hint="tok/s ≲ bandwidth / (bytes-per-param × N). INT4 = 0.5 bytes.">
+          <div class="ex-q">An H100 has \(3.35\times10^{12}\) B/s of bandwidth. Decoding a \(70\text{B}\) dense model in INT4 (0.5 bytes/param), what is the single-stream tokens/s ceiling? \(\;\text{tok/s} \approx \dfrac{\text{BW}}{\text{bytes}\times N}\).</div>
+          <div class="ex-reveal-src">Bytes streamed per token \(= 0.5 \times 70\times10^9 = 3.5\times10^{10}\). Ceiling \(= \dfrac{3.35\times10^{12}}{3.5\times10^{10}} = \) <b>95.7</b> tok/s. (In FP16 the same model only reaches ~24 — halving the bits doubled the speed.)</div>
+        </div>
       </section>
 
       <!-- ====================== 7.2 ====================== -->
@@ -64,6 +69,11 @@
         <div class="eq"><span class="eq-tag">EQ 7.2 — DISTILLATION LOSS (HINTON 2015)</span>
         $$ \mathcal{L}_{\text{KD}} = (1-\lambda)\, \mathcal{L}_{\text{CE}}(y, p_S) \;+\; \lambda\, \tau^2\, \mathrm{KL}\!\Big( p_T^{(\tau)} \,\Big\|\, p_S^{(\tau)} \Big), \qquad p^{(\tau)} = \mathrm{softmax}(z / \tau) $$
         <div class="eq-note">A full distribution per token is a vastly richer signal than a single label — “the next token is <em>cat</em>, but <em>kitten</em> was nearly as good and <em>carburetor</em> was absurd” — which is why students train far more sample-efficiently than from raw text.</div>
+        </div>
+
+        <div class="exercise" data-answer="16" data-tol="0.001" data-hint="The soft-target term carries a τ² prefactor.">
+          <div class="ex-q">The distillation loss scales its soft-target KL term by \(\tau^2\) (to keep gradient magnitudes comparable to the hard-label term). If you distill at temperature \(\tau = 4\), by what factor is that KL term multiplied?</div>
+          <div class="ex-reveal-src">The prefactor is \(\tau^2 = 4^2 = \) <b>16</b>. Without it, softening the targets (which shrinks every gradient by roughly \(1/\tau^2\)) would silently down-weight the teacher signal.</div>
         </div>
 
         <div class="pycell" data-py>
@@ -127,6 +137,11 @@ plot_xy(taus, ents)</pre>
         <div class="eq"><span class="eq-tag">EQ 7.3 — SYMMETRIC UNIFORM QUANTIZATION</span>
         $$ \hat{w} = s \cdot \mathrm{clamp}\!\Big( \mathrm{round}\big( w / s \big),\, -2^{b-1},\, 2^{b-1}-1 \Big), \qquad s = \frac{\max_i |w_i|}{2^{b-1}-1} $$
         <div class="eq-note">One FP scale \(s\) per <b>group</b> of weights; the integers are stored, the scale rides along. The whole game is choosing the granularity of \(s\): per-tensor (cheapest, coarsest) → per-channel → per-group of 64–128 (the GGUF/GPTQ standard) — smaller groups isolate outliers at slightly more bits/param overhead.</div>
+        </div>
+
+        <div class="exercise" data-answer="0.0857" data-tol="0.02" data-hint="s = max|w| / (2^(b-1) − 1). For b=4, the denominator is 7.">
+          <div class="ex-q">Symmetric \(b\)-bit quantization uses \(s = \dfrac{\max_i |w_i|}{2^{b-1}-1}\). For a group whose largest magnitude is \(\max_i|w_i| = 0.6\), quantized to \(b = 4\) bits, what is the scale \(s\)?</div>
+          <div class="ex-reveal-src">Denominator \(= 2^{4-1} - 1 = 2^3 - 1 = 7\). So \(s = \dfrac{0.6}{7} = \) <b>0.0857</b>. Each stored integer is one of \(\{-8,\dots,7\}\), recovered as integer\(\times s\).</div>
         </div>
 
         <div class="pycell" data-py>
@@ -230,6 +245,11 @@ print("whole reason GGUF/GPTQ ship a scale every 64-128 weights.")</pre>
       <section class="section" id="s6">
         <div class="sec-head"><span class="sec-num">7.6</span><h2>Pruning &amp; structured sparsity</h2></div>
         <p>Pruning zeroes connections outright. Magnitude pruning (drop the smallest \(|w|\)) needs no data; <strong>Wanda</strong> ranks by \(|w| \cdot \|x\|\) (weight × typical input magnitude) and prunes LLMs to ~50% unstructured sparsity with little loss and no retraining; SparseGPT runs a GPTQ-style reconstruction.</p>
+
+        <div class="exercise" data-answer="3.5" data-tol="0.01" data-unit="B" data-hint="50% sparsity means half the weights survive as nonzero.">
+          <div class="ex-q">You prune a <b>7B</b>-parameter model to 50% unstructured sparsity (Wanda-style). How many billions of weights remain nonzero?</div>
+          <div class="ex-reveal-src">Half are zeroed: \(7\text{B} \times (1 - 0.50) = 7 \times 0.5 = \) <b>3.5</b>B nonzero. (Without 2:4 structure or sparse kernels, though, those zeros rarely buy real speed on dense matmul units.)</div>
+        </div>
         <ul>
           <li><strong>Unstructured</strong> sparsity is hard to monetize — random zeros don't speed up dense matmul units.</li>
           <li><strong>2:4 semi-structured</strong> (two zeros in every four weights) is the exception: NVIDIA tensor cores execute it at up to 2× — the one sparsity pattern with first-class hardware.</li>
@@ -273,13 +293,13 @@ print("whole reason GGUF/GPTQ ship a scale every 64-128 weights.")</pre>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
 <script src="../assets/js/glossary.js?v=a9bc4f7e"></script>
-<script src="../assets/js/shared.js?v=badceda4"></script>
+<script src="../assets/js/shared.js?v=b22ff755"></script>
 <script src="../assets/js/exercises.js?v=56a8ee64"></script>
 <script src="../assets/js/pyrunner.js?v=501f0a15"></script>
 <script src="../assets/js/search.js?v=b56ede0c"></script>
 <script src="../assets/js/interactives.js?v=f738a9df"></script>
-<script src="../assets/js/videos.js?v=b7bcc79c"></script>
-<script src="../assets/js/lesson.js?v=ed2e768e"></script>
+<script src="../assets/js/videos.js?v=50ffd865"></script>
+<script src="../assets/js/lesson.js?v=3a58e097"></script>
 <script defer src="/_vercel/insights/script.js"></script>
 </body>
 </html>

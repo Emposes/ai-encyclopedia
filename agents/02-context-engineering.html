@@ -8,7 +8,7 @@
 <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
 <meta name="theme-color" content="#000000" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-<link rel="stylesheet" href="../assets/css/manual.css?v=f46aff47" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=289516f7" />
 </head>
 <body>
 
@@ -85,6 +85,11 @@ print("the expensive tokens are the ones you change, not the ones you keep")</pr
           <canvas class="py-plot" hidden height="260"></canvas>
         </div>
 
+        <div class="exercise" data-answer="58" data-tol="0.02" data-unit="%" data-hint="sum the six components, divide by 200,000, ×100">
+          <div class="ex-q">A coding agent assembles its context from six components: system 4,000 · tools 12,000 · memory 2,000 · history 60,000 · retrieval 30,000 · scratchpad 8,000 tokens. Against a 200K window, what percentage of the window does the total occupy?</div>
+          <div class="ex-reveal-src">Total \(= 4{,}000 + 12{,}000 + 2{,}000 + 60{,}000 + 30{,}000 + 8{,}000 = 116{,}000\) tokens. As a share of 200,000: \(116{,}000 / 200{,}000 = 0.58 = 58\%\) — already past the \(\rho \approx 0.5\)–0.7 effective limit where attention quality starts to slide. The answer is <b>58</b>.</div>
+        </div>
+
         <p>Why \(\rho \ll 1\)? Because the window is a physical limit but attention is a budget of its own. A transformer relates \(T\) tokens through \(T^2\) pairwise scores (Vol II · EQ 3.1), softmax spreads a fixed unit of probability mass over an ever-longer row, and training data contains far fewer million-token dependency patterns than thousand-token ones. The result is <strong>context rot</strong>: needle-in-a-haystack benchmarks saturate near 100%, while realistic tasks — multi-fact reasoning, instructions stated once at turn 3 and needed at turn 47, relevant passages buried mid-window among plausible distractors — degrade measurably as the window fills. Frontier models in 2026 hold up far better than the 2023 generation that made &ldquo;lost in the middle&rdquo; a famous phrase, but none are flat, and the degradation profile varies by model, by task, and by where the needle sits (Vol II · Ch 09). Treat the advertised window as an engineering maximum, not an operating point.</p>
 
         <div class="widget" id="ce-budget" data-reveal>
@@ -139,6 +144,11 @@ print("the expensive tokens are the ones you change, not the ones you keep")</pr
         <p>When the corpus is much larger than the window, there is no debate. A 10-million-document knowledge base at ~500 tokens each is 5B tokens against a 200K window — a factor of 25,000. Retrieval-augmented generation exists because selection is forced: an index (embeddings, BM25, or both) narrows the corpus to a handful of candidates, and only those candidates spend context. The engineering then lives in retrieval quality — chunking, hybrid lexical + semantic search (embeddings famously miss exact identifiers like error codes and function names that keyword search catches trivially), and reranking.</p>
         <p>When the corpus <em>fits</em>, the trade is genuinely contested. Stuffing the full corpus into context often beats RAG on answer quality — no retriever to miss the relevant passage — and for one-shot questions over a small document set it is frequently the right call. But the costs recur on every request: you pay tokens and prefill latency for the whole corpus each time (softened, not eliminated, by caching — §2.6), and you spend the very attention budget that §2.1 showed degrading past half-fill. Long context and retrieval are not rivals; they are a price curve, and the crossover moves with corpus size, query volume, and how often the corpus changes.</p>
         <p>The agentic turn added a third option that has largely won for tool-rich domains: <strong>just-in-time retrieval</strong>. Instead of front-loading top-k passages, keep lightweight references in context — file paths, schema names, document titles — and give the agent tools to fetch full content on demand: <code>grep</code>, <code>open_file</code>, a search API. A coding agent that navigates with search-and-open routinely beats one fed pre-embedded chunks of the same repository, because each fetch is targeted by the agent's <em>current</em> hypothesis rather than by a similarity score computed before the task began. This is progressive disclosure: context holds the map, tools fetch the territory. The honest cost is latency — every just-in-time fetch is a round trip — so production systems hybridize: pre-load what is almost certainly needed (the map, the conventions file), fetch the rest as the task reveals it.</p>
+
+        <div class="exercise" data-answer="12000" data-tol="0.02" data-hint="corpus tokens = docs × tokens/doc; divide by the window">
+          <div class="ex-q">A knowledge base holds <b>4 million</b> documents averaging <b>600 tokens</b> each. Against a <b>200,000</b>-token window, by what factor does the corpus exceed the window? (This is why retrieval is forced.)</div>
+          <div class="ex-reveal-src">Corpus \(= 4{,}000{,}000 \times 600 = 2.4 \times 10^{9}\) tokens. Factor over the window \(= 2.4\times10^{9} / 2\times10^{5} = 12{,}000\). When the corpus is 12,000× the window, "just stuff it all in" is not on the table — selection is mandatory. The answer is <b>12000</b>.</div>
+        </div>
       </section>
 
       <!-- ====================== 2.4 ====================== -->
@@ -190,6 +200,11 @@ plot_xy(turns, compacted)   # blue: the compaction sawtooth</pre>
           <pre class="py-out" hidden></pre>
           <canvas class="py-plot" hidden height="260"></canvas>
         </div>
+        <div class="exercise" data-answer="77" data-tol="0.02" data-unit="%" data-hint="new total = before − old span + summary; drop% = 1 − new/before">
+          <div class="ex-q">A transcript holds <b>5,342</b> tokens. Compaction replaces the oldest span — <b>4,369</b> tokens — with a structured summary of <b>240</b> tokens, keeping the rest verbatim. By what percentage does the context shrink?</div>
+          <div class="ex-reveal-src">New total \(= 5{,}342 - 4{,}369 + 240 = 1{,}213\) tokens. Drop \(= 1 - 1{,}213 / 5{,}342 = 1 - 0.227 = 0.773 = 77\%\). The percentage is the easy part; whether the 240-token summary kept every constraint is the hard part the instrument below tests. The answer is <b>77</b>.</div>
+        </div>
+
         <p>Compaction is a lossy codec, and the entire craft is choosing the loss function. The loss is brutally asymmetric: dropping a pleasantry costs nothing; dropping a constraint costs the task. What must survive, in rough priority order: the <strong>goal</strong> as currently understood; every <strong>constraint</strong>, stated once and never repeated; <strong>decisions with their reasons</strong> (so they are not silently relitigated); exact <strong>identifiers</strong> — file paths, function names, ids, commands; and <strong>unresolved state</strong> — what failed, what was tried, what is pending. What can die: greetings and acknowledgments, superseded drafts, and raw tool payloads whose conclusions have already been distilled into a decision. A summary that reads like a friendly recap and tests like amnesia is the most common failure in production agents — which is exactly what the instrument below lets you reproduce.</p>
 
         <div class="widget" id="ce-compact" data-reveal>
@@ -229,6 +244,11 @@ plot_xy(turns, compacted)   # blue: the compaction sawtooth</pre>
         <div class="eq"><span class="eq-tag">EQ A2.2 — CACHED VS UNCACHED COST</span>
         $$ \frac{\$_{\text{warm}}}{\$_{\text{cold}}} \;=\; \frac{\kappa P + D}{P + D}, \qquad \kappa \approx 0.1 $$
         <div class="eq-note">\(P\) = tokens in the stable, cache-hit prefix; \(D\) = dynamic tokens after the first changed byte; \(\kappa\) = cache-read discount. A coding agent at 100K context with a 90K stable prefix pays \((0.1 \times 90 + 10)/100 = 0.19\) of the cold price — <b>5.3× cheaper per step</b>, with proportionally faster prefill. The fine print: the first request pays a small write surcharge (≈1.25× on the cached span), so caching breaks even after roughly one subsequent hit. The entire equation collapses to this rule: <b>order context by stability, and never touch what you've already sent.</b></div>
+        </div>
+
+        <div class="exercise" data-answer="0.28" data-tol="0.02" data-hint="(κP + D) / (P + D) with κ = 0.1">
+          <div class="ex-q">By EQ A2.2, a warm call costs \(\frac{\kappa P + D}{P + D}\) of a cold one. With a stable cache-hit prefix \(P = 80\text{K}\), dynamic tail \(D = 20\text{K}\), and cache discount \(\kappa = 0.1\), what is the warm/cold cost ratio?</div>
+          <div class="ex-reveal-src">\(\frac{\kappa P + D}{P + D} = \frac{0.1 \times 80 + 20}{80 + 20} = \frac{8 + 20}{100} = \frac{28}{100} = 0.28\) — the warm call is 0.28× the cold price, i.e. ≈3.6× cheaper per step. Push more tokens into the stable prefix (raise \(P\), shrink \(D\)) and the ratio falls further. The answer is <b>0.28</b>.</div>
         </div>
 
         <p>In a fifty-step loop the same prefix is replayed fifty times, so the layout rules are unforgiving:</p>
@@ -336,7 +356,7 @@ plot_xy(turns, compacted)   # blue: the compaction sawtooth</pre>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
 <script src="../assets/js/glossary.js?v=a9bc4f7e"></script>
-<script src="../assets/js/shared.js?v=badceda4"></script>
+<script src="../assets/js/shared.js?v=b22ff755"></script>
 <script src="../assets/js/exercises.js?v=56a8ee64"></script>
 <script src="../assets/js/pyrunner.js?v=501f0a15"></script>
 <script src="../assets/js/search.js?v=b56ede0c"></script>
@@ -700,8 +720,8 @@ plot_xy(turns, compacted)   # blue: the compaction sawtooth</pre>
   })();
 })();
 </script>
-<script src="../assets/js/videos.js?v=b7bcc79c"></script>
-<script src="../assets/js/lesson.js?v=ed2e768e"></script>
+<script src="../assets/js/videos.js?v=50ffd865"></script>
+<script src="../assets/js/lesson.js?v=3a58e097"></script>
 <script defer src="/_vercel/insights/script.js"></script>
 </body>
 </html>

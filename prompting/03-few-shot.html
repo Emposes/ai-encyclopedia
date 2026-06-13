@@ -8,7 +8,7 @@
 <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
 <meta name="theme-color" content="#000000" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-<link rel="stylesheet" href="../assets/css/manual.css?v=f46aff47" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=289516f7" />
 </head>
 <body>
 
@@ -123,6 +123,11 @@ plot_xy(k.tolist(), acc_fmt)</pre>
         </div>
         <p class="note">The printed table is the same EQ P3.1 the instrument above draws — the value of this view is the marginal-gain line: format-following banks most of its lift on the first shot and almost nothing after the second, exactly the geometric decay the equation predicts. The reasoning column barely leaves its starting value, the algebraic face of "examples don't teach a model to reason."</p>
 
+        <div class="exercise" data-answer="0.75" data-tol="0.02" data-hint="acc(k) = a∞ − (a∞ − a₀)·e^(−k/κ); here e^(−2/2) = e^(−1) ≈ 0.368">
+          <div class="ex-q">A task has zero-shot accuracy \(a_0 = 0.5\), few-shot ceiling \(a_\infty = 0.9\), and saturation constant \(\kappa = 2\). Using the shot-count curve (EQ P3.1), what accuracy does \(k = 2\) examples predict?</div>
+          <div class="ex-reveal-src">\(\mathrm{acc}(2) = a_\infty - (a_\infty - a_0)\,e^{-k/\kappa} = 0.9 - (0.9-0.5)\,e^{-2/2} = 0.9 - 0.4\cdot e^{-1} = 0.9 - 0.4(0.3679) = 0.9 - 0.1472 \approx\) <b>0.75</b>. Two shots already close most of the \(a_\infty - a_0\) gap; the curve flattens fast from here.</div>
+        </div>
+
         <p class="note"><strong>The long-context caveat.</strong> "Many-shot" in-context learning (Agarwal et al., 2024) showed that with hundreds to thousands of examples — feasible once contexts crossed 100K tokens — some tasks keep improving well past where the classic curve flattens, occasionally approaching fine-tuning quality. The exponential above describes the 0–32 shot regime where almost all practical prompting lives; treat the far tail as a separate tool with fine-tuning-like economics (Vol II · Chapter 06), amortized only if you cache the prefix.</p>
       </section>
 
@@ -215,6 +220,11 @@ print(f"mean prior mass on LAST cls : {100*mass.mean():.1f}%  (vs 50% if blind)"
         </div>
         <p class="note">Set <code>beta = 0</code> and the match rate falls to the coin-flip baseline — pure majority-label bias with no recency. Any \(\beta &gt; 0\) pushes the prior toward whatever label sits last, which is why "end on your most representative example" is the single cheapest ordering fix. This is the toy model, not a transformer; what it reproduces is the <em>direction</em> and the <em>order-sensitivity</em>, not a specific model's magnitude.</p>
 
+        <div class="exercise" data-answer="0.714" data-tol="0.02" data-hint="recency-weighted prior: P(POS) = (sum of weights on POSITIVE demos) / (sum of all weights)">
+          <div class="ex-q">Three demos sit at positions 1→3 with recency weights \(w = (1,\, 2,\, 4)\) (latest heaviest, per EQ P3.2). Their labels are POSITIVE, NEGATIVE, POSITIVE. What is the recency-weighted prior \(\tilde p(\text{POSITIVE})\)?</div>
+          <div class="ex-reveal-src">Weights on POSITIVE demos: \(w_1 + w_3 = 1 + 4 = 5\). Total weight: \(1 + 2 + 4 = 7\). \(\tilde p(\text{POSITIVE}) = 5/7 \approx\) <b>0.714</b>. The labels are evenly split (2 vs 1 here is close), but because the heaviest, last demo is POSITIVE the prior tilts that way — pure recency, no input read.</div>
+        </div>
+
         <p><strong>What to do about it.</strong> Four mitigations, in increasing order of effort: (1) balance labels <em>and</em> end on the most representative example, since the last slot leaks hardest; (2) never sort examples by label — alternate or randomize within the balanced set; (3) for evaluation, average over several orders rather than trusting one (Chapter 07); (4) contextual calibration — measure the model's output on a content-free input like "N/A" and divide it out — recovers most of the lost accuracy when you control the decoding stack. Modern instruct models are meaningfully better calibrated than the GPT-3 these biases were measured on, but the bleed has not gone to zero — it has gone subtle, which is worse for debugging.</p>
       </section>
 
@@ -266,6 +276,11 @@ print(f"mean prior mass on LAST cls : {100*mass.mean():.1f}%  (vs 50% if blind)"
             <tr><td><strong>Example overfitting</strong></td><td>The model latches onto surface artifacts — your demos' entities reappear in outputs, answer lengths mimic demo lengths, one weird demo skews everything</td><td class="m">Diversify demos (§3.3), check outputs for demo-bleed, rotate example sets in evals</td></tr>
           </tbody>
         </table>
+        <div class="exercise" data-answer="1000" data-tol="0.001" data-hint="overhead per call = number of examples × tokens per example">
+          <div class="ex-q">A fixed few-shot block holds \(8\) examples, each \(125\) tokens long. How many tokens of overhead does that block add to <i>every single call</i>?</div>
+          <div class="ex-reveal-src">\(8 \times 125 =\) <b>1000</b> tokens per call. Rounding error on one request — but every shot is paid on every call forever, so at scale this is the line item prefix caching exists to discount.</div>
+        </div>
+
         <p>And always, the unglamorous one: <strong>cost</strong>. Every shot is paid on every call, forever. Eight 120-token examples are ~960 tokens of overhead — per request, that is rounding error; at ten million requests a month it is ten billion input tokens spent re-teaching a model the same four boundary cases. Prefix caching (Vol II · Chapter 08) discounts a static example block substantially, which is a real argument for fixed sets over per-query retrieval at high volume — and when the example block stops fitting the budget at all, the escalation path is the one Vol II · Chapter 06 opened: distill the behavior into the weights and delete the demos.</p>
         <div class="callout warn">
           <span class="co-icon">PITFALLS</span>
@@ -308,7 +323,7 @@ print(f"mean prior mass on LAST cls : {100*mass.mean():.1f}%  (vs 50% if blind)"
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
 <script src="../assets/js/glossary.js?v=a9bc4f7e"></script>
-<script src="../assets/js/shared.js?v=badceda4"></script>
+<script src="../assets/js/shared.js?v=b22ff755"></script>
 <script src="../assets/js/exercises.js?v=56a8ee64"></script>
 <script src="../assets/js/search.js?v=b56ede0c"></script>
 <script src="../assets/js/pyrunner.js?v=501f0a15"></script>
@@ -533,8 +548,8 @@ print(f"mean prior mass on LAST cls : {100*mass.mean():.1f}%  (vs 50% if blind)"
   })();
 })();
 </script>
-<script src="../assets/js/videos.js?v=b7bcc79c"></script>
-<script src="../assets/js/lesson.js?v=ed2e768e"></script>
+<script src="../assets/js/videos.js?v=50ffd865"></script>
+<script src="../assets/js/lesson.js?v=3a58e097"></script>
 <script defer src="/_vercel/insights/script.js"></script>
 </body>
 </html>

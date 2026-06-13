@@ -8,7 +8,7 @@
 <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
 <meta name="theme-color" content="#000000" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-<link rel="stylesheet" href="../assets/css/manual.css?v=f46aff47" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=289516f7" />
 </head>
 <body>
 
@@ -60,6 +60,11 @@
           <li><strong>Evals are expensive.</strong> One end-to-end run can take minutes and cost real dollars, so statistical power is something you budget for, not something you get for free. This is exactly why the next section is a pyramid and not a single metric.</li>
         </ul>
         <p>The consequence: agent evaluation is a layered system you engineer, with the same care as the agent itself. Teams that treat it as an afterthought discover their agent's true success rate from customer tickets.</p>
+
+        <div class="exercise" data-answer="0.401" data-tol="0.02" data-hint="per-task success ≈ per-step^steps if errors are fatal and independent">
+          <div class="ex-q">A model takes the right action <b>97%</b> of the time per step. If errors were fatal and independent over a <b>30-step</b> task, what end-to-end success rate would \(0.97^{30}\) predict? Give a probability between 0 and 1.</div>
+          <div class="ex-reveal-src">\(0.97^{30}\): \(0.97^{10} = 0.7374\), so \(0.97^{30} = 0.7374^{3} \approx 0.401\). Per-step metrics wildly overstate end-to-end reliability — which is exactly why a 97%-per-step headline is not a 97%-per-task agent, and why the pyramid measures whole tasks at the top. The answer is <b>0.401</b>.</div>
+        </div>
       </section>
 
       <!-- ====================== 6.2 ====================== -->
@@ -119,6 +124,11 @@
         <div class="eq"><span class="eq-tag">EQ A6.1 — UNBIASED pass@k ESTIMATOR</span>
         $$ \widehat{\text{pass@}k} \;=\; \mathop{\mathbb{E}}_{\text{tasks}} \left[\, 1 \;-\; \frac{\dbinom{n-c}{k}}{\dbinom{n}{k}} \,\right] $$
         <div class="eq-note">Per task: draw \(n \ge k\) samples, count \(c\) correct. \(\binom{n-c}{k}/\binom{n}{k}\) is exactly the probability that a uniformly random \(k\)-subset of your \(n\) samples contains <em>zero</em> successes — so its complement is the chance at least one of \(k\) passes. <b>This is unbiased for any \(n \ge k\)</b>; the plug-in \(1-(1-c/n)^k\) systematically underestimates. If \(n - c &lt; k\), the numerator is zero and the estimate is exactly 1. Compute it as the product \(\prod_{i=0}^{k-1}\frac{n-c-i}{\,n-i\,}\) — never with raw factorials, which overflow past \(n \approx 170\).</div>
+        </div>
+
+        <div class="exercise" data-answer="0.447" data-tol="0.02" data-hint="1 − (n−c)/n × (n−c−1)/(n−1) for k = 2">
+          <div class="ex-q">You drew \(n = 20\) samples for a task and \(c = 5\) passed. By EQ A6.1, the unbiased pass@2 is \(1 - \dfrac{n-c}{n}\cdot\dfrac{n-c-1}{n-1}\). What is pass@2?</div>
+          <div class="ex-reveal-src">The probability a random 2-subset has zero successes is \(\dfrac{15}{20}\cdot\dfrac{14}{19} = 0.75 \times 0.7368 = 0.5526\). So pass@2 \(= 1 - 0.5526 = 0.447\). Note it tops the per-attempt rate of \(5/20 = 0.25\) — a second attempt with an oracle to pick the winner is real lift, which is why any pass@k headline must state its \(k\). The answer is <b>0.447</b>.</div>
         </div>
 
         <div class="pycell" data-py>
@@ -234,6 +244,11 @@ print("the winner — a headline that omits k is marketing, not measurement")</p
         <div class="eq-note">\(S\) steps; \(n^{(s)}_{\text{in}}, n^{(s)}_{\text{out}}\) input/output tokens at step \(s\); \(h\) the cache hit rate; \(p_{\text{cached}} \approx 0.1\, p_{\text{in}}\) on most current pricing. Because context accumulates, \(n^{(s)}_{\text{in}}\) grows roughly linearly in \(s\) — so without compaction, <b>run cost grows quadratically in step count</b>: the sum of a linearly growing context is \(O(S^2)\). And the right-hand identity is the one executives should see: dividing by the resolution rate converts "cost per attempt" into <b>cost per task actually solved</b> — the only number comparable across models, scaffolds, and vendors.</div>
         </div>
 
+        <div class="exercise" data-answer="0.83" data-tol="0.02" data-unit="$" data-hint="C_resolved = C_run ÷ Pr[resolved]">
+          <div class="ex-q">An agent run costs \(C_{\text{run}} = \$0.54\) and resolves the task <b>65%</b> of the time. By EQ A6.2, what is the cost per <em>resolved</em> task, \(C_{\text{resolved}} = C_{\text{run}} / \Pr[\text{resolved}]\), in dollars?</div>
+          <div class="ex-reveal-src">\(C_{\text{resolved}} = 0.54 / 0.65 \approx \$0.83\). Cost per run is vanity; dividing by the resolution rate gives the only figure comparable across models and scaffolds — a cheaper run that resolves less often can easily cost more per task solved. The answer is <b>0.83</b>.</div>
+        </div>
+
         <div class="pycell" data-py>
           <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
           <pre class="py-src" contenteditable="true" spellcheck="false"># EQ A6.2 end to end: cost per run is vanity, cost per resolved is truth
@@ -265,6 +280,11 @@ print("routing change on cost per run; approve it on cost per resolved task")</p
         </div>
 
         <p><strong>Cost per resolved task is the real KPI</strong> because it correctly punishes false economies. A worked example with the instrument's illustrative prices — 20 steps, 12K average input and 700 output tokens per step, 60% cache hit rate. All-frontier ($3.00 in / $15.00 out per Mtok): about <strong>$0.54 per run</strong>; at a 65% resolution rate, <strong>≈ $0.83 per resolved task</strong>, or ≈ $5,400 a month at 10K runs. Now route the 14 mechanical steps (file reads, greps, summarization) to the small tier ($0.15 / $0.60) and keep the 6 decision steps on frontier: the run drops to <strong>≈ $0.18 — 3× cheaper</strong>. If resolution holds near 60%, cost per resolved task falls to ≈ $0.30 and the routing pays. If resolution collapses to 20% — which sloppy down-tiering absolutely can do — cost per resolved task is ≈ $0.90 and the "savings" made you worse off than frontier-everywhere. <strong>Never approve a routing change on cost per run; approve it on cost per resolved task, re-measured.</strong></p>
+
+        <div class="exercise" data-answer="1800" data-tol="0.02" data-unit="$" data-hint="multiply cost per run by the number of runs">
+          <div class="ex-q">After routing the mechanical steps to a cheap tier, an agent run costs <b>$0.18</b>. At <b>10,000</b> runs per month, what is the monthly bill, in dollars?</div>
+          <div class="ex-reveal-src">Monthly \(= \$0.18 \times 10{,}000 = \$1{,}800\). But never approve this routing on cost per run alone — re-measure cost per <em>resolved</em> task first, because down-tiering that quietly drops the resolution rate can make the cheaper run more expensive per task solved. The answer is <b>1800</b>.</div>
+        </div>
 
         <div class="widget" id="ev-ct" data-reveal>
           <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT A6.2 — COST OF A TASK</span><span class="w-sub">EQ A6.2 · ILLUSTRATIVE PRICE TIERS</span></div>
@@ -351,7 +371,7 @@ print("routing change on cost per run; approve it on cost per resolved task")</p
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
 <script src="../assets/js/glossary.js?v=a9bc4f7e"></script>
-<script src="../assets/js/shared.js?v=badceda4"></script>
+<script src="../assets/js/shared.js?v=b22ff755"></script>
 <script src="../assets/js/exercises.js?v=56a8ee64"></script>
 <script src="../assets/js/pyrunner.js?v=501f0a15"></script>
 <script src="../assets/js/search.js?v=b56ede0c"></script>
@@ -616,8 +636,8 @@ print("routing change on cost per run; approve it on cost per resolved task")</p
   })();
 })();
 </script>
-<script src="../assets/js/videos.js?v=b7bcc79c"></script>
-<script src="../assets/js/lesson.js?v=ed2e768e"></script>
+<script src="../assets/js/videos.js?v=50ffd865"></script>
+<script src="../assets/js/lesson.js?v=3a58e097"></script>
 <script defer src="/_vercel/insights/script.js"></script>
 </body>
 </html>

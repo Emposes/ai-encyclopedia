@@ -8,7 +8,7 @@
 <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
 <meta name="theme-color" content="#000000" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-<link rel="stylesheet" href="../assets/css/manual.css?v=f46aff47" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=289516f7" />
 </head>
 <body>
 
@@ -62,6 +62,11 @@
           <div class="x-step"><span class="x-n">04</span><span>The hidden assumption: "nearest" used Euclidean distance. If feature 1 were in kilometers and feature 2 in millimeters, the vote would be decided by feature 1 alone — rescale first.</span></div>
           <span class="x-result">RESULT: ŷ(x) = ● by 3 votes to 2</span>
         </div></div>
+        </div>
+
+        <div class="exercise" data-answer="1" data-tol="0.001" data-hint="count the labels among the k = 7 nearest and take the majority">
+          <div class="ex-q">Classify a query with \(k = 7\). Its seven nearest training points carry labels \(1, 0, 1, 1, 0, 1, 0\). By EQ M4.1, which class does k-NN predict (answer \(0\) or \(1\))?</div>
+          <div class="ex-reveal-src">Count the votes: class \(1\) appears \(4\) times, class \(0\) appears \(3\) times. The \(\arg\max\) picks the majority, so the prediction is class <b>1</b>. With odd \(k\) in a two-class problem, ties are impossible.</div>
         </div>
 
         <p>For something this naive, k-NN is theoretically respectable: a classic result (Cover &amp; Hart, 1967) shows that with unlimited data, the humble 1-NN rule's error is at most <em>twice</em> the best achievable error of any classifier. Memory is a legitimate model. And it scaled further than anyone guessed: vector search over learned embeddings — the retrieval step inside every RAG system and vector database — is k-NN run at billion-document scale. The algorithm never died; it just changed feature spaces.</p>
@@ -123,6 +128,16 @@ plot_scatter(X[:, 0], X[:, 1], y)</pre>
             <div class="try-out" id="tnxq-out">G_L = 0.320 · G_R = 0.320 · Δ = 0.180</div>
           </div>
         </div></div>
+        </div>
+
+        <div class="exercise" data-answer="0.375" data-tol="0.001" data-hint="G = 1 − p_●² − p_○², with p_● = 6/8 and p_○ = 2/8">
+          <div class="ex-q">A tree node holds 8 samples: 6 of class ● and 2 of class ○. What is its Gini impurity \(G = 1 - \sum_c p_c^2\) (EQ M4.2)?</div>
+          <div class="ex-reveal-src">Fractions: \(p_● = 6/8 = 0.75\), \(p_○ = 2/8 = 0.25\). \(G = 1 - (0.75^2 + 0.25^2) = 1 - (0.5625 + 0.0625) = 1 - 0.625 = \) <b>0.375</b>. Less impure than the 0.5 of a 50/50 node, but not yet pure.</div>
+        </div>
+
+        <div class="exercise" data-answer="0.125" data-tol="0.001" data-hint="Δ = G(parent) − weighted average of the two children's Gini; each child here has Gini 0.375">
+          <div class="ex-q">A parent node of 8 samples (4 ●, 4 ○, so \(G = 0.5\)) is split into a left child of 4 (3 ●, 1 ○) and a right child of 4 (1 ●, 3 ○). Each child has Gini \(0.375\). What is the split gain \(\Delta\) (EQ M4.2)?</div>
+          <div class="ex-reveal-src">\(\Delta = G(S) - \tfrac{|S_L|}{|S|}G(S_L) - \tfrac{|S_R|}{|S|}G(S_R) = 0.5 - \tfrac{4}{8}(0.375) - \tfrac{4}{8}(0.375) = 0.5 - 0.1875 - 0.1875 = \) <b>0.125</b>. A modest, balanced improvement — CART would still prefer this over any split that purifies less.</div>
         </div>
 
         <figure class="figure" data-reveal>
@@ -259,6 +274,11 @@ print(f"stump accuracy : {(pred == y).mean():.3f}   (noise ceiling ≈ 0.90)")</
         <div class="eq-note">Each tree's prediction errs with variance \(\sigma^2\); averaging \(n\) <em>independent</em> errors divides the variance by \(n\). The catch: trees grown on overlapping bootstrap samples are correlated, and with pairwise correlation \(\rho\) the variance is \(\rho\sigma^2 + \tfrac{1-\rho}{n}\sigma^2\). Averaging annihilates the second term but <b>the \(\rho\sigma^2\) floor survives no matter how many trees you add</b> — so the entire engineering problem becomes: decorrelate the trees.</div>
         </div>
 
+        <div class="exercise" data-answer="0.2" data-tol="0.001" data-hint="for uncorrelated predictors the averaged variance is σ²/n">
+          <div class="ex-q">Four <em>uncorrelated</em> trees each predict with error variance \(\sigma^2 = 0.8\). By EQ M4.3, what is the variance of their averaged prediction?</div>
+          <div class="ex-reveal-src">\(\dfrac{\sigma^2}{n} = \dfrac{0.8}{4} = \) <b>0.2</b>. Averaging four independent learners quarters the variance — the entire reason bagging works, and the reason random forests fight so hard to keep their trees uncorrelated.</div>
+        </div>
+
         <p>A <strong>random forest</strong> is bagging plus one decorrelation trick: at every split, the tree may only consider a random subset of the features (classically \(\sqrt{p}\) of \(p\) for classification). Strong features stop dominating every tree, \(\rho\) drops, and the variance floor drops with it. Two free gifts follow. Because each tree never saw ~37% of the data, scoring each point with only the trees that missed it yields <strong>out-of-bag error</strong> — an honest validation estimate with no held-out split. And since trees are independent, training parallelizes perfectly.</p>
         <p class="note">The honest ledger: random forests are astonishingly hard to break — near-default hyperparameters land within a few percent of optimal on most tabular tasks — but they pay in memory and latency (hundreds of deep trees), their predictions remain step functions, and like all trees they cannot extrapolate beyond the convex hull of what they saw: a forest trained on 2019 prices will never predict a 2026 price above the 2019 maximum.</p>
       </section>
@@ -278,6 +298,11 @@ print(f"stump accuracy : {(pred == y).mean():.3f}   (noise ceiling ≈ 0.90)")</
           <div class="x-step"><span class="x-n">04</span><span>New residuals: \((3 - 5.1,\; 5 - 5.7,\; 10 - 7.2) = (-2.1,\; -0.7,\; 2.8)\) — each exactly \(0.7\times\) the old. Every round multiplies what's left by \((1 - \eta)\): deliberate under-commitment, many rounds.</span></div>
           <span class="x-result">RESULT: residuals shrink ×0.70 per round at η = 0.3</span>
         </div></div>
+        </div>
+
+        <div class="exercise" data-answer="2.8" data-tol="0.001" data-hint="F_m = F_{m−1} + η·h_m, then new residual = y − F_m; here h_m = 4 fits the old residual exactly">
+          <div class="ex-q">For one input: target \(y = 10\), current prediction \(F_{m-1} = 6\), and the new tree fits the residual exactly (\(h_m = 4\)). With shrinkage \(\eta = 0.3\), what residual \(y - F_m\) remains after this boosting round (EQ M4.4)?</div>
+          <div class="ex-reveal-src">Update: \(F_m = F_{m-1} + \eta\,h_m = 6 + 0.3\cdot 4 = 7.2\). New residual: \(y - F_m = 10 - 7.2 = \) <b>2.8</b> — exactly \((1 - \eta) = 0.7\) times the old residual of \(4\). Shrinkage means each round deliberately leaves most of the error for the next tree.</div>
         </div>
 
         <p>The modern implementations are the tabular kings. <strong>XGBoost</strong> (2016) added second-order gradients and explicit regularization on leaf weights; <strong>LightGBM</strong> made training fast at scale with histogram-binned splits and leaf-wise growth; <strong>CatBoost</strong> specializes in categorical columns via ordered target statistics. A decade of Kaggle tabular leaderboards is, to a first approximation, a history of these three libraries.</p>
@@ -340,7 +365,7 @@ print(f"stump accuracy : {(pred == y).mean():.3f}   (noise ceiling ≈ 0.90)")</
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
 <script src="../assets/js/glossary.js?v=a9bc4f7e"></script>
-<script src="../assets/js/shared.js?v=badceda4"></script>
+<script src="../assets/js/shared.js?v=b22ff755"></script>
 <script src="../assets/js/exercises.js?v=56a8ee64"></script>
 <script src="../assets/js/search.js?v=b56ede0c"></script>
 <script src="../assets/js/pyrunner.js?v=501f0a15"></script>
@@ -637,8 +662,8 @@ print(f"stump accuracy : {(pred == y).mean():.3f}   (noise ceiling ≈ 0.90)")</
   go();
 })();
 </script>
-<script src="../assets/js/videos.js?v=b7bcc79c"></script>
-<script src="../assets/js/lesson.js?v=ed2e768e"></script>
+<script src="../assets/js/videos.js?v=50ffd865"></script>
+<script src="../assets/js/lesson.js?v=3a58e097"></script>
 <script defer src="/_vercel/insights/script.js"></script>
 </body>
 </html>

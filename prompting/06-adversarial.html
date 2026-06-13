@@ -8,7 +8,7 @@
 <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
 <meta name="theme-color" content="#000000" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-<link rel="stylesheet" href="../assets/css/manual.css?v=f46aff47" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=289516f7" />
 </head>
 <body>
 
@@ -86,6 +86,11 @@ print(f"lift over raw draft    {final.mean() - correct.mean():+.3f}")</pre>
           <canvas class="py-plot" hidden height="260"></canvas>
         </div>
         <p class="note">Half-right drafts become two-thirds-right answers, paid for in one extra verification pass — that surplus is \(\Delta_{\mathrm{GV}}\) spent. Drop the verifier to \(v = 0.5\) (a coin) and the lift collapses to zero: a verifier no better than chance launders no information, which is the §6.8 caution stated as code. Push \(v\) higher and the ceiling rises toward what a perfect filter plus one retry can reach.</p>
+
+        <div class="exercise" data-answer="0.35" data-tol="0.02" data-hint="generator–verifier gap = verification accuracy − generation accuracy">
+          <div class="ex-q">A model writes a correct first draft with probability \(0.50\), but judges a candidate solution correctly with probability \(0.85\). What is the generator–verifier gap \(\Delta_{\mathrm{GV}}\) (EQ P6.1)?</div>
+          <div class="ex-reveal-src">\(\Delta_{\mathrm{GV}} = 0.85 - 0.50 =\) <b>0.35</b>. A positive gap means extra compute is better spent checking-and-selecting than generating longer — the surplus every pattern in this chapter is built to spend.</div>
+        </div>
 
         <p>Three topologies organize everything that follows: run the check <strong>after</strong> the draft (sequential — self-critique, Reflexion), run many checks <strong>in parallel</strong> (the council), or make two copies of the model <strong>fight</strong> and judge the wreckage (debate). The pre-mortem and red team are sequential patterns wearing armor: the critique arrives dressed as an attacker or a coroner, which turns out to matter enormously.</p>
 
@@ -309,6 +314,11 @@ causes for each — no overlap.</code></pre>
         <div class="eq-note">For \(N\) judge scores with pairwise correlation \(\rho\), only the <em>uncorrelated</em> part of the noise averages away. Judges sharing a base model, a prompt phrasing, or a context window share blind spots: \(\rho \gg 0\), and judges 4 through 9 buy almost nothing. <b>Engineering independence — distinct lenses, separate contexts, different phrasings, ideally different models — is worth more than raising N.</b></div>
         </div>
 
+        <div class="exercise" data-answer="0.4" data-tol="0.02" data-hint="Var = (1−ρ)σ²/N + ρσ²; plug ρ = 0.2, σ² = 1, N = 4">
+          <div class="ex-q">Four judge scores have pairwise correlation \(\rho = 0.2\) and per-judge variance \(\sigma^2 = 1\). Using EQ P6.3, what is the variance of their mean \(\bar s_N\) at \(N = 4\)?</div>
+          <div class="ex-reveal-src">\(\operatorname{Var}(\bar s_N) = \dfrac{(1-\rho)\sigma^2}{N} + \rho\sigma^2 = \dfrac{(0.8)(1)}{4} + (0.2)(1) = 0.2 + 0.2 =\) <b>0.4</b>. Half the variance is the irreducible correlation floor \(\rho\sigma^2 = 0.2\) — raising \(N\) shrinks only the other half, which is why decorrelating judges beats adding them.</div>
+        </div>
+
         <p>EQ P6.2 is easy to state and easy to disbelieve, so run it. The cell below builds an IID council — \(n\) judges each correct with probability \(a = 0.72\), voting independently — and reports majority accuracy from both a seeded simulation and the exact binomial sum, side by side, for every council size 1 through 9.</p>
 
         <div class="pycell" data-py>
@@ -336,6 +346,11 @@ plot_xy(list(sizes), exact_pts)</pre>
           <canvas class="py-plot" hidden height="260"></canvas>
         </div>
         <p class="note">Three readings off the printout. The odd sizes climb steadily — 72% at n=1 to ~92% at n=9 — which is the variance reduction EQ P6.3 promises when \(\rho = 0\). The even sizes <em>dip</em> below the odd ones (a strict majority demands a real lead, and ties count as losses), which is the arithmetic behind "use odd N." And flip \(a\) to 0.45: every added judge now makes the council <em>more</em> confidently wrong — the theorem's cruel symmetry. This is the ceiling a real council never reaches, because its judges are correlated; the simulator above shows the gap.</p>
+
+        <div class="exercise" data-answer="0.86" data-tol="0.02" data-hint="P(≥3 of 5 right) = sum of binomial terms for k = 3, 4, 5 with p = 0.72">
+          <div class="ex-q">A council of \(5\) independent judges each votes correctly with probability \(p = 0.72\). Using the Condorcet sum (EQ P6.2), what is the probability the strict majority is correct?</div>
+          <div class="ex-reveal-src">\(P_{\mathrm{maj}} = \binom{5}{3}p^3 q^2 + \binom{5}{4}p^4 q + \binom{5}{5}p^5\) with \(q = 0.28\): \(10(0.3732)(0.0784) + 5(0.2687)(0.28) + 0.1935 = 0.2926 + 0.3762 + 0.1935 \approx\) <b>0.86</b>. Five judges turn a 72% single verdict into an 86% council verdict — the variance reduction the IID theorem promises.</div>
+        </div>
 
         <p>Hence the production shape: <strong>N judges, each with a distinct lens, in separate contexts, plus an aggregator</strong> that sees only verdicts and evidence — never the artifact author's chain of thought. The lenses do double duty: they decorrelate the judges <em>and</em> partition the review surface, so five judges cover five failure classes instead of quintuple-checking grammar. This is also a familiar object wearing new clothes: GRPO scores each sampled response against its group's mean reward (Vol II · EQ 5.6) — the group is the baseline that makes a single noisy score meaningful. A council is the same variance-reduction move executed at inference time, with verdicts instead of rewards; self-consistency (Ch 04) is its degenerate cousin where every "judge" is the same persona resampled at temperature.</p>
         <pre><code><span class="c"># COUNCIL — each judge is a separate call; aggregator sees verdicts only</span>
@@ -469,7 +484,7 @@ points per side. Verdict + the single argument that decided it.</code></pre>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
 <script src="../assets/js/glossary.js?v=a9bc4f7e"></script>
-<script src="../assets/js/shared.js?v=badceda4"></script>
+<script src="../assets/js/shared.js?v=b22ff755"></script>
 <script src="../assets/js/exercises.js?v=56a8ee64"></script>
 <script src="../assets/js/search.js?v=b56ede0c"></script>
 <script src="../assets/js/pyrunner.js?v=501f0a15"></script>
@@ -753,8 +768,8 @@ points per side. Verdict + the single argument that decided it.</code></pre>
   });
 })();
 </script>
-<script src="../assets/js/videos.js?v=b7bcc79c"></script>
-<script src="../assets/js/lesson.js?v=ed2e768e"></script>
+<script src="../assets/js/videos.js?v=50ffd865"></script>
+<script src="../assets/js/lesson.js?v=3a58e097"></script>
 <script defer src="/_vercel/insights/script.js"></script>
 </body>
 </html>

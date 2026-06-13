@@ -7,7 +7,7 @@
 <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
 <meta name="theme-color" content="#000000" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-<link rel="stylesheet" href="../assets/css/manual.css?v=f46aff47" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=289516f7" />
 </head>
 <body>
 
@@ -61,6 +61,11 @@
           <div class="x-step"><span class="x-n">04</span><div>Output row = \(0.51\, v_1 + 0.19\, v_2 + 0.31\, v_3\) — dominated by the matching key, but always a blend, never a hard pick. That softness is what makes it differentiable.</div></div>
           <span class="x-result">RESULT: attention weights = (0.51, 0.19, 0.31)</span>
         </div></div>
+        </div>
+
+        <div class="exercise" data-answer="3" data-tol="0.001" data-hint="dot product divided by the square root of the head dimension">
+          <div class="ex-q">A query and key give a raw dot product \( q \cdot k = 12 \), and the head dimension is \( d_k = 16 \). What is the scaled attention score \( \dfrac{q \cdot k}{\sqrt{d_k}} \)?</div>
+          <div class="ex-reveal-src">\( \sqrt{d_k} = \sqrt{16} = 4 \), so the scaled score \( = 12 / 4 = \) <b>3</b>.</div>
         </div>
 
         <div class="pycell" data-py>
@@ -118,6 +123,11 @@ print("row 0 can only see itself, so out[0] == v_0 exactly:",
           <div class="x-step"><span class="x-n">03</span><div>After scaling, scores are \((1,\ 0)\): weight \(= 2.72/3.72 = 0.731\), gradient \(\approx 0.20\) — roughly 600× more signal flows back.</div></div>
           <span class="x-result">RESULT: unscaled → 0.9997 (stuck) · scaled → 0.731 (trainable)</span>
         </div></div>
+        </div>
+
+        <div class="exercise" data-answer="0.731" data-tol="0.01" data-hint="two-way softmax of (1, 0) is e¹ over (e¹ + e⁰)">
+          <div class="ex-q">Two keys produce scaled scores \( (1,\ 0) \). What softmax weight does the first key receive? (Use \( e^1 = 2.718,\ e^0 = 1 \).)</div>
+          <div class="ex-reveal-src">\( \dfrac{e^1}{e^1 + e^0} = \dfrac{2.718}{2.718 + 1} = \dfrac{2.718}{3.718} = \) <b>0.731</b> — comfortably inside softmax's responsive regime, unlike the saturated unscaled case.</div>
         </div>
 
         <div class="pycell" data-py>
@@ -200,6 +210,11 @@ print("the scaled column sits near 0.73 at every width: always trainable.")</pre
         </div></div>
         </div>
 
+        <div class="exercise" data-answer="128" data-tol="0.01" data-hint="bytes/token = 2 · L · h_kv · d_k · (bytes per element), then convert to KB by dividing by 1024">
+          <div class="ex-q">Using EQ 3.5 per single token (\( T = 1 \), \( b = 1 \)): \( L = 32 \), \( h_{kv} = 8 \), \( d_k = 128 \), FP16 (2 bytes/element). How many <b>KB</b> of KV cache does one token need?</div>
+          <div class="ex-reveal-src">Elements \( = 2 \times 32 \times 8 \times 128 = 65{,}536 \). Bytes \( = 65{,}536 \times 2 = 131{,}072 \). In KB: \( 131{,}072 / 1024 = \) <b>128</b> KB per token.</div>
+        </div>
+
         <div class="pycell" data-py>
           <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
           <pre class="py-src" contenteditable="true" spellcheck="false"># kv_cache_gb: EQ 3.5 as a function -- the number that sizes serving fleets
@@ -267,6 +282,11 @@ print(f"a batch of 32 such users: {fleet/1000:,.1f} TB. This is why §3.6 exists
         <div class="eq"><span class="eq-tag">EQ 3.6 — MLA: CACHE A LATENT, NOT K AND V</span>
         $$ c_t = W_{DKV}\, h_t \in \mathbb{R}^{d_c}, \qquad k_t^{(i)} = W_{UK}^{(i)} c_t, \quad v_t^{(i)} = W_{UV}^{(i)} c_t \qquad (d_c \ll h \cdot d_k) $$
         <div class="eq-note">DeepSeek-V3: \(d_c = 512\) versus \(h \cdot d_k = 16{,}384\) — a ~32× compression that <em>outperformed</em> full MHA in their ablations, because the up-projections \(W_{UK}, W_{UV}\) can be absorbed into neighboring matrices at inference. A decoupled RoPE component rides alongside the latent to preserve relative position.</div>
+        </div>
+
+        <div class="exercise" data-answer="0.125" data-tol="0.001" data-hint="GQA caches h_kv KV heads instead of h; the cache fraction is h_kv / h">
+          <div class="ex-q">A model has \( h = 64 \) query heads but uses GQA with only \( h_{kv} = 8 \) cached KV heads. What fraction of the full-MHA KV cache does it keep? (Answer as a decimal: \( h_{kv}/h \).)</div>
+          <div class="ex-reveal-src">Cache scales with KV heads, so the fraction is \( h_{kv}/h = 8/64 = 1/8 = \) <b>0.125</b> — an 8× reduction at near-zero quality cost.</div>
         </div>
 
         <table class="data">
@@ -357,7 +377,7 @@ print(f"a batch of 32 such users: {fleet/1000:,.1f} TB. This is why §3.6 exists
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
 <script src="../assets/js/glossary.js?v=a9bc4f7e"></script>
-<script src="../assets/js/shared.js?v=badceda4"></script>
+<script src="../assets/js/shared.js?v=b22ff755"></script>
 <script src="../assets/js/exercises.js?v=56a8ee64"></script>
 <script src="../assets/js/pyrunner.js?v=501f0a15"></script>
 <script src="../assets/js/search.js?v=b56ede0c"></script>
@@ -391,8 +411,8 @@ print(f"a batch of 32 such users: {fleet/1000:,.1f} TB. This is why §3.6 exists
   upd();
 })();
 </script>
-<script src="../assets/js/videos.js?v=b7bcc79c"></script>
-<script src="../assets/js/lesson.js?v=ed2e768e"></script>
+<script src="../assets/js/videos.js?v=50ffd865"></script>
+<script src="../assets/js/lesson.js?v=3a58e097"></script>
 <script defer src="/_vercel/insights/script.js"></script>
 </body>
 </html>

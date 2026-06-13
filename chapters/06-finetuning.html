@@ -7,7 +7,7 @@
 <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
 <meta name="theme-color" content="#000000" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-<link rel="stylesheet" href="../assets/css/manual.css?v=f46aff47" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=289516f7" />
 </head>
 <body>
 
@@ -57,6 +57,11 @@
           </tbody>
         </table>
         <p><strong>Full fine-tuning</strong> updates every weight — maximum capacity, but it costs training-grade memory (≈16 bytes/param with AdamW: a 7B model wants ~112 GB before activations), produces a full model copy per task, and courts <strong>catastrophic forgetting</strong> of general capability. Parameter-efficient fine-tuning (PEFT) exists to dodge all three.</p>
+
+        <div class="exercise" data-answer="112" data-tol="0.01" data-unit="GB" data-hint="AdamW full FT is about 16 bytes per parameter.">
+          <div class="ex-q">Full fine-tuning with AdamW costs ≈16 bytes per parameter (weights + gradients + two optimizer moments, in mixed precision). How many GB does a <b>7B</b>-parameter model need for those states, before activations?</div>
+          <div class="ex-reveal-src">\(7\times10^9 \text{ params} \times 16 \text{ bytes} = 1.12\times10^{11}\) bytes \(= \) <b>112</b> GB. This is why a 7B full fine-tune already overflows a single 80 GB card.</div>
+        </div>
       </section>
 
       <!-- ====================== 6.2 ====================== -->
@@ -67,6 +72,16 @@
         <div class="eq"><span class="eq-tag">EQ 6.1 — LoRA</span>
         $$ W \;=\; W_0 + \Delta W \;=\; W_0 + \frac{\alpha}{r}\, B A, \qquad A \in \mathbb{R}^{r \times d_{\text{in}}},\; B \in \mathbb{R}^{d_{\text{out}} \times r},\; r \ll d $$
         <div class="eq-note">\(A\) starts Gaussian, \(B\) starts at <b>zero</b> — so training begins exactly at the pre-trained model and drifts smoothly away. \(\alpha/r\) rescales so behavior is stable across ranks. Trainable parameters per matrix drop from \(d_{\text{out}} d_{\text{in}}\) to \(r(d_{\text{in}} + d_{\text{out}})\). After training, \(BA\) can be <b>merged into \(W_0\)</b> — zero inference overhead — or kept separate and hot-swapped, letting one server multiplex hundreds of LoRA “personalities” over a single base model.</div>
+        </div>
+
+        <div class="exercise" data-answer="65536" data-tol="0.001" data-hint="square matrix means d_in = d_out = d, so the count is 2dr.">
+          <div class="ex-q">A square projection has \(d_{\text{in}} = d_{\text{out}} = 4096\). You attach a LoRA adapter of rank \(r = 8\). How many trainable parameters does the adapter add (\(A\) plus \(B\))?</div>
+          <div class="ex-reveal-src">Trainable params \(= r(d_{\text{in}} + d_{\text{out}}) = 2dr = 2 \times 4096 \times 8 = \) <b>65536</b>.</div>
+        </div>
+
+        <div class="exercise" data-answer="0.39" data-tol="0.02" data-hint="2dr divided by d², times 100.">
+          <div class="ex-q">For that same \(d = 4096\), \(r = 8\) adapter, what percent of the full \(d^2\) update does it train? (Give the percent, e.g. enter <b>0.39</b> for 0.39%.)</div>
+          <div class="ex-reveal-src">Fraction \(= \dfrac{2dr}{d^2} = \dfrac{2r}{d} = \dfrac{16}{4096} = 0.00390625\). As a percent: \(\times 100 = \) <b>0.39</b>%. Rank 8 trains under four-tenths of one percent of the matrix.</div>
         </div>
 
         <div class="pycell" data-py>
@@ -155,6 +170,16 @@ plot_xy(ranks, errs)</pre>
         <div class="eq"><span class="eq-tag">EQ 6.2 — NF4: QUANTILES OF A GAUSSIAN</span>
         $$ q_i = \mathrm{Quantile}_{\mathcal{N}(0,1)}\!\left( \delta + \frac{i}{15}\,(1 - 2\delta) \right), \quad i = 0, \ldots, 15, \quad \delta \approx 0.03 \qquad\text{(then normalized to } [-1, 1]\text{)} $$
         <div class="eq-note">Trained weights are approximately Gaussian, so NF4 places its 16 levels at Gaussian <b>quantiles</b> — equal probability mass per bin, minimizing expected error where weights actually live (dense near zero, sparse at the tails). A second-order trick, <b>double quantization</b>, quantizes the per-block scale factors themselves, saving another ~0.4 bits/param. Full quantization theory: Chapter 07.</div>
+        </div>
+
+        <div class="exercise" data-answer="16" data-tol="0.001" data-hint="b bits encode 2^b distinct levels.">
+          <div class="ex-q">NF4 stores each weight in \(b = 4\) bits. How many distinct quantization levels does that allow? (\(2^b\).)</div>
+          <div class="ex-reveal-src">A \(b\)-bit code addresses \(2^b\) values: \(2^4 = \) <b>16</b> levels. NF4 places these 16 at Gaussian quantiles rather than on a uniform grid.</div>
+        </div>
+
+        <div class="exercise" data-answer="35" data-tol="0.01" data-unit="GB" data-hint="4 bits = 0.5 bytes per parameter.">
+          <div class="ex-q">QLoRA freezes the base weights at 4 bits (0.5 bytes/param). How many GB do the frozen weights of a <b>70B</b> model occupy?</div>
+          <div class="ex-reveal-src">\(70\times10^9 \times 0.5 \text{ bytes} = 3.5\times10^{10}\) bytes \(= \) <b>35</b> GB — small enough to sit on one 48 GB card with room left for bf16 adapters and activations.</div>
         </div>
 
         <p class="note">Gradients flow <em>through</em> the frozen 4-bit weights into the adapters only. Quality matches 16-bit LoRA closely on instruction-tuning benchmarks — the canonical result that made serious fine-tuning a consumer-hardware activity.</p>
@@ -250,13 +275,13 @@ plot_xy(ranks, errs)</pre>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
 <script src="../assets/js/glossary.js?v=a9bc4f7e"></script>
-<script src="../assets/js/shared.js?v=badceda4"></script>
+<script src="../assets/js/shared.js?v=b22ff755"></script>
 <script src="../assets/js/exercises.js?v=56a8ee64"></script>
 <script src="../assets/js/pyrunner.js?v=501f0a15"></script>
 <script src="../assets/js/search.js?v=b56ede0c"></script>
 <script src="../assets/js/interactives.js?v=f738a9df"></script>
-<script src="../assets/js/videos.js?v=b7bcc79c"></script>
-<script src="../assets/js/lesson.js?v=ed2e768e"></script>
+<script src="../assets/js/videos.js?v=50ffd865"></script>
+<script src="../assets/js/lesson.js?v=3a58e097"></script>
 <script defer src="/_vercel/insights/script.js"></script>
 </body>
 </html>

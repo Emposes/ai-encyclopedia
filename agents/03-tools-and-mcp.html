@@ -8,7 +8,7 @@
 <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
 <meta name="theme-color" content="#000000" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-<link rel="stylesheet" href="../assets/css/manual.css?v=f46aff47" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=289516f7" />
 </head>
 <body>
 
@@ -58,6 +58,11 @@
         <div class="eq"><span class="eq-tag">EQ A3.1 — TOOL SELECTION IS A SOFTMAX OVER DESCRIPTIONS</span>
         $$ P(t_i \mid g) \;=\; \frac{\exp\!\big(s_i/\tau\big)}{\sum_j \exp\!\big(s_j/\tau\big)}, \qquad s_i \;=\; f_\theta\!\big(g,\; \text{name}_i,\; \text{desc}_i,\; \text{schema}_i\big) $$
         <div class="eq-note">\(g\) is the goal in context; \(s_i\) is how well tool \(i\)'s <em>advertised surface</em> matches it — a function of the words you wrote, never of the code you shipped. The consequence is sharp: if two tools have overlapping descriptions, their scores converge, the distribution flattens, and the model picks wrong roughly as often as right. <b>The clarity that separates tools in the model's mind is clarity you put in the text.</b> Lower effective \(\tau\) (a more decisive model) only helps if the scores are actually separated.</div>
+        </div>
+
+        <div class="exercise" data-answer="0.731" data-tol="0.02" data-hint="softmax: e^(s_i/τ) over the sum; e^2 ≈ 7.389, e^1 ≈ 2.718">
+          <div class="ex-q">The model weighs two tools for a goal. Their match scores are \(s_1 = 2\) and \(s_2 = 1\), at temperature \(\tau = 1\). By EQ A3.1, what is \(P(t_1 \mid g) = \dfrac{e^{s_1/\tau}}{e^{s_1/\tau} + e^{s_2/\tau}}\)?</div>
+          <div class="ex-reveal-src">\(e^{2} = 7.389\), \(e^{1} = 2.718\); sum \(= 10.107\). \(P(t_1) = 7.389 / 10.107 \approx 0.731\). A one-point score gap already gives a clear winner — but if the two descriptions overlapped and the scores converged toward equal, this would slide toward 0.5: a coin flip on which tool fires. The answer is <b>0.731</b>.</div>
         </div>
 
         <p class="note">Three corollaries fall straight out of EQ A3.1. <strong>(1) Distinctness beats completeness</strong> — a tool that is easy to tell apart from its neighbors is called correctly more often than a more capable tool that blurs into them. <strong>(2) Names are high-leverage tokens</strong> — they are read first and carry the prior. <strong>(3) The model cannot recover information you withheld</strong>: an undocumented side effect, a units convention left implicit, a failure mode unmentioned — none of it exists for the model until it shows up, the hard way, in a result.</p>
@@ -152,6 +157,11 @@ lint(bad); lint(good)</pre>
         <div class="eq-note">An <em>illustrative</em> framing, not a measured quantity: a good result drives \(\rho\) toward 1 by returning what the model needs to act and nothing else. Raw API payloads sit near \(\rho \approx 0.05\) — pagination cursors, internal IDs, null fields, ISO timestamps the model will never reference. The engineering move is to <b>transform at the tool boundary</b>: filter, rename to human-legible fields, round, summarize, and return a compact structured object. The cost you pay in code is repaid every turn the result sits in context.</div>
         </div>
 
+        <div class="exercise" data-answer="2000" data-tol="0.001" data-unit="tokens" data-hint="tokens ≈ characters ÷ 4">
+          <div class="ex-q">A raw tool result serializes to <b>8,000</b> characters of JSON. Using the rough rule of <b>~4 characters per token</b>, roughly how many tokens does it cost — and remember it rides along on every later call?</div>
+          <div class="ex-reveal-src">Tokens \(\approx 8{,}000 / 4 = 2{,}000\). Those 2,000 tokens are charged again on every subsequent turn until something removes them — the case for curating at the tool boundary instead of dumping the payload. The answer is <b>2000</b>.</div>
+        </div>
+
         <div class="pycell" data-py>
           <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
           <pre class="py-src" contenteditable="true" spellcheck="false"># one API result, two returns: raw dump vs curated — token arithmetic
@@ -181,6 +191,11 @@ print("in both returns — only one buries them under cursors and nulls")</pre>
           <canvas class="py-plot" hidden height="260"></canvas>
         </div>
 
+        <div class="exercise" data-answer="0.05" data-tol="0.02" data-hint="ρ = u / r, decision-relevant over total">
+          <div class="ex-q">A tool returns <b>3,000</b> tokens, of which only <b>150</b> bear on the model's next decision (the rest are cursors, IDs, nulls, timestamps). By EQ A3.2, what is the actionable density \(\rho = u/r\)?</div>
+          <div class="ex-reveal-src">\(\rho = u/r = 150 / 3{,}000 = 0.05\). That is the signature of a raw API dump — 95% of the tokens are noise the model must rule out at every step. Curating toward \(\rho \to 1\) is the whole job of result design. The answer is <b>0.05</b>.</div>
+        </div>
+
         <p><strong>Structured and dense.</strong> Return the smallest object that answers the call: the fields the model asked about, in stable names it can rely on, with units and currencies explicit. Drop nulls. Round floats that don't need precision. If a result is a list, return the top-k that matter and a count of the rest — <code>{"shown": 5, "total_matches": 218}</code> — rather than all 218.</p>
 
         <p><strong>Truncation discipline.</strong> When a result is unavoidably large — a file, a log, a query that hit thousands of rows — truncate deliberately and <em>say so in-band</em>. A return that ends with <code>… [truncated: 9,640 of 12,000 lines omitted; call again with a line range to see more]</code> keeps the model oriented and tells it exactly how to get more. Silent truncation is worse than the raw dump, because the model reasons confidently over data it doesn't know is incomplete.</p>
@@ -201,6 +216,11 @@ print("in both returns — only one buries them under cursors and nulls")</pre>
         <div class="eq"><span class="eq-tag">EQ A3.3 — WHY N×M INTEGRATIONS DIED</span>
         $$ I_{\text{bespoke}} \;=\; N \times M \qquad\longrightarrow\qquad I_{\text{MCP}} \;=\; N + M $$
         <div class="eq-note">A shared protocol collapses a multiplicative integration burden into an additive one: each host implements MCP <em>once</em> (the client side), each service implements it <em>once</em> (the server side), and any host talks to any server. This is precisely the USB-C argument — one connector standard so the cable count stops scaling with the product of devices. The <b>Model Context Protocol</b>, opened in late 2024 and now broadly adopted across agent platforms, is that connector for tools.</div>
+        </div>
+
+        <div class="exercise" data-answer="39" data-tol="0.001" data-hint="bespoke = N×M, MCP = N+M; subtract">
+          <div class="ex-q">With <b>6</b> agent hosts and <b>9</b> services, the bespoke world needs \(N \times M\) integrations and MCP needs only \(N + M\). How many integrations does the standard <em>save</em> — i.e. \(N\times M - (N+M)\)?</div>
+          <div class="ex-reveal-src">Bespoke \(= 6 \times 9 = 54\); MCP \(= 6 + 9 = 15\); saved \(= 54 - 15 = 39\). The multiplicative-to-additive collapse is the entire USB-C argument: each host and each service implements the protocol once. The answer is <b>39</b>.</div>
         </div>
 
         <p>MCP names three roles. The <strong>host</strong> is the application the user runs (an IDE assistant, a chat client, an agent runtime). Inside it, an MCP <strong>client</strong> manages a connection to one MCP <strong>server</strong> — a separate process, local or remote, that exposes capabilities. One host runs many clients, one per server it has connected.</p>
@@ -262,6 +282,11 @@ print("in both returns — only one buries them under cursors and nulls")</pre>
         <div class="eq"><span class="eq-tag">EQ A3.4 — THE LETHAL TRIFECTA</span>
         $$ R_{\text{exfil}} \;=\; \mathbb{1}\big[\text{private data access}\big]\;\cdot\;\mathbb{1}\big[\text{untrusted content}\big]\;\cdot\;\mathbb{1}\big[\text{outbound channel}\big] $$
         <div class="eq-note">A product of indicators: the exfiltration risk is non-zero only when an agent can <em>(1)</em> reach sensitive data, <em>(2)</em> ingest attacker-controlled text, and <em>(3)</em> send information somewhere the attacker can observe. <b>Zero any one factor and the product is zero.</b> That is the whole defensive strategy — not "make the model robust to injection" (no one can, yet), but "ensure these three never coincide in one agent with one trust boundary." Most real exploits are an exercise in finding all three already wired together.</div>
+        </div>
+
+        <div class="exercise" data-answer="0" data-tol="0.001" data-hint="multiply the three indicators; any zero zeroes the product">
+          <div class="ex-q">An agent reaches private data (indicator = 1) and ingests untrusted content (indicator = 1), but has <b>no outbound channel</b> (indicator = 0). By EQ A3.4, \(R_{\text{exfil}} = \mathbb{1}[\text{private}]\cdot\mathbb{1}[\text{untrusted}]\cdot\mathbb{1}[\text{outbound}]\). What is \(R_{\text{exfil}}\)?</div>
+          <div class="ex-reveal-src">\(R_{\text{exfil}} = 1 \cdot 1 \cdot 0 = 0\). The exfiltration risk is a product, so removing any single leg drops it to zero — which is the entire defensive strategy: make sure the three never coincide in one trust boundary. The answer is <b>0</b>.</div>
         </div>
 
         <p>The factors are independently common, which is what makes the trifecta easy to assemble by accident. A coding agent reads your private repo (1), browses linked issues and docs (2), and can open a pull request or hit a webhook (3). An email assistant reads your inbox (1, and the inbox is pure untrusted content, 2) and can send mail (3). Each capability shipped for a good reason; the vulnerability is in their <em>conjunction</em>, and no single team necessarily owns the conjunction.</p>
@@ -363,7 +388,7 @@ print("in both returns — only one buries them under cursors and nulls")</pre>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
 <script src="../assets/js/glossary.js?v=a9bc4f7e"></script>
-<script src="../assets/js/shared.js?v=badceda4"></script>
+<script src="../assets/js/shared.js?v=b22ff755"></script>
 <script src="../assets/js/exercises.js?v=56a8ee64"></script>
 <script src="../assets/js/pyrunner.js?v=501f0a15"></script>
 <script src="../assets/js/search.js?v=b56ede0c"></script>
@@ -665,8 +690,8 @@ print("in both returns — only one buries them under cursors and nulls")</pre>
 
 })();
 </script>
-<script src="../assets/js/videos.js?v=b7bcc79c"></script>
-<script src="../assets/js/lesson.js?v=ed2e768e"></script>
+<script src="../assets/js/videos.js?v=50ffd865"></script>
+<script src="../assets/js/lesson.js?v=3a58e097"></script>
 <script defer src="/_vercel/insights/script.js"></script>
 </body>
 </html>
