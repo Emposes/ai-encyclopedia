@@ -154,6 +154,12 @@
     var path = location.pathname.replace(/\.html$/, "");
     var isChapter = /\/(chapters|ml|prompting|agents)\//.test(path);
     if (!isChapter) return;
+    /* record last-visited chapter so the landing can offer "continue" */
+    try {
+      var h1 = document.querySelector(".chapter-hero h1");
+      var title = h1 ? h1.textContent.replace(/\s+/g, " ").trim() : (document.title.split("—")[0] || "").trim();
+      localStorage.setItem("aie-last", JSON.stringify({ path: location.pathname, title: title }));
+    } catch (e) {}
     var marked = false;
     window.addEventListener("scroll", function () {
       if (marked) return;
