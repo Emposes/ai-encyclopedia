@@ -148,22 +148,11 @@
     return m ? m[1].trim().slice(0, 64) : "runnable numpy — edit freely";
   }
 
-  /* ---------- the Lab panel (desktop) ---------- */
-  function buildLab(cells) {
-    var panel = document.createElement("aside");
-    panel.className = "lab-panel";
-    panel.setAttribute("aria-label", "Python lab");
-    panel.innerHTML =
-      "<div class='lab-head'><span class='lh-dot'></span><span class='lh-title'>THE LAB — CHAPTER PYTHON</span>" +
-      "<span class='py-status' style='font-family:ui-monospace,Menlo,monospace;font-size:9px;color:#636363;letter-spacing:.1em;'></span>" +
-      "<button class='lh-close'>ESC ✕</button></div>" +
-      "<div class='lab-tabs'></div><div class='lab-body'></div>" +
-      "<div class='lab-hint'>EDIT THE CODE FREELY — IT RUNS IN YOUR BROWSER (PYODIDE/WASM). BREAK IT ON PURPOSE.</div>";
-    document.body.appendChild(panel);
-    var tabs = panel.querySelector(".lab-tabs");
-    var body = panel.querySelector(".lab-body");
-
-    var entries = cells.map(function (cell, i) {
+  /* ---------- register cells into the shared dock (desktop) ----------
+     Each cell becomes a chip in the prose; clicking the chip opens the
+     dock to that cell's tab. The dock is NEVER auto-opened. */
+  function buildChips(cells) {
+    cells.forEach(function (cell, i) {
       var title = titleFor(cell, i);
       var chip = document.createElement("div");
       chip.className = "py-chip";
@@ -171,59 +160,10 @@
         "<span class='pc-icon'>PY " + String(i + 1).padStart(2, "0") + "</span>" +
         "<span class='pc-title'><b>" + title + "</b><span># " + commentLine(cell) + "</span></span>" +
         "<span class='pc-cta'>OPEN IN LAB ▸</span>";
-      cell.parentNode.insertBefore(chip, cell);
-      body.appendChild(cell);            // dock the real cell into the panel
-      cell.style.display = "none";
-
-      var tab = document.createElement("button");
-      tab.className = "lab-tab";
-      tab.textContent = "CELL " + String(i + 1).padStart(2, "0");
-      tab.title = title;
-      tabs.appendChild(tab);
-
-      return { cell: cell, chip: chip, tab: tab };
+      cell.parentNode.insertBefore(chip, cell);   // chip takes the cell's place in flow
+      var key = window.AIEDock.registerCode(cell, title); // dock moves the cell into the panel
+      chip.addEventListener("click", function () { window.AIEDock.show(key); });
     });
-
-    var current = -1;
-    function activate(i) {
-      entries.forEach(function (e, j) {
-        e.cell.style.display = j === i ? "block" : "none";
-        e.tab.classList.toggle("on", j === i);
-      });
-      current = i;
-    }
-    function refreshTriggers() {
-      if (window.ScrollTrigger) setTimeout(function () { window.ScrollTrigger.refresh(); }, 350);
-    }
-    function open(i) {
-      activate(i);
-      panel.classList.add("open");
-      document.body.classList.add("lab-open");
-      refreshTriggers();
-    }
-    function close() {
-      panel.classList.remove("open");
-      document.body.classList.remove("lab-open");
-      refreshTriggers();
-    }
-
-    entries.forEach(function (e, i) {
-      e.chip.addEventListener("click", function () { open(i); });
-      e.tab.addEventListener("click", function () { activate(i); });
-    });
-    panel.querySelector(".lh-close").addEventListener("click", close);
-    document.addEventListener("keydown", function (ev) {
-      if (ev.key === "Escape") close();
-    });
-    activate(0);
-    /* code lives ON the right by default — the Lab opens with the page
-       (unless the reader closed it here before: remembered per session) */
-    var dismissed = false;
-    try { dismissed = sessionStorage.getItem("aie-lab-closed") === location.pathname; } catch (e) {}
-    panel.querySelector(".lh-close").addEventListener("click", function () {
-      try { sessionStorage.setItem("aie-lab-closed", location.pathname); } catch (e) {}
-    });
-    if (!dismissed) setTimeout(function () { open(0); }, 250);
   }
 
   /* ---------- inline fallback (narrow screens) ---------- */
@@ -251,7 +191,7 @@
     if (!cells.length) return;
     cells.forEach(function (c) { c.classList.add("wired"); });
     cells.forEach(wire);
-    if (DESKTOP) buildLab(cells); else buildInline(cells);
+    if (DESKTOP && window.AIEDock) buildChips(cells); else buildInline(cells);
     /* docking the cells collapses ~400px each out of the prose flow —
        scroll-trigger positions measured before this are stale */
     if (window.ScrollTrigger) setTimeout(function () { window.ScrollTrigger.refresh(); }, 60);

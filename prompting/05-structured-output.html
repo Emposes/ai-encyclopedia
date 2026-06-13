@@ -8,7 +8,7 @@
 <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
 <meta name="theme-color" content="#000000" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-<link rel="stylesheet" href="../assets/css/manual.css?v=49d672cc" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=84ebc43a" />
 </head>
 <body>
 
@@ -44,6 +44,7 @@
       <a href="#s5"><span class="n">5.5</span>Schemas &amp; tool calls</a>
       <a href="#s6"><span class="n">5.6</span>Failure modes</a>
       <a href="#s7"><span class="n">5.7</span>Constrained decoding</a>
+      <a href="#refs"><span class="n">§</span>Further reading</a>
     </nav>
 
     <main>
@@ -267,6 +268,41 @@ output_format = { "type": "json_schema", "schema": { ... } }
           <div class="w-note">Each card is a plausible model reply. PARSE RAW runs an actual <code>JSON.parse</code> plus a schema check (enum + types) — the verdict text is the real engine error. DEFEND applies that card's documented fix and re-runs. Note card 4: it <em>parses green and validates red</em> — the failure mode a try/catch alone never catches. And card 6's bracket-balancer "succeeds" by silently amputating data: detection and re-request beat repair.</div>
         </div>
 
+        <p>Here is the first two stages of that pipeline as code you can run and break — <code>extract</code> and <code>repair</code> over six realistic messy replies. Watch the last case fail: syntax-only repair cannot touch Python literals, which is exactly why the pipeline's honest answer to that one is a retry, not a cleverer regex.</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># defensive JSON repair — strip fences, grab first {...}, fix trailing commas, json.loads
+import json, re
+np = __import__("numpy"); np.random.default_rng(0)            # seeded per house style; logic is deterministic
+
+def repair(s):
+    s = re.sub(r"```[a-zA-Z]*", "", s).replace("```", "")    # 1. strip code fences
+    a, b = s.find("{"), s.rfind("}")
+    if a &lt; 0 or b &lt;= a: return None                          # 2. find outermost {...}
+    s = re.sub(r",\s*([}\]])", r"\1", s[a:b+1])              # 3. kill trailing commas
+    try: return json.loads(s)                                # 4. strict parse — never eval
+    except json.JSONDecodeError: return None
+
+cases = [
+    '{"label": "negative", "score": 0.91}',                  # already clean
+    '```json\n{"label": "neutral", "score": 0.5}\n```',      # markdown fence
+    'Sure! Here you go:\n{"label": "positive", "score": 0.8}\nHope that helps!',  # pre/postamble
+    '{"label": "negative", "score": 0.87,}',                 # trailing comma
+    '{"label": "positive", "tags": ["a", "b",],}',           # nested trailing commas
+    "{'label': 'negative'}",                                 # python literals — syntax repair can't help
+]
+ok = 0
+for i, c in enumerate(cases, 1):
+    r = repair(c); ok += r is not None
+    print(f"case {i}: {'PARSED' if r is not None else 'FAILED'}  -> {r}")
+print(f"\nrepaired {ok}/{len(cases)}; only the Python-literal case defeats syntax-only repair -> retry")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+        <p class="note">Five of six recover, and the sixth fails <em>loudly</em> — which is the point. The single-quote / <code>True</code> / <code>None</code> dialect from code-heavy training data is genuinely ambiguous (an apostrophe inside a value will break any quote-swapping regex), so the disciplined move is to surface the failure and re-prompt with the parser's error rather than paper over it. Repair what is mechanical; escalate what is semantic.</p>
+
         <div class="callout warn">
           <span class="co-icon">RULE</span>
           <p><strong>Repair syntax mechanically; never repair semantics silently.</strong> Stripping a fence loses nothing. Mapping <code>"slightly_negative"</code> to <code>"negative"</code> changes the answer — do it only with a log line, or better, send the validator error back to the model and let it correct itself (Chapter 06 builds this into a full critique loop).</p>
@@ -283,6 +319,38 @@ output_format = { "type": "json_schema", "schema": { ... } }
         <div class="eq-note">\(\mathcal{A}(q_s)\) is the allowed-token set in automaton state \(q_s\). The model's distribution is <b>renormalized over the legal moves only</b>, then temperature and top-p (Vol II · EQ 8.2 machinery) apply to the survivors. Validity becomes a property of the decoder, not of the model's cooperation.</div>
         </div>
 
+        <p>The toy below is EQ P5.3 in eight lines. A tiny vocabulary holds three legal enum members alongside near-misses the model is fond of (<code>slightly_negative</code>, <code>POSITIVE</code>) and structural debris (<code>{</code>, <code>&lt;/s&gt;</code>). We hand the model logits that <em>prefer the wrong tokens</em>, then sample 200 times with and without the grammar mask. Free sampling scatters across the vocabulary; masked sampling cannot leave the enum no matter what the model wanted:</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># constrained decoding toy — mask logits to a grammar so only valid enum tokens survive
+import numpy as np
+rng = np.random.default_rng(0)
+vocab   = ["positive","neutral","negative","slightly_negative","POSITIVE","maybe","{","&lt;/s&gt;"]
+allowed = {"positive","neutral","negative"}                  # the grammar: enum members only
+mask    = np.array([1.0 if t in allowed else 0.0 for t in vocab])
+
+def sample(logits, constrain):
+    z = np.where(mask &gt; 0, logits, -np.inf) if constrain else logits.copy()  # EQ P5.3
+    p = np.exp(z - z.max()); p /= p.sum()                    # softmax over survivors
+    return vocab[rng.choice(len(vocab), p=p)]
+
+logits  = rng.normal(0, 2, len(vocab))                       # what the model "wants"
+free    = [sample(logits, False) for _ in range(200)]
+grammar = [sample(logits, True ) for _ in range(200)]
+
+bad_free = sum(t not in allowed for t in free)
+bad_con  = sum(t not in allowed for t in grammar)
+print("argmax token (what the model wanted):", vocab[int(logits.argmax())])
+print(f"FREE sampling  : {bad_free:3d}/200 invalid   e.g. {sorted(set(free))[:3]}")
+print(f"GRAMMAR-MASKED : {bad_con:3d}/200 invalid   emitted set = {sorted(set(grammar))}")
+print("invalid output is not unlikely under masking — it is unrepresentable")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+        <p class="note">The model's single most-wanted token here is <code>{</code> — structurally useless for an enum field — yet the masked column emits only the three legal values, 0/200 violations. That is the whole promise of rung 6: validity is a property of the decoder, not of the model's cooperation. Now read the second subtlety below in that light — the mask <em>renormalizes</em> the model's distribution, it does not improve it, so a model that wanted <code>{</code> is being dragged somewhere it assigns low joint probability.</p>
+
         <p>Two subtleties separate the good implementations from the slow or broken ones:</p>
         <ul>
           <li><strong>Token–grammar misalignment.</strong> The grammar is defined over characters, but the model emits tokens — and <code>"true"</code> might be one token or four, with thousands of vocabulary entries spanning any given character boundary. Engines precompute, for each automaton state, which of the ~100K+ tokens are admissible (Outlines' FSM indexing, XGrammar's adaptive token-mask cache), turning a per-step vocabulary scan into a lookup. Done naively, masking dominates decode latency; done well, it is near-free.</li>
@@ -294,6 +362,19 @@ output_format = { "type": "json_schema", "schema": { ... } }
           <span class="co-icon">NEXT</span>
           <p><strong>Structure makes output checkable — now make the model check it.</strong> Chapter 06: self-critique loops, rubric-driven revision, red-team prompts that attack your own system, and councils of models that grade each other's work.</p>
         </div>
+      </section>
+
+      <section class="section" id="refs">
+        <div class="sec-head"><span class="sec-num">§</span><h2>Further reading</h2></div>
+        <ul>
+          <li>Crockford, D. (2006). <em>The application/json Media Type for JavaScript Object Notation (JSON)</em>, RFC 4627. — the canonical grammar this whole chapter's parsers and repairs are defending; note it forbids trailing commas.</li>
+          <li>JSON Schema Org. (2020). <em>JSON Schema Draft 2020-12: Core and Validation</em>. — the specification that rung 4's prompts paste in and rung 6's decoders compile; the source of the <code>description</code>/<code>enum</code>/<code>required</code> keywords used throughout.</li>
+          <li>Willard, B. T. &amp; Louf, R. (2023). <em>Efficient Guided Generation for Large Language Models</em>. — the Outlines paper; reframes constrained decoding as FSM indexing over the vocabulary, the mechanism behind EQ P5.3's near-free masking.</li>
+          <li>Dong, Y. et al. (2024). <em>XGrammar: Flexible and Efficient Structured Generation Engine for Large Language Models</em>. — adaptive token-mask caching for context-free grammars; the production answer to token–grammar misalignment.</li>
+          <li>Geng, S. et al. (2023). <em>Grammar-Constrained Decoding for Structured NLP Tasks without Finetuning</em>. — shows grammar masking guarantees syntax but can distort the joint distribution, motivating §5.7's reason-then-constrain split.</li>
+          <li>Anthropic. (2025). <em>Claude Documentation: Tool Use, Structured Outputs, and Prompt Engineering with XML Tags</em>. — primary source for rungs 3–6 in practice: prefilling, XML-tag conventions, strict tool use, and structured outputs.</li>
+          <li>OpenAI. (2024). <em>Introducing Structured Outputs in the API</em>. — describes constrained decoding compiled from JSON Schema with guaranteed schema conformance, the commercial instantiation of rung 6.</li>
+        </ul>
       </section>
 
       <nav class="pager">
@@ -313,8 +394,9 @@ output_format = { "type": "json_schema", "schema": { ... } }
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
-<script src="../assets/js/glossary.js?v=de942868"></script>
-<script src="../assets/js/shared.js?v=2ab4fc41"></script>
+<script src="../assets/js/glossary.js?v=a9bc4f7e"></script>
+<script src="../assets/js/shared.js?v=badceda4"></script>
+<script src="../assets/js/pyrunner.js?v=abf14a7e"></script>
 <script src="../assets/js/search.js?v=b56ede0c"></script>
 <script>
 /* chapter instruments — single IIFE, no globals */

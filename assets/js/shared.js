@@ -50,6 +50,105 @@
     }
   };
 
+  /* ---------- AIEDock: the right-side context dock (code + reference) ----------
+     One panel hosts BOTH runnable code cells (tabs) and the detailed
+     definition of any clicked glossary term. Opens only on demand — never
+     auto-opens. Desktop only (mobile keeps inline cells + hover tooltips). */
+  window.AIEDock = (function () {
+    var panel, tabsEl, bodyEl, titleEl, hintEl, built = false;
+    var tabs = [], codeN = 0;
+    var DESKTOP = window.matchMedia("(min-width: 60em)").matches;
+
+    function esc(s) {
+      return String(s).replace(/[&<>"]/g, function (c) {
+        return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+      });
+    }
+    function refreshTriggers() {
+      if (window.ScrollTrigger) setTimeout(function () { window.ScrollTrigger.refresh(); }, 350);
+    }
+    function ensure() {
+      if (built) return;
+      built = true;
+      panel = document.createElement("aside");
+      panel.className = "lab-panel";
+      panel.setAttribute("aria-label", "Reference and code dock");
+      panel.innerHTML =
+        "<div class='lab-head'><span class='lh-dot'></span>" +
+        "<span class='lh-title' id='aiedock-title'>REFERENCE</span>" +
+        "<span class='py-status' style='font-family:ui-monospace,Menlo,monospace;font-size:9px;color:#636363;letter-spacing:.1em;'></span>" +
+        "<button class='lh-close' id='aiedock-close'>ESC ✕</button></div>" +
+        "<div class='lab-tabs' id='aiedock-tabs'></div>" +
+        "<div class='lab-body' id='aiedock-body'></div>" +
+        "<div class='lab-hint' id='aiedock-hint'></div>";
+      document.body.appendChild(panel);
+      tabsEl = panel.querySelector("#aiedock-tabs");
+      bodyEl = panel.querySelector("#aiedock-body");
+      titleEl = panel.querySelector("#aiedock-title");
+      hintEl = panel.querySelector("#aiedock-hint");
+      panel.querySelector("#aiedock-close").addEventListener("click", close);
+      document.addEventListener("keydown", function (ev) { if (ev.key === "Escape") close(); });
+    }
+    function open() { ensure(); panel.classList.add("open"); if (DESKTOP) document.body.classList.add("lab-open"); refreshTriggers(); }
+    function close() { if (!panel) return; panel.classList.remove("open"); document.body.classList.remove("lab-open"); refreshTriggers(); }
+    function activate(key) {
+      tabsEl.style.display = tabs.length > 1 ? "flex" : "none";
+      tabs.forEach(function (t) {
+        var on = t.key === key;
+        t.paneEl.style.display = on ? "block" : "none";
+        t.tabEl.classList.toggle("on", on);
+        if (on) { titleEl.textContent = t.title; hintEl.textContent = t.hint; }
+      });
+    }
+    function find(key) { for (var i = 0; i < tabs.length; i++) if (tabs[i].key === key) return tabs[i]; return null; }
+    function addTab(key, label, title, hint) {
+      ensure();
+      var tabEl = document.createElement("button");
+      tabEl.className = "lab-tab"; tabEl.textContent = label;
+      tabEl.addEventListener("click", function () { activate(key); });
+      tabsEl.appendChild(tabEl);
+      var paneEl = document.createElement("div");
+      paneEl.style.display = "none";
+      bodyEl.appendChild(paneEl);
+      var t = { key: key, tabEl: tabEl, paneEl: paneEl, title: title, hint: hint };
+      tabs.push(t);
+      return t;
+    }
+    function registerCode(cellEl, title) {
+      var key = "code" + codeN++;
+      var t = addTab(key, "CELL " + String(codeN).padStart(2, "0"),
+        "THE LAB — PYTHON",
+        "EDIT THE CODE FREELY — IT RUNS IN YOUR BROWSER (PYODIDE/WASM). BREAK IT ON PURPOSE.");
+      t.tabEl.title = title || "";
+      t.paneEl.appendChild(cellEl);
+      cellEl.style.display = "block";
+      return key;
+    }
+    function show(key) { open(); activate(key); }
+    function openReference(opts) {
+      ensure();
+      var t = find("ref");
+      if (!t) t = addTab("ref", "DEFINITION", "DEFINITION",
+        "CLICK A RELATED TERM TO KEEP EXPLORING · ESC TO CLOSE");
+      var rel = (opts.related || []).map(function (r) {
+        return "<button class='dock-rel' data-term='" + esc(r) + "'>" + esc(r) + "</button>";
+      }).join("");
+      t.paneEl.innerHTML =
+        "<div class='dock-ref'>" +
+        "<div class='dr-term'>" + esc(opts.term) + "</div>" +
+        "<div class='dr-def'>" + esc(opts.def) + "</div>" +
+        (rel ? "<div class='dr-rel-label'>RELATED TERMS</div><div class='dr-rel'>" + rel + "</div>" : "") +
+        "</div>";
+      if (opts.onRelated) {
+        t.paneEl.querySelectorAll(".dock-rel").forEach(function (b) {
+          b.addEventListener("click", function () { opts.onRelated(b.getAttribute("data-term")); });
+        });
+      }
+      show("ref");
+    }
+    return { open: open, close: close, show: show, registerCode: registerCode, openReference: openReference, desktop: DESKTOP };
+  })();
+
   /* ---------- reading progress (localStorage, no accounts) ---------- */
   function initProgress() {
     var path = location.pathname.replace(/\.html$/, "");

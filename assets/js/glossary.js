@@ -536,19 +536,56 @@
     }
     function hide() { tip.classList.remove("show"); }
 
+    var DESKTOP = window.matchMedia("(min-width: 60em)").matches;
+
+    /* hover = quick glance (desktop only); never while the dock-driven
+       detail is the intended interaction on a touch device */
     document.addEventListener("mouseover", function (e) {
       var g = e.target.closest && e.target.closest(".gloss");
-      if (g) show(g);
+      if (g && DESKTOP) show(g);
     });
     document.addEventListener("mouseout", function (e) {
       if (e.target.closest && e.target.closest(".gloss")) hide();
     });
     document.addEventListener("scroll", hide, { passive: true });
-    /* touch: tap toggles */
+
+    /* click = detailed explanation. Desktop: open the right-side dock with
+       the full definition + explorable related terms. Mobile: toggle the
+       inline tooltip (the dock is desktop-only). */
     document.addEventListener("click", function (e) {
       var g = e.target.closest && e.target.closest(".gloss");
-      if (g) { if (tip.classList.contains("show")) hide(); else show(g); }
-      else hide();
+      if (!g) { hide(); return; }
+      var term = g.getAttribute("data-term");
+      if (DESKTOP && window.AIEDock && DEFS[term]) {
+        e.preventDefault();
+        hide();
+        openReferenceFor(term);
+      } else {
+        if (tip.classList.contains("show")) hide(); else show(g);
+      }
+    });
+  }
+
+  /* related terms = other glossary entries named inside this definition
+     (longest-first, word-bounded), so the dock becomes explorable */
+  function relatedFor(term) {
+    var def = " " + (DEFS[term] || "") + " ";
+    var rel = [];
+    for (var i = 0; i < TERMS.length && rel.length < 8; i++) {
+      var t = TERMS[i];
+      if (t.toLowerCase() === term.toLowerCase()) continue;
+      var esc = t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/[- ]/g, "[- ]");
+      if (new RegExp("(^|[^A-Za-z])" + esc + "([^A-Za-z]|$)", "i").test(def)) rel.push(t);
+    }
+    return rel;
+  }
+  function openReferenceFor(term) {
+    if (!DEFS[term] || !window.AIEDock) return;
+    window.AIEDock.openReference({
+      term: term,
+      def: DEFS[term],
+      related: relatedFor(term),
+      onRelated: openReferenceFor
     });
   }
 

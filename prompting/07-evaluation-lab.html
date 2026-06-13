@@ -8,7 +8,7 @@
 <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
 <meta name="theme-color" content="#000000" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-<link rel="stylesheet" href="../assets/css/manual.css?v=49d672cc" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=84ebc43a" />
 </head>
 <body>
 
@@ -42,6 +42,7 @@
       <a href="#s3"><span class="n">7.3</span>Versioning &amp; regression</a>
       <a href="#s4"><span class="n">7.4</span>Anti-patterns catalog</a>
       <a href="#s5"><span class="n">7.5</span>The Prompt Lab</a>
+      <a href="#refs"><span class="n">§</span>Further reading</a>
     </nav>
 
     <main>
@@ -71,6 +72,33 @@
         $$ \mathrm{Var}\!\left(\widehat{p}_A - \widehat{p}_B\right) \;=\; \frac{1}{n}\Big[\, p_A(1-p_A) + p_B(1-p_B) - 2\,\mathrm{Cov}(X_A, X_B) \,\Big] $$
         <div class="eq-note">\(X_A, X_B\) are pass/fail indicators for the two prompts on the same item. Hard items sink both prompts and easy items lift both, so \(\mathrm{Cov} &gt; 0\) — and the subtraction <b>shrinks the variance of the difference</b>, often by half or more. The items that decide the comparison are the <em>discordant</em> ones (A passes where B fails, or vice versa); a sign test over just those pairs (McNemar's logic) is the correct significance check, and it is three lines of arithmetic.</div>
         </div>
+
+        <p>So put a number on it. Forty paired comparisons is a typical first eval; the cell below counts B's wins over A and wraps the rate in a <strong>Wilson</strong> confidence interval — the small-sample-correct version of EQ P7.1, which (unlike the textbook normal interval) never runs off the end of \([0,1]\) and stays honest near the edges. Read whether the interval clears 50%: if it doesn't, you have not yet earned the right to call B better.</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Paired A/B win rate over 40 comparisons with a Wilson 95% confidence interval
+import numpy as np
+rng = np.random.default_rng(0)
+n, p_true = 40, 0.65                    # comparisons, B's true per-item win prob over A
+wins = rng.random(n) &lt; p_true          # one paired verdict per item (did B beat A?)
+k = int(wins.sum()); p = k / n         # observed win rate
+z = 1.96                                # 95%
+
+# Wilson score interval -- correct for small n and rates near the edges
+center = p + z*z / (2*n)
+half = z * np.sqrt(p*(1-p)/n + z*z / (4*n*n))
+lo, hi = (center - half) / (1 + z*z/n), (center + half) / (1 + z*z/n)
+naive = z * np.sqrt(p*(1-p)/n)         # textbook normal half-width, for contrast
+
+print(f"B won {k}/{n} paired comparisons -&gt; win rate {100*p:.1f}%")
+print(f"Wilson 95% CI : [{100*lo:.1f}%, {100*hi:.1f}%]  (width {100*(hi-lo):.1f} pts)")
+print(f"naive normal  : {100*p:.1f}% +/- {100*naive:.1f}  -- 50% is inside: tie not ruled out")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — raise n to 200 and watch the interval clear 50%</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+        <p class="note">B wins 23 of 40 — a 57.5% win rate that <em>looks</em> like a result. The Wilson interval is [42.2%, 71.5%]: nearly 30 points wide, and it straddles 50%. With true skill of 65%, forty comparisons still cannot rule out a coin flip. This is EQ P7.1's noise floor in its most common operational form — the wide bar is why a single green run does not close the ticket. Push <code>n</code> to 200 and the interval finally lifts off 50%.</p>
 
         <div class="callout warn">
           <span class="co-icon">CONTAMINATION</span>
@@ -128,6 +156,36 @@
         </div>
 
         <p class="note"><strong>Calibrate the judge itself.</strong> Before trusting any judge pipeline, run it on 20–30 pairs you have hand-labeled and check agreement; published judge–human agreement transfers poorly across domains. And reuse the noise-floor logic of EQ P7.1: a judge-scored win rate over 50 pairs carries ±14-point error bars at \(w \approx 0.5\) — wide enough to swallow most prompt tweaks.</p>
+
+        <p>The flip rate is not just a slider — it is three lines of arithmetic you can run against your own judge. The cell below builds a toy judge that adds a fixed boost to whichever answer it reads first, then scores the <em>same</em> pairs in both orders. The naive eval (A always first) reports a win rate inflated by the boost; swapping and averaging recovers the truth; and the flip rate names how often the verdict was an artifact of seating.</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># LLM-judge position bias: judge the same pair in both orders, count the flips
+import numpy as np
+rng = np.random.default_rng(0)
+N, b, sigma = 2000, 0.6, 0.8           # items, first-slot boost, judging noise
+qA = rng.normal(0.15, 1.0, N)          # latent quality of answers A and B, per item
+qB = rng.normal(0.00, 1.0, N)
+
+def a_wins(a_is_first):                 # +b goes to whichever answer is shown first
+    sa = qA + (b if a_is_first else 0) + sigma * rng.standard_normal(N)
+    sb = qB + (b if not a_is_first else 0) + sigma * rng.standard_normal(N)
+    return sa &gt; sb
+
+naive = a_wins(True)                    # A always shown first -- the lazy eval
+o1 = a_wins(True)                       # order 1: A first
+o2 = a_wins(False)                      # order 2: B first
+flip = np.mean(o1 != o2)               # the two orders disagree on who won
+
+print(f"naive  win%(A), A-always-first  : {100*naive.mean():.1f}%")
+print(f"swapped win%(A), order-averaged  : {100*0.5*(o1.mean()+o2.mean()):.1f}%")
+print(f"verdict FLIP rate on order swap  : {100*flip:.1f}%   &lt;- this is bias, not quality")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — set b = 0 and watch the flip rate survive</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+        <p class="note">Naive reports A winning 66%; order-averaged says 53% — a thirteen-point phantom edge, pure seating. The 36.6% flip rate is the alarm: more than a third of verdicts changed under nothing but a swap. Set <code>b = 0</code> and the naive and averaged rates converge, but the flip rate stays well above zero — independent re-reads disagree near the boundary regardless. Position bias is the <em>systematic</em> slice of that instability, and it is the slice swapping removes.</p>
       </section>
 
       <!-- ====================== 7.3 ====================== -->
@@ -190,6 +248,72 @@
           </tbody>
         </table>
         <p class="note">The catalog compresses to one rule: <strong>every token must carry information the model can act on</strong>. Rank, flattery, threats, and vibes carry none. Context, constraints, examples, and checkable formats carry plenty — and everything that carries information can be measured, which is what the next section is for.</p>
+
+        <h3>The broken-prompt diagnostic</h3>
+        <p>The catalog tells you what bad prompts look like; the diagnostic tells you how to <em>find</em> the break in your own. Run these five questions in order — the first NO is usually the whole bug. They are deliberately yes/no: a vibe is not a diagnosis.</p>
+        <table class="data">
+          <thead><tr><th>Question</th><th>What broken looks like</th><th>The fix</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><strong>1 · ROLE defined?</strong></td>
+              <td>No role at all, or a superlative one ("world's best expert") that selects grandiosity instead of a register.</td>
+              <td class="hl">Name domain, seniority, and audience — the three facts that actually move the output distribution (Ch 02).</td>
+            </tr>
+            <tr>
+              <td><strong>2 · CONTEXT named?</strong></td>
+              <td>The model is asked to act on facts it was never given — reader, stakes, prior history, the actual input — so it invents them.</td>
+              <td class="hl">Supply the real inputs and the real stakes as information, not adjectives ("goes to the CFO unedited").</td>
+            </tr>
+            <tr>
+              <td><strong>3 · FORMAT locked?</strong></td>
+              <td>"Write something good" with no shape — length, sections, schema all left to chance, so every sample differs and nothing parses.</td>
+              <td class="hl">Specify a checkable structure: word cap, named sections, schema, or one exemplar that embodies it (Ch 05).</td>
+            </tr>
+            <tr>
+              <td><strong>4 · CONSTRAINTS named &amp; refusal licensed?</strong></td>
+              <td>No boundaries, or only DON'Ts; and the model is never told it may refuse or flag missing inputs, so it confabulates to comply.</td>
+              <td class="hl">Pair each DON'T with a DO; resolve trade-offs explicitly; license the escape hatch ("if a field is missing, write UNKNOWN — do not guess").</td>
+            </tr>
+            <tr>
+              <td><strong>5 · EXAMPLES present?</strong></td>
+              <td>The desired output is described in prose only; the model matches the description loosely and the label/format discipline drifts.</td>
+              <td class="hl">Show one to three worked exemplars. An example is worth twenty constraints (Ch 03).</td>
+            </tr>
+          </tbody>
+        </table>
+        <p class="note"><strong>Most broken prompts fail question 4 first.</strong> Roles and formats are the parts authors remember to write; the unstated constraint and the un-granted refusal license are the parts they forget — and they are the parts that turn a confident wrong answer into an incident. Diagnose in order, but expect the break at four.</p>
+
+        <div class="widget" id="pdx-doctor" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT P7.3 — PROMPT DOCTOR</span><span class="w-sub">RUN THE FIVE QUESTIONS ON ONE REAL BROKEN PROMPT</span></div>
+          <div class="w-body">
+            <div style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.16em;color:#636363;margin-bottom:6px;">THE PATIENT — A PRODUCTION PROMPT THAT KEEPS CAUSING RETRIES</div>
+            <pre id="pdx-prompt" style="margin:0 0 14px;background:rgba(0,0,0,.45);border:1px solid var(--hairline);border-radius:4px;padding:12px;white-space:pre-wrap;font-size:12px;line-height:1.6;color:#e5e5e5;">You are an amazing customer-support assistant. A user has written in
+about a problem with their order. Here is their message:
+
+"My order #44812 arrived with the wrong item — I got the blue case,
+not the black one I paid for. This is the second time. I need the
+right one before Friday or I'm disputing the charge."
+
+Reply to the customer in a friendly, professional tone with a clear
+subject line and 2–3 short paragraphs. Don't be defensive and don't
+make promises we can't keep.</pre>
+            <div style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.16em;color:#636363;margin-bottom:6px;">RUN A DIAGNOSTIC — EACH BUTTON REVEALS ITS VERDICT FOR THIS PROMPT</div>
+            <div class="seg-row" style="margin-bottom:12px;flex-wrap:wrap;">
+              <button class="w-btn ghost" data-pdx-q="role">ROLE</button>
+              <button class="w-btn ghost" data-pdx-q="context">CONTEXT</button>
+              <button class="w-btn ghost" data-pdx-q="format">FORMAT</button>
+              <button class="w-btn ghost" data-pdx-q="constraints">CONSTRAINTS</button>
+              <button class="w-btn ghost" data-pdx-q="examples">EXAMPLES</button>
+            </div>
+            <div id="pdx-verdict" style="background:rgba(0,0,0,.35);border:1px solid var(--hairline);border-radius:4px;padding:14px;min-height:62px;font-size:13px;line-height:1.6;color:#9b9b9b;">Click a diagnostic above. Three of the five fail on this prompt — see if you can predict which before revealing.</div>
+            <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:14px;">
+              <button class="w-btn" id="pdx-fix">SHOW FIX ▶</button>
+              <span id="pdx-score" style="font-family:ui-monospace,Menlo,monospace;font-size:10px;letter-spacing:.14em;color:#636363;">DIAGNOSTICS RUN: 0 / 5</span>
+            </div>
+            <pre id="pdx-rewrite" hidden style="margin:14px 0 0;background:rgba(43,89,69,.18);border:1px solid var(--hairline);border-radius:4px;padding:12px;white-space:pre-wrap;font-size:12px;line-height:1.6;color:#e5e5e5;"></pre>
+          </div>
+          <div class="w-note">Two diagnostics pass: the prompt names the CONTEXT (the actual ticket, with stakes) and locks a FORMAT (subject + 2–3 paragraphs). Three fail: the ROLE is a superlative with no register, the CONSTRAINTS are negative-only with no refusal license for the missing replacement-stock fact, and there are no EXAMPLES. As the rule predicts, the load-bearing break is question 4 — nothing tells the model what to do when it doesn't know whether a black case is even in stock, so it will cheerfully promise one. SHOW FIX rewrites all three.</div>
+        </div>
       </section>
 
       <!-- ====================== 7.5 ====================== -->
@@ -284,6 +408,18 @@ against brevity, choose brevity.</textarea>
         </div>
       </section>
 
+      <section class="section" id="refs">
+        <div class="sec-head"><span class="sec-num">§</span><h2>Further reading</h2></div>
+        <ul>
+          <li>Zheng, L., Chiang, W.-L., Sheng, Y., et al. (2023). <em>Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena</em>. — the foundational study of LLM judges; documents the position, verbosity, and self-enhancement biases and the both-orders protocol this chapter builds on.</li>
+          <li>Dubois, Y., Galambosi, B., Liang, P., &amp; Hashimoto, T. B. (2024). <em>Length-Controlled AlpacaEval: A Simple Way to Debias Automatic Evaluators</em>. — the length-bias fix referenced in §7.2; shows verbosity alone can move judged win rates by double digits.</li>
+          <li>Wilson, E. B. (1927). <em>Probable Inference, the Law of Succession, and Statistical Inference</em>. — the original Wilson score interval used in the §7.1 paired-eval cell; still the correct small-sample interval for a proportion.</li>
+          <li>McNemar, Q. (1947). <em>Note on the Sampling Error of the Difference Between Correlated Proportions or Percentages</em>. — the paired sign test behind EQ P7.2; the right significance check when two prompts are scored on the same items.</li>
+          <li>Liang, P., Bommasani, R., Lee, T., et al. (2022). <em>Holistic Evaluation of Language Models (HELM)</em>. — the case for multi-metric, scenario-based evaluation over a single aggregate score; the discipline §7.3's eval gates operationalize.</li>
+          <li>Perez, E., Huang, S., Song, F., et al. (2022). <em>Red Teaming Language Models with Language Models</em>. — methodology for generating adversarial test cases automatically; how to grow the weird-tail golden set §7.1 demands.</li>
+        </ul>
+      </section>
+
       <nav class="pager">
         <a href="06-adversarial.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">06</span> Self-Critique, Red Teams &amp; Councils</div></a>
         <a class="next" href="../agents/01-the-agentic-loop.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">01</span> Vol IV · From Chat to Agents</div></a>
@@ -301,8 +437,10 @@ against brevity, choose brevity.</textarea>
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
-<script src="../assets/js/glossary.js?v=de942868"></script>
-<script src="../assets/js/shared.js?v=2ab4fc41"></script>
+<script src="../assets/js/glossary.js?v=a9bc4f7e"></script>
+<script src="../assets/js/shared.js?v=badceda4"></script>
+<script src="../assets/js/search.js?v=b56ede0c"></script>
+<script src="../assets/js/pyrunner.js?v=abf14a7e"></script>
 <script src="../assets/js/byok.js?v=ad60784f"></script>
 <script>
 /* chapter instruments — single IIFE, no globals */
@@ -594,6 +732,82 @@ against brevity, choose brevity.</textarea>
       });
     }
   })();
+})();
+</script>
+<script>
+/* INSTRUMENT P7.3 — PROMPT DOCTOR · hand-written verdicts for the one patient prompt */
+(function () {
+  "use strict";
+  var root = document.getElementById("pdx-doctor");
+  if (!root) return;
+  var verdictEl = document.getElementById("pdx-verdict");
+  var scoreEl = document.getElementById("pdx-score");
+  var fixBtn = document.getElementById("pdx-fix");
+  var rewriteEl = document.getElementById("pdx-rewrite");
+  var qBtns = root.querySelectorAll("[data-pdx-q]");
+  if (!verdictEl || !fixBtn || !rewriteEl) return;
+
+  var MINT = "#a6f2cc", RED = "#ff4136";
+  var VERDICTS = {
+    role: { ok: false, text: "FAIL — ROLE. “An amazing customer-support assistant” is a superlative, not a register: no domain, no seniority, no escalation authority. The model can’t tell whether it speaks for a scrappy startup or a regulated firm, so its tone and what it’s allowed to commit to are both guesses." },
+    context: { ok: true, text: "PASS — CONTEXT. The actual ticket is supplied verbatim, with the order number, the specific error, the repeat-incident history, and the real stake (“disputing the charge before Friday”). The model is acting on facts, not inventing them. This one earns its pass." },
+    format: { ok: true, text: "PASS — FORMAT. A checkable shape is locked: a subject line plus 2–3 short paragraphs. You could write an eval that parses for it. Not the richest spec, but a genuine constraint the output must satisfy." },
+    constraints: { ok: false, text: "FAIL — CONSTRAINTS (the load-bearing break). Only DON’Ts are given (“don’t be defensive”, “don’t make promises we can’t keep”) — and crucially, no refusal license. The model is never told what to do when it doesn’t know whether a black case is in stock, so it complies by promising one. This is the question-4 failure that becomes an incident." },
+    examples: { ok: false, text: "FAIL — EXAMPLES. The desired reply is described in prose only — “friendly, professional” — with nothing to anchor it. One worked exemplar of a good resolution email would pin the tone, the apology calibration, and the commitment language far better than the adjectives do." }
+  };
+  var seen = {};
+
+  function updateScore() {
+    var n = Object.keys(seen).length;
+    scoreEl.textContent = "DIAGNOSTICS RUN: " + n + " / 5";
+  }
+
+  for (var i = 0; i < qBtns.length; i++) {
+    qBtns[i].addEventListener("click", function () {
+      for (var k = 0; k < qBtns.length; k++) qBtns[k].classList.remove("on");
+      this.classList.add("on");
+      var q = this.getAttribute("data-pdx-q");
+      var v = VERDICTS[q];
+      if (!v) return;
+      seen[q] = true;
+      updateScore();
+      verdictEl.textContent = v.text;
+      verdictEl.style.color = v.ok ? MINT : RED;
+    });
+  }
+
+  var REWRITE = [
+    "ROLE — Senior support specialist at a consumer-hardware retailer. You",
+    "can issue replacements and refunds up to $200 without approval; anything",
+    "above that you escalate.",
+    "",
+    "CONTEXT — [the ticket, unchanged: order #44812, wrong item, second",
+    "occurrence, dispute threatened, Friday deadline].",
+    "",
+    "FORMAT — Subject line + 2–3 short paragraphs: (1) acknowledge + the",
+    "concrete next step, (2) the timeline, (3) the goodwill gesture. Under",
+    "140 words.",
+    "",
+    "CONSTRAINTS — Pair each DON’T with a DO: instead of defensive, lead with",
+    "ownership; instead of vague promises, commit only to actions you can",
+    "verify. REFUSAL LICENSE: you do NOT know current stock of the black",
+    "case. If stock is unconfirmed, do not promise a ship date — promise a",
+    "stock check within 24h and a firm date to follow. Never invent inventory.",
+    "",
+    "EXAMPLE — one prior resolution email is appended below as the target",
+    "register and commitment style; match its calibration, not its details."
+  ].join("\n");
+
+  fixBtn.addEventListener("click", function () {
+    if (rewriteEl.hasAttribute("hidden")) {
+      rewriteEl.textContent = REWRITE;
+      rewriteEl.removeAttribute("hidden");
+      fixBtn.textContent = "HIDE FIX";
+    } else {
+      rewriteEl.setAttribute("hidden", "");
+      fixBtn.textContent = "SHOW FIX ▶";
+    }
+  });
 })();
 </script>
 <script defer src="/_vercel/insights/script.js"></script>

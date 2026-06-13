@@ -8,7 +8,7 @@
 <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
 <meta name="theme-color" content="#000000" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-<link rel="stylesheet" href="../assets/css/manual.css?v=49d672cc" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=84ebc43a" />
 </head>
 <body>
 
@@ -44,6 +44,7 @@
       <a href="#s5"><span class="n">3.5</span>Format leakage as a feature</a>
       <a href="#s6"><span class="n">3.6</span>Contrastive examples</a>
       <a href="#s7"><span class="n">3.7</span>When few-shot hurts</a>
+      <a href="#fs-refs"><span class="n">§</span>Further reading</a>
     </nav>
 
     <main>
@@ -91,6 +92,36 @@
           </div>
           <div class="w-note">Curves are hand-built to match the shapes reported across the few-shot literature — they are illustrative, not measurements. Slide k from 0 to 1 and watch where each curve makes its largest jump; then note that by k = 2 the format curve has nothing left to gain, while every added example keeps costing tokens on every single call. Cost readout assumes an indicative $3 / 1M input tokens.</div>
         </div>
+
+        <p>The same exponential, in code. Each task family gets its own \((a_\infty, a_\infty{-}a_0, \kappa)\); the table makes the diminishing marginal return concrete — read down any column and watch the <em>per-shot gain</em> collapse. Edit <code>tau</code> for reasoning and watch its curve refuse to move regardless:</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># k-shot accuracy curve (ILLUSTRATIVE) — acc(k) = ceil - gap*exp(-k/tau)
+import numpy as np
+k = np.arange(0, 9)
+tasks = {  # (ceiling, gap, tau) — hand-built per EQ P3.1, NOT measured
+    "format": (0.97, 0.55, 0.7),
+    "classif": (0.88, 0.33, 3.2),
+    "reason":  (0.66, 0.05, 4.0),
+}
+print("ILLUSTRATIVE — hand-built shapes, not measurements")
+print("  k " + "".join(f"{n:>9}" for n in tasks))
+for kk in k:
+    row = [ceil - gap*np.exp(-kk/tau) for ceil, gap, tau in tasks.values()]
+    print(f"{kk:>3} " + "".join(f"{a:>9.3f}" for a in row))
+fmt = tasks["format"]
+print("\nformat marginal gain, shot 1 vs shot 2:")
+g1 = (fmt[0]-fmt[1]*np.exp(-1/fmt[2])) - (fmt[0]-fmt[1])
+g2 = (fmt[0]-fmt[1]*np.exp(-2/fmt[2])) - (fmt[0]-fmt[1]*np.exp(-1/fmt[2]))
+print(f"  +{g1*100:5.1f} pts then +{g2*100:5.1f} pts  (geometric decay)")
+acc_fmt = [fmt[0]-fmt[1]*np.exp(-kk/fmt[2]) for kk in k]
+plot_xy(k.tolist(), acc_fmt)</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+        <p class="note">The printed table is the same EQ P3.1 the instrument above draws — the value of this view is the marginal-gain line: format-following banks most of its lift on the first shot and almost nothing after the second, exactly the geometric decay the equation predicts. The reasoning column barely leaves its starting value, the algebraic face of "examples don't teach a model to reason."</p>
 
         <p class="note"><strong>The long-context caveat.</strong> "Many-shot" in-context learning (Agarwal et al., 2024) showed that with hundreds to thousands of examples — feasible once contexts crossed 100K tokens — some tasks keep improving well past where the classic curve flattens, occasionally approaching fine-tuning quality. The exponential above describes the 0–32 shot regime where almost all practical prompting lives; treat the far tail as a separate tool with fine-tuning-like economics (Vol II · Chapter 06), amortized only if you cache the prefix.</p>
       </section>
@@ -152,6 +183,37 @@
           </div>
           <div class="w-note">The labels are perfectly balanced — two POSITIVE, two NEGATIVE — yet every shuffle produces a skewed prior, always toward the final example's class, strongest when the last two demos share a label. The numbers come from EQ P3.2, not from a model, but the phenomenon is the one Zhao et al. measured: same examples, different order, different answer.</div>
         </div>
+
+        <p>The instrument shows one ordering at a time; the cell below sweeps <em>all</em> orderings of the same balanced four-demo block, applies EQ P3.2, and reports how often the recency-weighted prior lands on the final example's label. With perfectly balanced labels a position-blind model would sit at 50%:</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># recency bias over orderings (ILLUSTRATIVE) — EQ P3.2, beta>0
+import numpy as np
+from itertools import permutations
+rng = np.random.default_rng(0)
+labels = np.array([1, 1, 0, 0])    # 2 POSITIVE (1), 2 NEGATIVE (0) — balanced
+beta = 0.65
+w = np.exp(beta * np.arange(1, 5))  # recency weights, last demo heaviest
+perms = list(set(permutations(range(4))))
+agree, mass = [], []                # match + prior mass on the LAST label's class
+for _ in range(2000):
+    order = perms[rng.integers(len(perms))]
+    lab = labels[list(order)]
+    p_pos = (w * lab).sum() / w.sum()
+    p_last = p_pos if lab[-1] == 1 else 1 - p_pos
+    agree.append(int((p_pos >= 0.5) == (lab[-1] == 1)))
+    mass.append(p_last)
+agree, mass = np.array(agree), np.array(mass)
+print("balanced labels, position-blind baseline: 50.0%")
+print(f"shuffles simulated         : {agree.size}")
+print(f"prior matches LAST label   : {100*agree.mean():.1f}%  (recency skew)")
+print(f"mean prior mass on LAST cls : {100*mass.mean():.1f}%  (vs 50% if blind)")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+        <p class="note">Set <code>beta = 0</code> and the match rate falls to the coin-flip baseline — pure majority-label bias with no recency. Any \(\beta &gt; 0\) pushes the prior toward whatever label sits last, which is why "end on your most representative example" is the single cheapest ordering fix. This is the toy model, not a transformer; what it reproduces is the <em>direction</em> and the <em>order-sensitivity</em>, not a specific model's magnitude.</p>
 
         <p><strong>What to do about it.</strong> Four mitigations, in increasing order of effort: (1) balance labels <em>and</em> end on the most representative example, since the last slot leaks hardest; (2) never sort examples by label — alternate or randomize within the balanced set; (3) for evaluation, average over several orders rather than trusting one (Chapter 07); (4) contextual calibration — measure the model's output on a content-free input like "N/A" and divide it out — recovers most of the lost accuracy when you control the decoding stack. Modern instruct models are meaningfully better calibrated than the GPT-3 these biases were measured on, but the bleed has not gone to zero — it has gone subtle, which is worse for debugging.</p>
       </section>
@@ -215,6 +277,19 @@
         </div>
       </section>
 
+      <section class="section" id="fs-refs">
+        <div class="sec-head"><span class="sec-num">§</span><h2>Further reading</h2></div>
+        <ul>
+          <li>Brown et al. (2020). <em>Language Models are Few-Shot Learners</em>. — the GPT-3 paper that introduced in-context few-shot learning and first plotted accuracy against shot count.</li>
+          <li>Min et al. (2022). <em>Rethinking the Role of Demonstrations: What Makes In-Context Learning Work?</em> — shows that label correctness matters far less than the demonstrations' format, input distribution, and label space.</li>
+          <li>Zhao et al. (2021). <em>Calibrate Before Use: Improving Few-Shot Performance of Language Models</em>. — measures majority-label, recency, and common-token bias, and introduces contextual calibration as the fix.</li>
+          <li>Lu et al. (2022). <em>Fantastically Ordered Prompts and Where to Find Them</em>. — demonstrates the extreme sensitivity of few-shot accuracy to example ordering and how to select good permutations without labelled data.</li>
+          <li>Liu et al. (2022). <em>What Makes Good In-Context Examples for GPT-3?</em> — the KATE result: retrieving nearest-neighbour demonstrations of the query beats a fixed example set.</li>
+          <li>Wei et al. (2023). <em>Larger Language Models Do In-Context Learning Differently</em>. — finds that at scale models increasingly override semantic priors and follow flipped or arbitrary label mappings in the examples.</li>
+          <li>Agarwal et al. (2024). <em>Many-Shot In-Context Learning</em>. — shows that hundreds-to-thousands of examples, enabled by long context, can keep improving tasks well past the classic saturation point.</li>
+        </ul>
+      </section>
+
       <nav class="pager">
         <a href="02-the-scaffold.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">02</span> The Scaffold: Role · Task · Context · Format · Constraints</div></a>
         <a class="next" href="04-reasoning.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">04</span> Reasoning Controls: CoT to Effort Dials</div></a>
@@ -232,9 +307,10 @@
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
-<script src="../assets/js/glossary.js?v=de942868"></script>
-<script src="../assets/js/shared.js?v=2ab4fc41"></script>
+<script src="../assets/js/glossary.js?v=a9bc4f7e"></script>
+<script src="../assets/js/shared.js?v=badceda4"></script>
 <script src="../assets/js/search.js?v=b56ede0c"></script>
+<script src="../assets/js/pyrunner.js?v=abf14a7e"></script>
 <script>
 /* chapter instruments — single IIFE, no globals */
 (function () {

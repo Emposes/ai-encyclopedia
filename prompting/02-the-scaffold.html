@@ -8,7 +8,7 @@
 <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
 <meta name="theme-color" content="#000000" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-<link rel="stylesheet" href="../assets/css/manual.css?v=49d672cc" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=84ebc43a" />
 </head>
 <body>
 
@@ -44,6 +44,7 @@
       <a href="#s5"><span class="n">2.5</span>Format</a>
       <a href="#s6"><span class="n">2.6</span>Constraints</a>
       <a href="#s7"><span class="n">2.7</span>Assembled: case studies</a>
+      <a href="#scf-refs"><span class="n">§</span>Further reading</a>
     </nav>
 
     <main>
@@ -99,6 +100,42 @@
           </div>
           <div class="w-note">Start with everything OFF — that single grey line is the prompt most people actually send. Toggle parts on as you read §2.2–2.6 and watch the assembled prompt grow teeth; every field is editable, and the three presets are the §2.7 case studies, so you can rebuild them part by part. The meter counts coverage, not quality: five mediocre parts still lose to three sharp ones.</div>
         </div>
+
+        <p>The Gym's prompt katas grade your prompt against exactly these five anchors — role, context, format, constraints, examples — by regex, before any model is called. That grader is small enough to fit in a cell: paste a weak prompt and a strong one, and watch the same PASS/MISS table the kata prints. It catches structure, not truth — but a row of MISS is a row of conditioning you forgot to write.</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false">import re
+# experiment: the five-anchor linter — regex-grade a weak vs a strong prompt
+ANCHORS = {
+    "role":        r"you are|as an?|acting as|role:",
+    "context":     r"context:|using only|attached|below|the document|reader:|audience:",
+    "format":      r"format:|table|bullet|json|\d+ (?:bullets|words|sentences|paragraphs)|template",
+    "constraints": r"constraints?:|do not|only|never|if .* (?:conflict|missing|unsure)|not specified",
+    "examples":    r"example|e\.g\.|for instance|like this|input ->|input:.*output:",
+}
+def lint(name, prompt):
+    print(f"\n{name}")
+    score = 0
+    for anchor, pat in ANCHORS.items():
+        hit = re.search(pat, prompt, re.IGNORECASE) is not None
+        score += hit
+        print(f"  {anchor:<12} {'PASS' if hit else 'MISS'}")
+    print(f"  SCORE        {score}/5")
+    return score
+
+weak   = "write an email to the client telling them the project is delayed"
+strong = ("ROLE: You are a senior account manager. TASK: write an email requesting a "
+          "two-week extension. CONTEXT: reader is Dana, VP Ops; their API arrived late. "
+          "FORMAT: under 150 words, subject line + 3 paragraphs. CONSTRAINTS: do not blame "
+          "their team; if apology and confidence conflict, choose confidence.")
+for name, p in [("WEAK PROMPT", weak), ("STRONG PROMPT", strong)]:
+    lint(name, p)</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+        <p class="note">The weak prompt scores 0/5 — it carries a task verb but trips none of the anchor patterns; the strong one scores 4/5, missing only EXAMPLES (which §2.7 shows is often the right anchor to omit). The linter is deliberately dumb — it counts the presence of conditioning, not its correctness, exactly the limitation EQ P2.1 warns about. A high score means you left the model less to guess; it does not mean you aimed the funnel at the truth. That second job is yours.</p>
       </section>
 
       <!-- ====================== 2.2 ====================== -->
@@ -179,6 +216,59 @@
         </ul>
         <p><strong>Positive phrasing beats negative phrasing — with caveats.</strong> Two mechanisms argue for stating what to do rather than only what to avoid. First, negation is a documented weak spot: benchmark families built around negated questions have shown models — strikingly, sometimes <em>larger</em> models — agreeing with the negated form of statements they correctly reject in positive form. Second, salience: every token in a prohibition becomes attendable context (Ch 01), so "do not mention the outage" places <em>outage</em> squarely in the model's working set — the pink-elephant problem, mechanized. The honest caveats: the worst negation failures were measured on older and base models, and modern instruction-tuned models follow plain prohibitions reasonably well in short contexts. The brittleness returns under pressure — long contexts, many competing instructions, conversational drift. Best practice is therefore not "never say don't" but <strong>pair every don't with a do</strong>: "do not blame their team; attribute the delay to the access timeline, neutrally" gives the model a road, not just a wall.</p>
         <p class="note"><strong>The constraint budget.</strong> EQ P2.3 applies to constraints too: each one is another requirement in the product, another claim on attention. Ten constraints comply worse than four. Prune to the ones whose violation you'd actually reject the output for — and promote the rest to a review checklist on your side of the table.</p>
+
+        <h3>The refusal rule — the constraint that kills hallucinations</h3>
+        <p>One constraint earns its place in almost every extraction, summarization, and analysis prompt, and it is the one most people omit: <strong>license the model to refuse</strong>. Ground the answer in named sources — "use only the policy excerpt below," "answer only from DOC A and DOC B" — and then add the clause the model will not supply on its own: <em>if a fact is not in the source, write "not specified" — never invent.</em> This is the difference between a prompt the model can satisfy honestly and one whose only satisfiable completion is fiction.</p>
+        <p>The mechanism is worth stating precisely, because it explains why this clause is so much more than politeness. A bare instruction — "extract the contract value" — is an <em>open generation</em> task: the model's job is to produce the most probable continuation, and when the value is absent from the source, the most probable continuation is still a plausible-looking number, because that is what contracts contain. The refusal license <strong>converts open generation into constrained extraction</strong>: it adds "not specified" to the model's set of acceptable answers, so abstention stops competing with fabrication and starts winning. The model will not abstain unless you license it to — left to its priors, refusing looks like failing the task. You have to make refusal a legal move.</p>
+        <p><strong>Citation discipline is the second half of the same constraint.</strong> Grounding the model is worthless if you cannot check it, so demand traceability: every claim carries the source span it came from. The operating rule for anything load-bearing — <em>numbers without sources are not numbers</em>. They are confident guesses wearing a number's clothes, and they fail silently, which is the worst way to fail. Two cheap habits make the discipline enforceable rather than aspirational. First, <strong>sample-check</strong>: when the model returns 50 extracted fields, you do not verify all 50 — you verify 5 chosen at random against the source. A single fabricated citation in the sample condemns the whole batch and sends it back. Second, demand an <strong>ASSUMPTION: prefix</strong> on anything the model inferred rather than read — "ASSUMPTION: contract assumed annual, term not stated." A flagged assumption is a reviewable claim; an unflagged inference is a landmine.</p>
+        <pre><code><span class="c"># Copy-ready hardening clauses — append to the CONSTRAINTS block</span>
+<span class="k">SOURCE</span> — Answer using ONLY the document(s) provided below.
+   Treat your own prior knowledge as out of scope for this task.
+<span class="k">REFUSAL</span> — If a requested fact is not present in the source,
+   write exactly "not specified". Do NOT infer, estimate, or invent.
+<span class="k">CITATION</span> — After every factual claim, cite the source span it
+   came from (section, line, or quoted phrase). Numbers without a
+   source citation are not permitted.
+<span class="k">ASSUMPTION</span> — If you must infer to proceed, prefix the line with
+   "ASSUMPTION:" and state what you assumed and why.
+<span class="k">VERIFICATION</span> — Output is sample-checked: 5 of every batch are
+   verified against the source. One fabricated citation fails the batch.</code></pre>
+        <div class="callout">
+          <span class="co-icon">FIELD NOTE</span>
+          <p><strong>The six-figure citation that never existed.</strong> In regulated-industry field practice the recurring incident is identical across firms: an analyst pastes a contract or a filing into a model, asks for a summary table of key terms, and ships the result into a memo that drives a real decision — a renewal, a reserve, a disclosure. Buried in the table is a clean, specific, entirely fabricated figure: a liability cap, a penalty rate, an effective date the source never stated. The number looks exactly like the real ones around it, which is precisely why it survives review, and the cost of unwinding it once it has moved a decision runs comfortably into six figures before anyone traces it back to a prompt that never licensed the model to say "not specified." The fix costs one clause. The omission costs a remediation project.</p>
+        </div>
+        <p>Here is the rule in numbers. Take an extraction task over 50 fields where 8 are genuinely absent from the source. Without a refusal license, every absent field is an invitation to fabricate; with the "not specified" clause, the model abstains on most of them. The cell below simulates both regimes and prints the two fabrication rates.</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false">import numpy as np
+# experiment: the refusal rule in numbers — fabrication with vs without a license
+rng = np.random.default_rng(0)
+N, ABSENT = 50, 8                 # 50 fields; 8 are genuinely not in the source
+present = np.ones(N, dtype=bool)
+present[rng.choice(N, ABSENT, replace=False)] = False
+
+# WITHOUT a refusal license: open generation. On an absent field the model
+# almost always emits a plausible-looking value (fabricates).
+p_fab_unlicensed = 0.88
+# WITH "not specified": absent fields are mostly abstained; rare leakage.
+p_abstain_licensed = 0.85
+
+absent_idx = np.where(~present)[0]
+fab_no_license = rng.random(len(absent_idx)) < p_fab_unlicensed
+fab_licensed   = rng.random(len(absent_idx)) >= p_abstain_licensed  # leaked = fabricated
+
+rate_no = fab_no_license.mean()
+rate_yes = fab_licensed.mean()
+print(f"absent fields                 : {ABSENT} of {N}")
+print(f"fabrication rate  NO LICENSE  : {rate_no:.0%}  ({fab_no_license.sum()}/{ABSENT} invented)")
+print(f"fabrication rate  'not spec.' : {rate_yes:.0%}  ({fab_licensed.sum()}/{ABSENT} invented)")
+print(f"reduction                     : {(rate_no - rate_yes) / rate_no:.0%} fewer fabrications")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+        <p class="note">With no refusal license the model invents on roughly 7 of the 8 absent fields; with the single "not specified" clause it leaks on at most one or two. The clause does not make the model smarter — it makes abstention an allowed answer, and that one change does most of the work. The residual leakage is the reason the citation discipline above is not optional: the constraint cuts the fabrication rate, sample-checking catches what slips through.</p>
       </section>
 
       <!-- ====================== 2.7 ====================== -->
@@ -269,6 +359,19 @@ analyze this churn data</code></pre>
         </div>
       </section>
 
+      <section class="section" id="scf-refs">
+        <div class="sec-head"><span class="sec-num">§</span><h2>Further reading</h2></div>
+        <ul>
+          <li>Brown, T. et al. (2020). <em>Language Models are Few-Shot Learners</em>. — establishes that the prompt itself is the conditioning interface, the premise the whole scaffold rests on.</li>
+          <li>Ouyang, L. et al. (2022). <em>Training Language Models to Follow Instructions with Human Feedback (InstructGPT)</em>. — explains why instruction-tuned models parse ROLE/TASK headers at all, and why the "competent expert" prior is already baked in.</li>
+          <li>Zheng, M. et al. (2024). <em>When "A Helpful Assistant" Is Not Really Helpful: Personas in System Prompts Do Not Improve Performance</em>. — the controlled persona study behind §2.2's "roles are often cargo cult" claim.</li>
+          <li>Lewis, P. et al. (2020). <em>Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks</em>. — the canonical case that grounding answers in supplied sources beats relying on model priors, the engine behind the refusal rule.</li>
+          <li>Ji, Z. et al. (2023). <em>Survey of Hallucination in Natural Language Generation</em>. — taxonomy and causes of fabrication, the failure mode the "not specified" license is designed to suppress.</li>
+          <li>Wei, J. et al. (2022). <em>Chain-of-Thought Prompting Elicits Reasoning in Large Language Models</em>. — demonstrates that output structure and field order (§2.5's "field order is computation order") shape the reasoning, not just the formatting.</li>
+          <li>Kojima, T. et al. (2022). <em>Large Language Models are Zero-Shot Reasoners</em>. — shows how small, specific instructional phrasing changes behavior, sharpening the case for explicit TASK and CONSTRAINTS over vibes.</li>
+        </ul>
+      </section>
+
       <nav class="pager">
         <a href="01-how-prompts-work.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">01</span> How Models Read Prompts</div></a>
         <a class="next" href="03-few-shot.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">03</span> Show, Don't Tell: Few-Shot &amp; Examples</div></a>
@@ -286,8 +389,10 @@ analyze this churn data</code></pre>
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
-<script src="../assets/js/glossary.js?v=de942868"></script>
-<script src="../assets/js/shared.js?v=2ab4fc41"></script>
+<script src="../assets/js/glossary.js?v=a9bc4f7e"></script>
+<script src="../assets/js/shared.js?v=badceda4"></script>
+<script src="../assets/js/search.js?v=b56ede0c"></script>
+<script src="../assets/js/pyrunner.js?v=abf14a7e"></script>
 <script>
 /* chapter instruments — single IIFE, no globals */
 (function () {

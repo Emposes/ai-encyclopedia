@@ -8,7 +8,7 @@
 <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
 <meta name="theme-color" content="#000000" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-<link rel="stylesheet" href="../assets/css/manual.css?v=49d672cc" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=84ebc43a" />
 </head>
 <body>
 
@@ -45,6 +45,7 @@
       <a href="#s6"><span class="n">6.6</span>Council of judges</a>
       <a href="#s7"><span class="n">6.7</span>Debate</a>
       <a href="#s8"><span class="n">6.8</span>Honest costs</a>
+      <a href="#refs"><span class="n">§</span>Further reading</a>
     </nav>
 
     <main>
@@ -58,6 +59,33 @@
         $$ \Delta_{\mathrm{GV}} \;=\; \underbrace{\Pr\!\big[\,V_\theta(x,\hat y) \,=\, \mathbf{1}[\hat y \text{ solves } x]\,\big]}_{\text{verification accuracy}} \;-\; \underbrace{\Pr_{\hat y\,\sim\,p_\theta(\cdot\mid x)}\!\big[\,\hat y \text{ solves } x\,\big]}_{\text{generation accuracy}} $$
         <div class="eq-note">\(V_\theta\) is the same model prompted as a judge. When \(\Delta_{\mathrm{GV}} &gt; 0\), extra compute is better spent <b>checking and selecting</b> than generating longer. The gap is task-dependent and honestly contested: it is large for code-with-tests, math-with-verifiers, and factual claims; it shrinks toward zero for taste, style, and — without an external signal — for the model's own reasoning chains (§6.8). Every pattern in this chapter is a way of spending a positive gap.</div>
         </div>
+
+        <p>The gap is not a slogan; it is arithmetic. Suppose a model writes a correct first draft only half the time, but can judge a candidate correctly 85% of the time. A bare draft is a coin flip — but generate, verify, and revise only what the verifier flags, and the effective accuracy climbs well past either number alone. The cell below runs that lifecycle on a toy model and prints the lift; it is the smallest possible version of every pattern in this chapter.</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># generator-verifier gap: generate -> verify -> revise lifts effective accuracy
+import numpy as np
+rng = np.random.default_rng(0)
+g, v = 0.50, 0.85                      # P(draft correct), P(verifier judges correctly)
+N = 200_000
+
+correct = rng.random(N) &lt; g                    # is the draft actually right?
+verifier_right = rng.random(N) &lt; v             # does the verifier judge it correctly?
+says_ok = np.where(correct, verifier_right, ~verifier_right)   # OK iff judged "good"
+revised = rng.random(N) &lt; g                     # flagged drafts get one fresh attempt
+final = np.where(says_ok, correct, revised)     # keep OK drafts; replace the flagged
+
+analytic = g*v + g*(1-v)*g + (1-g)*v*g          # the three ways to end up correct
+print(f"raw generator          {correct.mean():.3f}")
+print(f"verifier flags 'bad'   {(~says_ok).mean():.3f}   (these get revised)")
+print(f"after verify + revise  {final.mean():.3f}   (analytic {analytic:.3f})")
+print(f"lift over raw draft    {final.mean() - correct.mean():+.3f}")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — push v toward 0.5 and watch the lift vanish</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+        <p class="note">Half-right drafts become two-thirds-right answers, paid for in one extra verification pass — that surplus is \(\Delta_{\mathrm{GV}}\) spent. Drop the verifier to \(v = 0.5\) (a coin) and the lift collapses to zero: a verifier no better than chance launders no information, which is the §6.8 caution stated as code. Push \(v\) higher and the ceiling rises toward what a perfect filter plus one retry can reach.</p>
 
         <p>Three topologies organize everything that follows: run the check <strong>after</strong> the draft (sequential — self-critique, Reflexion), run many checks <strong>in parallel</strong> (the council), or make two copies of the model <strong>fight</strong> and judge the wreckage (debate). The pre-mortem and red team are sequential patterns wearing armor: the critique arrives dressed as an attacker or a coroner, which turns out to matter enormously.</p>
 
@@ -161,6 +189,40 @@ Change nothing the critique did not flag. Output only the revision.</code></pre>
           </div>
           <div class="w-note">Step through the three turns. The draft is fluent and empty; the critique convicts it by quotation, criterion by criterion; the revision view shows exactly what the critique paid for — <span style="color:#ff4136;">deletions struck in red</span>, <span style="color:#a6f2cc;">insertions in mint</span>. Toggle VIEW: CLEAN to read the final text. Token cost is computed from the actual word counts of the three turns — note it lands near 5× here, not the 3× rule of thumb of §6.8: short drafts amortize the rubric badly, long artifacts amortize it well.</div>
         </div>
+
+        <h3>The three-pass discipline</h3>
+        <p>In regulated-industry field practice — where a flawed artifact survives to a downstream review that has consequences — the three-turn pattern hardens into a fixed ritual run on every load-bearing document. The shape is the same three calls, but each pass is named, scoped, and given a job it cannot fake its way out of.</p>
+        <p><strong>Pass 1 — generate.</strong> Produce the full scaffold: not an outline, not a sketch, but the complete artifact with every section populated, so the critic has real text to convict rather than intentions to approve. A half-finished draft invites a half-hearted review.</p>
+        <p><strong>Pass 2 — critique as a named senior reviewer.</strong> Fresh context. The model is cast as a specific, senior, skeptical persona — a named role with a reputation to protect — and made to grade the artifact against an <em>explicit, pre-registered</em> checklist, every verdict anchored to quoted text. The persona is load-bearing for the same reason as in §6.4: "review this" returns courtesy; "you are the principal reviewer who signs off on this and owns the failures" returns findings.</p>
+        <p><strong>Pass 3 — confidence-score every section 1–5 with rationale.</strong> The reviewer assigns each section a numeric confidence (1 = would block release, 5 = ship as-is) and a one-line rationale for the score. The enforced rule is the whole point: <strong>at least one section must score ≤ 3.</strong> A scorecard of straight fives is rejected and the pass re-run — because all fives means the critique never happened.</p>
+        <p>The forced low score is a direct countermeasure to <em>sycophantic self-review</em> (§6.8). A model grading work — especially work adjacent to its own first draft — drifts toward charitable, "looks good with minor nits" verdicts; left to free-form scoring it will hand out fives to close the task. Mandating that the distribution contain a low number removes the comfortable equilibrium: the model can no longer satisfy the instruction <em>and</em> bless everything, so it is forced to locate the genuinely weakest section and defend a real criticism of it. The constraint does not invent flaws — every artifact has a weakest part — it simply refuses to let the reviewer pretend there isn't one. In practice the section the model is most reluctant to mark down is, more often than not, the one that actually needed the work.</p>
+        <pre><code><span class="c"># PASS 2 — SENIOR REVIEWER · fresh context: artifact + checklist only</span>
+You are the principal reviewer who signs the release for this artifact
+and personally owns every defect that reaches production. You did not
+write it. Grade it against the checklist. QUOTE the text behind every
+verdict. Do not rewrite. Do not praise. Verdict: PASS / PARTIAL / FAIL.
+
+CHECKLIST
+1. <span class="v">{{check 1 — e.g. every claim carries a number, date, or source}}</span>
+2. <span class="v">{{check 2 — e.g. no two sections contradict}}</span>
+3. <span class="v">{{check 3 — e.g. each stated mechanism is measured, not asserted}}</span>
+4. <span class="v">{{check 4 — e.g. nothing here can be quoted out of context to mislead}}</span>
+
+ARTIFACT
+<span class="v">{{artifact, full scaffold from Pass 1}}</span>
+
+<span class="c"># PASS 3 — CONFIDENCE SCORECARD · same reviewer, after the critique</span>
+Score every section 1-5 (1 = would block release, 5 = ship as-is) with
+a one-line rationale per score. HARD RULE: at least one section must
+score 3 or below. A scorecard of all fives is invalid — find the
+weakest section and defend a real criticism of it.
+
+SECTION                 SCORE   RATIONALE (one line, anchored to text)
+<span class="v">{{section 1}}</span>          _/5    ...
+<span class="v">{{section 2}}</span>          _/5    ...
+<span class="v">{{section N}}</span>          _/5    ...
+LOWEST-SCORING SECTION: <span class="v">{{name}}</span> — the one change that raises it.</code></pre>
+        <p class="note">Feed the lowest-scoring section and its FAIL/PARTIAL verdicts to the §6.2 reviser; leave the fours and fives alone (the reviser's leash). The scorecard is also a cheap audit trail: in a regulated setting, "every section scored, weakest one named and addressed" is a defensible record of <em>having actually checked</em> — which is most of what a downstream reviewer is looking for.</p>
       </section>
 
       <!-- ====================== 6.3 ====================== -->
@@ -246,6 +308,34 @@ causes for each — no overlap.</code></pre>
         $$ \operatorname{Var}(\bar s_N) \;=\; \frac{(1-\rho)\,\sigma^2}{N} \;+\; \rho\,\sigma^2 \;\;\xrightarrow[\;N\,\to\,\infty\;]{}\;\; \rho\,\sigma^2 $$
         <div class="eq-note">For \(N\) judge scores with pairwise correlation \(\rho\), only the <em>uncorrelated</em> part of the noise averages away. Judges sharing a base model, a prompt phrasing, or a context window share blind spots: \(\rho \gg 0\), and judges 4 through 9 buy almost nothing. <b>Engineering independence — distinct lenses, separate contexts, different phrasings, ideally different models — is worth more than raising N.</b></div>
         </div>
+
+        <p>EQ P6.2 is easy to state and easy to disbelieve, so run it. The cell below builds an IID council — \(n\) judges each correct with probability \(a = 0.72\), voting independently — and reports majority accuracy from both a seeded simulation and the exact binomial sum, side by side, for every council size 1 through 9.</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># council of judges: majority accuracy vs council size (Condorcet, EQ P6.2)
+import numpy as np
+from math import comb
+rng = np.random.default_rng(0)
+a = 0.72                                   # each judge correct w.p. a, independently
+sizes = range(1, 10)
+trials = 20000
+print(f"single-judge accuracy a = {a}")
+print(" n   simulated   exact")
+exact_pts = []
+for n in sizes:
+    votes = rng.random((trials, n)) &lt; a               # True = judge votes correctly
+    sim = (votes.sum(1) &gt; n / 2).mean()               # strict majority correct
+    exact = sum(comb(n, k) * a**k * (1 - a)**(n - k)  # EQ P6.2, summed tail
+                for k in range(n // 2 + 1, n + 1))
+    exact_pts.append(exact)
+    print(f"{n:2d}   {sim:8.3f}   {exact:8.3f}")
+plot_xy(list(sizes), exact_pts)</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">set a below 0.5 and watch the council converge on WRONG</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+        <p class="note">Three readings off the printout. The odd sizes climb steadily — 72% at n=1 to ~92% at n=9 — which is the variance reduction EQ P6.3 promises when \(\rho = 0\). The even sizes <em>dip</em> below the odd ones (a strict majority demands a real lead, and ties count as losses), which is the arithmetic behind "use odd N." And flip \(a\) to 0.45: every added judge now makes the council <em>more</em> confidently wrong — the theorem's cruel symmetry. This is the ceiling a real council never reaches, because its judges are correlated; the simulator above shows the gap.</p>
 
         <p>Hence the production shape: <strong>N judges, each with a distinct lens, in separate contexts, plus an aggregator</strong> that sees only verdicts and evidence — never the artifact author's chain of thought. The lenses do double duty: they decorrelate the judges <em>and</em> partition the review surface, so five judges cover five failure classes instead of quintuple-checking grammar. This is also a familiar object wearing new clothes: GRPO scores each sampled response against its group's mean reward (Vol II · EQ 5.6) — the group is the baseline that makes a single noisy score meaningful. A council is the same variance-reduction move executed at inference time, with verdicts instead of rewards; self-consistency (Ch 04) is its degenerate cousin where every "judge" is the same persona resampled at temperature.</p>
         <pre><code><span class="c"># COUNCIL — each judge is a separate call; aggregator sees verdicts only</span>
@@ -348,6 +438,19 @@ points per side. Verdict + the single argument that decided it.</code></pre>
         </div>
       </section>
 
+      <section class="section" id="refs">
+        <div class="sec-head"><span class="sec-num">§</span><h2>Further reading</h2></div>
+        <ul>
+          <li>Cobbe, K., et al. (2021). <em>Training Verifiers to Solve Math Word Problems</em>. — Introduces GSM8K and shows a verifier-ranked small generator beating a 30× larger one: the generator–verifier gap, measured.</li>
+          <li>Shinn, N., Cassano, F., Gopinath, A., Narasimhan, K., &amp; Yao, S. (2023). <em>Reflexion: Language Agents with Verbal Reinforcement Learning</em>. — The canonical reflect-on-failure loop with episodic memory; the source of §6.3's distilled-lesson design.</li>
+          <li>Irving, G., Christiano, P., &amp; Amodei, D. (2018). <em>AI Safety via Debate</em>. — The original argument that judging adversarial debate is easier than direct evaluation, the foundation of §6.7.</li>
+          <li>Khan, A., et al. (2024). <em>Debating with More Persuasive LLMs Leads to More Truthful Answers</em>. — Empirical evidence that weaker judges gain accuracy from watching stronger models debate — and the persuasion caveat.</li>
+          <li>Huang, J., et al. (2024). <em>Large Language Models Cannot Self-Correct Reasoning Yet</em>. — Documents net-negative intrinsic self-correction without an external signal; the honest counterweight to this whole chapter.</li>
+          <li>Panickssery, A., Bowman, S. R., &amp; Feng, S. (2024). <em>LLM Evaluators Recognize and Favor Their Own Generations</em>. — Links the self-preference bias to self-recognition, the mechanism behind §6.8's "fresh context" rule.</li>
+          <li>Wang, X., et al. (2023). <em>Self-Consistency Improves Chain-of-Thought Reasoning in Language Models</em>. — Majority vote over sampled reasoning paths: the degenerate, single-persona cousin of the council in §6.6.</li>
+        </ul>
+      </section>
+
       <nav class="pager">
         <a href="05-structured-output.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">05</span> Structured Output &amp; Tool-Ready Prompts</div></a>
         <a class="next" href="07-evaluation-lab.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">07</span> Evaluation &amp; The Prompt Lab</div></a>
@@ -365,8 +468,10 @@ points per side. Verdict + the single argument that decided it.</code></pre>
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
-<script src="../assets/js/glossary.js?v=de942868"></script>
-<script src="../assets/js/shared.js?v=2ab4fc41"></script>
+<script src="../assets/js/glossary.js?v=a9bc4f7e"></script>
+<script src="../assets/js/shared.js?v=badceda4"></script>
+<script src="../assets/js/search.js?v=b56ede0c"></script>
+<script src="../assets/js/pyrunner.js?v=abf14a7e"></script>
 <script>
 /* chapter instruments — single IIFE, no globals */
 (function () {

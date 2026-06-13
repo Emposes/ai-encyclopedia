@@ -8,7 +8,7 @@
 <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
 <meta name="theme-color" content="#000000" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-<link rel="stylesheet" href="../assets/css/manual.css?v=49d672cc" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=84ebc43a" />
 </head>
 <body>
 
@@ -42,6 +42,7 @@
       <a href="#s3"><span class="n">1.3</span>What the model attends to</a>
       <a href="#s4"><span class="n">1.4</span>Tokens: cost &amp; attention</a>
       <a href="#s5"><span class="n">1.5</span>The empirical mindset</a>
+      <a href="#hp-refs"><span class="n">§</span>Further reading</a>
     </nav>
 
     <main>
@@ -71,6 +72,38 @@
         </div>
 
         <p class="note">You will watch EQ P1.1 happen in Instrument P1.2 below: four one-line edits to a prompt, each visibly dragging probability mass across eight candidate replies — with the weights untouched throughout.</p>
+
+        <p>Before the instrument, run the mechanism yourself. The cell below is EQ P1.1 in eight candidates: a hand-set logit vector is the frozen model's neutral verdict; a role/constraint clause is one additive evidence term over the same vocabulary (the latent-task lens of EQ P1.2). Softmax both, and watch wording — not weights — relocate the mass:</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># prompt-as-conditioning: one role/constraint term reweights an 8-candidate reply distribution
+import numpy as np
+
+cands = ["I'm sorry -", "Hi there!", "Sure, let's", "Unfortunately",
+         "Per policy,", '{"action"', "REFUND-101:", "Certainly."]
+base = np.array([2.1, 1.3, 0.9, 0.4, -0.7, -2.6, -3.2, 0.6])   # frozen model's neutral logits
+
+def softmax(z):
+    z = z - z.max()
+    e = np.exp(z)
+    return e / e.sum()
+
+# a role/constraint is additive evidence over the SAME vocabulary (EQ P1.2) - theta never moves
+role = np.array([-1.2, -1.9, -1.3, 0.4, 3.3, -0.2, 0.0, -0.4])  # "be a terse, policy-exact specialist"
+p0 = softmax(base)            # before: bare task
+p1 = softmax(base + role)     # after:  same weights, conditioned prompt
+
+print("candidate        before    after    delta")
+for c, a, b in zip(cands, p0, p1):
+    print(f"{c:13s} {a*100:7.1f}% {b*100:7.1f}% {(b-a)*100:+7.1f}")
+moved = 0.5 * np.abs(p1 - p0).sum()     # total variation = fraction of mass relocated
+print(f"\ntop before: {cands[p0.argmax()]!r}   top after: {cands[p1.argmax()]!r}")
+print(f"one role line relocated {moved*100:.1f} of 100 points of probability mass")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
       </section>
 
       <!-- ====================== 1.2 ====================== -->
@@ -206,6 +239,38 @@ What is the capital of Australia?<span class="v">&lt;|eot_id|&gt;</span><span cl
         </table>
 
         <p class="note">Do not micro-optimize tokens at the expense of clarity — a clear 400-token instruction beats a cryptic 150-token one every time, and the table's effects are second-order next to <em>what you actually say</em>. The point is narrower: format choices are real inputs with real consequences, not decoration. Budget them like you budget words.</p>
+
+        <p>You do not need a real tokenizer to develop budget instincts — the <code>len/4</code> rule of thumb (≈ 4 characters per token for English) is close enough to feel the difference. The cell below estimates a bloated, over-polite prompt against the same instruction tightened, prints both counts and the percentage saved, then projects the cost gap across a day of traffic — because every input token is paid for on <em>every</em> call:</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># token-budget: len/4 heuristic on a bloated vs tightened prompt, plus % and cost saved
+bloated = (
+    "Hello there! I was hoping that you might possibly be able to help me out "
+    "with something today, if that is at all okay with you. What I would really "
+    "like for you to do, if you would be so kind, is to take the following "
+    "customer message and let me know whether or not it sounds like the person "
+    "is feeling positive, negative, or somewhere neutral in between, and then "
+    "kindly explain your reasoning to me in a few sentences. Thank you so much!"
+)
+tight = "Classify the sentiment of the message below as positive, negative, or neutral.\nMessage:"
+
+def est_tokens(s):
+    return max(1, round(len(s) / 4))          # ~4 chars/token rule of thumb
+
+tb, tt = est_tokens(bloated), est_tokens(tight)
+saved = (tb - tt) / tb * 100
+print(f"bloated prompt : {len(bloated):4d} chars  ~{tb:4d} tokens")
+print(f"tight prompt   : {len(tight):4d} chars  ~{tt:4d} tokens")
+print(f"tokens saved   : {tb - tt:4d}  ({saved:.0f}% smaller)")
+
+calls = 100_000                               # every call re-pays the prompt (no prefix cache)
+print(f"at {calls:,} calls/day, $3 / 1M input tok: "
+      f"${tb*calls/1e6*3:.2f}/day bloated  ->  ${tt*calls/1e6*3:.2f}/day tight")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
       </section>
 
       <!-- ====================== 1.5 ====================== -->
@@ -234,6 +299,18 @@ What is the capital of Australia?<span class="v">&lt;|eot_id|&gt;</span><span cl
         </div>
       </section>
 
+      <section class="section" id="hp-refs">
+        <div class="sec-head"><span class="sec-num">§</span><h2>Further reading</h2></div>
+        <ul>
+          <li>Radford, Wu, Child, Luan, Amodei &amp; Sutskever (2019). <em>Language Models are Unsupervised Multitask Learners.</em> — the GPT-2 report; shows tasks can be elicited from raw text conditioning alone, the seed of all prompting.</li>
+          <li>Brown et al. (2020). <em>Language Models are Few-Shot Learners.</em> — the GPT-3 paper that established in-context learning: examples in the prompt steer behavior with the weights frozen (EQ P1.1).</li>
+          <li>Xie, Raghunathan, Liang &amp; Ma (2021). <em>An Explanation of In-context Learning as Implicit Bayesian Inference.</em> — the latent-task lens behind EQ P1.2: the prompt as evidence about which "document type" to continue.</li>
+          <li>Ouyang et al. (2022). <em>Training Language Models to Follow Instructions with Human Feedback.</em> — InstructGPT; explains why instruction- and system-prompt deference is installed by post-training, not architecture.</li>
+          <li>Liu et al. (2023). <em>Lost in the Middle: How Language Models Use Long Contexts.</em> — the measured U-shaped position effect behind FIG P1.1 and the "put the task last" rule.</li>
+          <li>Sclar, Choi, Tsvetkov &amp; Suhr (2024). <em>Quantifying Language Models' Sensitivity to Spurious Features in Prompt Design.</em> — FormatSpread; shows formatting choices alone swing accuracy widely, grounding §1.4's "format is a real input."</li>
+        </ul>
+      </section>
+
       <nav class="pager">
         <a href="../index.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">00</span> Encyclopedia Index</div></a>
         <a class="next" href="02-the-scaffold.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">02</span> The Scaffold: Role · Task · Context · Format · Constraints</div></a>
@@ -251,8 +328,9 @@ What is the capital of Australia?<span class="v">&lt;|eot_id|&gt;</span><span cl
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
-<script src="../assets/js/glossary.js?v=de942868"></script>
-<script src="../assets/js/shared.js?v=2ab4fc41"></script>
+<script src="../assets/js/glossary.js?v=a9bc4f7e"></script>
+<script src="../assets/js/shared.js?v=badceda4"></script>
+<script src="../assets/js/pyrunner.js?v=abf14a7e"></script>
 <script src="../assets/js/search.js?v=b56ede0c"></script>
 <script>
 /* chapter instruments — single IIFE, no globals */

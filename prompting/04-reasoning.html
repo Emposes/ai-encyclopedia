@@ -8,7 +8,7 @@
 <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
 <meta name="theme-color" content="#000000" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-<link rel="stylesheet" href="../assets/css/manual.css?v=49d672cc" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=84ebc43a" />
 </head>
 <body>
 
@@ -43,6 +43,7 @@
       <a href="#s4"><span class="n">4.4</span>The reasoning-model plot twist</a>
       <a href="#s5"><span class="n">4.5</span>When to still prompt for reasoning</a>
       <a href="#s6"><span class="n">4.6</span>Verification prompts</a>
+      <a href="#rc-refs"><span class="n">§</span>Further reading</a>
     </nav>
 
     <main>
@@ -107,6 +108,33 @@
           <div class="w-note">Each chain is correct with probability p; wrong chains scatter over six distractor answers (weighted — some wrong answers are more attractive than others); the plurality wins, ties broken at random. Watch three things: the steep early climb (most of the gain arrives by N ≈ 5–9), the saw-tooth (even N invites ties — papers sample odd N for a reason), and p = 0.40: <em>below</em> the Condorcet threshold, yet voting still helps, because errors disperse while truth concentrates. The token readout is the bill — accuracy saturates, cost stays linear.</div>
         </div>
 
+        <p>The instrument animates the curve; the code below <em>is</em> the curve. A barely-above-chance chain (p = 0.55) is no use alone, but voting integrates the path out — and the run prints the diminishing-returns shape EQ P4.2 promises: the climb from N = 1 to N = 9 dwarfs everything past it.</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># self-consistency: majority vote over N CoT chains, each correct w.p. p = 0.55
+import numpy as np
+rng = np.random.default_rng(0)
+p, trials = 0.55, 4000
+Ns, accs = [1, 3, 5, 9, 15, 25, 41], []
+for N in Ns:
+    draws = (rng.random((trials, N)) &lt; p).astype(int)   # 1 = chain hit the right answer
+    correct = draws.sum(axis=1)
+    distract = np.zeros(trials, dtype=int)              # wrong chains scatter over 6 distractors
+    for i in range(trials):
+        w = N - correct[i]
+        if w: distract[i] = np.bincount(rng.integers(0, 6, w).astype(np.intc), minlength=6).max()
+    win = (correct &gt; distract) | ((correct == distract) &amp; (rng.random(trials) &lt; 0.5))
+    accs.append(win.mean())
+    print(f"N={N:2d}   vote acc = {win.mean():.3f}")
+print(f"single chain {accs[0]:.3f}  ->  N=41 {accs[-1]:.3f}   (gain +{accs[-1]-accs[0]:.3f})")
+plot_xy(Ns, accs)</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+        <p class="note">Try <code>p = 0.45</code> — below the Condorcet half — and watch the curve still <em>rise</em>: a single chain that is wrong more often than right can still vote its way to a correct plurality, because its errors disperse over six distractors while its correct answers all pile on one value. That is the gap between the binary jury theorem and the multi-way reality the chapter flags. Then set every wrong chain to the <em>same</em> distractor (delete the scatter) and the gift evaporates — correlated errors are the failure mode voting cannot fix.</p>
+
         <p>What the simulator's independence assumption hides, the next instrument shows: five concrete chains for one problem, including <em>where</em> the wrong ones leave the road.</p>
 
         <div class="widget" id="rc-paths" data-reveal>
@@ -123,6 +151,34 @@
           </div>
           <div class="w-note">Three chains reach 74 by different routes — distinct z, same a, the agreement EQ P4.2 counts on. The two failures derail at <em>marked</em> steps and scatter (10 and 84), so 74 wins 3–1–1. The fragility is visible too: had both wrong chains made the <em>same</em> misreading — a correlated error — the vote would stand 3–2 and one more bad sample flips it. Voting fixes scattered errors, not shared ones.</div>
         </div>
+
+        <p>Pull EQ P4.1 down to arithmetic. Take the five chains above as the only draws from \(p(z \mid q)\), read off each one's answer \(a\), and the marginal \(p(a \mid q)\) is just the histogram. A single sample is wrong two times in five — yet the mode of the histogram is the right answer. That is the whole trick on one line of <code>np.unique</code>:</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># CoT as marginalization: 5 hand-written reasoning paths, majority recovers the answer
+import numpy as np
+rng = np.random.default_rng(0)
+# bakery problem (INSTRUMENT P4.2): true answer is 74. 3 paths land on 74, 2 derail.
+paths = [("parse boxes, subtract, double", 74),
+         ("fuse 'baked - left', double", 74),
+         ("misread 'all but 5' as 'sold 5'", 10),   # language slip
+         ("restate, double the sales", 74),
+         ("double BAKED, not SOLD", 84)]            # wrong operand
+answers = np.array([a for _, a in paths])
+for route, a in paths:
+    print(f"  a = {a:>2}   via {route}")
+vals, counts = np.unique(answers, return_counts=True)   # the marginal p(a | q)
+winner = vals[np.argmax(counts)]
+print("tally: " + ", ".join(f"{v}:{c}" for v, c in zip(vals, counts)))
+draws = rng.choice(answers, size=2000)                  # sample one path at a time
+print(f"single random path correct: {(draws==74).mean():.0%}   plurality vote: a = {winner}")
+print("=> EQ P4.1 marginal concentrates on 74, though any single sample may miss")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+        <p class="note">The output is the chapter's thesis in five lines: <code>74:3, 10:1, 84:1</code>. No single path is trustworthy — sample one and you are right 58% of the time across draws — but the <em>mode</em> of the path-marginal is correct. Flip a third path to a wrong-but-distinct value and 74 still wins on a plurality; flip it to <em>match</em> one of the existing wrong answers and the vote ties. Truth concentrates, scattered error doesn't, correlated error does — exactly what §4.3 argues in prose.</p>
 
         <p class="note"><strong>Where this sits in 2026.</strong> Self-consistency is the verifier-free baseline of a whole family: best-of-\(N\) with a reward model or verifier picking instead of counting, weighted votes, and tree search over partial chains (Tree-of-Thoughts) all spend parallel samples to buy accuracy. Frontier evals still report <code>cons@64</code> for exactly this reason. The economics never change, though: gains saturate around \(N \approx 10\)–\(20\) while cost stays linear in \(N\) — past the knee you are buying noise.</p>
       </section>
@@ -183,6 +239,19 @@
         </div>
       </section>
 
+      <section class="section" id="rc-refs">
+        <div class="sec-head"><span class="sec-num">§</span><h2>Further reading</h2></div>
+        <ul>
+          <li>Wei, J. et al. (2022). <em>Chain-of-Thought Prompting Elicits Reasoning in Large Language Models</em>. — the few-shot CoT result that opened §4.1; shows worked rationales in exemplars unlock multi-step reasoning at scale.</li>
+          <li>Kojima, T. et al. (2022). <em>Large Language Models are Zero-Shot Reasoners</em>. — the “Let's think step by step” paper; the magic words themselves, with the scale dependence §4.1 stresses.</li>
+          <li>Wang, X. et al. (2022). <em>Self-Consistency Improves Chain of Thought Reasoning in Language Models</em>. — the source of EQ P4.2 and both instruments: sample many chains, vote on the answer.</li>
+          <li>Feng, G. et al. (2023). <em>Towards Revealing the Mystery behind Chain of Thought: A Theoretical Perspective</em>. — formalizes “tokens are compute”: bounded-depth transformers gain expressivity with a long enough scratchpad.</li>
+          <li>Turpin, M. et al. (2023). <em>Language Models Don't Always Say What They Think</em>. — the faithfulness caveat in §4.1: a clean chain can rationalize an answer actually driven by an unmentioned prompt bias.</li>
+          <li>Dhuliawala, S. et al. (2023). <em>Chain-of-Verification Reduces Hallucination in Large Language Models</em>. — the §4.6 verification pattern; the load-bearing trick is answering check questions in a fresh context.</li>
+          <li>DeepSeek-AI (2025). <em>DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning</em>. — the §4.4 plot twist: outcome-graded RL trains long internal chains, turning CoT from a prompt into a policy.</li>
+        </ul>
+      </section>
+
       <nav class="pager">
         <a href="03-few-shot.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">03</span> Show, Don't Tell: Few-Shot &amp; Examples</div></a>
         <a class="next" href="05-structured-output.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">05</span> Structured Output &amp; Tool-Ready Prompts</div></a>
@@ -200,8 +269,9 @@
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
-<script src="../assets/js/glossary.js?v=de942868"></script>
-<script src="../assets/js/shared.js?v=2ab4fc41"></script>
+<script src="../assets/js/glossary.js?v=a9bc4f7e"></script>
+<script src="../assets/js/shared.js?v=badceda4"></script>
+<script src="../assets/js/pyrunner.js?v=abf14a7e"></script>
 <script src="../assets/js/search.js?v=b56ede0c"></script>
 <script>
 /* chapter instruments — single IIFE, no globals */
