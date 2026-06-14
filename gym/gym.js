@@ -1076,7 +1076,7 @@
     x.fillStyle = "#2f3234"; x.fillRect(M, 520, W - 2 * M, 1);
     letter("2px");
     x.fillStyle = "#636363"; x.font = "500 20px " + MONO;
-    x.fillText("llm-manual.vercel.app/gym", M, 568);
+    x.fillText("ai-encyclopedia.com/gym", M, 568);
     var stamp = "GRADED CLIENT-SIDE · NO ACCOUNT";
     x.fillText(stamp, W - M - x.measureText(stamp).width, 568);
     letter("0px");

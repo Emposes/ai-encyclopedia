@@ -11,7 +11,9 @@ import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const SITE = "https://llm-manual.vercel.app";
+const SITE = "https://ai-encyclopedia.com";
+// Public (clean) URL for a path — drops index.html and .html to match Vercel cleanUrls.
+const pub = (u) => SITE + u.replace(/index\.html$/, "").replace(/\.html$/, "");
 
 // Track list drives search, llms.txt, cache-busting, link-checking, content.json.
 // `part` groups tracks for the hub/onboarding; existing four keep their VOL tags.
@@ -175,7 +177,7 @@ writeFileSync(join(ROOT, "llms-full.txt"),
 
 writeFileSync(join(ROOT, "sitemap.xml"),
   `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n` +
-  sitemapUrls.map(u => `  <url><loc>${SITE}${u}</loc></url>`).join("\n") + "\n</urlset>");
+  sitemapUrls.map(u => `  <url><loc>${pub(u)}</loc></url>`).join("\n") + "\n</urlset>");
 
 writeFileSync(join(ROOT, "robots.txt"), `User-agent: *\nAllow: /\nSitemap: ${SITE}/sitemap.xml\n`);
 
@@ -196,13 +198,24 @@ let stamped = 0;
 for (const rel of htmlFiles) {
   if (!existsSync(join(ROOT, rel))) continue;
   const before = readFileSync(join(ROOT, rel), "utf8");
-  const after = before.replace(ASSET_RE, (m, attr, url, assetPath) => {
+  let after = before.replace(ASSET_RE, (m, attr, url, assetPath) => {
     const h = hashOf(assetPath);
     return h ? `${attr}="${url}?v=${h}"` : m;
   });
+  // canonical + og:url (clean self URL) + absolute og:image — skip the error page.
+  if (rel !== "404.html") {
+    const canon = pub("/" + rel);
+    after = /<link rel="canonical"/i.test(after)
+      ? after.replace(/<link rel="canonical"[^>]*>/i, `<link rel="canonical" href="${canon}" />`)
+      : after.replace(/<\/head>/i, `<link rel="canonical" href="${canon}" />\n</head>`);
+    after = /<meta property="og:url"/i.test(after)
+      ? after.replace(/<meta property="og:url"[^>]*>/i, `<meta property="og:url" content="${canon}" />`)
+      : after.replace(/<\/head>/i, `<meta property="og:url" content="${canon}" />\n</head>`);
+    after = after.replace(/(<meta property="og:image" content=")\/([^"]*)"/i, `$1${SITE}/$2"`);
+  }
   if (after !== before) { writeFileSync(join(ROOT, rel), after); stamped++; }
 }
-console.log("cache-bust: rewrote asset versions in", stamped, "pages");
+console.log("cache-bust + canonical: rewrote", stamped, "pages");
 
 /* ---------- MCQ length-tell regression guard (warning-only) ---------- */
 try {
