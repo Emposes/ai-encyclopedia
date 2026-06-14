@@ -1,0 +1,285 @@
+{
+  "concepts": [
+    {
+      "id": "agents-07-retrieval-augmented-generation-s1",
+      "chapter": "agents/07-retrieval-augmented-generation",
+      "section": "s1",
+      "title": "Why retrieve at all",
+      "eyebrow": "AGENTS",
+      "beats": [
+        {
+          "text": "A model knows only what it was trained on. Retrieval feeds it the relevant passages at query time instead.",
+          "visual": { "type": "title", "text": "Why retrieve at all", "sub": "Grounding a frozen model in external facts" }
+        },
+        {
+          "text": "Parametric memory has four chronic problems: freshness, private knowledge, grounding, and context economy.",
+          "visual": { "type": "bars", "values": [1, 1, 1, 1], "labels": ["Freshness", "Private", "Citations", "Cost"] }
+        },
+        {
+          "text": "Weights freeze at the training cutoff, so anything that changed afterward is invisible until you retrain.",
+          "visual": { "type": "stat", "value": 0, "label": "Facts learned after cutoff", "unit": "" }
+        },
+        {
+          "text": "Pasting the whole knowledge base into every prompt is quadratic in attention cost and hits the window limit.",
+          "visual": { "type": "plot", "ys": [1, 4, 9, 16, 25], "xlabel": "tokens in context", "ylabel": "attention cost", "mark": true }
+        },
+        {
+          "text": "Most wrong answers are recall bugs: the right passage was never retrieved, not a reasoning failure.",
+          "visual": { "type": "stat", "value": 0, "label": "Reasoning fixes for a missed passage", "unit": "" }
+        }
+      ]
+    },
+    {
+      "id": "agents-07-retrieval-augmented-generation-s2",
+      "chapter": "agents/07-retrieval-augmented-generation",
+      "section": "s2",
+      "title": "The pipeline, end to end",
+      "eyebrow": "AGENTS",
+      "beats": [
+        {
+          "text": "RAG has two phases: indexing runs offline once per corpus, and retrieval runs online per request.",
+          "visual": { "type": "title", "text": "The pipeline", "sub": "Index offline, retrieve online" }
+        },
+        {
+          "text": "Indexing splits documents into chunks, embeds each chunk into a vector, and loads them into a searchable index.",
+          "visual": { "type": "bars", "values": [1, 1, 1], "labels": ["Chunk", "Embed", "Index"] }
+        },
+        {
+          "text": "At query time the question is embedded, the index returns nearest chunks, a reranker reorders, and survivors are assembled.",
+          "visual": { "type": "bars", "values": [1, 1, 1, 1], "labels": ["Embed", "Retrieve", "Rerank", "Assemble"] }
+        },
+        {
+          "text": "Query and documents must share the same vector space, or measured nearness between them is meaningless.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "End-to-end answer quality is bounded above by retrieval quality, so we spend more pages on retrieval.",
+          "visual": { "type": "plot", "ys": [3, 5, 7, 8, 8], "dot": 4, "xlabel": "retrieval quality", "ylabel": "answer quality", "mark": true }
+        }
+      ]
+    },
+    {
+      "id": "agents-07-retrieval-augmented-generation-s3",
+      "chapter": "agents/07-retrieval-augmented-generation",
+      "section": "s3",
+      "title": "Chunking: the unglamorous decision that dominates",
+      "eyebrow": "AGENTS",
+      "beats": [
+        {
+          "text": "An embedding represents a whole chunk as one vector, so the chunk is the atomic unit of retrieval.",
+          "visual": { "type": "title", "text": "Chunking", "sub": "The splitting policy that dominates" }
+        },
+        {
+          "text": "Small chunks are semantically focused and score high on precision, but often lack the surrounding context.",
+          "visual": { "type": "plot", "ys": [0.95, 0.8, 0.62, 0.5, 0.42], "xlabel": "chunk size", "ylabel": "precision@k", "mark": true }
+        },
+        {
+          "text": "Large chunks carry full context and help recall, but one vector averages many topics and dilutes the signal.",
+          "visual": { "type": "plot", "ys": [0.45, 0.62, 0.78, 0.88, 0.92], "xlabel": "chunk size", "ylabel": "recall@k", "mark": true }
+        },
+        {
+          "text": "Chunk count advances by the stride, chunk size minus overlap, not by the chunk size itself.",
+          "visual": { "type": "equation", "tex": "N_{\\text{chunks}} = \\left\\lceil \\frac{L_{\\text{doc}} - o}{c - o} \\right\\rceil", "note": "stride = c - o" }
+        },
+        {
+          "text": "A 6000-token document with chunk size 500 and overlap 50 tiles into 14 chunks, two more than without overlap.",
+          "visual": { "type": "stat", "value": 14, "label": "Chunks with overlap", "unit": "" }
+        },
+        {
+          "text": "Overlap is pure storage cost: doubling it roughly doubles the redundant tokens you embed and store.",
+          "visual": { "type": "bars", "values": [12, 14], "labels": ["no overlap", "overlap 50"], "highlight": 1 }
+        }
+      ]
+    },
+    {
+      "id": "agents-07-retrieval-augmented-generation-s4",
+      "chapter": "agents/07-retrieval-augmented-generation",
+      "section": "s4",
+      "title": "Embeddings, similarity, and the index",
+      "eyebrow": "AGENTS",
+      "beats": [
+        {
+          "text": "An embedding model maps a chunk to a fixed-length vector so that semantically similar text lands nearby.",
+          "visual": { "type": "title", "text": "Embeddings and similarity", "sub": "Vectors, cosine, and the vector index" }
+        },
+        {
+          "text": "Cosine similarity compares only the direction of query and document vectors, ignoring magnitude.",
+          "visual": { "type": "equation", "tex": "\\cos(\\mathbf{q}, \\mathbf{d}) = \\frac{\\mathbf{q} \\cdot \\mathbf{d}}{\\lVert \\mathbf{q} \\rVert\\, \\lVert \\mathbf{d} \\rVert} \\in [-1, 1]", "note": "1 identical, 0 orthogonal, negative opposed" }
+        },
+        {
+          "text": "Query (1,2,2) against document (2,3,1) gives a cosine of 0.8909, so they point in a similar direction.",
+          "visual": { "type": "stat", "value": 0.8909, "label": "Cosine similarity", "unit": "", "decimals": 4 }
+        },
+        {
+          "text": "Exact k-nearest-neighbour search scans every vector at O(Nd) cost, fine for thousands and ruinous for millions.",
+          "visual": { "type": "plot", "ys": [1, 2, 3, 4, 5], "xlabel": "vectors N", "ylabel": "scan cost", "mark": true }
+        },
+        {
+          "text": "Production systems use HNSW or IVF indexes that answer approximate neighbours in sub-linear time.",
+          "visual": { "type": "bars", "values": [3, 5], "labels": ["IVF memory", "HNSW recall"], "highlight": 1 }
+        },
+        {
+          "text": "An ANN index that silently returns the ninth-best neighbour is a recall leak you mistake for a model failure.",
+          "visual": { "type": "stat", "value": 9, "label": "Returned instead of best", "unit": "th" }
+        }
+      ]
+    },
+    {
+      "id": "agents-07-retrieval-augmented-generation-s5",
+      "chapter": "agents/07-retrieval-augmented-generation",
+      "section": "s5",
+      "title": "Sparse, dense, and hybrid retrieval",
+      "eyebrow": "AGENTS",
+      "beats": [
+        {
+          "text": "Dense embeddings are not the only way to rank documents, and on their own they are not the best.",
+          "visual": { "type": "title", "text": "Sparse, dense, hybrid", "sub": "BM25, embeddings, and fusion" }
+        },
+        {
+          "text": "BM25 scores by exact term overlap and is unbeatable at matching product codes, error strings, and proper nouns.",
+          "visual": { "type": "equation", "tex": "\\text{BM25}(q, D) = \\sum_{t \\in q} \\text{IDF}(t)\\, \\frac{f(t, D)\\,(k_1 + 1)}{f(t, D) + k_1\\left(1 - b + b\\,\\frac{|D|}{\\overline{|D|}}\\right)}", "note": "b approx 0.75, k1 approx 1.2 to 2.0" }
+        },
+        {
+          "text": "Term-frequency saturation means the tenth occurrence adds far less than the first, so keyword stuffing cannot win.",
+          "visual": { "type": "plot", "ys": [0, 0.5, 0.72, 0.85, 0.9, 0.93], "xlabel": "term frequency", "ylabel": "score contribution", "mark": true }
+        },
+        {
+          "text": "Dense retrieval matches car won't start to engine fails to crank, with zero shared content words.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "Reciprocal Rank Fusion sums a discounted reciprocal of each ranker's position, softened by a constant K near 60.",
+          "visual": { "type": "equation", "tex": "\\text{RRF}(d) = \\sum_{r \\in R} \\frac{1}{K + \\text{rank}_r(d)}", "note": "K commonly 60, scale-free fusion" }
+        },
+        {
+          "text": "A document ranked first by BM25 and third by the dense retriever scores about 0.0323 by RRF.",
+          "visual": { "type": "stat", "value": 0.0323, "label": "RRF fused score", "unit": "", "decimals": 4 }
+        }
+      ]
+    },
+    {
+      "id": "agents-07-retrieval-augmented-generation-s6",
+      "chapter": "agents/07-retrieval-augmented-generation",
+      "section": "s6",
+      "title": "Reranking and query transformation",
+      "eyebrow": "AGENTS",
+      "beats": [
+        {
+          "text": "The retriever surfaces a generous candidate set fast, but that set is usually mis-ordered.",
+          "visual": { "type": "title", "text": "Reranking", "sub": "Cross-encoders and query transforms" }
+        },
+        {
+          "text": "The bi-encoder embeds query and document separately, so only their final vectors meet at a dot product.",
+          "visual": { "type": "bars", "values": [1, 1], "labels": ["query vec", "doc vec"] }
+        },
+        {
+          "text": "A cross-encoder feeds query and document together, letting every query token attend to every document token.",
+          "visual": { "type": "plot", "ys": [0.4, 0.55, 0.7, 0.82, 0.9], "xlabel": "candidates read", "ylabel": "precision", "mark": true }
+        },
+        {
+          "text": "The two-stage pattern narrows millions to dozens cheaply, then perfects the order of those dozens accurately.",
+          "visual": { "type": "bars", "values": [1000000, 50, 5], "labels": ["retriever", "candidates", "kept"], "highlight": 2 }
+        },
+        {
+          "text": "HyDE embeds a hypothetical answer, which lives near real answers and retrieves better than the bare question.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "Reranking matters most at small k: a tighter context budget lets the first few passages decide the answer.",
+          "visual": { "type": "plot", "ys": [0.9, 0.7, 0.5, 0.35, 0.25], "dot": 0, "xlabel": "k", "ylabel": "rerank lift", "mark": true }
+        }
+      ]
+    },
+    {
+      "id": "agents-07-retrieval-augmented-generation-s7",
+      "chapter": "agents/07-retrieval-augmented-generation",
+      "section": "s7",
+      "title": "Context assembly and lost-in-the-middle",
+      "eyebrow": "AGENTS",
+      "beats": [
+        {
+          "text": "How you arrange the reranked passages in the prompt is not cosmetic; position changes how the model uses them.",
+          "visual": { "type": "title", "text": "Context assembly", "sub": "The lost-in-the-middle effect" }
+        },
+        {
+          "text": "Liu and colleagues found accuracy as a function of the gold passage position is U-shaped, not flat.",
+          "visual": { "type": "plot", "ys": [0.9, 0.65, 0.5, 0.45, 0.52, 0.7, 0.88], "xlabel": "gold position", "ylabel": "accuracy", "mark": true }
+        },
+        {
+          "text": "Put the most relevant passages first and last, not buried in the middle where attention is weakest.",
+          "visual": { "type": "bars", "values": [9, 5, 5, 9], "labels": ["first", "mid", "mid", "last"], "highlight": 0 }
+        },
+        {
+          "text": "Fewer, better passages beat more, noisier ones: padding adds distractors and pushes gold toward the dead zone.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "A context-only instruction that says answer only from the passages measurably reduces ungrounded answers.",
+          "visual": { "type": "bars", "values": [7, 3], "labels": ["plain prompt", "context-only"], "highlight": 1 }
+        }
+      ]
+    },
+    {
+      "id": "agents-07-retrieval-augmented-generation-s8",
+      "chapter": "agents/07-retrieval-augmented-generation",
+      "section": "s8",
+      "title": "Evaluation and failure modes",
+      "eyebrow": "AGENTS",
+      "beats": [
+        {
+          "text": "RAG has two stages to evaluate, and conflating the retriever and the generator is the common measurement mistake.",
+          "visual": { "type": "title", "text": "Evaluation", "sub": "Measure retriever and generator apart" }
+        },
+        {
+          "text": "Recall@k counts the relevant chunks that made the top-k; precision@k counts how many returned were relevant.",
+          "visual": { "type": "equation", "tex": "\\text{Recall@}k = \\frac{|\\text{relevant} \\cap \\text{top-}k|}{|\\text{relevant}|}, \\quad \\text{Precision@}k = \\frac{|\\text{relevant} \\cap \\text{top-}k|}{k}", "note": "recall@k bounds answer quality" }
+        },
+        {
+          "text": "With 5 relevant chunks and 3 of them in the top-10, recall@10 is 0.6, the ceiling on what the model can use.",
+          "visual": { "type": "stat", "value": 0.6, "label": "Recall@10", "unit": "", "decimals": 1 }
+        },
+        {
+          "text": "Faithfulness asks whether every claim in the answer is entailed by the retrieved passages.",
+          "visual": { "type": "bars", "values": [1, 1, 1], "labels": ["faithful", "relevant", "context"] }
+        },
+        {
+          "text": "The diagnostic table maps six failure modes from stale index to ungrounded answer onto a first fix each.",
+          "visual": { "type": "bars", "values": [1, 1, 1, 1, 1, 1], "labels": ["stale", "split", "recall", "distract", "middle", "ungrnd"] }
+        }
+      ]
+    },
+    {
+      "id": "agents-07-retrieval-augmented-generation-s9",
+      "chapter": "agents/07-retrieval-augmented-generation",
+      "section": "s9",
+      "title": "Agentic RAG, and the honest decision",
+      "eyebrow": "AGENTS",
+      "beats": [
+        {
+          "text": "Naive RAG is one retrieval and one generation; it is the right default and solves most cases.",
+          "visual": { "type": "title", "text": "Agentic RAG", "sub": "And the honest knowledge decision" }
+        },
+        {
+          "text": "Agentic RAG makes retrieval a tool the agent calls, deciding whether to retrieve, refine, or answer.",
+          "visual": { "type": "plot", "ys": [1, 2, 3, 4], "xlabel": "hops", "ylabel": "model calls", "mark": true }
+        },
+        {
+          "text": "It is strictly more capable and more expensive, inheriting agent failure modes like loops and bad tool args.",
+          "visual": { "type": "bars", "values": [1, 3], "labels": ["naive", "agentic"], "highlight": 1 }
+        },
+        {
+          "text": "RAG, long context, and fine-tuning are complementary: tuning teaches behaviour, RAG supplies current facts.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "Long context costs 0.90 per query at 80% correct; RAG costs 0.45 at 70%, so compare cost per resolved task.",
+          "visual": { "type": "stat", "value": 0.6429, "label": "RAG cost per correct answer", "unit": "$", "decimals": 4 }
+        },
+        {
+          "text": "Reach for RAG precisely when the knowledge is large, private, changing, or must be cited.",
+          "visual": { "type": "bars", "values": [1.125, 0.6429], "labels": ["long context", "RAG"], "highlight": 1 }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,202 @@
+{
+  "concepts": [
+    {
+      "id": "chapters-13-mechanistic-interpretability-s1",
+      "chapter": "chapters/13-mechanistic-interpretability",
+      "section": "s1",
+      "title": "The goal: reverse-engineering learned algorithms",
+      "eyebrow": "LLM FIELD MANUAL",
+      "beats": [
+        {
+          "text": "Training tells you that a network works, but the weights alone never tell you how it actually works.",
+          "visual": { "type": "title", "text": "Reverse-Engineering Learned Algorithms", "sub": "From weights to a computation a person can audit" }
+        },
+        {
+          "text": "Mechanistic interpretability recovers the algorithm itself, not which input pixels mattered as saliency maps ask.",
+          "visual": { "type": "bars", "values": [3, 9], "labels": ["saliency: where", "mechanistic: what"], "highlight": 1 }
+        },
+        {
+          "text": "The unit of explanation is the circuit, a subgraph of features and weights that together implement one identifiable function.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "The program rests on three commitments: name the features, describe the circuit, and confirm each claim with a causal test.",
+          "visual": { "type": "bars", "values": [1, 2, 3], "labels": ["name", "describe", "verify"], "highlight": 2 }
+        },
+        {
+          "text": "A neuron is a fixed basis coordinate; a feature is a direction the network actually uses to store one concept.",
+          "visual": { "type": "equation", "tex": "\\text{neuron} = e_i, \\qquad \\text{feature} = \\mathbf{d}_i \\in \\mathbb{R}^{d}", "note": "They coincide only by accident" }
+        },
+        {
+          "text": "Two facts make this hard: neurons rarely match concepts, and the cause is a deliberate encoding called superposition.",
+          "visual": { "type": "stat", "value": 3, "label": "commitments the program insists on", "unit": "" }
+        }
+      ]
+    },
+    {
+      "id": "chapters-13-mechanistic-interpretability-s2",
+      "chapter": "chapters/13-mechanistic-interpretability",
+      "section": "s2",
+      "title": "Features versus neurons, and polysemanticity",
+      "eyebrow": "LLM FIELD MANUAL",
+      "beats": [
+        {
+          "text": "If features lined up with neurons, interpretability would be a labeling exercise: read each neuron, write the concept.",
+          "visual": { "type": "title", "text": "Features Versus Neurons", "sub": "Why the natural basis is the wrong coordinate system" }
+        },
+        {
+          "text": "A few neurons are cleanly monosemantic, firing for one thing, but most are polysemantic and fire for many.",
+          "visual": { "type": "bars", "values": [1, 3], "labels": ["monosemantic", "polysemantic"], "highlight": 1 }
+        },
+        {
+          "text": "One typical neuron can light up for French text, DNA codons, and HTTP headers, with no faithful single caption.",
+          "visual": { "type": "stat", "value": 3, "label": "unrelated concepts on one axis", "unit": "" }
+        },
+        {
+          "text": "The linear representation assumption models an activation as a sparse non-negative sum of unit feature directions.",
+          "visual": { "type": "equation", "tex": "x \\approx \\sum_{i=1}^{F} a_i\\, \\mathbf{d}_i, \\quad \\lVert \\mathbf{d}_i \\rVert = 1,\\; a_i \\ge 0", "note": "EQ 13.1 — concepts are directions, and they add" }
+        },
+        {
+          "text": "Training has no pressure to align features with axes, since rotating the hidden basis computes the same function.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "Reading the neuron basis is like reading a paragraph with the word boundaries deleted: every letter present, meaning lost.",
+          "visual": { "type": "plot", "ys": [8, 2, 7, 3, 6, 2], "xlabel": "neuron axis", "ylabel": "activation", "mark": "concepts cut across axes" }
+        }
+      ]
+    },
+    {
+      "id": "chapters-13-mechanistic-interpretability-s3",
+      "chapter": "chapters/13-mechanistic-interpretability",
+      "section": "s3",
+      "title": "The superposition hypothesis",
+      "eyebrow": "LLM FIELD MANUAL",
+      "beats": [
+        {
+          "text": "Superposition is the leading explanation: a network stores more features than dimensions using near-orthogonal directions.",
+          "visual": { "type": "title", "text": "The Superposition Hypothesis", "sub": "Packing more features than there are dimensions" }
+        },
+        {
+          "text": "With d dimensions you get only d orthogonal directions, but exponentially many nearly-orthogonal ones fit alongside them.",
+          "visual": { "type": "plot", "ys": [1, 3, 9, 27, 81, 243], "xlabel": "dimensions d", "ylabel": "features packable", "mark": "Johnson-Lindenstrauss" }
+        },
+        {
+          "text": "The price is interference: projecting onto a feature recovers its activation plus cross-talk from every overlapping feature.",
+          "visual": { "type": "equation", "tex": "\\hat{a}_i = a_i + \\sum_{j\\neq i} a_j\\,(\\mathbf{d}_i^{\\top}\\mathbf{d}_j)", "note": "EQ 13.2 — cross-talk scales with pairwise cosine" }
+        },
+        {
+          "text": "Superposition only works because features are sparse, so overlapping directions almost never fire on the same input.",
+          "visual": { "type": "stat", "value": 0.6, "label": "cosine between two example features", "unit": "", "decimals": 1 }
+        },
+        {
+          "text": "The interference cost scales with the product of two firing probabilities, so sparse features make overpacking cheap.",
+          "visual": { "type": "equation", "tex": "\\text{loss} \\approx \\text{capacity} + \\sum_i \\Pr[a_i]\\sum_{j\\neq i}\\Pr[a_j]\\,(\\mathbf{d}_i^{\\top}\\mathbf{d}_j)^2", "note": "EQ 13.3 — sparser features, more you can pack" }
+        },
+        {
+          "text": "As sparsity rises, toy networks leave one-feature-per-neuron and arrange features into pentagons and tetrahedra.",
+          "visual": { "type": "lattice" }
+        }
+      ]
+    },
+    {
+      "id": "chapters-13-mechanistic-interpretability-s4",
+      "chapter": "chapters/13-mechanistic-interpretability",
+      "section": "s4",
+      "title": "Sparse autoencoders: dictionary learning for features",
+      "eyebrow": "LLM FIELD MANUAL",
+      "beats": [
+        {
+          "text": "If superposition is the disease, dictionary learning is the cure, and a sparse autoencoder runs it at scale.",
+          "visual": { "type": "title", "text": "Sparse Autoencoders", "sub": "Re-expressing activations as a sparse learned dictionary" }
+        },
+        {
+          "text": "The encoder maps an activation to a much wider code with a ReLU, then a decoder rebuilds it from feature directions.",
+          "visual": { "type": "equation", "tex": "\\mathbf{f}(x) = \\mathrm{ReLU}(W_{\\text{enc}}(x - \\mathbf{b}_{\\text{dec}}) + \\mathbf{b}_{\\text{enc}}), \\quad \\hat{x} = W_{\\text{dec}}\\,\\mathbf{f}(x) + \\mathbf{b}_{\\text{dec}}", "note": "EQ 13.4 — the dictionary is overcomplete, 8x to 64x wider" }
+        },
+        {
+          "text": "The loss balances two terms: reconstruct the activation faithfully, and keep the code sparse with an L1 penalty.",
+          "visual": { "type": "equation", "tex": "\\mathcal{L} = \\lVert x - \\hat{x} \\rVert_2^2 + \\lambda\\,\\lVert \\mathbf{f}(x)\\rVert_1", "note": "EQ 13.5 — lambda sets the fidelity-versus-sparsity exchange rate" }
+        },
+        {
+          "text": "L0 counts the nonzero entries in the code, so a code of 0.8, 1.2, and 0.4 active among eight has L0 of three.",
+          "visual": { "type": "stat", "value": 3, "label": "L0: active features in the code", "unit": "" }
+        },
+        {
+          "text": "Three realities dominate practice: dead features, the width-versus-L0-versus-fidelity trilemma, and feature splitting.",
+          "visual": { "type": "bars", "values": [4, 6, 5], "labels": ["dead feats", "trilemma", "splitting"], "highlight": 1 }
+        },
+        {
+          "text": "Scaling Monosemanticity pushed SAEs onto Claude 3 Sonnet and found millions of locatable, manipulable features.",
+          "visual": { "type": "stat", "value": 1000000, "label": "features found at production scale", "unit": "" }
+        }
+      ]
+    },
+    {
+      "id": "chapters-13-mechanistic-interpretability-s5",
+      "chapter": "chapters/13-mechanistic-interpretability",
+      "section": "s5",
+      "title": "Circuits, motifs & causal methods",
+      "eyebrow": "LLM FIELD MANUAL",
+      "beats": [
+        {
+          "text": "Features are nouns and circuits are the sentences: features wired by weights to actually compute something.",
+          "visual": { "type": "title", "text": "Circuits & Causal Methods", "sub": "Wiring features into auditable computations" }
+        },
+        {
+          "text": "The best-traced example is the induction head, a two-head circuit that copies what followed an earlier matching token.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "Two cheap tools dominate: the logit lens decodes intermediate layers, and ablation zeroes a component to test necessity.",
+          "visual": { "type": "bars", "values": [4, 6], "labels": ["logit lens", "ablation"], "highlight": 1 }
+        },
+        {
+          "text": "Activation patching is the gold standard: transplant one location's activation from a corrupted run into a clean run.",
+          "visual": { "type": "equation", "tex": "\\Delta_{\\ell,p} = M(x_{\\text{clean}}\\,|\\, h^{(\\ell)}_{p} \\leftarrow h^{(\\ell)}_{p}(x_{\\text{corrupt}})) - M(x_{\\text{clean}})", "note": "EQ 13.6 — a large delta means that location decides the answer" }
+        },
+        {
+          "text": "If a clean logit of 2.1 becomes 6.3 after patching layer eight position five, the causal effect there is 4.2.",
+          "visual": { "type": "stat", "value": 4.2, "label": "patching effect at one location", "unit": "", "decimals": 1 }
+        },
+        {
+          "text": "Patching is causal because it asks a counterfactual, which is stronger than ablation and far stronger than attention inspection.",
+          "visual": { "type": "plot", "ys": [0, 0, 4.2, 0, 0, 0, 0, 0], "xlabel": "patched location", "ylabel": "delta logit", "mark": "one decisive hotspot" }
+        }
+      ]
+    },
+    {
+      "id": "chapters-13-mechanistic-interpretability-s6",
+      "chapter": "chapters/13-mechanistic-interpretability",
+      "section": "s6",
+      "title": "Feature steering, and honest limits",
+      "eyebrow": "LLM FIELD MANUAL",
+      "beats": [
+        {
+          "text": "Once a feature direction passes a causal test, you can steer by adding its decoder vector to the residual stream.",
+          "visual": { "type": "title", "text": "Feature Steering & Honest Limits", "sub": "Writing concepts, and the limits of the method" }
+        },
+        {
+          "text": "Adding alpha units of a feature direction pushes the model toward that concept, or clamping fixes its activation outright.",
+          "visual": { "type": "equation", "tex": "x' = x + \\alpha\\,\\mathbf{d}_i \\quad\\text{or}\\quad f_i(x) \\leftarrow c \\Rightarrow x' = x + (c - f_i(x))\\,\\mathbf{d}_i", "note": "EQ 13.7 — the direction that reads a feature also writes it" }
+        },
+        {
+          "text": "Clamping a Golden Gate Bridge feature high made the model fixate on the bridge across unrelated prompts.",
+          "visual": { "type": "stat", "value": 1, "label": "direction that both reads and writes", "unit": "" }
+        },
+        {
+          "text": "Be honest: SAE features are not ground truth, since a different width or lambda yields a different feature set.",
+          "visual": { "type": "bars", "values": [8, 16, 32, 64], "labels": ["8x", "16x", "32x", "64x"], "highlight": 3 }
+        },
+        {
+          "text": "Evaluation is genuinely hard, reconstruction is incomplete, scaling is costly, and circuits remain mostly hand-found.",
+          "visual": { "type": "bars", "values": [5, 4, 6, 5], "labels": ["eval", "residual", "cost", "circuits"], "highlight": 2 }
+        },
+        {
+          "text": "The honest scorecard: a working pipeline exists, but treat extracted features as falsifiable hypotheses, provisional always.",
+          "visual": { "type": "lattice" }
+        }
+      ]
+    }
+  ]
+}
