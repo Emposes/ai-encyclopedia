@@ -1,0 +1,169 @@
+{
+  "concepts": [
+    {
+      "id": "rl-05-deep-rl-s1",
+      "chapter": "rl/05-deep-rl",
+      "section": "s1",
+      "title": "Function approximation & the deadly triad",
+      "eyebrow": "REINFORCEMENT LEARNING",
+      "beats": [
+        {
+          "text": "Tabular reinforcement learning stores one value per state, which becomes useless the moment the state space grows large.",
+          "visual": { "type": "title", "text": "Function approximation & the deadly triad", "sub": "When the lookup table runs out" }
+        },
+        {
+          "text": "A single Atari frame has more configurations than there are atoms in the universe, so a table can never revisit a state.",
+          "visual": { "type": "stat", "value": 33600, "label": "pixels in one 210x160 Atari frame", "unit": "px" }
+        },
+        {
+          "text": "The fix is to replace the table with a neural network that generalizes across states, which is what makes the method deep.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "Sutton and Barto named the failure mode the deadly triad: three ingredients that together risk divergence.",
+          "visual": { "type": "equation", "tex": "\\text{approximation} + \\text{bootstrapping} + \\text{off-policy} \\Rightarrow \\text{divergence}", "note": "Each ingredient is benign alone" }
+        },
+        {
+          "text": "Bootstrapping means the regression target depends on the network's own output, so the network chases a target it keeps moving.",
+          "visual": { "type": "equation", "tex": "y = r + \\gamma \\max_{a'} Q_\\theta(s', a')", "note": "target computed from the same network being updated" }
+        },
+        {
+          "text": "Removing any one ingredient restores safety, so every algorithm in this chapter is a recipe for keeping the three forces balanced.",
+          "visual": { "type": "bars", "values": [3, 2, 2, 2], "labels": ["all three", "no approx", "no boot", "on-policy"], "highlight": 0 }
+        }
+      ]
+    },
+    {
+      "id": "rl-05-deep-rl-s2",
+      "chapter": "rl/05-deep-rl",
+      "section": "s2",
+      "title": "Deep Q-Networks — replay & target nets",
+      "eyebrow": "REINFORCEMENT LEARNING",
+      "beats": [
+        {
+          "text": "The 2015 Deep Q-Network reached human-level play on most of forty-nine Atari games, learning straight from raw pixels.",
+          "visual": { "type": "title", "text": "Deep Q-Networks", "sub": "Replay buffers and frozen targets" }
+        },
+        {
+          "text": "Experience replay writes every transition into a large buffer and trains on random minibatches drawn from it.",
+          "visual": { "type": "stat", "value": 1000000, "label": "transitions held in a replay buffer", "unit": "" }
+        },
+        {
+          "text": "Random sampling breaks the correlation between consecutive frames and reuses each experience for many gradient updates.",
+          "visual": { "type": "bars", "values": [49, 29], "labels": ["games at human level", "games below"], "highlight": 0 }
+        },
+        {
+          "text": "The target network is a frozen copy used to compute the regression target, so it does not move while the online network chases it.",
+          "visual": { "type": "equation", "tex": "\\mathcal{L}(\\theta) = \\mathbb{E}\\!\\left[\\left(r + \\gamma \\max_{a'} Q_{\\theta^-}(s',a') - Q_\\theta(s,a)\\right)^2\\right]", "note": "gradient never flows through the frozen target" }
+        },
+        {
+          "text": "Modern code refreshes the target with a slow Polyak average, nudging it a tiny step toward the online weights each update.",
+          "visual": { "type": "equation", "tex": "\\theta^- \\leftarrow \\tau\\,\\theta + (1-\\tau)\\,\\theta^-, \\quad 0 < \\tau \\ll 1", "note": "with tau = 0.005 the target trails slowly" }
+        },
+        {
+          "text": "With both stabilizers on the learned value climbs smoothly to the truth; remove them and it overshoots and oscillates.",
+          "visual": { "type": "plot", "ys": [0, 0.3, 0.55, 0.7, 0.78, 0.81, 0.81], "dot": 6, "xlabel": "training step", "ylabel": "learned V(s0)", "mark": 0.81 }
+        }
+      ]
+    },
+    {
+      "id": "rl-05-deep-rl-s3",
+      "chapter": "rl/05-deep-rl",
+      "section": "s3",
+      "title": "Proximal Policy Optimization",
+      "eyebrow": "REINFORCEMENT LEARNING",
+      "beats": [
+        {
+          "text": "Vanilla policy gradients are unbiased but brittle, since a single overlarge step can collapse the policy beyond recovery.",
+          "visual": { "type": "title", "text": "Proximal Policy Optimization", "sub": "A one-line trust region" }
+        },
+        {
+          "text": "PPO descends from TRPO, whose principle is to improve the policy without stepping far from the one that gathered the data.",
+          "visual": { "type": "equation", "tex": "r_t(\\theta) = \\frac{\\pi_\\theta(a_t \\mid s_t)}{\\pi_{\\theta_{\\text{old}}}(a_t \\mid s_t)}", "note": "the probability ratio; r = 1 means no change" }
+        },
+        {
+          "text": "The clipped surrogate objective takes the pessimistic minimum of the clipped and unclipped terms, forming a lower bound.",
+          "visual": { "type": "equation", "tex": "L^{\\text{CLIP}}(\\theta) = \\mathbb{E}_t\\!\\left[\\min\\!\\left(r_t \\hat{A}_t,\\; \\mathrm{clip}(r_t, 1-\\varepsilon, 1+\\varepsilon)\\,\\hat{A}_t\\right)\\right]" }
+        },
+        {
+          "text": "The default epsilon of 0.2 confines the ratio to the interval from 0.8 to 1.2, the trust region made of arithmetic.",
+          "visual": { "type": "stat", "value": 1.2, "label": "upper clip bound at epsilon = 0.2", "unit": "", "decimals": 1 }
+        },
+        {
+          "text": "Once an update would move the policy too far in the rewarding direction the gradient switches off, so it cannot over-commit.",
+          "visual": { "type": "plot", "ys": [0, 0.8, 1.6, 2.4, 2.4, 2.4, 2.4], "dot": 3, "xlabel": "probability ratio r", "ylabel": "L^CLIP (A = +1)", "mark": 2.4 }
+        },
+        {
+          "text": "For a ratio of 1.5 with advantage plus two the objective caps at 2.4, since pushing the ratio higher buys nothing.",
+          "visual": { "type": "bars", "values": [3.0, 2.4], "labels": ["unclipped r*A", "clipped, taken"], "highlight": 1 }
+        }
+      ]
+    },
+    {
+      "id": "rl-05-deep-rl-s4",
+      "chapter": "rl/05-deep-rl",
+      "section": "s4",
+      "title": "Continuous control — DDPG & SAC",
+      "eyebrow": "REINFORCEMENT LEARNING",
+      "beats": [
+        {
+          "text": "DQN's max over actions is intractable when the action is a vector of continuous torques, so continuous control needs another shape.",
+          "visual": { "type": "title", "text": "Continuous control", "sub": "DDPG, TD3, and SAC" }
+        },
+        {
+          "text": "Actor-critic methods keep a learned policy and a learned value, letting the two improve each other.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "DDPG reads as DQN for continuous actions, replacing the inner max with a deterministic actor, but is sensitive to hyperparameters.",
+          "visual": { "type": "equation", "tex": "Q(s, \\mu_\\theta(s))", "note": "deterministic actor removes the inner maximization" }
+        },
+        {
+          "text": "TD3 adds three fixes: twin critics taking the minimum, delayed actor updates, and noise smoothing on the target action.",
+          "visual": { "type": "bars", "values": [3, 1], "labels": ["TD3 fixes", "DDPG"], "highlight": 0 }
+        },
+        {
+          "text": "Soft Actor-Critic, the current default, adds a per-step entropy bonus that pays the agent to stay random while doing well.",
+          "visual": { "type": "equation", "tex": "J(\\pi) = \\sum_t \\mathbb{E}\\!\\left[ R(s_t, a_t) + \\alpha\\,\\mathcal{H}(\\pi(\\cdot \\mid s_t)) \\right]", "note": "the temperature alpha sets the price of randomness" }
+        },
+        {
+          "text": "Entropy turns exploration into a first-class term of the objective, and modern SAC tunes alpha automatically to a target.",
+          "visual": { "type": "stat", "value": 0, "label": "alpha at which SAC recovers ordinary reward maximization", "unit": "" }
+        }
+      ]
+    },
+    {
+      "id": "rl-05-deep-rl-s5",
+      "chapter": "rl/05-deep-rl",
+      "section": "s5",
+      "title": "Stability & reproducibility",
+      "eyebrow": "REINFORCEMENT LEARNING",
+      "beats": [
+        {
+          "text": "Deep RL works, yet it is the least reproducible corner of mainstream machine learning because the agent generates its own data.",
+          "visual": { "type": "title", "text": "Stability & reproducibility", "sub": "What a single seed hides" }
+        },
+        {
+          "text": "Seed sensitivity means the same code and hyperparameters, changing only the random seed, can produce wildly different curves.",
+          "visual": { "type": "plot", "ys": [0, 40, 90, 150, 175, 180, 182], "dot": 6, "xlabel": "training step", "ylabel": "return (lucky seed)", "mark": 182 }
+        },
+        {
+          "text": "Henderson and colleagues showed in 2018 that reported results were routinely driven by a handful of lucky seeds.",
+          "visual": { "type": "bars", "values": [180, 40], "labels": ["seed solves", "seed stalls"], "highlight": 0 }
+        },
+        {
+          "text": "The mean across seeds and its standard error capture what one run cannot, but the standard error shrinks only as one over root N.",
+          "visual": { "type": "equation", "tex": "\\bar{G} = \\frac{1}{N}\\sum_{i=1}^{N} G^{(i)}, \\qquad \\mathrm{SE} = \\frac{s}{\\sqrt{N}}", "note": "halving uncertainty costs four times the compute" }
+        },
+        {
+          "text": "Five to ten independent seeds with the spread shown is the minimum honest unit of evidence in deep RL.",
+          "visual": { "type": "stat", "value": 5, "label": "minimum seeds to report", "unit": "" }
+        },
+        {
+          "text": "Pin the environment, library, hardware, and every hyperparameter, since details like reward scaling can swing the result.",
+          "visual": { "type": "bars", "values": [1, 5, 10], "labels": ["anecdote", "minimum", "robust"], "highlight": 0 }
+        }
+      ]
+    }
+  ]
+}

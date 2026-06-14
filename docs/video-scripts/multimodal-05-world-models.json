@@ -1,0 +1,169 @@
+{
+  "concepts": [
+    {
+      "id": "multimodal-05-world-models-s1",
+      "chapter": "multimodal/05-world-models",
+      "section": "s1",
+      "title": "What a world model is",
+      "eyebrow": "MULTIMODAL",
+      "beats": [
+        {
+          "text": "A language model predicts the next token, but an agent acting in the world needs to predict the next state instead.",
+          "visual": { "type": "title", "text": "What a world model is", "sub": "A learned simulator of an environment's dynamics" }
+        },
+        {
+          "text": "A world model encodes an observation into a compact latent state, then predicts the next latent and reward from the current state and action.",
+          "visual": { "type": "equation", "tex": "z_t = \\mathrm{enc}(o_t),\\quad \\hat{z}_{t+1} = f_\\theta(z_t, a_t),\\quad \\hat{r}_{t+1} = g_\\theta(z_t, a_t)", "note": "EQ MM5.1 — the world-model contract" }
+        },
+        {
+          "text": "Predicting every pixel wastes capacity on textures and shadows that do not matter, so dynamics are learned in a low-dimensional latent space instead.",
+          "visual": { "type": "bars", "values": [88, 12], "labels": ["pixel detail", "control bits"], "highlight": 1 }
+        },
+        {
+          "text": "Feeding each predicted latent back into the transition rolls the model forward in imagination, generating futures without touching the real environment.",
+          "visual": { "type": "plot", "ys": [1.0, 0.92, 0.85, 0.78, 0.72, 0.66], "dot": 5, "xlabel": "imagined step", "ylabel": "latent norm" }
+        },
+        {
+          "text": "A world model can do three jobs: predict next states, generate whole futures, and plan by scoring imagined action sequences.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "Ha and Schmidhuber showed in 2018 an agent trained entirely inside its own dream of a racing game, then transferred to the real one.",
+          "visual": { "type": "stat", "value": 2018, "label": "World Models, the founding demonstration", "decimals": 0 }
+        }
+      ]
+    },
+    {
+      "id": "multimodal-05-world-models-s2",
+      "chapter": "multimodal/05-world-models",
+      "section": "s2",
+      "title": "Latent dynamics — Dreamer",
+      "eyebrow": "MULTIMODAL",
+      "beats": [
+        {
+          "text": "Dreamer is the most complete worked example of latent-dynamics control, built around a Recurrent State-Space Model.",
+          "visual": { "type": "title", "text": "Latent dynamics — Dreamer", "sub": "DreamerV1 through V3, Hafner et al." }
+        },
+        {
+          "text": "The latent splits into a deterministic recurrent state that carries history and a stochastic state that represents genuine uncertainty.",
+          "visual": { "type": "equation", "tex": "h_t = \\mathrm{GRU}(h_{t-1}, z_{t-1}, a_{t-1})", "note": "The recurrent hidden state carries history forward" }
+        },
+        {
+          "text": "Training pulls the prior, which sees only the recurrent state, toward the posterior, which sees the real observation, via a KL term.",
+          "visual": { "type": "equation", "tex": "\\mathcal{L}_{\\text{dyn}} = \\mathrm{KL}\\big( q(z_t \\mid h_t, o_t) \\,\\Vert\\, p(z_t \\mid h_t) \\big)", "note": "EQ MM5.2 — prior must anticipate what the posterior knows" }
+        },
+        {
+          "text": "Dreamer trains an actor and critic purely on imagined rollouts of about fifteen steps, never planning in the real environment.",
+          "visual": { "type": "stat", "value": 15, "label": "imagination horizon H", "unit": "steps", "decimals": 0 }
+        },
+        {
+          "text": "Because a latent forward pass is far cheaper than a real simulator step, Dreamer can practise millions of imagined steps per real step.",
+          "visual": { "type": "plot", "ys": [1, 8, 64, 512, 4096, 32768], "dot": 5, "xlabel": "scale factor", "ylabel": "imagined per real" }
+        },
+        {
+          "text": "DreamerV3 used one fixed hyperparameter set across Atari, control and DMLab, and was first to mine diamonds in Minecraft from scratch.",
+          "visual": { "type": "bars", "values": [1, 150], "labels": ["config", "tasks"], "highlight": 1 }
+        }
+      ]
+    },
+    {
+      "id": "multimodal-05-world-models-s3",
+      "chapter": "multimodal/05-world-models",
+      "section": "s3",
+      "title": "JEPA — joint-embedding predictive architectures",
+      "eyebrow": "MULTIMODAL",
+      "beats": [
+        {
+          "text": "LeCun's 2022 position paper makes one commitment central: do not predict in observation space, predict in representation space.",
+          "visual": { "type": "title", "text": "JEPA", "sub": "Joint-embedding predictive architectures" }
+        },
+        {
+          "text": "A predictor maps the context embedding to the target embedding, with stop-gradient and an EMA target encoder to avoid collapse.",
+          "visual": { "type": "equation", "tex": "\\mathcal{L}_{\\text{JEPA}} = \\big\\Vert \\mathrm{pred}_\\phi(s_x, c) - \\mathrm{sg}(s_y) \\big\\Vert^2", "note": "EQ MM5.3 — predict the embedding, not the pixels" }
+        },
+        {
+          "text": "By predicting an embedding, JEPA can discard unpredictable detail like textures, keeping only what is predictable and dropping noise.",
+          "visual": { "type": "bars", "values": [100, 35], "labels": ["pixel recon", "embedding"], "highlight": 1 }
+        },
+        {
+          "text": "I-JEPA on images and V-JEPA on video learned features competitive with reconstruction methods while training faster without heavy augmentation.",
+          "visual": { "type": "plot", "ys": [0.4, 0.55, 0.68, 0.79, 0.86, 0.9], "dot": 5, "xlabel": "training step", "ylabel": "feature quality" }
+        },
+        {
+          "text": "Collapse remains a finicky failure mode, so EMA targets, stop-gradient, and VICReg variance regularisers are load-bearing, not optional.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "Without a decoder you cannot visualise a JEPA prediction, so it trades interpretability for representational efficiency.",
+          "visual": { "type": "stat", "value": 2022, "label": "A Path Towards Autonomous Machine Intelligence", "decimals": 0 }
+        }
+      ]
+    },
+    {
+      "id": "multimodal-05-world-models-s4",
+      "chapter": "multimodal/05-world-models",
+      "section": "s4",
+      "title": "Genie & learned interactive simulators",
+      "eyebrow": "MULTIMODAL",
+      "beats": [
+        {
+          "text": "Genie pushes the world model toward generating playable worlds, producing an environment you can step through from a single prompt.",
+          "visual": { "type": "title", "text": "Genie & learned simulators", "sub": "Bruce et al., DeepMind, 2024" }
+        },
+        {
+          "text": "It was trained on over 200,000 hours of internet platformer gameplay video, with no action labels at all.",
+          "visual": { "type": "stat", "value": 200000, "label": "hours of unlabelled gameplay video", "unit": "h", "decimals": 0 }
+        },
+        {
+          "text": "The latent action module infers, for each pair of frames, a discrete action from a tiny codebook that best explains the transition.",
+          "visual": { "type": "equation", "tex": "a_t = \\arg\\min_{a \\in \\mathcal{A}} \\big\\Vert x_{t+1} - \\mathrm{dyn}_\\theta(x_{\\le t}, a) \\big\\Vert,\\quad |\\mathcal{A}| = 8", "note": "EQ MM5.4 — latent action inferred, not labelled" }
+        },
+        {
+          "text": "Because the codebook holds only eight actions, it is forced to capture controllable recurring moves like jump and move rather than memorise pixels.",
+          "visual": { "type": "bars", "values": [8], "labels": ["codebook actions"], "highlight": 0 }
+        },
+        {
+          "text": "Genie loosens the binding constraint on agent training, since passive video is essentially unlimited while action-labelled data is scarce.",
+          "visual": { "type": "plot", "ys": [0.1, 0.3, 0.7, 1.5, 3.2, 6.8], "dot": 5, "xlabel": "data scale", "ylabel": "available hours" }
+        },
+        {
+          "text": "These simulators still hallucinate, drift over long horizons, and approximate physics, so they are research artifacts not physics engines.",
+          "visual": { "type": "lattice" }
+        }
+      ]
+    },
+    {
+      "id": "multimodal-05-world-models-s5",
+      "chapter": "multimodal/05-world-models",
+      "section": "s5",
+      "title": "World models for planning & RL",
+      "eyebrow": "MULTIMODAL",
+      "beats": [
+        {
+          "text": "A world model turns reinforcement learning from a problem of acting into a problem of imagining, spent in two dominant ways.",
+          "visual": { "type": "title", "text": "World models for planning & RL", "sub": "Background planning vs decision-time planning" }
+        },
+        {
+          "text": "Background planning trains a fast reactive policy on imagined rollouts, then acts with the policy alone at deployment.",
+          "visual": { "type": "bars", "values": [70, 30], "labels": ["train w/ model", "act w/o model"], "highlight": 0 }
+        },
+        {
+          "text": "Decision-time planning chooses the action sequence whose imagined discounted return is greatest, then executes only the first action.",
+          "visual": { "type": "equation", "tex": "a_{t:t+H}^{\\star} = \\arg\\max_{a_{t:t+H}} \\mathbb{E}\\!\\left[ \\sum_{k=0}^{H-1} \\gamma^{k} \\hat r_{t+k} + \\gamma^{H} \\hat V(\\hat z_{t+H}) \\right]", "note": "EQ MM5.5 — planning as imagined-return maximisation" }
+        },
+        {
+          "text": "MuZero learns the transition, reward and value, then runs tree search over them, mastering Go, chess and Atari without being given the rules.",
+          "visual": { "type": "stat", "value": 4, "label": "domains mastered without rules", "unit": "games", "decimals": 0 }
+        },
+        {
+          "text": "Compounding error is the recurring tension: each small error feeds the next step, so an H-step rollout can be useless even with good one-step predictions.",
+          "visual": { "type": "plot", "ys": [0.02, 0.06, 0.14, 0.27, 0.48, 0.81], "dot": 5, "xlabel": "horizon step", "ylabel": "rollout error" }
+        },
+        {
+          "text": "Search amplifies model error, so background planning that only needs local accuracy is often more robust than long decision-time search.",
+          "visual": { "type": "lattice" }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,169 @@
+{
+  "concepts": [
+    {
+      "id": "mlops-04-ranking-calibration-s1",
+      "chapter": "mlops/04-ranking-calibration",
+      "section": "s1",
+      "title": "ROC curves & AUC",
+      "eyebrow": "MODEL RISK",
+      "beats": [
+        {
+          "text": "A scoring classifier commits to no decision until you pick a threshold, and sweeping it traces every operating point the model can offer.",
+          "visual": { "type": "title", "text": "ROC curves & AUC", "sub": "Sweep the threshold, trace the menu" }
+        },
+        {
+          "text": "The ROC curve plots true positive rate against false positive rate, and both rates condition on the true class.",
+          "visual": { "type": "equation", "tex": "\\mathrm{TPR}(t) = \\frac{\\mathrm{TP}(t)}{\\mathrm{TP}(t) + \\mathrm{FN}(t)}, \\quad \\mathrm{FPR}(t) = \\frac{\\mathrm{FP}(t)}{\\mathrm{FP}(t) + \\mathrm{TN}(t)}", "note": "Both rates condition on the true class, so ROC is invariant to prevalence." }
+        },
+        {
+          "text": "Because both axes condition on the true class, the ROC curve is invariant to class prevalence and bows toward the top-left as separation grows.",
+          "visual": { "type": "plot", "ys": [0, 0.45, 0.72, 0.88, 0.96, 1.0], "xlabel": "FPR", "ylabel": "TPR", "mark": "ROC" }
+        },
+        {
+          "text": "The area under the curve equals the probability that a random positive outranks a random negative, with ties split evenly.",
+          "visual": { "type": "equation", "tex": "\\mathrm{AUC} = \\Pr\\big(s(X^{+}) > s(X^{-})\\big) + \\tfrac{1}{2}\\Pr\\big(s(X^{+}) = s(X^{-})\\big)", "note": "This is the Wilcoxon-Mann-Whitney statistic." }
+        },
+        {
+          "text": "AUC of one is a perfect ranker, half is a coin flip, and below half means the score is backwards.",
+          "visual": { "type": "bars", "values": [1.0, 0.83, 0.5], "labels": ["perfect", "example", "coin flip"], "highlight": 1 }
+        },
+        {
+          "text": "The worked example forms six positive-negative pairs, finds five concordant with no ties, and gives AUC five over six.",
+          "visual": { "type": "stat", "value": 0.833, "label": "AUC from 5 of 6 pairs ranked correctly", "decimals": 3 }
+        }
+      ]
+    },
+    {
+      "id": "mlops-04-ranking-calibration-s2",
+      "chapter": "mlops/04-ranking-calibration",
+      "section": "s2",
+      "title": "Precision–recall curves",
+      "eyebrow": "MODEL RISK",
+      "beats": [
+        {
+          "text": "ROC's prevalence-invariance is a feature when judging a ranker in the abstract, and a trap the moment you deploy it.",
+          "visual": { "type": "title", "text": "Precision-recall curves", "sub": "The story ROC hides on rare events" }
+        },
+        {
+          "text": "On a one-percent fraud problem a model can post a gorgeous AUC and still raise fifty false alarms per real fraud.",
+          "visual": { "type": "stat", "value": 0.95, "label": "AUC that still drowns in false alarms", "decimals": 2 }
+        },
+        {
+          "text": "Precision carries false positives in its denominator, so it is acutely sensitive to prevalence in a way the ROC rates are not.",
+          "visual": { "type": "equation", "tex": "\\mathrm{Precision}(t) = \\frac{\\mathrm{TP}(t)}{\\mathrm{TP}(t) + \\mathrm{FP}(t)}, \\quad \\text{baseline} = \\frac{P}{P+N} = \\pi", "note": "The no-skill baseline is the positive rate, not a fixed diagonal." }
+        },
+        {
+          "text": "As positives get rarer the PR curve collapses toward the shrinking baseline while AUC barely moves at all.",
+          "visual": { "type": "plot", "ys": [0.92, 0.68, 0.41, 0.22, 0.11, 0.05], "xlabel": "prevalence falling", "ylabel": "PR-AUC", "mark": "collapse" }
+        },
+        {
+          "text": "The practical rule: use ROC to compare rankers, use precision-recall when positives are rare and false alarms cost real money.",
+          "visual": { "type": "bars", "values": [0.6, 0.4], "labels": ["true alerts", "false alarms"], "highlight": 0 }
+        },
+        {
+          "text": "Flagging fifty cases with thirty truly positive gives precision of zero point six, a number ROC never puts in front of you.",
+          "visual": { "type": "stat", "value": 0.6, "label": "precision: 30 of 50 alerts real", "decimals": 1 }
+        }
+      ]
+    },
+    {
+      "id": "mlops-04-ranking-calibration-s3",
+      "chapter": "mlops/04-ranking-calibration",
+      "section": "s3",
+      "title": "The KS statistic & Gini (credit scoring)",
+      "eyebrow": "MODEL RISK",
+      "beats": [
+        {
+          "text": "Credit risk has its own ranking dialect, and two numbers dominate banking model documentation: the KS statistic and the Gini coefficient.",
+          "visual": { "type": "title", "text": "KS statistic & Gini", "sub": "Discrimination in coordinates a risk committee reads" }
+        },
+        {
+          "text": "KS is the largest gap between the cumulative score distributions of bads and goods, the maximum vertical distance from ROC to the diagonal.",
+          "visual": { "type": "equation", "tex": "\\mathrm{KS} = \\max_{t}\\big|F_{+}(t) - F_{-}(t)\\big| = \\max_{t}\\big|\\mathrm{TPR}(t) - \\mathrm{FPR}(t)\\big|", "note": "KS ranges from 0, identical curves, to 1, perfectly disjoint." }
+        },
+        {
+          "text": "In retail credit a KS in the thirties or forties is a healthy application scorecard, while above seventy-five usually means a leak.",
+          "visual": { "type": "plot", "ys": [0, 0.18, 0.34, 0.42, 0.31, 0.12, 0], "xlabel": "score cutoff", "ylabel": "KS gap", "mark": "max gap" }
+        },
+        {
+          "text": "Gini is just AUC rescaled so a random model scores zero and a perfect model scores one.",
+          "visual": { "type": "equation", "tex": "\\mathrm{Gini} = 2\\,\\mathrm{AUC} - 1 \\quad\\Longleftrightarrow\\quad \\mathrm{AUC} = \\frac{\\mathrm{Gini} + 1}{2}", "note": "AUC 0.80 maps to Gini 0.60." }
+        },
+        {
+          "text": "Gini is a fixed function of AUC, but KS depends on the shape of separation and can reorder two models AUC ranks the other way.",
+          "visual": { "type": "bars", "values": [0.80, 0.60, 0.42], "labels": ["AUC", "Gini", "KS"], "highlight": 2 }
+        },
+        {
+          "text": "PSI shares the distribution-comparison spirit but answers a different question: not discrimination, but whether the population has shifted.",
+          "visual": { "type": "stat", "value": 0.6, "label": "Gini for an AUC of 0.80", "decimals": 1 }
+        }
+      ]
+    },
+    {
+      "id": "mlops-04-ranking-calibration-s4",
+      "chapter": "mlops/04-ranking-calibration",
+      "section": "s4",
+      "title": "Calibration — reliability curves & Brier score",
+      "eyebrow": "MODEL RISK",
+      "beats": [
+        {
+          "text": "Every ranking metric judges ordering and ignores the actual value of the score, but a decision usually needs the number to mean something.",
+          "visual": { "type": "title", "text": "Calibration & Brier score", "sub": "When the score has to mean something" }
+        },
+        {
+          "text": "Perfect calibration means that among all cases assigned probability p, a fraction p actually turn out positive.",
+          "visual": { "type": "equation", "tex": "\\Pr\\big(Y = 1 \\mid \\hat{p}(X) = p\\big) = p \\quad \\text{for all } p \\in [0, 1]", "note": "Calibration and discrimination are orthogonal properties." }
+        },
+        {
+          "text": "A reliability curve plots mean prediction against observed frequency, and a curve sagging below the diagonal signals an over-confident model.",
+          "visual": { "type": "plot", "ys": [0.05, 0.14, 0.27, 0.46, 0.68, 0.88], "dot": 0.46, "xlabel": "predicted p", "ylabel": "observed freq", "mark": "reliability" }
+        },
+        {
+          "text": "The Brier score is the mean squared error of the probabilities themselves, a strictly proper rule you cannot game by shading forecasts.",
+          "visual": { "type": "equation", "tex": "\\mathrm{BS} = \\frac{1}{n}\\sum_{i=1}^{n}\\big(\\hat{p}_i - y_i\\big)^2, \\qquad y_i \\in \\{0, 1\\}", "note": "Lower is better; predicting the base rate gives pi times one minus pi." }
+        },
+        {
+          "text": "When a model ranks well but is miscalibrated you recalibrate with Platt scaling or isotonic regression, both of which preserve the ranking exactly.",
+          "visual": { "type": "bars", "values": [0.045, 0.025, 0.060], "labels": ["over-conf", "calibrated", "under-conf"], "highlight": 1 }
+        },
+        {
+          "text": "Two true-positive predictions of zero point eight and zero point nine give a Brier score of zero point zero two five.",
+          "visual": { "type": "stat", "value": 0.025, "label": "Brier score from two predictions", "decimals": 3 }
+        }
+      ]
+    },
+    {
+      "id": "mlops-04-ranking-calibration-s5",
+      "chapter": "mlops/04-ranking-calibration",
+      "section": "s5",
+      "title": "Cutoff selection by cost",
+      "eyebrow": "MODEL RISK",
+      "beats": [
+        {
+          "text": "The ROC curve hands you every operating point, but it does not tell you which one to stand on.",
+          "visual": { "type": "title", "text": "Cutoff selection by cost", "sub": "The default 0.5 is almost always wrong" }
+        },
+        {
+          "text": "The right threshold minimizes expected cost, a weighted sum over the confusion matrix that depends on numbers the model never sees.",
+          "visual": { "type": "equation", "tex": "\\mathbb{E}[\\text{cost}](t) = c_{\\mathrm{FP}}\\cdot\\mathrm{FP}(t) + c_{\\mathrm{FN}}\\cdot\\mathrm{FN}(t)", "note": "Choose the threshold t that minimizes this total." }
+        },
+        {
+          "text": "Sweeping the threshold traces a U-shaped cost curve, and the minimum sits well away from the naive midpoint.",
+          "visual": { "type": "plot", "ys": [820, 540, 360, 410, 620, 910], "dot": 360, "xlabel": "threshold", "ylabel": "total cost", "mark": "min cost" }
+        },
+        {
+          "text": "For a calibrated probability the cost-optimal cutoff has a clean closed form depending only on the ratio of error costs.",
+          "visual": { "type": "equation", "tex": "t^{\\star} = \\frac{c_{\\mathrm{FP}}}{c_{\\mathrm{FP}} + c_{\\mathrm{FN}}}", "note": "Equal costs give 0.5, the only case the default is right." }
+        },
+        {
+          "text": "If a missed case costs nine times a false alarm, the optimal cutoff slides down to zero point one.",
+          "visual": { "type": "stat", "value": 0.1, "label": "cost-optimal threshold when FN costs 9x FP", "decimals": 1 }
+        },
+        {
+          "text": "The formula is only valid on calibrated scores, which is exactly why calibration comes before cutoff selection in the pipeline.",
+          "visual": { "type": "bars", "values": [1, 9], "labels": ["FP cost", "FN cost"], "highlight": 1 }
+        }
+      ]
+    }
+  ]
+}

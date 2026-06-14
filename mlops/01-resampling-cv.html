@@ -1,0 +1,910 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Resampling &amp; Cross-Validation — AI Encyclopedia</title>
+<meta name="description" content="A single train/test split is a coin flip; cross-validation turns it into an estimate with error bars — k-fold, stratified and grouped folds, time-series splits, and nested CV for honest model selection." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+<link rel="canonical" href="https://ai-encyclopedia.com/mlops/01-resampling-cv" />
+<meta property="og:url" content="https://ai-encyclopedia.com/mlops/01-resampling-cv" />
+</head>
+<body data-track="mlops" data-level="core">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ MODEL RISK / 01 / CROSS-VALIDATION</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../mlops/02-hyperparameter-tuning.html">NEXT: 02 HYPERPARAMETER TUNING →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">MODEL VALIDATION &amp; RISK · CHAPTER 01 / 07</div>
+    <h1>Resampling &amp; Cross-Validation</h1>
+    <p class="lede">Holding out one slice of the data and scoring on it gives a number, but that number is itself a random draw. A different split would have produced a different result, so a lone estimate carries no measure of its own variance. <strong>Cross-validation replaces the single split with repeated resampling, yielding a mean performance estimate and a standard error around it.</strong></p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 26 MIN</b></span>
+      <span>BUILDS ON<b>ML 06 · STATS 04</b></span>
+      <span>INSTRUMENTS<b>k-FOLD · TIME SPLIT · NESTED CV</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">1.1</span>Why a single split lies</a>
+      <a href="#s2"><span class="n">1.2</span>k-fold cross-validation</a>
+      <a href="#s3"><span class="n">1.3</span>Stratified &amp; grouped k-fold</a>
+      <a href="#s4"><span class="n">1.4</span>Time-series cross-validation</a>
+      <a href="#s5"><span class="n">1.5</span>Nested CV for honest tuning</a>
+      <a href="#s6"><span class="n">1.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 1.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">1.1</span><h2>Why a single split lies</h2></div>
+        <p>You want to know how a model will perform on data it has never seen. The honest target is <strong>generalization error</strong> — the expected loss over the whole data-generating distribution \(\mathcal{D}\), not over the rows you happen to hold. You cannot compute it; you can only <em>estimate</em> it from a finite sample. The cheapest estimator is the <strong>holdout</strong>: carve off a test set once, train on the rest, score once.</p>
+
+        <div class="eq"><span class="eq-tag">EQ V1.1 — GENERALIZATION ERROR vs ITS HOLDOUT ESTIMATE</span>
+        $$ \mathrm{Err} = \mathbb{E}_{(x,y)\sim\mathcal{D}}\big[\,L(y,\, \hat{f}(x))\,\big], \qquad \widehat{\mathrm{Err}}_{\text{holdout}} = \frac{1}{|\mathcal{T}|}\sum_{(x,y)\in\mathcal{T}} L\big(y,\, \hat{f}(x)\big) $$
+        <div class="eq-note">\(L\) is the loss (0–1 error, squared error, log loss…), \(\hat{f}\) the model trained on the non-test rows, and \(\mathcal{T}\) the held-out test set. The holdout estimate is <b>unbiased for the error of the model trained on that particular training set</b> — but it is a single random draw, and its variance is large precisely when the test set is small. Two unlucky splits of the same data can disagree by several points of accuracy on nothing but the luck of the draw.</div>
+        </div>
+
+        <p>Where does the wobble come from? A finite test set of size \(m\) estimates an accuracy \(p\) the way a coin of bias \(p\) estimates its bias from \(m\) flips. For a 0–1 loss the test-set accuracy has a binomial standard error:</p>
+
+        <div class="eq"><span class="eq-tag">EQ V1.2 — STANDARD ERROR OF A HOLDOUT ACCURACY</span>
+        $$ \mathrm{SE}(\hat{p}) = \sqrt{\frac{p\,(1-p)}{m}} \qquad\Longrightarrow\qquad \hat{p} \pm 1.96\,\mathrm{SE}(\hat{p}) \;\;(\text{95\% interval}) $$
+        <div class="eq-note">At \(p = 0.85\) on a test set of \(m = 200\) rows, \(\mathrm{SE} = \sqrt{0.85\cdot0.15/200} \approx 0.025\) — a 95% interval of roughly \(\pm 5\) points. <b>Two models that differ by three points of test accuracy may be statistically indistinguishable.</b> Shrinking that interval means a larger test set — which steals rows from training — or reusing every row for both roles, which is the whole idea of cross-validation. This is the \(1/\sqrt{m}\) law of STATS · EQ S4.4 wearing a model-evaluation hat.</div>
+        </div>
+
+        <p>The holdout therefore forces a bad trade. A big test set gives a stable estimate of a <em>worse</em> model (you trained on fewer rows); a small test set gives a noisy estimate of a <em>better</em> model. On small and medium datasets there is no good place to stand. Cross-validation refuses the trade: it lets every row serve as test data exactly once and as training data the rest of the time, then averages the per-fold estimates to cut the variance.</p>
+
+        <div class="callout">
+          <span class="co-icon">A COMMON ERROR</span>
+          <p><strong>"My model gets 91% — here is the number."</strong> A point estimate with no spread is not a result, it is an anecdote. The first question any reviewer should ask is <em>"across how many splits, and with what standard deviation?"</em> A reported metric without a band silently claims a precision the single split cannot deliver. The fix is the rest of this chapter.</p>
+        </div>
+
+        <div class="exercise" data-answer="0.025" data-tol="0.02" data-unit="" data-hint="Binomial SE = sqrt(p(1-p)/m) with p = 0.85, m = 200.">
+          <div class="ex-q">A model scores accuracy \( p = 0.85 \) on a holdout test set of \( m = 200 \) rows. Using EQ V1.2, what is the standard error of that accuracy, \( \sqrt{p(1-p)/m} \)?</div>
+          <div class="ex-reveal-src">\( p(1-p) = 0.85 \times 0.15 = 0.1275 \); divide by \( m = 200 \) to get \( 0.0006375 \); the square root is \( \sqrt{0.0006375} = \) <b>0.025</b>. A 95% interval is therefore about \( \pm 0.049 \) — nearly five points of accuracy of pure sampling noise around a single number.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># The single split is a coin flip: 200 random holdouts of the SAME data + model.
+import numpy as np
+rng = np.random.default_rng(0)
+
+# One fixed dataset: a 2D blob whose label is a noisy linear rule.
+N, d = 400, 5
+X = rng.normal(0, 1, (N, d))
+w_true = rng.normal(0, 1, d)
+y = ((X @ w_true + rng.normal(0, 1.2, N)) > 0).astype(int)
+
+def fit_predict(Xtr, ytr, Xte):            # ridge-ish least-squares classifier
+    w = np.linalg.solve(Xtr.T @ Xtr + 1e-2*np.eye(d), Xtr.T @ (2*ytr - 1))
+    return (Xte @ w > 0).astype(int)
+
+accs = []
+for _ in range(200):                        # vary ONLY the split, nothing else
+    perm = rng.permutation(N)
+    te, tr = perm[:80], perm[80:]           # 80-row test set each time
+    pred = fit_predict(X[tr], y[tr], X[te])
+    accs.append((pred == y[te]).mean())
+accs = np.array(accs)
+
+print(f"holdout accuracy ranges over {accs.min():.3f} .. {accs.max():.3f}")
+print(f"mean = {accs.mean():.3f}   std across splits = {accs.std():.3f}")
+print(f"so two single splits can disagree by ~{accs.max()-accs.min():.2f} on luck alone.")
+plot_xy(np.arange(len(accs)), np.sort(accs))   # sorted: the spread you'd never see once</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 1.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">1.2</span><h2>k-fold cross-validation</h2></div>
+        <p><strong>k-fold cross-validation</strong> partitions the data into \(k\) equal, disjoint <em>folds</em>. It then runs \(k\) experiments: in round \(i\), fold \(i\) is the validation set and the other \(k-1\) folds are the training set. Every row is validated exactly once. The cross-validation estimate is the average of the \(k\) fold scores:</p>
+
+        <div class="eq"><span class="eq-tag">EQ V1.3 — THE k-FOLD CV ESTIMATE</span>
+        $$ \widehat{\mathrm{CV}} = \frac{1}{k}\sum_{i=1}^{k} \frac{1}{|F_i|}\sum_{(x,y)\in F_i} L\big(y,\, \hat{f}^{\,(-i)}(x)\big), \qquad \widehat{\mathrm{SE}} = \frac{s}{\sqrt{k}} $$
+        <div class="eq-note">\(F_i\) is the \(i\)-th fold and \(\hat{f}^{\,(-i)}\) is the model trained on <em>everything except</em> \(F_i\). The estimate \(\widehat{\mathrm{CV}}\) is the mean of the \(k\) fold scores; \(s\) is their sample standard deviation, and \(s/\sqrt{k}\) is the usual standard error of that mean. <b>Averaging \(k\) estimates is what buys the error bars the single split could not give you.</b> A caveat experts insist on: the \(k\) fold scores are <em>not</em> independent (their training sets overlap heavily), so \(s/\sqrt{k}\) understates the true uncertainty — treat it as a useful indicator, not a calibrated interval.</div>
+        </div>
+
+        <p>The choice of \(k\) is a bias–variance dial. Small \(k\) (e.g. 2) trains each model on much less data, so each fold model is weaker and \(\widehat{\mathrm{CV}}\) is <strong>pessimistically biased</strong>. Large \(k\) trains on almost all the data — at \(k = N\) you get <strong>leave-one-out CV (LOOCV)</strong>, nearly unbiased but with \(N\) tightly correlated, high-variance fold scores and \(N\) model fits. The empirical sweet spot, established by Kohavi's classic study and unchanged in 2026, is \(k = 5\) or \(k = 10\): low enough bias, manageable variance, affordable compute.</p>
+
+        <table class="data">
+          <thead><tr><th>k</th><th>Train size per fold</th><th>Bias of estimate</th><th>Variance / cost</th></tr></thead>
+          <tbody>
+            <tr><td class="m">2</td><td class="m">N / 2</td><td>high (pessimistic)</td><td>low cost, low variance</td></tr>
+            <tr><td class="m">5</td><td class="m">0.8 N</td><td class="hl">small</td><td class="hl">the common default</td></tr>
+            <tr><td class="m">10</td><td class="m">0.9 N</td><td class="hl">smaller</td><td>2× the cost of k = 5</td></tr>
+            <tr><td class="m">N (LOOCV)</td><td class="m">N − 1</td><td>~unbiased</td><td>N fits; high variance</td></tr>
+          </tbody>
+        </table>
+
+        <p>The total compute is exactly \(k\) model fits, each on a fraction \((k-1)/k\) of the data. That \(k\)-fold multiplier is the price of the error bars, and it is why §1.5's nested scheme — CV inside CV — is the expensive-but-honest end of the spectrum.</p>
+
+        <div class="exercise" data-answer="20" data-tol="0.001" data-unit="rows" data-hint="Each fold validates N/k rows; here N = 100, k = 5.">
+          <div class="ex-q">You run <b>5-fold</b> cross-validation on a dataset of \( N = 100 \) rows. With equal folds, how many rows are in the <b>validation set</b> of each fold (\( N/k \))?</div>
+          <div class="ex-reveal-src">k-fold splits the data into \(k\) equal disjoint folds, and each fold is the validation set exactly once. So each fold holds \( N/k = 100/5 = \) <b>20</b> rows for validation, leaving the other 80 for training that round.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># k-fold CV from scratch in numpy: report mean +/- std of the metric.
+import numpy as np
+rng = np.random.default_rng(1)
+
+N, d, k = 300, 6, 5
+X = rng.normal(0, 1, (N, d))
+w_true = rng.normal(0, 1, d)
+y = ((X @ w_true + rng.normal(0, 1.0, N)) > 0).astype(int)
+
+def fit_predict(Xtr, ytr, Xte):
+    w = np.linalg.solve(Xtr.T @ Xtr + 1e-2*np.eye(d), Xtr.T @ (2*ytr - 1))
+    return (Xte @ w > 0).astype(int)
+
+idx = rng.permutation(N)                      # shuffle once, then cut into k folds
+folds = np.array_split(idx, k)               # k disjoint, near-equal index blocks
+
+scores = []
+for i in range(k):
+    val = folds[i]
+    tr  = np.concatenate([folds[j] for j in range(k) if j != i])
+    pred = fit_predict(X[tr], y[tr], X[val])
+    acc  = (pred == y[val]).mean()
+    scores.append(acc)
+    print(f"fold {i+1}: train {tr.size:3d}  val {val.size:3d}  acc {acc:.3f}")
+
+scores = np.array(scores)
+se = scores.std(ddof=1) / np.sqrt(k)         # EQ V1.3 (optimistic: folds correlate)
+print(f"\nCV accuracy = {scores.mean():.3f} +/- {scores.std(ddof=1):.3f} (std)")
+print(f"            = {scores.mean():.3f} +/- {se:.3f} (std error of the mean)")
+print("One number with a band -- not a point estimate pretending to be the truth.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="cv-folds-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT V1.1 — FOLD VISUALIZER &amp; VARIANCE</span><span class="w-sub">SINGLE SPLIT vs k-FOLD · EQ V1.3</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>NUMBER OF FOLDS k <output id="cv-k-out">5</output></label><input type="range" id="cv-k" min="2" max="10" step="1" value="5"/></div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>ESTIMATOR</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost" id="cv-mode-single">SINGLE SPLIT</button>
+                  <button class="w-btn ghost on" id="cv-mode-kfold">k-FOLD</button>
+                </div>
+              </div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>&nbsp;</label>
+                <div class="seg-row"><button class="w-btn ghost on" id="cv-reshuffle">RESHUFFLE ▶</button></div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="cv-folds-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">CV / HOLDOUT ESTIMATE</div><div class="r-value" id="cv-mean">—</div></div>
+              <div class="readout"><div class="r-label">SPREAD ACROSS RESHUFFLES (STD)</div><div class="r-value" id="cv-var">—</div></div>
+              <div class="readout"><div class="r-label">MODELS FIT</div><div class="r-value" id="cv-fits">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The bar of 30 cells is your dataset; <span style="color:var(--accent);">mint</span> cells are validation, grey are training, one row per fold. Press <b>RESHUFFLE</b> a dozen times and watch the right-hand readout. In <b>SINGLE SPLIT</b> the estimate jumps around wildly between reshuffles — the coin flip of §1.1. Switch to <b>k-FOLD</b>: the same reshuffles now barely move the averaged estimate, because the \(k\) folds cancel each other's luck. Raise \(k\) to shrink the spread further, at the cost of more model fits.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 1.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">1.3</span><h2>Stratified &amp; grouped k-fold</h2></div>
+        <p>Plain k-fold shuffles rows and cuts blindly. That fails in two common situations, and both have a fix that costs nothing but a smarter partition.</p>
+
+        <h3>Stratified k-fold: preserve the class balance</h3>
+        <p>On a <strong>1% positive</strong> fraud dataset, a random fold can easily land with zero positives — making its score meaningless and inflating the variance across folds. <strong>Stratified k-fold</strong> partitions <em>within</em> each class so every fold mirrors the overall label distribution:</p>
+
+        <div class="eq"><span class="eq-tag">EQ V1.4 — STRATIFICATION CONSTRAINT</span>
+        $$ \frac{|\{(x,y)\in F_i : y = c\}|}{|F_i|} \;\approx\; \frac{|\{(x,y)\in \mathcal{D} : y = c\}|}{N} \quad\text{for every fold } F_i \text{ and class } c $$
+        <div class="eq-note">Each fold's class proportions match the dataset's, up to rounding. <b>For classification, stratification is the default, not an option</b> — it removes a needless source of fold-to-fold variance and is essential under class imbalance, where a non-stratified fold may contain no minority examples at all. The same idea extends to regression by stratifying on binned targets.</div>
+        </div>
+
+        <h3>Grouped k-fold: respect dependence between rows</h3>
+        <p>If multiple rows share a hidden identity — several visits from one patient, many frames of one video, repeated measurements of one sensor — then a row in training and its sibling in validation creates <strong>leakage</strong>: the model effectively sees the answer. <strong>Grouped k-fold</strong> keeps every group entirely on one side of each split, so no group straddles the train/validation boundary.</p>
+
+        <div class="callout warn">
+          <span class="co-icon">LEAKAGE</span>
+          <p><strong>The most expensive bug in applied ML is a leak you cannot see.</strong> If patient #42 has rows in both the training fold and the validation fold, your reported accuracy measures memorization of patient #42, not generalization to new patients — and it will collapse in production. The same trap appears with near-duplicate images, augmented copies, and any preprocessing (scaling, imputation, target encoding) fit on the full dataset <em>before</em> splitting. <b>Rule: every transform must be fit inside the training fold only,</b> and grouped splits are mandatory whenever rows are not independent.</p>
+        </div>
+
+        <p>These choices compose: <strong>stratified group k-fold</strong> keeps groups intact <em>and</em> balances classes across folds, the standard recipe for imbalanced, clustered data. The honest caveat: when groups are few and uneven, perfect stratification and perfect grouping can conflict, and you accept an approximate balance.</p>
+
+        <div class="exercise" data-answer="200" data-tol="0.001" data-unit="positives" data-hint="A 1% positive rate on 20,000 rows means 0.01 × 20,000 positives in total.">
+          <div class="ex-q">A dataset has \( N = 20{,}000 \) rows with a \( 1\% \) positive rate. How many positive rows are there in total (\( 0.01 \times N \))?</div>
+          <div class="ex-reveal-src">\( 0.01 \times 20{,}000 = \) <b>200</b> positives. With only 200 positives spread across folds, a <em>blind</em> random split can easily hand one fold far fewer than its share — even zero — which is exactly the failure mode stratification (EQ V1.4) is built to prevent.</div>
+        </div>
+
+        <div class="exercise" data-answer="40" data-tol="0.001" data-unit="positives" data-hint="Stratified 5-fold splits the 200 positives evenly: 200 / 5.">
+          <div class="ex-q">For that same dataset (200 positives total), under <b>5-fold stratified</b> CV, how many positives sit in each validation fold (\( 200/5 \))?</div>
+          <div class="ex-reveal-src">Stratification forces each fold to carry the dataset's class proportions, so the positives are divided evenly: \( 200 / 5 = \) <b>40</b> per fold. Every fold therefore has enough minority examples to produce a meaningful score — the whole point of EQ V1.4.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Stratified vs blind folds on a 5%-positive set: blind folds vary wildly.
+import numpy as np
+rng = np.random.default_rng(3)
+
+N, k = 1000, 5
+y = (rng.random(N) < 0.05).astype(int)       # ~5% positives -> ~50 of them
+print(f"dataset positives: {y.sum()} / {N}  ({100*y.mean():.1f}%)\n")
+
+def blind_folds(idx):
+    return np.array_split(rng.permutation(idx), k)
+
+def stratified_folds(y):
+    folds = [[] for _ in range(k)]
+    for c in (0, 1):                          # deal each class round-robin into folds
+        members = rng.permutation(np.where(y == c)[0])
+        for j, row in enumerate(members):
+            folds[j % k].append(row)
+    return [np.array(f) for f in folds]
+
+print("blind   fold positive-rates:", end=" ")
+for f in blind_folds(np.arange(N)):
+    print(f"{y[f].mean():.3f}", end=" ")
+print("\nstrat.  fold positive-rates:", end=" ")
+for f in stratified_folds(y):
+    print(f"{y[f].mean():.3f}", end=" ")
+print("\n\nBlind folds scatter (one may even hit 0.00 -> a useless fold);")
+print("stratified folds all sit near the 0.05 base rate, by construction.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 1.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">1.4</span><h2>Time-series cross-validation</h2></div>
+        <p>Everything above assumes the rows are exchangeable — that shuffling is harmless. For <strong>temporally ordered data</strong> it is not. Shuffling lets the model train on the future and validate on the past, which is impossible at deployment and produces gloriously optimistic, completely fake scores. The cardinal rule of temporal validation is brutal and simple:</p>
+
+        <div class="eq"><span class="eq-tag">EQ V1.5 — THE FORWARD-CHAINING CONSTRAINT</span>
+        $$ \max_{t \in \text{train}_i} t \;<\; \min_{t \in \text{val}_i} t \qquad \text{for every fold } i $$
+        <div class="eq-note">Every timestamp used for training must precede every timestamp used for validation, in <em>every</em> fold. This is <b>forward chaining</b> (also "walk-forward" or "rolling-origin" validation): the validation window always lives strictly in the future relative to its training window. Standard k-fold violates this on roughly half of its train/validation pairs and is therefore invalid for any series with temporal structure. A further refinement inserts an <em>embargo / purge gap</em> between train and validation to kill leakage from overlapping feature windows or label horizons (the López de Prado correction for financial data).</div>
+        </div>
+
+        <p>Two schemes both satisfy EQ V1.5; they differ in what they do with old data:</p>
+        <ul>
+          <li><strong>Expanding window.</strong> The training set grows each fold — every split keeps all history up to the cut and validates on the next block. Uses all data; assumes the past stays relevant; training cost grows over folds.</li>
+          <li><strong>Rolling (sliding) window.</strong> The training set is a fixed-length window that slides forward, dropping the oldest data as it adds new. Constant training cost, and — more importantly — it adapts to <strong>non-stationarity</strong> and concept drift, where ancient history actively misleads.</li>
+        </ul>
+
+        <p class="note">Which to prefer is genuinely contested and data-dependent: expanding windows win when the process is stable and data is scarce; rolling windows win when the world is drifting. Either way you typically report the average score across the forward-chained folds, exactly as in EQ V1.3 — just with splits that never look ahead.</p>
+
+        <div class="widget" id="cv-ts-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT V1.2 — TIME-SERIES SPLIT VISUALIZER</span><span class="w-sub">EXPANDING vs ROLLING · FORWARD-CHAINED · EQ V1.5</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>SPLITS <output id="cv-ts-k-out">5</output></label><input type="range" id="cv-ts-k" min="3" max="8" step="1" value="5"/></div>
+              <div class="ctl"><label>EMBARGO GAP <output id="cv-ts-gap-out">0</output></label><input type="range" id="cv-ts-gap" min="0" max="4" step="1" value="0"/></div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>WINDOW</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" id="cv-ts-expand">EXPANDING</button>
+                  <button class="w-btn ghost" id="cv-ts-roll">ROLLING</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="cv-ts-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">SCHEME</div><div class="r-value" id="cv-ts-mode" style="font-size:13px;">—</div></div>
+              <div class="readout acc"><div class="r-label">FORWARD-CHAINED?</div><div class="r-value" id="cv-ts-valid">—</div></div>
+              <div class="readout"><div class="r-label">TRAIN BLOCKS · FOLD 1 → LAST</div><div class="r-value" id="cv-ts-grow">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Time runs left → right across 24 ordered periods, one row per fold. <span style="color:var(--secondary);">Grey</span> is training, <span style="color:var(--accent);">mint</span> is validation, and any <span style="color:var(--blue);">blue</span> cell is the embargo gap that is thrown away to prevent leakage. Notice that validation is <em>always</em> to the right of training — the future is never used to predict the past. Switch to <b>ROLLING</b> and the grey training block becomes a fixed-width window that slides forward, forgetting the oldest data; <b>EXPANDING</b> keeps accumulating it. Raise the embargo to punch a blue moat between the two.</div>
+        </div>
+
+        <div class="exercise" data-answer="true" data-tol="0" data-unit="" data-hint="Recall EQ V1.5 — what must hold between training and validation timestamps?">
+          <div class="ex-q">In time-series cross-validation, the training data must <b>always</b> come before the validation data in time (no future rows in training). True or false? (Answer <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">This is the forward-chaining constraint of EQ V1.5: \(\max_{t\in\text{train}} t < \min_{t\in\text{val}} t\) in every fold. Training on the future to predict the past is impossible at deployment and produces fake optimism, so the statement is <b>true</b>.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Forward-chained splits: expanding vs rolling. Verify NO split looks ahead.
+import numpy as np
+
+N, k = 24, 5
+order = np.arange(N)                          # already time-ordered: 0 = oldest
+fold = N // (k + 1)                           # size of each validation block
+roll_train = 2 * fold                         # fixed window width for the rolling scheme
+
+print("EXPANDING window (training set grows):")
+ok = True
+for i in range(1, k + 1):
+    tr = order[: i * fold]
+    va = order[i * fold : (i + 1) * fold]
+    leak = tr.max() >= va.min()
+    ok &= not leak
+    print(f"  fold {i}: train {tr.min():2d}..{tr.max():2d} ({tr.size:2d})  "
+          f"val {va.min():2d}..{va.max():2d}   leak? {leak}")
+
+print("\nROLLING window (fixed width, slides forward):")
+for i in range(1, k + 1):
+    end = i * fold
+    tr = order[max(0, end - roll_train): end]
+    va = order[end: end + fold]
+    if va.size == 0: break
+    leak = tr.max() >= va.min()
+    ok &= not leak
+    print(f"  fold {i}: train {tr.min():2d}..{tr.max():2d} ({tr.size:2d})  "
+          f"val {va.min():2d}..{va.max():2d}   leak? {leak}")
+
+print(f"\nany split that trained on the future? {not ok}  "
+      "(EQ V1.5 holds <=> this is False)")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 1.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">1.5</span><h2>Nested CV for honest tuning</h2></div>
+        <p>Here is the subtle, costly mistake that even careful practitioners make. You run k-fold CV, try a hundred hyperparameter settings, pick the one with the best CV score, and report that score as the model's performance. <strong>That number is biased upward</strong> — sometimes badly. You used the validation folds twice: once to <em>tune</em> and once to <em>report</em>. Selecting the maximum over many noisy estimates is selecting partly for noise, so the winner's CV score is an optimistic estimate of its true error. This is the cross-validation cousin of the multiple-comparisons problem (STATS · §4.6).</p>
+
+        <div class="eq"><span class="eq-tag">EQ V1.6 — THE OPTIMISM OF SELECTION</span>
+        $$ \mathbb{E}\Big[\min_{\theta\in\Theta}\widehat{\mathrm{CV}}(\theta)\Big] \;\le\; \min_{\theta\in\Theta}\,\mathbb{E}\big[\widehat{\mathrm{CV}}(\theta)\big] \qquad\text{(Jensen / max-of-noisy-estimates)} $$
+        <div class="eq-note">The expected score of the <em>selected</em> configuration is better (lower error) than the true error of the best configuration — the gap is pure selection bias, and it grows with the number of configurations tried \(|\Theta|\) and with the noise in each estimate. <b>The fold you select on can no longer give an unbiased estimate of performance.</b> The fix is to wall off an estimation set the selection never touches.</div>
+        </div>
+
+        <p><strong>Nested cross-validation</strong> does exactly that with two loops. The <em>outer</em> loop's folds are used only to estimate performance. Inside each outer training set, a separate <em>inner</em> CV loop performs the entire hyperparameter search and refits the chosen model. The outer fold — never seen by the inner search — then scores it. Because selection and evaluation use disjoint data, the outer score is an honest estimate of the <em>whole pipeline</em>, tuning included.</p>
+
+        <div class="widget" id="cv-nested-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT V1.3 — NESTED CV STRUCTURE</span><span class="w-sub">OUTER = SCORE · INNER = SELECT · EQ V1.6</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>OUTER FOLDS <output id="cv-n-out-out">3</output></label><input type="range" id="cv-n-outer" min="2" max="5" step="1" value="3"/></div>
+              <div class="ctl"><label>INNER FOLDS <output id="cv-n-in-out">3</output></label><input type="range" id="cv-n-inner" min="2" max="5" step="1" value="3"/></div>
+              <div class="ctl"><label>HIGHLIGHT OUTER FOLD <output id="cv-n-sel-out">1</output></label><input type="range" id="cv-n-sel" min="1" max="5" step="1" value="1"/></div>
+            </div>
+            <canvas class="w-canvas" id="cv-nested-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">TOTAL MODEL FITS</div><div class="r-value" id="cv-n-fits">—</div></div>
+              <div class="readout"><div class="r-label">OUTER × INNER × GRID</div><div class="r-value" id="cv-n-formula" style="font-size:12px;">—</div></div>
+              <div class="readout"><div class="r-label">OUTER SCORE IS…</div><div class="r-value" id="cv-n-honest" style="font-size:12px;">UNBIASED</div></div>
+            </div>
+          </div>
+          <div class="w-note">The top band is one highlighted <b>outer</b> split: <span style="color:var(--secondary);">grey</span> = outer-train, <span style="color:var(--accent);">mint</span> = the outer-test fold that is sealed away. The lower bands show the <b>inner</b> CV that runs <em>inside</em> the outer-train portion to pick hyperparameters — and never touches the mint band. Drag <b>HIGHLIGHT OUTER FOLD</b> to step through outer rounds. The fit-count readout makes the cost concrete: nested CV runs (outer × inner × grid-size) fits, which is why people reach for it only when an honest number actually matters.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Optimistic bias of tuning on the test fold vs nested CV (pure noise data).
+import numpy as np
+rng = np.random.default_rng(7)
+
+N, k, G = 120, 5, 40                          # G = number of hyperparameter settings tried
+y = rng.integers(0, 2, N)                     # labels are PURE NOISE: true acc = 0.50
+
+# Each "config" is a random predictor independent of y -> all truly ~50% accurate.
+def config_preds(seed, idx):                  # deterministic per (config, rows)
+    r = np.random.default_rng(seed)
+    return r.integers(0, 2, len(idx))
+
+def cv_acc(g, idx):                           # k-fold accuracy of config g on rows idx
+    folds = np.array_split(rng.permutation(idx), k)
+    accs = [(config_preds(g, f) == y[f]).mean() for f in folds]
+    return np.mean(accs)
+
+# WRONG: tune AND report on the same CV -> pick the max over G noisy 0.5s.
+flat = [cv_acc(g, np.arange(N)) for g in range(G)]
+naive = max(flat)
+
+# NESTED: inner CV selects the best config; the held-out outer fold scores it.
+outer = np.array_split(rng.permutation(np.arange(N)), k)
+nested = []
+for i in range(k):
+    test = outer[i]
+    train = np.concatenate([outer[j] for j in range(k) if j != i])
+    best = max(range(G), key=lambda g: cv_acc(g, train))      # select on inner data
+    nested.append((config_preds(best, test) == y[test]).mean())  # score on sealed fold
+
+print(f"truth (labels are noise)        : 0.500")
+print(f"naive 'best CV' (tune==report)  : {naive:.3f}  <- optimistic, > 0.5 on noise")
+print(f"nested CV outer mean            : {np.mean(nested):.3f}  <- honest, hugs 0.5")
+print(f"selection bias removed          : {naive - np.mean(nested):+.3f}")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <p class="note">When is the full nested machinery worth it? When you must <em>report</em> a trustworthy performance number after tuning — a benchmark, a paper, a go/no-go decision. For the cheaper everyday workflow, a fixed three-way split (train / validation / test) approximates one outer fold: tune on validation, report once on the untouched test set. Nested CV is simply that idea applied \(k\) times so the honest estimate itself gets error bars. The cost — outer × inner × grid model fits — is the reason it is reserved for when honesty is non-negotiable.</p>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>Cross-validation tells you how to score a configuration honestly; it does not tell you which configurations to try.</strong> The inner loop of nested CV was a hand-wave — "search the hyperparameters." Chapter 02 opens that loop: grid and random search, Bayesian optimization, Hyperband and successive halving, and the budget arithmetic that decides how many of those expensive inner fits you can actually afford.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 1.R — References ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">1.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://doi.org/10.1111/j.2517-6161.1974.tb00994.x" target="_blank" rel="noopener">Stone, M. (1974). <span class="ref-venue">Cross-Validatory Choice and Assessment of Statistical Predictions</span>.</a> <span class="ref-meta">J. R. Stat. Soc. B 36(2) — the foundational formalization of cross-validation for model assessment.</span></li>
+          <li><a href="https://www.ijcai.org/Proceedings/95-2/Papers/016.pdf" target="_blank" rel="noopener">Kohavi, R. (1995). <span class="ref-venue">A Study of Cross-Validation and Bootstrap for Accuracy Estimation and Model Selection</span>.</a> <span class="ref-meta">IJCAI 1995 — the empirical case for stratified 10-fold CV (§1.2).</span></li>
+          <li><a href="https://doi.org/10.1186/1471-2105-7-91" target="_blank" rel="noopener">Varma, S. &amp; Simon, R. (2006). <span class="ref-venue">Bias in Error Estimation When Using Cross-Validation for Model Selection</span>.</a> <span class="ref-meta">BMC Bioinformatics 7:91 — the selection-bias result behind nested CV (EQ V1.6).</span></li>
+          <li><a href="https://doi.org/10.1016/j.ins.2011.12.028" target="_blank" rel="noopener">Bergmeir, C. &amp; Benítez, J. M. (2012). <span class="ref-venue">On the Use of Cross-Validation for Time Series Predictor Evaluation</span>.</a> <span class="ref-meta">Information Sciences 191 — forward-chaining validation for temporal data (§1.4).</span></li>
+          <li><a href="https://doi.org/10.1214/09-SS054" target="_blank" rel="noopener">Arlot, S. &amp; Celisse, A. (2010). <span class="ref-venue">A Survey of Cross-Validation Procedures for Model Selection</span>.</a> <span class="ref-meta">Statistics Surveys 4 — the comprehensive modern reference on CV variants and their bias/variance.</span></li>
+          <li><a href="https://www.jmlr.org/papers/v11/cawley10a.html" target="_blank" rel="noopener">Cawley, G. C. &amp; Talbot, N. L. C. (2010). <span class="ref-venue">On Over-fitting in Model Selection and Subsequent Selection Bias in Performance Evaluation</span>.</a> <span class="ref-meta">JMLR 11 — why tuning and reporting on the same folds inflates scores.</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../ml/15-boosting-libraries.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">15</span> Boosting Libraries</div></a>
+        <a class="next" href="../mlops/02-hyperparameter-tuning.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">02</span> Hyperparameter Tuning</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — MODEL VALIDATION &amp; RISK · CH 01</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* ============================================================
+   Resampling & Cross-Validation — chapter instruments
+   Single IIFE, no globals. Deterministic mulberry32 RNG keeps
+   every render reproducible; setTimeout (never rAF) is used for
+   resize re-renders so background tabs stay quiet.
+   ============================================================ */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
+
+  /* ========================================================
+     INSTRUMENT V1.1 — Fold visualizer & variance
+     A fixed synthetic dataset of NCELL "rows". A linear-ish
+     score function maps a hidden quality per row; an estimator
+     (single split vs k-fold) is evaluated across many reshuffles
+     and the SPREAD of the estimate across reshuffles is the
+     lesson: k-fold collapses the variance the single split has.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("cv-folds-demo");
+    if (!root) return;
+    var canvas = document.getElementById("cv-folds-canvas");
+    var kEl = document.getElementById("cv-k");
+    var kOut = document.getElementById("cv-k-out");
+    var bSingle = document.getElementById("cv-mode-single");
+    var bKfold = document.getElementById("cv-mode-kfold");
+    var bShuf = document.getElementById("cv-reshuffle");
+    var meanEl = document.getElementById("cv-mean");
+    var varEl = document.getElementById("cv-var");
+    var fitsEl = document.getElementById("cv-fits");
+
+    var NCELL = 30;
+    var mode = "kfold";          /* "single" | "kfold" */
+    var seedCounter = 24010101;
+    var layout = [];             /* per-cell role for the CURRENT reshuffle render */
+    var history = [];            /* recent estimates, to show spread across reshuffles */
+
+    /* a deterministic "true accuracy" per row index in [0,1]: rows differ in how
+       hard they are, so which rows land in validation perturbs the estimate. */
+    function rowDifficulty(i) {
+      var x = Math.sin(i * 1.7) * 0.5 + Math.cos(i * 0.6) * 0.5; /* -1..1 */
+      return 0.5 + 0.45 * x;      /* ~0.05..0.95 per-row score */
+    }
+
+    /* evaluate a SET of validation indices: mean per-row difficulty + tiny noise */
+    function scoreFolds(foldsValIdx, rng) {
+      var foldScores = [], f, i, s;
+      for (f = 0; f < foldsValIdx.length; f++) {
+        s = 0;
+        for (i = 0; i < foldsValIdx[f].length; i++) s += rowDifficulty(foldsValIdx[f][i]);
+        s = s / foldsValIdx[f].length + (rng() - 0.5) * 0.05; /* sampling noise */
+        foldScores.push(clamp(s, 0, 1));
+      }
+      return foldScores;
+    }
+
+    function shuffleIdx(rng) {
+      var a = [], i, j, t;
+      for (i = 0; i < NCELL; i++) a.push(i);
+      for (i = NCELL - 1; i > 0; i--) { j = Math.floor(rng() * (i + 1)); t = a[i]; a[i] = a[j]; a[j] = t; }
+      return a;
+    }
+
+    /* run ONE reshuffle, return {estimate, foldsValIdx (for the current layout), fits} */
+    function oneReshuffle(seed) {
+      var rng = FM.mulberry32(seed);
+      var perm = shuffleIdx(rng);
+      var k = +kEl.value;
+      if (mode === "single") {
+        /* single split: last 1/k as validation, rest train (one fit) */
+        var cut = NCELL - Math.round(NCELL / k);
+        var valIdx = perm.slice(cut);
+        var fs = scoreFolds([valIdx], rng);
+        return { estimate: fs[0], foldsValIdx: [valIdx], fits: 1, k: k };
+      }
+      /* k-fold: split perm into k near-equal blocks, each is validation once */
+      var folds = [], base = Math.floor(NCELL / k), rem = NCELL % k, p = 0, f;
+      for (f = 0; f < k; f++) {
+        var sz = base + (f < rem ? 1 : 0);
+        folds.push(perm.slice(p, p + sz));
+        p += sz;
+      }
+      var foldScores = scoreFolds(folds, rng);
+      var sum = 0; for (f = 0; f < foldScores.length; f++) sum += foldScores[f];
+      return { estimate: sum / foldScores.length, foldsValIdx: folds, fits: k, k: k };
+    }
+
+    function std(arr) {
+      if (arr.length < 2) return 0;
+      var m = 0, i; for (i = 0; i < arr.length; i++) m += arr[i]; m /= arr.length;
+      var v = 0; for (i = 0; i < arr.length; i++) v += (arr[i] - m) * (arr[i] - m);
+      return Math.sqrt(v / (arr.length - 1));
+    }
+
+    var current = null;
+
+    function reshuffle() {
+      seedCounter += 1;
+      current = oneReshuffle(seedCounter);
+      history.push(current.estimate);
+      if (history.length > 25) history.shift();
+      render();
+    }
+
+    function render() {
+      kOut.textContent = kEl.value;
+      bSingle.classList.toggle("on", mode === "single");
+      bKfold.classList.toggle("on", mode === "kfold");
+      if (!current) current = oneReshuffle(seedCounter);
+
+      var c = FM.setupCanvas(canvas, 300);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      ctx.clearRect(0, 0, w, h);
+
+      var k = current.k;
+      var rows = mode === "single" ? 1 : k;
+      var padL = 14, padR = 14, padT = 16, padB = 22;
+      var gridW = w - padL - padR;
+      var labelW = 44;
+      var cellsW = gridW - labelW;
+      var cellW = cellsW / NCELL;
+      var bandTop = padT, bandBot = h - padB - 34;
+      var rowH = (bandBot - bandTop) / rows;
+      var ch = Math.min(rowH - 4, 22);
+
+      ctx.font = C.MONO;
+      ctx.textBaseline = "middle";
+
+      /* build, for each row, the validation index set */
+      var i, r, j;
+      for (r = 0; r < rows; r++) {
+        var valSet = {};
+        var valIdx = mode === "single" ? current.foldsValIdx[0] : current.foldsValIdx[r];
+        for (j = 0; j < valIdx.length; j++) valSet[valIdx[j]] = true;
+        var y = bandTop + r * rowH + (rowH - ch) / 2;
+        /* row label */
+        ctx.fillStyle = C.MUT; ctx.textAlign = "left";
+        ctx.fillText(mode === "single" ? "SPLIT" : "FOLD " + (r + 1), padL, y + ch / 2);
+        /* cells: the dataset in its NATURAL order 0..NCELL-1 */
+        for (i = 0; i < NCELL; i++) {
+          var x = padL + labelW + i * cellW;
+          var isVal = !!valSet[i];
+          ctx.fillStyle = isVal ? C.MINT : "rgba(99,99,99,.28)";
+          ctx.fillRect(x + 0.5, y, cellW - 1, ch);
+          if (isVal) {
+            ctx.strokeStyle = "rgba(166,242,204,.5)";
+            ctx.lineWidth = 1; ctx.strokeRect(x + 0.5, y + 0.5, cellW - 1, ch - 1);
+          }
+        }
+      }
+
+      /* legend + estimate strip */
+      var ly = bandBot + 14;
+      ctx.textAlign = "left"; ctx.textBaseline = "middle";
+      ctx.fillStyle = C.MINT; ctx.fillRect(padL, ly - 4, 9, 9);
+      ctx.fillStyle = C.SEC; ctx.fillText("VALIDATION", padL + 14, ly);
+      ctx.fillStyle = "rgba(99,99,99,.28)"; ctx.fillRect(padL + 96, ly - 4, 9, 9);
+      ctx.fillStyle = C.SEC; ctx.fillText("TRAINING", padL + 110, ly);
+      ctx.fillStyle = C.MUT; ctx.textAlign = "right";
+      ctx.fillText("DATASET ORDER 0 → " + (NCELL - 1) + "  (one reshuffle)", w - padR, ly);
+
+      /* readouts */
+      meanEl.textContent = (100 * current.estimate).toFixed(1) + "%";
+      var sd = std(history);
+      varEl.textContent = history.length < 2 ? "press RESHUFFLE" : "±" + (100 * sd).toFixed(2) + " pts";
+      fitsEl.textContent = current.fits + (current.fits === 1 ? " fit" : " fits");
+    }
+
+    kEl.addEventListener("input", function () { history = []; current = oneReshuffle(seedCounter); render(); });
+    bSingle.addEventListener("click", function () { mode = "single"; history = []; current = oneReshuffle(seedCounter); render(); });
+    bKfold.addEventListener("click", function () { mode = "kfold"; history = []; current = oneReshuffle(seedCounter); render(); });
+    bShuf.addEventListener("click", reshuffle);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+
+    /* meaningful initial state: a few reshuffles already accumulated */
+    var n0;
+    for (n0 = 0; n0 < 6; n0++) { seedCounter += 1; current = oneReshuffle(seedCounter); history.push(current.estimate); }
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT V1.2 — Time-series split visualizer
+     24 ordered periods. Expanding vs rolling training window,
+     with an optional embargo gap. Always forward-chained.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("cv-ts-demo");
+    if (!root) return;
+    var canvas = document.getElementById("cv-ts-canvas");
+    var kEl = document.getElementById("cv-ts-k");
+    var gapEl = document.getElementById("cv-ts-gap");
+    var kOut = document.getElementById("cv-ts-k-out");
+    var gapOut = document.getElementById("cv-ts-gap-out");
+    var bExp = document.getElementById("cv-ts-expand");
+    var bRoll = document.getElementById("cv-ts-roll");
+    var modeEl = document.getElementById("cv-ts-mode");
+    var validEl = document.getElementById("cv-ts-valid");
+    var growEl = document.getElementById("cv-ts-grow");
+
+    var NPER = 24;
+    var mode = "expand";    /* "expand" | "roll" */
+
+    /* build the folds. valSize = NPER/(k+1); fold i validates the i-th forward block. */
+    function buildFolds(k, gap) {
+      var valSize = Math.max(1, Math.floor(NPER / (k + 1)));
+      var rollWidth = 2 * valSize;        /* fixed training window for rolling */
+      var folds = [], i;
+      for (i = 1; i <= k; i++) {
+        var valStart = i * valSize + (i) * 0; /* contiguous forward blocks */
+        var vStart = i * valSize;
+        var vEnd = Math.min(vStart + valSize, NPER);   /* exclusive */
+        if (vStart >= NPER) break;
+        /* training ends gap periods before validation starts */
+        var trEnd = vStart - gap;                        /* exclusive */
+        var trStart = mode === "roll" ? Math.max(0, trEnd - rollWidth) : 0;
+        if (trEnd <= trStart) { trStart = 0; trEnd = Math.max(0, vStart - gap); }
+        folds.push({ trStart: trStart, trEnd: trEnd, vStart: vStart, vEnd: vEnd, gap: gap });
+      }
+      return folds;
+    }
+
+    function render() {
+      kOut.textContent = kEl.value;
+      gapOut.textContent = gapEl.value;
+      bExp.classList.toggle("on", mode === "expand");
+      bRoll.classList.toggle("on", mode === "roll");
+
+      var k = +kEl.value, gap = +gapEl.value;
+      var folds = buildFolds(k, gap);
+
+      var c = FM.setupCanvas(canvas, 300);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      ctx.clearRect(0, 0, w, h);
+
+      var padL = 14, padR = 14, padT = 28, padB = 26;
+      var labelW = 50;
+      var gridX = padL + labelW;
+      var gridW = w - padR - gridX;
+      var cellW = gridW / NPER;
+      var top = padT, bot = h - padB - 16;
+      var rows = folds.length;
+      var rowH = (bot - top) / rows;
+      var ch = Math.min(rowH - 5, 20);
+
+      ctx.font = C.MONO; ctx.textBaseline = "middle";
+
+      /* time axis header */
+      ctx.fillStyle = C.MUT; ctx.textAlign = "left";
+      ctx.fillText("TIME →  PERIOD 0 (OLDEST) … " + (NPER - 1) + " (NEWEST)", gridX, padT - 14);
+
+      var i, f, x, fold, role, allValid = true;
+      for (f = 0; f < rows; f++) {
+        fold = folds[f];
+        var y = top + f * rowH + (rowH - ch) / 2;
+        ctx.fillStyle = C.MUT; ctx.textAlign = "left";
+        ctx.fillText("SPLIT " + (f + 1), padL, y + ch / 2);
+        /* forward-chaining check */
+        if (fold.trEnd - 1 >= fold.vStart) allValid = false;
+        for (i = 0; i < NPER; i++) {
+          x = gridX + i * cellW;
+          if (i >= fold.trStart && i < fold.trEnd) {
+            ctx.fillStyle = "rgba(155,155,155,.32)";          /* training: grey */
+          } else if (i >= fold.trEnd && i < fold.vStart) {
+            ctx.fillStyle = gap > 0 ? "rgba(78,138,247,.45)" : "rgba(0,0,0,0)"; /* embargo: blue */
+          } else if (i >= fold.vStart && i < fold.vEnd) {
+            ctx.fillStyle = C.MINT;                            /* validation: mint */
+          } else {
+            ctx.fillStyle = "rgba(47,50,52,.35)";             /* unused */
+          }
+          ctx.fillRect(x + 0.5, y, cellW - 1, ch);
+        }
+      }
+
+      /* legend */
+      var ly = bot + 12;
+      ctx.textAlign = "left"; ctx.textBaseline = "middle";
+      ctx.fillStyle = "rgba(155,155,155,.32)"; ctx.fillRect(gridX, ly - 4, 9, 9);
+      ctx.fillStyle = C.SEC; ctx.fillText("TRAIN", gridX + 14, ly);
+      ctx.fillStyle = C.MINT; ctx.fillRect(gridX + 70, ly - 4, 9, 9);
+      ctx.fillStyle = C.SEC; ctx.fillText("VALIDATE", gridX + 84, ly);
+      ctx.fillStyle = "rgba(78,138,247,.45)"; ctx.fillRect(gridX + 168, ly - 4, 9, 9);
+      ctx.fillStyle = C.SEC; ctx.fillText("EMBARGO", gridX + 182, ly);
+
+      /* readouts */
+      modeEl.textContent = mode === "expand" ? "EXPANDING" : "ROLLING";
+      validEl.textContent = allValid ? "YES ✓" : "NO";
+      validEl.style.color = allValid ? C.MINT : C.RED;
+      var first = folds[0], last = folds[folds.length - 1];
+      var g0 = first.trEnd - first.trStart, gN = last.trEnd - last.trStart;
+      growEl.textContent = g0 + " → " + gN + (mode === "roll" ? " (fixed)" : " (grows)");
+    }
+
+    kEl.addEventListener("input", render);
+    gapEl.addEventListener("input", render);
+    bExp.addEventListener("click", function () { mode = "expand"; render(); });
+    bRoll.addEventListener("click", function () { mode = "roll"; render(); });
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();   /* meaningful initial state with zero interaction */
+  })();
+
+  /* ========================================================
+     INSTRUMENT V1.3 — Nested CV structure
+     One highlighted outer split on top (grey train / mint test);
+     below it, the inner CV that runs INSIDE the outer-train part
+     and never touches the sealed outer-test band. Fit-count
+     readout makes the outer*inner*grid cost concrete.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("cv-nested-demo");
+    if (!root) return;
+    var canvas = document.getElementById("cv-nested-canvas");
+    var oEl = document.getElementById("cv-n-outer");
+    var iEl = document.getElementById("cv-n-inner");
+    var selEl = document.getElementById("cv-n-sel");
+    var oOut = document.getElementById("cv-n-out-out");
+    var iOut = document.getElementById("cv-n-in-out");
+    var selOut = document.getElementById("cv-n-sel-out");
+    var fitsEl = document.getElementById("cv-n-fits");
+    var formulaEl = document.getElementById("cv-n-formula");
+
+    var NCELL = 24;
+    var GRID = 12;   /* hyperparameter settings searched per inner CV */
+
+    function render() {
+      var ko = +oEl.value, ki = +iEl.value;
+      /* keep the highlight slider within the current outer-fold count */
+      if (+selEl.value > ko) selEl.value = ko;
+      selEl.max = ko;
+      var sel = +selEl.value;
+      oOut.textContent = ko; iOut.textContent = ki; selOut.textContent = sel;
+
+      var c = FM.setupCanvas(canvas, 320);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      ctx.clearRect(0, 0, w, h);
+
+      var padL = 14, padR = 14, labelW = 56;
+      var gridX = padL + labelW;
+      var gridW = w - padR - gridX;
+      var cellW = gridW / NCELL;
+
+      /* --- outer split bands geometry --- */
+      var base = Math.floor(NCELL / ko), rem = NCELL % ko;
+      var bounds = [], p = 0, f;
+      for (f = 0; f < ko; f++) { var sz = base + (f < rem ? 1 : 0); bounds.push([p, p + sz]); p += sz; }
+      var outerTest = bounds[sel - 1];   /* [start, end) of the highlighted outer test fold */
+
+      ctx.font = C.MONO; ctx.textBaseline = "middle";
+
+      /* === TOP: the highlighted OUTER split === */
+      var topY = 20, ch = 22;
+      ctx.fillStyle = C.SEC; ctx.textAlign = "left";
+      ctx.fillText("OUTER SPLIT " + sel + " / " + ko + "  (SCORE)", gridX, topY - 8);
+      var i, x;
+      for (i = 0; i < NCELL; i++) {
+        x = gridX + i * cellW;
+        var isTest = i >= outerTest[0] && i < outerTest[1];
+        ctx.fillStyle = isTest ? C.MINT : "rgba(155,155,155,.32)";
+        ctx.fillRect(x + 0.5, topY, cellW - 1, ch);
+        if (isTest) { ctx.strokeStyle = "rgba(166,242,204,.55)"; ctx.lineWidth = 1; ctx.strokeRect(x + 0.5, topY + 0.5, cellW - 1, ch - 1); }
+      }
+      ctx.fillStyle = C.MUT; ctx.textAlign = "left";
+      ctx.fillText("SEALED OUTER-TEST (never tuned on)", gridX, topY + ch + 12);
+
+      /* connector note */
+      var midY = topY + ch + 30;
+      ctx.strokeStyle = "rgba(78,138,247,.5)"; ctx.setLineDash([3, 3]); ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(gridX, midY); ctx.lineTo(gridX + outerTest[0] * cellW, midY); ctx.stroke();
+      var teEndX = gridX + outerTest[1] * cellW;
+      ctx.beginPath(); ctx.moveTo(teEndX, midY); ctx.lineTo(gridX + gridW, midY); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = C.BLUE; ctx.textAlign = "center";
+      ctx.fillText("↓ INNER CV RUNS ONLY ON THE GREY OUTER-TRAIN ↓", gridX + gridW / 2, midY + 12);
+
+      /* === BOTTOM: the INNER CV inside the outer-train region === */
+      /* outer-train indices are everything NOT in [outerTest) */
+      var trainCols = [];
+      for (i = 0; i < NCELL; i++) if (!(i >= outerTest[0] && i < outerTest[1])) trainCols.push(i);
+      var nTrain = trainCols.length;
+      var ibase = Math.floor(nTrain / ki), irem = nTrain % ki;
+
+      var innerTop = midY + 28;
+      var innerBot = h - 26;
+      var rowH = (innerBot - innerTop) / ki;
+      var ich = Math.min(rowH - 5, 18);
+
+      ctx.fillStyle = C.SEC; ctx.textAlign = "left";
+      ctx.fillText("INNER CV " + ki + "-FOLD  (SELECT θ)", gridX, innerTop - 9);
+
+      var r, c2 = 0, innerVal = [];   /* assign each outer-train column to an inner fold */
+      var assign = {}, q = 0;
+      for (r = 0; r < ki; r++) {
+        var isz = ibase + (r < irem ? 1 : 0);
+        for (var jj = 0; jj < isz; jj++) { assign[trainCols[q]] = r; q++; }
+      }
+
+      for (r = 0; r < ki; r++) {
+        var y = innerTop + r * rowH + (rowH - ich) / 2;
+        ctx.fillStyle = C.MUT; ctx.textAlign = "left";
+        ctx.fillText("IN " + (r + 1), padL, y + ich / 2);
+        for (i = 0; i < NCELL; i++) {
+          x = gridX + i * cellW;
+          var inOuterTest = i >= outerTest[0] && i < outerTest[1];
+          if (inOuterTest) {
+            ctx.fillStyle = "rgba(166,242,204,.10)";   /* sealed: faint, untouched */
+          } else if (assign[i] === r) {
+            ctx.fillStyle = C.BLUE;                     /* inner-validation this row */
+          } else {
+            ctx.fillStyle = "rgba(155,155,155,.30)";   /* inner-train */
+          }
+          ctx.fillRect(x + 0.5, y, cellW - 1, ich);
+        }
+      }
+
+      /* readouts: total fits = outer * inner * grid (+ optional refits omitted for clarity) */
+      var fits = ko * ki * GRID;
+      fitsEl.textContent = FM.siFormat(fits, 0).replace(".0", "") + " fits";
+      formulaEl.textContent = ko + " × " + ki + " × " + GRID + " grid";
+    }
+
+    oEl.addEventListener("input", render);
+    iEl.addEventListener("input", render);
+    selEl.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();   /* meaningful initial state with zero interaction */
+  })();
+
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

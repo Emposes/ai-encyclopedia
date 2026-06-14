@@ -1,0 +1,870 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Correlation &amp; Causation — AI Encyclopedia</title>
+<meta name="description" content="Correlation measures how two variables move together — but the leap to causation needs a causal model, not more data. Summaries, Pearson, Spearman, Simpson's paradox, and DAGs." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+<link rel="canonical" href="https://ai-encyclopedia.com/stats/03-descriptive-correlation" />
+<meta property="og:url" content="https://ai-encyclopedia.com/stats/03-descriptive-correlation" />
+</head>
+<body data-track="stats" data-level="intro">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ STATISTICS / 03 / CORRELATION</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../stats/04-inference-testing.html">NEXT: INFERENCE &amp; TESTING →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">MATHEMATICS &amp; STATISTICS · CHAPTER 03 / 08</div>
+    <h1>Correlation &amp; Causation</h1>
+    <p class="lede">Correlation measures how two variables move together. <strong>Moving from correlation to causation requires a causal model, not more data.</strong> This chapter builds the toolkit in order: the summaries that describe one variable, the coefficients that describe two, and the reason a tight correlation can still mislead about cause.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>INTRO</b></span>
+      <span>READING TIME<b>≈ 24 MIN</b></span>
+      <span>BUILDS ON<b>STATS 01–02</b></span>
+      <span>INSTRUMENTS<b>SCATTER · SIMPSON · DAG</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">3.1</span>Summarizing one variable</a>
+      <a href="#s2"><span class="n">3.2</span>Covariance &amp; Pearson</a>
+      <a href="#s3"><span class="n">3.3</span>Rank correlation</a>
+      <a href="#s4"><span class="n">3.4</span>Correlation ≠ causation</a>
+      <a href="#s5"><span class="n">3.5</span>Causal thinking</a>
+      <a href="#s6"><span class="n">3.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 3.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">3.1</span><h2>Summarizing one variable</h2></div>
+        <p>Before two variables can be related, each must be described. A column of numbers is summarized along two axes: where it sits (<strong>location</strong>) and how spread out it is (<strong>scale</strong>). Get these two right and most of descriptive statistics follows.</p>
+
+        <p>The two headline measures of location are the <strong>mean</strong> and the <strong>median</strong>. The mean is the balance point; the median is the middle value once the data is sorted. They agree on symmetric data and disagree — sometimes wildly — on skewed data.</p>
+
+        <div class="eq"><span class="eq-tag">EQ S3.1 — MEAN &amp; VARIANCE</span>
+        $$ \bar{x} = \frac{1}{n}\sum_{i=1}^{n} x_i, \qquad s^2 = \frac{1}{n-1}\sum_{i=1}^{n}\big(x_i - \bar{x}\big)^2, \qquad s = \sqrt{s^2} $$
+        <div class="eq-note">\(\bar{x}\) is the arithmetic mean; \(s^2\) the sample variance — the average squared distance from the mean; \(s\) the standard deviation, in the <em>same units</em> as the data. The divisor \(n-1\) (not \(n\)) is <b>Bessel's correction</b>: dividing by \(n\) systematically under-estimates the spread because the deviations are taken from the sample mean — which is itself fit to the data — so one degree of freedom is already spent. Variance is the engine of everything that follows: correlation is just <em>shared</em> variance, normalized.</div>
+        </div>
+
+        <p>The mean has one fatal weakness: it is <strong>not robust</strong>. A single extreme value drags it arbitrarily far, while the median barely flinches. This is the first lesson of robust statistics — and it returns the moment a single outlier hijacks a correlation in §3.2.</p>
+
+        <p><strong>Quantiles</strong> generalize the median. The \(q\)-quantile is the value below which a fraction \(q\) of the data falls: the median is the \(0.5\)-quantile, the quartiles are the \(0.25\) and \(0.75\) quantiles, and the <strong>interquartile range</strong> (IQR \(= Q_3 - Q_1\)) is a robust measure of scale that ignores the tails entirely.</p>
+
+        <table class="data">
+          <thead><tr><th>Measure</th><th>What it captures</th><th>Robust to outliers?</th><th>Breakdown point</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Mean</strong></td><td>Location (balance point)</td><td class="m">No</td><td class="m">0%</td></tr>
+            <tr><td><strong>Median</strong></td><td>Location (middle value)</td><td class="hl">Yes</td><td class="m">50%</td></tr>
+            <tr><td><strong>Std. deviation</strong></td><td>Scale (typical spread)</td><td class="m">No</td><td class="m">0%</td></tr>
+            <tr><td><strong>IQR</strong></td><td>Scale (middle 50%)</td><td class="hl">Yes</td><td class="m">25%</td></tr>
+          </tbody>
+        </table>
+        <p class="note">The <em>breakdown point</em> is the fraction of the data you can corrupt before the statistic becomes meaningless. The mean breaks with one bad point (0%); the median survives until half the data is corrupted (50%). When you do not yet trust your data, summarize it with the median and IQR first.</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Location & scale: mean vs median, std vs IQR -- and how one outlier hits each
+import numpy as np
+x = np.array([2, 4, 4, 5, 5, 6, 7, 8, 9, 10], dtype=float)
+
+def summarize(v):
+    q1, med, q3 = np.percentile(v, [25, 50, 75])
+    return dict(mean=v.mean(), median=med,
+                std=v.std(ddof=1),                 # ddof=1 => Bessel's n-1
+                iqr=q3 - q1)
+
+print("clean data :", {k: round(val, 2) for k, val in summarize(x).items()})
+
+x_bad = x.copy(); x_bad[-1] = 1000.0              # one wild outlier
+print("with outlier:", {k: round(val, 2) for k, val in summarize(x_bad).items()})
+
+print("\nmean   moved by", round(summarize(x_bad)['mean']   - summarize(x)['mean'],   2))
+print("median moved by", round(summarize(x_bad)['median'] - summarize(x)['median'], 2))
+print("=> the mean & std chase the outlier; median & IQR barely notice it.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 3.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">3.2</span><h2>Covariance &amp; Pearson correlation</h2></div>
+        <p>With two variables \(X\) and \(Y\), the first question is whether they move <em>together</em>. <strong>Covariance</strong> answers it directly: when \(X\) is above its mean, is \(Y\) usually above its mean too? Multiply the two deviations and average — positive products dominate when they rise together, negative when one rises as the other falls.</p>
+
+        <div class="eq"><span class="eq-tag">EQ S3.2 — COVARIANCE</span>
+        $$ \operatorname{cov}(X, Y) = \frac{1}{n-1}\sum_{i=1}^{n}\big(x_i - \bar{x}\big)\big(y_i - \bar{y}\big) $$
+        <div class="eq-note">Each term is the product of two signed deviations. Same side of the mean → positive; opposite sides → negative. The sum's sign tells you the direction of the association. But its <em>magnitude</em> is uninterpretable: covariance carries the units of \(X\) times the units of \(Y\), so rescaling height from metres to centimetres multiplies it by 100 without changing anything real. <b>Covariance has the right sign but the wrong scale.</b></div>
+        </div>
+
+        <p>The fix is to divide out the scale. Normalize covariance by the two standard deviations and you get the <strong>Pearson correlation coefficient</strong> \(r\) — a pure, unitless number locked to \([-1, +1]\).</p>
+
+        <div class="eq"><span class="eq-tag">EQ S3.3 — PEARSON CORRELATION</span>
+        $$ r = \frac{\operatorname{cov}(X, Y)}{s_X\, s_Y} = \frac{\sum_i (x_i - \bar{x})(y_i - \bar{y})}{\sqrt{\sum_i (x_i - \bar{x})^2}\;\sqrt{\sum_i (y_i - \bar{y})^2}} $$
+        <div class="eq-note">\(r = +1\) is a perfect increasing line, \(r = -1\) a perfect decreasing line, \(r = 0\) no <em>linear</em> association. Geometrically, \(r\) is the cosine of the angle between the two mean-centred data vectors — which is exactly why \(|r| \le 1\). The square, \(r^2\), is the fraction of \(Y\)'s variance a straight line through \(X\) explains. <b>Pearson sees only straight lines:</b> it can read \(r \approx 0\) off data that is perfectly but non-linearly related (a clean parabola), and it is dragged hard by a single outlier — both failures you can trigger in the instrument below.</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><div>Three points: \((1,2),(2,4),(3,6)\). Means \(\bar{x}=2,\ \bar{y}=4\). Deviations in \(x\): \((-1,0,1)\); in \(y\): \((-2,0,2)\).</div></div>
+          <div class="x-step"><span class="x-n">02</span><div>Cross-products \((x_i-\bar{x})(y_i-\bar{y})\): \((2,\ 0,\ 2)\), sum \(= 4\). So \(\operatorname{cov} = 4/(3-1) = 2\).</div></div>
+          <div class="x-step"><span class="x-n">03</span><div>\(\sum(x-\bar{x})^2 = 2\), \(\sum(y-\bar{y})^2 = 8\). So \(s_X = \sqrt{2/2}=1\), \(s_Y = \sqrt{8/2}=2\).</div></div>
+          <div class="x-step"><span class="x-n">04</span><div>\(r = \dfrac{\operatorname{cov}}{s_X s_Y} = \dfrac{2}{1 \times 2} = 1\). The three points lie exactly on the line \(y = 2x\), so the correlation is a perfect \(+1\).</div></div>
+          <span class="x-result">RESULT: cov = 2, r = +1 (perfect line)</span>
+        </div></div>
+        </div>
+
+        <div class="exercise" data-answer="1.0" data-tol="0.001" data-hint="points on a single increasing straight line are perfectly correlated.">
+          <div class="ex-q">You measure five points that lie <b>exactly</b> on the increasing line \( y = 3x + 2 \): \((0,2),(1,5),(2,8),(3,11),(4,14)\). What is their Pearson correlation \( r \)?</div>
+          <div class="ex-reveal-src">Every point sits on one straight increasing line, so the linear fit is perfect: \( r = \) <b>1.0</b>. Pearson reaches \(+1\) for <em>any</em> increasing line, regardless of its slope — the slope (here 3) and intercept (here 2) do not affect \(r\); only the tightness and direction of the linear pattern do.</div>
+        </div>
+
+        <div class="exercise" data-answer="0.5" data-tol="0.01" data-hint="r = cov / (sigma_x * sigma_y).">
+          <div class="ex-q">Two variables have covariance \( \operatorname{cov}(X,Y) = 6 \), with standard deviations \( \sigma_X = 2 \) and \( \sigma_Y = 6 \). What is the Pearson correlation \( r \)?</div>
+          <div class="ex-reveal-src">By EQ S3.3, \( r = \dfrac{\operatorname{cov}(X,Y)}{\sigma_X\,\sigma_Y} = \dfrac{6}{2 \times 6} = \dfrac{6}{12} = \) <b>0.5</b> — a moderate positive linear association. Notice the covariance alone (6) told you nothing until it was divided by the spreads.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Pearson from scratch -- and proof it only sees straight lines (EQ S3.3)
+import numpy as np
+
+def pearson(x, y):
+    x, y = np.asarray(x, float), np.asarray(y, float)
+    xc, yc = x - x.mean(), y - y.mean()
+    return float((xc * yc).sum() / np.sqrt((xc**2).sum() * (yc**2).sum()))
+
+x = np.linspace(-3, 3, 60)
+
+print("y = 2x + 1   (perfect line)      r =", round(pearson(x, 2*x + 1), 3))
+print("y = -x       (perfect down-line) r =", round(pearson(x, -x),       3))
+print("y = x**2     (perfect parabola)  r =", round(pearson(x, x**2),     3))
+print("\nThe parabola is a *perfect* relationship -- yet Pearson reports ~0,")
+print("because the symmetric U has no net linear trend. Always plot first.")
+plot_scatter(x, x**2)        # see the U that Pearson is blind to</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="corr-scatter" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT S3.1 — SCATTER &amp; CORRELATION EXPLORER</span><span class="w-sub">DRAG THE OUTLIER · NOISE SLIDER · PEARSON vs SPEARMAN</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>NOISE σ <output id="corr-noise-out">0.30</output></label><input type="range" id="corr-noise" min="0" max="1.5" step="0.05" value="0.30"/></div>
+              <div class="ctl"><label>TRUE SLOPE <output id="corr-slope-out">+1.0</output></label><input type="range" id="corr-slope" min="-1.5" max="1.5" step="0.1" value="1"/></div>
+            </div>
+            <canvas class="w-canvas" id="corr-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">PEARSON r</div><div class="r-value" id="corr-pearson">—</div></div>
+              <div class="readout"><div class="r-label">SPEARMAN ρ</div><div class="r-value" id="corr-spearman">—</div></div>
+              <div class="readout"><div class="r-label">r² (VARIANCE EXPLAINED)</div><div class="r-value" id="corr-r2">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Drag the single <span style="color:var(--danger);">red</span> point — the outlier — anywhere on the canvas. Watch <b>Pearson r</b> swing dramatically while <b>Spearman ρ</b> barely moves: Spearman works on ranks, so one wild value can only shift it by one rank, not arbitrarily far. Now raise the noise slider toward 1.5 and both coefficients collapse toward 0; set slope to negative and both flip sign. The line is the least-squares fit.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 3.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">3.3</span><h2>Rank correlation: Spearman &amp; Kendall</h2></div>
+        <p>Pearson asks "do they fall on a line?" Often the better question is "do they move in the same <em>order</em>?" — a relationship can be reliably increasing without being straight. <strong>Rank correlation</strong> answers that softer question, and in doing so buys robustness for free.</p>
+
+        <p><strong>Spearman's ρ</strong> is breathtakingly simple: replace every value by its rank, then run ordinary Pearson on the ranks. Because ranks are bounded \(1,\dots,n\), no outlier can pull harder than one rank — and any strictly increasing relationship, line or not, gets \(\rho = 1\).</p>
+
+        <div class="eq"><span class="eq-tag">EQ S3.4 — SPEARMAN'S RANK CORRELATION</span>
+        $$ \rho = 1 - \frac{6\sum_{i=1}^{n} d_i^{2}}{n\,(n^{2}-1)}, \qquad d_i = \operatorname{rank}(x_i) - \operatorname{rank}(y_i) $$
+        <div class="eq-note">\(d_i\) is the difference between the two ranks of observation \(i\). This tidy formula is exact <em>only when there are no ties</em>; with ties you fall back to Pearson-on-the-ranks, which is the general definition. \(\rho\) measures <b>monotonicity</b>, not linearity: it reaches \(+1\) for \(y = e^{x}\), \(y = \log x\), or any other strictly increasing curve, where Pearson would report something less than 1. It inherits the median's robustness because ranks compress the tails.</div>
+        </div>
+
+        <p><strong>Kendall's τ</strong> attacks the same target — monotone agreement — from a different angle. It counts ordered pairs: a pair \((i,j)\) is <em>concordant</em> if \(x\) and \(y\) agree on which is larger, and <em>discordant</em> if they disagree.</p>
+
+        <div class="eq"><span class="eq-tag">EQ S3.5 — KENDALL'S τ</span>
+        $$ \tau = \frac{C - D}{\binom{n}{2}} = \frac{(\text{concordant pairs}) - (\text{discordant pairs})}{\tfrac{1}{2}\,n(n-1)} $$
+        <div class="eq-note">\(C\) counts pairs that move the same way, \(D\) pairs that move opposite ways, out of all \(\binom{n}{2}\) pairs. \(\tau = +1\) means every pair is concordant (perfect monotone increase); \(\tau = -1\) every pair discordant. Kendall's τ has a cleaner probabilistic meaning than Spearman — \(\tau = P(\text{concordant}) - P(\text{discordant})\) — is even more robust to outliers, and behaves better in small samples, at the cost of being more expensive to compute. <b>For ranked data, Kendall is the statistician's default; Spearman is the more widely reported.</b></div>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">WHICH TO USE</span>
+          <p><strong>Pearson</strong> when the relationship is plausibly linear and the data is clean and roughly normal. <strong>Spearman / Kendall</strong> when you only care about monotone direction, when outliers are present, when the data is ordinal (ratings, ranks), or when the relationship is curved but consistently increasing. A large gap between Pearson and Spearman is itself a diagnostic: it screams "non-linearity or outliers — go look at the scatter plot."</p>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Pearson vs Spearman on monotone-nonlinear data -- watch the gap open
+import numpy as np
+
+def pearson(x, y):
+    xc, yc = x - x.mean(), y - y.mean()
+    return float((xc * yc).sum() / np.sqrt((xc**2).sum() * (yc**2).sum()))
+
+def spearman(x, y):                      # Pearson on the ranks
+    rx = np.argsort(np.argsort(x)).astype(float)
+    ry = np.argsort(np.argsort(y)).astype(float)
+    return pearson(rx, ry)
+
+x = np.linspace(0.1, 4, 80)
+for name, y in [("linear   y=x",  x),
+                ("exp      y=e^x", np.exp(x)),
+                ("cubic    y=x^3", x**3),
+                ("log      y=log x", np.log(x))]:
+    print(f"{name:16s}  pearson {pearson(x, y):+.3f}   spearman {spearman(x, y):+.3f}")
+
+print("\nEvery curve above is strictly increasing -> Spearman = +1.000 exactly.")
+print("Pearson sags below 1 wherever the curve bends. The gap = non-linearity.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 3.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">3.4</span><h2>Why correlation ≠ causation</h2></div>
+        <p>Here is the cliff every analyst eventually walks off. You compute a strong \(r\), the p-value is tiny, the scatter is gorgeous — and you conclude that \(X\) causes \(Y\). The conclusion does not follow, and no amount of additional data fixes it. A correlation is consistent with <em>at least</em> four very different worlds.</p>
+
+        <table class="data">
+          <thead><tr><th>If X and Y correlate, it could be…</th><th>Structure</th><th>Example</th></tr></thead>
+          <tbody>
+            <tr><td><strong>X causes Y</strong></td><td class="m">X → Y</td><td>Smoking → lung cancer</td></tr>
+            <tr><td><strong>Y causes X</strong> (reverse)</td><td class="m">X ← Y</td><td>"Umbrellas → rain" read backwards</td></tr>
+            <tr><td><strong>A confounder Z causes both</strong></td><td class="hl">X ← Z → Y</td><td>Ice-cream sales &amp; drownings ← summer heat</td></tr>
+            <tr><td><strong>Pure coincidence</strong></td><td class="m">none</td><td>Spurious correlations in noisy, multiply-tested data</td></tr>
+          </tbody>
+        </table>
+
+        <p>The most dangerous of these is the <strong>confounder</strong>: a hidden variable \(Z\) that drives both \(X\) and \(Y\), manufacturing a correlation between them where no direct link exists. Ice-cream sales and drowning deaths rise together — not because frozen dairy is lethal, but because hot weather \(Z\) independently boosts both. Condition on \(Z\) (compare days at the same temperature) and the correlation evaporates.</p>
+
+        <div class="eq"><span class="eq-tag">EQ S3.6 — CONFOUNDER-INDUCED CORRELATION</span>
+        $$ X = aZ + \varepsilon_X, \quad Y = bZ + \varepsilon_Y, \quad (\text{no } X \to Y) \;\;\Longrightarrow\;\; \operatorname{corr}(X, Y) = \frac{ab\,\sigma_Z^2}{\sigma_X\,\sigma_Y} \neq 0 $$
+        <div class="eq-note">Both \(X\) and \(Y\) are noisy copies of the same driver \(Z\); the noise terms \(\varepsilon_X, \varepsilon_Y\) are independent of each other and of \(Z\). There is <em>no arrow from \(X\) to \(Y\)</em> — yet they correlate, purely through their shared parent. With \(a=b=1\) and unit variances everywhere, \(\sigma_X^2 = \sigma_Y^2 = \sigma_Z^2 + 1 = 2\), giving \(\operatorname{corr}(X,Y) = 1/2\). <b>An intervention on \(X\) would move nothing in \(Y\)</b> — the spurious 0.5 would vanish the instant you set \(X\) by hand instead of letting \(Z\) set it. You can build this exact world in Instrument S3.3.</div>
+        </div>
+
+        <h3>Simpson's paradox</h3>
+        <p>Confounding has a spectacular special case. <strong>Simpson's paradox</strong> is when a trend that holds in every subgroup <em>reverses</em> when the groups are pooled. It is not a statistical glitch — both the aggregate and the per-group numbers are arithmetically correct. The aggregate is simply answering a different, usually wrong, question.</p>
+
+        <div class="callout warn">
+          <span class="co-icon">THE 1973 BERKELEY CASE</span>
+          <p><strong>UC Berkeley's graduate admissions looked biased against women in aggregate</strong> (about 44% of men admitted vs 35% of women). But department by department, women were admitted at <em>equal or higher</em> rates than men. The resolution: women applied disproportionately to highly competitive departments with low admit rates for everyone. Department was the confounder. Pooling across it produced a reversal that defamed the wrong cause — a textbook reason never to aggregate blindly across a variable that drives both your exposure and your outcome.</p>
+        </div>
+
+        <div class="widget" id="corr-simpson" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT S3.2 — SIMPSON'S PARADOX VISUALIZER</span><span class="w-sub">GROUP TREND vs POOLED TREND · WATCH IT FLIP</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>GROUP SEPARATION <output id="corr-sep-out">1.6</output></label><input type="range" id="corr-sep" min="0" max="2.5" step="0.1" value="1.6"/></div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>VIEW</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost" data-corr-view="pooled">POOLED</button>
+                  <button class="w-btn ghost on" data-corr-view="grouped">BY GROUP</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="corr-simp-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">POOLED r (ALL POINTS)</div><div class="r-value" id="corr-simp-pooled">—</div></div>
+              <div class="readout acc"><div class="r-label">WITHIN-GROUP r (AVG)</div><div class="r-value" id="corr-simp-within">—</div></div>
+              <div class="readout"><div class="r-label">VERDICT</div><div class="r-value" id="corr-simp-verdict" style="font-size:13px;">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Each colour is one subgroup with a clear <em>downward</em> trend. Push <b>GROUP SEPARATION</b> up: the groups stagger diagonally so the pooled cloud trends <em>upward</em> even though every group trends down. Toggle <b>POOLED</b> vs <b>BY GROUP</b> to see the grey overall fit fight the coloured within-group fits. The verdict flags when the signs disagree — that is the paradox.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 3.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">3.5</span><h2>Causal thinking: DAGs, backdoor paths, the do-operator</h2></div>
+        <p>If more data cannot turn correlation into causation, what can? A <strong>causal model</strong> — an explicit, falsifiable claim about which variable affects which. Judea Pearl's framework, the standard since the 2000s, draws these claims as a <strong>directed acyclic graph</strong> (DAG): nodes are variables, arrows are direct causal effects, "acyclic" means no variable causes itself through a loop.</p>
+
+        <div class="figure">
+          <div class="fig-head"><span class="fig-id">FIG S3.1</span><span class="fig-title">THREE STRUCTURES · ONLY THE FORK CONFOUNDS</span></div>
+          <div class="fig-body">
+            <svg viewBox="0 0 720 200" xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                <marker id="corr-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                  <path d="M0,0 L10,5 L0,10 z" fill="#9b9b9b"/>
+                </marker>
+              </defs>
+              <!-- CHAIN -->
+              <g>
+                <text x="120" y="28" text-anchor="middle" fill="#9b9b9b" font-family="ui-monospace,Menlo,monospace" font-size="11" letter-spacing="2">CHAIN  X→Z→Y</text>
+                <circle cx="40" cy="110" r="20" class="dg-box"/><text x="40" y="115" text-anchor="middle" fill="#e5e5e5" font-size="14">X</text>
+                <circle cx="120" cy="110" r="20" class="dg-box"/><text x="120" y="115" text-anchor="middle" fill="#e5e5e5" font-size="14">Z</text>
+                <circle cx="200" cy="110" r="20" class="dg-box"/><text x="200" y="115" text-anchor="middle" fill="#e5e5e5" font-size="14">Y</text>
+                <line x1="62" y1="110" x2="98" y2="110" stroke="#9b9b9b" stroke-width="1.5" marker-end="url(#corr-arrow)"/>
+                <line x1="142" y1="110" x2="178" y2="110" stroke="#9b9b9b" stroke-width="1.5" marker-end="url(#corr-arrow)"/>
+                <text x="120" y="165" text-anchor="middle" fill="#636363" font-family="ui-monospace,Menlo,monospace" font-size="10">mediator — do NOT control Z</text>
+              </g>
+              <!-- FORK -->
+              <g>
+                <text x="360" y="28" text-anchor="middle" fill="#a6f2cc" font-family="ui-monospace,Menlo,monospace" font-size="11" letter-spacing="2">FORK  X←Z→Y</text>
+                <circle cx="300" cy="150" r="20" class="dg-box"/><text x="300" y="155" text-anchor="middle" fill="#e5e5e5" font-size="14">X</text>
+                <circle cx="360" cy="70" r="20" class="dg-box-accent"/><text x="360" y="75" text-anchor="middle" fill="#a6f2cc" font-size="14">Z</text>
+                <circle cx="420" cy="150" r="20" class="dg-box"/><text x="420" y="155" text-anchor="middle" fill="#e5e5e5" font-size="14">Y</text>
+                <line x1="346" y1="88" x2="314" y2="132" stroke="#9b9b9b" stroke-width="1.5" marker-end="url(#corr-arrow)"/>
+                <line x1="374" y1="88" x2="406" y2="132" stroke="#9b9b9b" stroke-width="1.5" marker-end="url(#corr-arrow)"/>
+                <text x="360" y="190" text-anchor="middle" fill="#636363" font-family="ui-monospace,Menlo,monospace" font-size="10">confounder — DO control Z</text>
+              </g>
+              <!-- COLLIDER -->
+              <g>
+                <text x="600" y="28" text-anchor="middle" fill="#9b9b9b" font-family="ui-monospace,Menlo,monospace" font-size="11" letter-spacing="2">COLLIDER  X→Z←Y</text>
+                <circle cx="540" cy="70" r="20" class="dg-box"/><text x="540" y="75" text-anchor="middle" fill="#e5e5e5" font-size="14">X</text>
+                <circle cx="600" cy="150" r="20" class="dg-box"/><text x="600" y="155" text-anchor="middle" fill="#e5e5e5" font-size="14">Z</text>
+                <circle cx="660" cy="70" r="20" class="dg-box"/><text x="660" y="75" text-anchor="middle" fill="#e5e5e5" font-size="14">Y</text>
+                <line x1="554" y1="88" x2="586" y2="132" stroke="#9b9b9b" stroke-width="1.5" marker-end="url(#corr-arrow)"/>
+                <line x1="646" y1="88" x2="614" y2="132" stroke="#9b9b9b" stroke-width="1.5" marker-end="url(#corr-arrow)"/>
+                <text x="600" y="190" text-anchor="middle" fill="#636363" font-family="ui-monospace,Menlo,monospace" font-size="10">collider — do NOT control Z</text>
+              </g>
+            </svg>
+          </div>
+          <div class="fig-cap"><b>The same three variables, three different DAGs.</b> The <b>fork</b> is the confounder — to estimate X→Y you must <em>adjust for</em> Z. The <b>chain</b> has Z as a mediator (adjusting for it would erase the very effect you want), and the <b>collider</b> creates a spurious link only <em>if</em> you control Z. Whether to control a variable depends entirely on the graph, not on the data.</div>
+        </div>
+
+        <p>This figure carries the central, counter-intuitive lesson of causal inference: <strong>"control for everything" is wrong.</strong> The arrows decide. A <em>fork</em> (\(X \leftarrow Z \rightarrow Y\)) is the confounder you must adjust for. A <em>chain</em> (\(X \rightarrow Z \rightarrow Y\)) makes \(Z\) a mediator — adjust for it and you delete part of the real effect. A <em>collider</em> (\(X \rightarrow Z \leftarrow Y\)) is the trap: \(X\) and \(Y\) are independent until you condition on \(Z\), which <em>opens</em> a fake association (this is collider / selection bias).</p>
+
+        <p>A <strong>backdoor path</strong> is any non-causal route from \(X\) to \(Y\) that starts with an arrow <em>into</em> \(X\) — exactly the channel through which confounding leaks. The <strong>backdoor criterion</strong> says: to read the true causal effect of \(X\) on \(Y\), find a set of variables that <em>blocks every backdoor path</em> without opening a collider, and adjust for them. Do that, and observational data yields a causal answer.</p>
+
+        <div class="eq"><span class="eq-tag">EQ S3.7 — THE do-OPERATOR &amp; BACKDOOR ADJUSTMENT</span>
+        $$ P\big(Y \mid \mathrm{do}(X = x)\big) \;=\; \sum_{z} P\big(Y \mid X = x,\, Z = z\big)\, P(Z = z) $$
+        <div class="eq-note">\(\mathrm{do}(X=x)\) means <em>intervene</em> — reach in and <b>set</b> \(X\) to \(x\), severing the arrows that normally point into \(X\) — as opposed to merely <em>observing</em> \(X = x\), which is \(P(Y \mid X=x)\). The two are equal only when nothing confounds \(X\) and \(Y\). When a sufficient adjustment set \(Z\) blocks the backdoors, this formula recovers the interventional distribution from purely observational data — the bridge from correlation to causation. <b>A randomized controlled trial physically performs the \(\mathrm{do}\): randomizing \(X\) deletes every arrow into it,</b> which is why an RCT needs no DAG to be valid. When you cannot randomize, the DAG plus EQ S3.7 is the next best thing.</div>
+        </div>
+
+        <div class="widget" id="corr-dag" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT S3.3 — CONFOUNDER TOY</span><span class="w-sub">TOGGLE Z → SPURIOUS r APPEARS · CONDITION → IT VANISHES</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>CONFOUNDER STRENGTH (a=b) <output id="corr-dag-str-out">1.0</output></label><input type="range" id="corr-dag-str" min="0" max="2" step="0.1" value="1"/></div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>ANALYSIS</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-corr-cond="naive">IGNORE Z</button>
+                  <button class="w-btn ghost" data-corr-cond="adjust">CONDITION ON Z</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="corr-dag-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">OBSERVED corr(X,Y)</div><div class="r-value" id="corr-dag-obs">—</div></div>
+              <div class="readout"><div class="r-label">TRUE X→Y EFFECT</div><div class="r-value" id="corr-dag-true">0.00</div></div>
+              <div class="readout"><div class="r-label">STATUS</div><div class="r-value" id="corr-dag-status" style="font-size:13px;">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The data-generating truth is fixed: \(X \leftarrow Z \rightarrow Y\), with <b>no</b> direct \(X \to Y\) arrow. Raise <b>CONFOUNDER STRENGTH</b> and the naive scatter sprouts a strong upward correlation out of nothing — pure backdoor leakage through \(Z\). Now switch to <b>CONDITION ON Z</b> (the plot shows one narrow slice of \(Z\)): the spurious correlation collapses toward 0, exactly as EQ S3.6 predicts. This is backdoor adjustment, by hand.</div>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>You can now describe data and reason about what does — and does not — cause what.</strong> The missing piece is uncertainty: every \(r\), every mean, every effect estimate is computed from a finite sample and could be a fluke. Chapter 04 — <em>Inference &amp; Testing</em> — builds the machinery to ask "could this have happened by chance?": sampling distributions, confidence intervals, p-values, and the hypothesis tests that decide when a correlation is real enough to act on.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 3.R ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">3.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://doi.org/10.1098/rspl.1895.0041" target="_blank" rel="noopener">Pearson, K. (1895). <span class="ref-venue">Note on Regression and Inheritance in the Case of Two Parents</span>.</a> <span class="ref-meta">Proceedings of the Royal Society of London 58 — the product-moment correlation coefficient (EQ S3.3).</span></li>
+          <li><a href="https://doi.org/10.2307/1412159" target="_blank" rel="noopener">Spearman, C. (1904). <span class="ref-venue">The Proof and Measurement of Association between Two Things</span>.</a> <span class="ref-meta">American Journal of Psychology 15(1) — rank correlation, EQ S3.4.</span></li>
+          <li><a href="https://doi.org/10.1093/biomet/30.1-2.81" target="_blank" rel="noopener">Kendall, M. G. (1938). <span class="ref-venue">A New Measure of Rank Correlation</span>.</a> <span class="ref-meta">Biometrika 30(1–2) — Kendall's τ, EQ S3.5.</span></li>
+          <li><a href="https://doi.org/10.1126/science.187.4175.398" target="_blank" rel="noopener">Bickel, P. J., Hammel, E. A. &amp; O'Connell, J. W. (1975). <span class="ref-venue">Sex Bias in Graduate Admissions: Data from Berkeley</span>.</a> <span class="ref-meta">Science 187(4175) — the canonical Simpson's paradox case study.</span></li>
+          <li><a href="https://doi.org/10.2307/2984065" target="_blank" rel="noopener">Simpson, E. H. (1951). <span class="ref-venue">The Interpretation of Interaction in Contingency Tables</span>.</a> <span class="ref-meta">Journal of the Royal Statistical Society B 13(2) — the paradox's namesake paper.</span></li>
+          <li><a href="https://doi.org/10.1017/CBO9780511803161" target="_blank" rel="noopener">Pearl, J. (2009). <span class="ref-venue">Causality: Models, Reasoning, and Inference</span> (2nd ed.).</a> <span class="ref-meta">Cambridge University Press — DAGs, the do-operator and the backdoor criterion (EQ S3.7).</span></li>
+          <li><a href="https://doi.org/10.1093/biomet/82.4.669" target="_blank" rel="noopener">Pearl, J. (1995). <span class="ref-venue">Causal Diagrams for Empirical Research</span>.</a> <span class="ref-meta">Biometrika 82(4) — the foundational presentation of the backdoor criterion.</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../stats/02-distributions.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">02</span> Distributions</div></a>
+        <a class="next" href="../stats/04-inference-testing.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">04</span> Inference &amp; Testing</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — STATISTICS · CH 03</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* ============================================================
+   Correlation & Causation — chapter instruments
+   Single IIFE, no globals. Pearson / Spearman / ranks and a
+   seeded Gaussian sampler are shared by all three widgets.
+   ============================================================ */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  /* ---- shared statistics ---- */
+  function mean(a) { var s = 0, i; for (i = 0; i < a.length; i++) s += a[i]; return s / a.length; }
+  function pearson(x, y) {
+    var mx = mean(x), my = mean(y), sxy = 0, sxx = 0, syy = 0, i, dx, dy;
+    for (i = 0; i < x.length; i++) {
+      dx = x[i] - mx; dy = y[i] - my;
+      sxy += dx * dy; sxx += dx * dx; syy += dy * dy;
+    }
+    if (sxx <= 1e-12 || syy <= 1e-12) return 0;
+    return sxy / Math.sqrt(sxx * syy);
+  }
+  function ranks(a) {                       /* average ranks, ties-aware */
+    var idx = a.map(function (v, i) { return i; });
+    idx.sort(function (i, j) { return a[i] - a[j]; });
+    var r = new Array(a.length), k = 0;
+    while (k < idx.length) {
+      var j = k;
+      while (j + 1 < idx.length && a[idx[j + 1]] === a[idx[k]]) j++;
+      var avg = (k + j) / 2 + 1;            /* 1-based average rank */
+      for (var m = k; m <= j; m++) r[idx[m]] = avg;
+      k = j + 1;
+    }
+    return r;
+  }
+  function spearman(x, y) { return pearson(ranks(x), ranks(y)); }
+  /* Box–Muller on a mulberry32 stream → reproducible standard normals */
+  function gaussFactory(seed) {
+    var rng = FM.mulberry32(seed), spare = null;
+    return function () {
+      if (spare !== null) { var s = spare; spare = null; return s; }
+      var u = 0, v = 0;
+      while (u <= 1e-12) u = rng();
+      v = rng();
+      var mag = Math.sqrt(-2 * Math.log(u));
+      spare = mag * Math.sin(2 * Math.PI * v);
+      return mag * Math.cos(2 * Math.PI * v);
+    };
+  }
+  function fnum(x, d) { d = d === undefined ? 3 : d; return (x >= 0 ? "+" : "") + x.toFixed(d); }
+
+  /* small canvas axis helper: returns scalers for a value box */
+  function axisBox(c, padL, padR, padT, padB) {
+    return { x0: padL, x1: c.w - padR, y0: c.h - padB, y1: padT };
+  }
+  function drawFrame(ctx, b) {
+    ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+    ctx.strokeRect(b.x0, b.y1, b.x1 - b.x0, b.y0 - b.y1);
+  }
+
+  /* ========================================================
+     INSTRUMENT S3.1 — Scatter & correlation explorer
+     One draggable outlier + a noise slider; Pearson swings,
+     Spearman holds. (EQ S3.2 / S3.3 / S3.4)
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("corr-scatter");
+    if (!root) return;
+    var canvas = document.getElementById("corr-canvas");
+    var noise = document.getElementById("corr-noise");
+    var slope = document.getElementById("corr-slope");
+    var noiseOut = document.getElementById("corr-noise-out");
+    var slopeOut = document.getElementById("corr-slope-out");
+    var pEl = document.getElementById("corr-pearson");
+    var sEl = document.getElementById("corr-spearman");
+    var r2El = document.getElementById("corr-r2");
+
+    var N = 28;
+    var DMIN = -3, DMAX = 3;                 /* data coordinate range */
+    var base = [];                           /* fixed x positions + noise seeds */
+    var g = gaussFactory(7);
+    var i;
+    for (i = 0; i < N; i++) base.push({ x: DMIN + (DMAX - DMIN) * i / (N - 1), n: g() });
+    /* the draggable outlier, in data coords */
+    var outlier = { x: 2.2, y: -2.4 };
+    var dragging = false;
+
+    function dataXY() {
+      var s = +slope.value, sig = +noise.value;
+      var xs = [], ys = [];
+      for (var k = 0; k < N; k++) {
+        xs.push(base[k].x);
+        ys.push(s * base[k].x + sig * base[k].n);
+      }
+      xs.push(outlier.x); ys.push(outlier.y);   /* outlier is the last point */
+      return { xs: xs, ys: ys };
+    }
+
+    function render() {
+      var s = +slope.value, sig = +noise.value;
+      noiseOut.textContent = sig.toFixed(2);
+      slopeOut.textContent = (s >= 0 ? "+" : "") + s.toFixed(1);
+
+      var d = dataXY();
+      var rp = pearson(d.xs, d.ys), rs = spearman(d.xs, d.ys);
+      pEl.textContent = fnum(rp, 3);
+      sEl.textContent = fnum(rs, 3);
+      r2El.textContent = (rp * rp).toFixed(3);
+
+      var c = FM.setupCanvas(canvas, 320);
+      var ctx = c.ctx;
+      var b = axisBox(c, 44, 16, 16, 28);
+      ctx.clearRect(0, 0, c.w, c.h);
+      drawFrame(ctx, b);
+
+      function px(x) { return b.x0 + (x - DMIN) / (DMAX - DMIN) * (b.x1 - b.x0); }
+      function py(y) { return b.y0 - (y - DMIN) / (DMAX - DMIN) * (b.y0 - b.y1); }
+
+      /* grid + zero lines */
+      ctx.strokeStyle = "rgba(47,50,52,.55)"; ctx.lineWidth = 1;
+      var t;
+      for (t = -3; t <= 3; t += 1) {
+        ctx.beginPath(); ctx.moveTo(px(t), b.y1); ctx.lineTo(px(t), b.y0); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(b.x0, py(t)); ctx.lineTo(b.x1, py(t)); ctx.stroke();
+      }
+      ctx.strokeStyle = C.MUT;
+      ctx.beginPath(); ctx.moveTo(b.x0, py(0)); ctx.lineTo(b.x1, py(0)); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(px(0), b.y1); ctx.lineTo(px(0), b.y0); ctx.stroke();
+
+      /* least-squares fit line through all points */
+      var mx = mean(d.xs), my = mean(d.ys), sxx = 0, sxy = 0;
+      for (i = 0; i < d.xs.length; i++) { var ddx = d.xs[i] - mx; sxx += ddx * ddx; sxy += ddx * (d.ys[i] - my); }
+      var slopeFit = sxx > 1e-9 ? sxy / sxx : 0, inter = my - slopeFit * mx;
+      ctx.strokeStyle = C.BLUE; ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(px(DMIN), py(slopeFit * DMIN + inter));
+      ctx.lineTo(px(DMAX), py(slopeFit * DMAX + inter));
+      ctx.stroke();
+
+      /* normal points */
+      ctx.fillStyle = C.MINT;
+      for (i = 0; i < N; i++) {
+        ctx.beginPath(); ctx.arc(px(d.xs[i]), py(d.ys[i]), 3.4, 0, 2 * Math.PI); ctx.fill();
+      }
+      /* the outlier, large + red */
+      ctx.fillStyle = C.RED;
+      ctx.beginPath(); ctx.arc(px(outlier.x), py(outlier.y), 6, 0, 2 * Math.PI); ctx.fill();
+      ctx.strokeStyle = C.BRIGHT; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(px(outlier.x), py(outlier.y), 9, 0, 2 * Math.PI); ctx.stroke();
+
+      /* labels */
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText("X →", b.x1 - 28, b.y0 + 6);
+      ctx.save(); ctx.translate(b.x0 - 34, b.y1 + 6); ctx.fillText("↑ Y", 0, 0); ctx.restore();
+      ctx.fillStyle = C.RED;
+      ctx.fillText("◉ DRAG ME", px(outlier.x) + 12, py(outlier.y) - 16);
+
+      canvas._px = px; canvas._py = py; canvas._b = b;
+    }
+
+    /* pointer → data coords for dragging the outlier */
+    function toData(ev) {
+      var rect = canvas.getBoundingClientRect();
+      var cx = (ev.touches ? ev.touches[0].clientX : ev.clientX) - rect.left;
+      var cy = (ev.touches ? ev.touches[0].clientY : ev.clientY) - rect.top;
+      var b = canvas._b;
+      var dx = DMIN + (cx - b.x0) / (b.x1 - b.x0) * (DMAX - DMIN);
+      var dy = DMIN + (b.y0 - cy) / (b.y0 - b.y1) * (DMAX - DMIN);
+      return { x: Math.max(DMIN, Math.min(DMAX, dx)), y: Math.max(DMIN, Math.min(DMAX, dy)) };
+    }
+    function near(ev) {
+      var rect = canvas.getBoundingClientRect();
+      var cx = (ev.touches ? ev.touches[0].clientX : ev.clientX) - rect.left;
+      var cy = (ev.touches ? ev.touches[0].clientY : ev.clientY) - rect.top;
+      var ox = canvas._px(outlier.x), oy = canvas._py(outlier.y);
+      return Math.hypot(cx - ox, cy - oy) < 22;
+    }
+    function down(ev) { if (near(ev)) { dragging = true; ev.preventDefault(); } }
+    function move(ev) { if (!dragging) return; var d = toData(ev); outlier.x = d.x; outlier.y = d.y; render(); ev.preventDefault(); }
+    function up() { dragging = false; }
+
+    canvas.addEventListener("mousedown", down);
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+    canvas.addEventListener("touchstart", down, { passive: false });
+    canvas.addEventListener("touchmove", move, { passive: false });
+    window.addEventListener("touchend", up);
+
+    noise.addEventListener("input", render);
+    slope.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT S3.2 — Simpson's paradox visualizer
+     Three groups each trending DOWN; staggering them along a
+     diagonal makes the POOLED trend point UP.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("corr-simpson");
+    if (!root) return;
+    var canvas = document.getElementById("corr-simp-canvas");
+    var sep = document.getElementById("corr-sep");
+    var sepOut = document.getElementById("corr-sep-out");
+    var pooledEl = document.getElementById("corr-simp-pooled");
+    var withinEl = document.getElementById("corr-simp-within");
+    var verdictEl = document.getElementById("corr-simp-verdict");
+    var viewBtns = root.querySelectorAll("[data-corr-view]");
+    var view = "grouped";
+
+    var GROUPS = 3, PER = 16;
+    var COLORS = [C.MINT, C.BLUE, "#9b9b9b"];
+    var g = gaussFactory(42);
+    /* per-group base x in [0,1] and within-group downward noise, fixed */
+    var pts = [];
+    for (var gi = 0; gi < GROUPS; gi++) {
+      for (var k = 0; k < PER; k++) {
+        var lx = k / (PER - 1);                  /* 0..1 within the group */
+        pts.push({ g: gi, lx: lx, ny: 0.18 * g() });
+      }
+    }
+    var DMIN = 0, DMAX = 10;
+
+    function build() {
+      var sval = +sep.value;
+      var xs = [], ys = [], byg = [[], [], []];
+      for (var i = 0; i < pts.length; i++) {
+        var p = pts[i];
+        /* each group occupies a window; higher sep staggers windows up-right */
+        var gx = p.g * sval + p.lx * 2.2 + 1;          /* x climbs across groups */
+        var gy = p.g * sval - p.lx * 2.2 + 4 + p.ny;   /* y also climbs across groups, but DROPS within */
+        xs.push(gx); ys.push(gy);
+        byg[p.g].push({ x: gx, y: gy });
+      }
+      return { xs: xs, ys: ys, byg: byg };
+    }
+
+    function fitLine(arr) {
+      var xs = arr.map(function (p) { return p.x; });
+      var ys = arr.map(function (p) { return p.y; });
+      var mx = mean(xs), my = mean(ys), sxx = 0, sxy = 0;
+      for (var i = 0; i < xs.length; i++) { var dx = xs[i] - mx; sxx += dx * dx; sxy += dx * (ys[i] - my); }
+      var sl = sxx > 1e-9 ? sxy / sxx : 0;
+      return { slope: sl, inter: my - sl * mx, r: pearson(xs, ys) };
+    }
+
+    function render() {
+      var sval = +sep.value;
+      sepOut.textContent = sval.toFixed(1);
+      var d = build();
+
+      var pooledR = pearson(d.xs, d.ys);
+      var withinR = 0;
+      for (var gi = 0; gi < GROUPS; gi++) withinR += fitLine(d.byg[gi]).r;
+      withinR /= GROUPS;
+
+      pooledEl.textContent = fnum(pooledR, 2);
+      withinEl.textContent = fnum(withinR, 2);
+      var flip = (pooledR > 0.05 && withinR < -0.05) || (pooledR < -0.05 && withinR > 0.05);
+      verdictEl.textContent = flip ? "SIGN FLIP — PARADOX" : "signs agree";
+      verdictEl.style.color = flip ? C.RED : C.SEC;
+
+      var c = FM.setupCanvas(canvas, 320);
+      var ctx = c.ctx;
+      var b = axisBox(c, 36, 16, 16, 26);
+      ctx.clearRect(0, 0, c.w, c.h);
+      drawFrame(ctx, b);
+
+      /* dynamic range across all points */
+      var lo = Infinity, hi = -Infinity, i;
+      for (i = 0; i < d.xs.length; i++) { lo = Math.min(lo, d.xs[i], d.ys[i]); hi = Math.max(hi, d.xs[i], d.ys[i]); }
+      var pad = (hi - lo) * 0.08; lo -= pad; hi += pad;
+      function px(x) { return b.x0 + (x - lo) / (hi - lo) * (b.x1 - b.x0); }
+      function py(y) { return b.y0 - (y - lo) / (hi - lo) * (b.y0 - b.y1); }
+
+      ctx.strokeStyle = "rgba(47,50,52,.5)"; ctx.lineWidth = 1;
+      for (i = 0; i <= 4; i++) {
+        var gy = b.y1 + (b.y0 - b.y1) * i / 4;
+        ctx.beginPath(); ctx.moveTo(b.x0, gy); ctx.lineTo(b.x1, gy); ctx.stroke();
+      }
+
+      /* points */
+      for (i = 0; i < pts.length; i++) {
+        var col = view === "grouped" ? COLORS[pts[i].g] : "#565656";
+        ctx.fillStyle = col;
+        ctx.globalAlpha = view === "grouped" ? 0.95 : 0.85;
+        ctx.beginPath(); ctx.arc(px(d.xs[i]), py(d.ys[i]), 3.1, 0, 2 * Math.PI); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+
+      function drawFit(f, color, dash, wide) {
+        ctx.strokeStyle = color; ctx.lineWidth = wide ? 2.4 : 1.8;
+        ctx.setLineDash(dash || []);
+        ctx.beginPath();
+        ctx.moveTo(px(lo), py(f.slope * lo + f.inter));
+        ctx.lineTo(px(hi), py(f.slope * hi + f.inter));
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      if (view === "grouped") {
+        for (gi = 0; gi < GROUPS; gi++) drawFit(fitLine(d.byg[gi]), COLORS[gi], [], false);
+      }
+      /* pooled fit — always show, emphasized when in pooled view */
+      var allPts = d.xs.map(function (x, j) { return { x: x, y: d.ys[j] }; });
+      drawFit(fitLine(allPts), view === "pooled" ? C.BRIGHT : "#636363",
+              view === "pooled" ? [] : [6, 5], view === "pooled");
+
+      /* legend */
+      ctx.font = C.MONO; ctx.textAlign = "left"; ctx.textBaseline = "top";
+      if (view === "grouped") {
+        ctx.fillStyle = COLORS[0]; ctx.fillText("■ WITHIN-GROUP (↓)", b.x0 + 6, b.y1 + 4);
+        ctx.fillStyle = "#636363"; ctx.fillText("┄ POOLED (↑)", b.x0 + 6, b.y1 + 18);
+      } else {
+        ctx.fillStyle = C.BRIGHT; ctx.fillText("■ POOLED FIT (↑)", b.x0 + 6, b.y1 + 4);
+      }
+    }
+
+    viewBtns.forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        view = btn.getAttribute("data-corr-view");
+        viewBtns.forEach(function (o) { o.classList.toggle("on", o === btn); });
+        render();
+      });
+    });
+    sep.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT S3.3 — Confounder toy
+     Truth: X <- Z -> Y, no X->Y. "IGNORE Z" shows the spurious
+     marginal correlation; "CONDITION ON Z" plots one thin Z
+     slice, where the correlation collapses to ~0. (EQ S3.6)
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("corr-dag");
+    if (!root) return;
+    var canvas = document.getElementById("corr-dag-canvas");
+    var str = document.getElementById("corr-dag-str");
+    var strOut = document.getElementById("corr-dag-str-out");
+    var obsEl = document.getElementById("corr-dag-obs");
+    var statusEl = document.getElementById("corr-dag-status");
+    var condBtns = root.querySelectorAll("[data-corr-cond]");
+    var mode = "naive";
+
+    var N = 260;
+    /* fixed latent draws so dragging the strength slider is smooth */
+    var gZ = gaussFactory(11), gEx = gaussFactory(23), gEy = gaussFactory(37);
+    var Z = [], Ex = [], Ey = [], i;
+    for (i = 0; i < N; i++) { Z.push(gZ()); Ex.push(gEx()); Ey.push(gEy()); }
+
+    function build() {
+      var a = +str.value;                 /* a = b = strength */
+      var X = [], Y = [];
+      for (var k = 0; k < N; k++) {
+        X.push(a * Z[k] + Ex[k]);         /* X <- Z (+ noise); NO Y term  */
+        Y.push(a * Z[k] + Ey[k]);         /* Y <- Z (+ noise); NO X term  */
+      }
+      return { X: X, Y: Y };
+    }
+
+    function render() {
+      var a = +str.value;
+      strOut.textContent = a.toFixed(1);
+      var d = build();
+
+      /* observed correlation depends on the analysis mode */
+      var idx = [], k;
+      if (mode === "naive") {
+        for (k = 0; k < N; k++) idx.push(k);
+      } else {
+        /* condition on Z: keep a thin central slice |Z| < 0.35 */
+        for (k = 0; k < N; k++) if (Math.abs(Z[k]) < 0.35) idx.push(k);
+      }
+      var xs = idx.map(function (j) { return d.X[j]; });
+      var ys = idx.map(function (j) { return d.Y[j]; });
+      var robs = xs.length > 2 ? pearson(xs, ys) : 0;
+      obsEl.textContent = fnum(robs, 2);
+
+      var spurious = mode === "naive" && Math.abs(robs) > 0.2;
+      statusEl.textContent = mode === "naive"
+        ? (spurious ? "SPURIOUS — backdoor open" : "weak / no signal")
+        : "ADJUSTED — backdoor blocked";
+      statusEl.style.color = mode === "naive" ? (spurious ? C.RED : C.SEC) : C.MINT;
+      obsEl.parentElement.classList.toggle("acc", true);
+
+      var c = FM.setupCanvas(canvas, 300);
+      var ctx = c.ctx;
+      var b = axisBox(c, 40, 16, 16, 26);
+      ctx.clearRect(0, 0, c.w, c.h);
+      drawFrame(ctx, b);
+
+      var R = 4;                          /* fixed data range for both modes */
+      function px(x) { return b.x0 + (x + R) / (2 * R) * (b.x1 - b.x0); }
+      function py(y) { return b.y0 - (y + R) / (2 * R) * (b.y0 - b.y1); }
+
+      /* grid + zero axes */
+      ctx.strokeStyle = "rgba(47,50,52,.5)"; ctx.lineWidth = 1;
+      var t;
+      for (t = -4; t <= 4; t += 2) {
+        ctx.beginPath(); ctx.moveTo(px(t), b.y1); ctx.lineTo(px(t), b.y0); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(b.x0, py(t)); ctx.lineTo(b.x1, py(t)); ctx.stroke();
+      }
+      ctx.strokeStyle = C.MUT;
+      ctx.beginPath(); ctx.moveTo(b.x0, py(0)); ctx.lineTo(b.x1, py(0)); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(px(0), b.y1); ctx.lineTo(px(0), b.y0); ctx.stroke();
+
+      /* faded out-of-slice points when conditioning */
+      if (mode === "adjust") {
+        ctx.fillStyle = "rgba(86,86,86,.35)";
+        for (k = 0; k < N; k++) if (Math.abs(Z[k]) >= 0.35) {
+          ctx.beginPath(); ctx.arc(px(d.X[k]), py(d.Y[k]), 2.4, 0, 2 * Math.PI); ctx.fill();
+        }
+      }
+      /* active points */
+      ctx.fillStyle = mode === "naive" ? C.MINT : C.BLUE;
+      for (k = 0; k < idx.length; k++) {
+        ctx.beginPath(); ctx.arc(px(xs[k]), py(ys[k]), 2.8, 0, 2 * Math.PI); ctx.fill();
+      }
+
+      /* fit through the active points */
+      if (xs.length > 2) {
+        var mx = mean(xs), my = mean(ys), sxx = 0, sxy = 0;
+        for (k = 0; k < xs.length; k++) { var dx = xs[k] - mx; sxx += dx * dx; sxy += dx * (ys[k] - my); }
+        var sl = sxx > 1e-9 ? sxy / sxx : 0, inter = my - sl * mx;
+        ctx.strokeStyle = spurious ? C.RED : (mode === "adjust" ? C.MINT : C.SEC);
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(px(-R), py(sl * -R + inter));
+        ctx.lineTo(px(R), py(sl * R + inter));
+        ctx.stroke();
+      }
+
+      /* labels */
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText("X →", b.x1 - 26, b.y0 - 16);
+      ctx.fillText("↑ Y", b.x0 + 4, b.y1 + 4);
+      ctx.fillStyle = mode === "adjust" ? C.BLUE : C.MINT;
+      ctx.fillText(mode === "adjust" ? "Z-SLICE: |Z| < 0.35  (n=" + idx.length + ")"
+                                     : "ALL POINTS  (n=" + N + ")", b.x0 + 4, b.y1 + 18);
+    }
+
+    condBtns.forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        mode = btn.getAttribute("data-corr-cond");
+        condBtns.forEach(function (o) { o.classList.toggle("on", o === btn); });
+        render();
+      });
+    });
+    str.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

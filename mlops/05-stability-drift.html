@@ -1,0 +1,778 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Stability &amp; Drift — PSI, CSI &amp; Concept Drift — AI Encyclopedia</title>
+<meta name="description" content="Every deployed model decays — covariate, label and concept drift, the Population Stability Index and CSI, production drift detectors, and the monitoring that retrains a model before its users feel the rot." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+<link rel="canonical" href="https://ai-encyclopedia.com/mlops/05-stability-drift" />
+<meta property="og:url" content="https://ai-encyclopedia.com/mlops/05-stability-drift" />
+</head>
+<body data-track="mlops" data-level="core">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ MODEL RISK / 05 / STABILITY &amp; DRIFT</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../mlops/06-explainability.html">NEXT: 06 EXPLAINABILITY →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">MODEL VALIDATION &amp; RISK · CHAPTER 05 / 07</div>
+    <h1>Stability &amp; Drift</h1>
+    <p class="lede">A model is trained once on a fixed snapshot, then deployed into an environment that keeps changing. As the input distribution and the input-output relationships shift, an unchanged model gradually loses accuracy. <strong>Every deployed model decays; the open question is whether you detect the drift before users do.</strong></p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 27 MIN</b></span>
+      <span>BUILDS ON<b>MLOPS 01 · STATS 04</b></span>
+      <span>INSTRUMENTS<b>PSI · STREAM DETECTOR · DECAY</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">5.1</span>Distribution shift</a>
+      <a href="#s2"><span class="n">5.2</span>PSI &amp; CSI</a>
+      <a href="#s3"><span class="n">5.3</span>Detecting drift in production</a>
+      <a href="#s4"><span class="n">5.4</span>Monitoring &amp; retraining triggers</a>
+      <a href="#s5"><span class="n">5.5</span>A model decaying in the wild</a>
+      <a href="#s6"><span class="n">5.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 5.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">5.1</span><h2>Distribution shift — covariate, label &amp; concept drift</h2></div>
+        <p>Supervised learning rests on one quiet assumption: the data you serve is drawn from the same distribution as the data you trained on. Write the joint distribution of inputs \(x\) and labels \(y\) as \(P(x, y) = P(y \mid x)\,P(x)\). Training estimates \(\hat{f}\) against a fixed \(P_{\text{train}}\); production feeds it some \(P_{\text{prod}}\). When the two diverge, the model is being asked a question it was never taught to answer. There are three textbook ways for them to diverge, and they are <em>not</em> interchangeable.</p>
+
+        <div class="eq"><span class="eq-tag">EQ V5.1 — THE THREE SHIFTS</span>
+        $$ \underbrace{P_{\text{prod}}(x)\neq P_{\text{train}}(x)}_{\text{covariate shift}},\qquad \underbrace{P_{\text{prod}}(y)\neq P_{\text{train}}(y)}_{\text{label / prior shift}},\qquad \underbrace{P_{\text{prod}}(y\mid x)\neq P_{\text{train}}(y\mid x)}_{\text{concept drift}} $$
+        <div class="eq-note"><b>Covariate shift</b> moves the inputs (\(P(x)\) changes) while the rule \(P(y\mid x)\) holds — your traffic now skews toward regions of feature space the model rarely saw. <b>Label / prior shift</b> moves the class balance \(P(y)\) — fraud spikes, the base rate moves. <b>Concept drift</b> is the dangerous one: the relationship itself, \(P(y\mid x)\), changes, so the function you learned is now <em>wrong</em>, not merely under-sampled. Critically, only the first two are visible from inputs alone; <b>concept drift can be invisible in the features and surface only as a collapse in accuracy</b> — which is why you monitor both.</div>
+        </div>
+
+        <p>The distinction is operational, not academic, because it dictates the fix. Covariate shift can sometimes be corrected by <strong>importance weighting</strong> — reweight training examples by \(w(x) = P_{\text{prod}}(x)/P_{\text{train}}(x)\) so the old data resembles the new — without any fresh labels. Label shift is corrected by re-estimating the priors. Concept drift admits no such trick: the mapping moved, so the model must <strong>relearn it</strong> from freshly labelled data. Worse, concept drift can be <em>real</em> (the world genuinely changed — a new fraud tactic) or <em>virtual</em> (only \(P(x)\) moved, \(P(y\mid x)\) is intact); Gama et al. carefully separate the two, because virtual drift may need nothing more than a wider training set.</p>
+
+        <p>Drift also has a <em>shape in time</em>, and the shape decides how you watch for it. The canonical taxonomy (Gama et al., 2014):</p>
+        <table class="data">
+          <thead><tr><th>Pattern</th><th>What happens</th><th>Example</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Sudden</strong></td><td>An abrupt jump to a new concept</td><td class="m">a sensor is replaced; a regulation flips overnight</td></tr>
+            <tr><td><strong>Gradual</strong></td><td>The new concept slowly overtakes the old, the two coexisting for a while</td><td class="m">a product preference migrating between cohorts</td></tr>
+            <tr><td><strong>Incremental</strong></td><td>A slow, continuous slide through intermediate concepts</td><td class="m">inflation eroding a price model month by month</td></tr>
+            <tr><td><strong>Recurring</strong></td><td>Old concepts return on a cycle (seasonality)</td><td class="hl">holiday shopping, weekday/weekend traffic</td></tr>
+          </tbody>
+        </table>
+        <p class="note"><strong>Seasonality is the great impostor.</strong> A recurring pattern looks like drift to a naïve detector but needs no retraining — only a model that already encodes the cycle, or a baseline that compares like-for-like (this December against last December, not against November). Treating seasonality as drift is the most common false alarm in production monitoring, and the reason §5.4 insists on a sensible reference window.</p>
+
+        <div class="exercise" data-answer="concept" data-tol="0" data-unit="" data-hint="Which shift changes P(y|x) — the relationship itself — rather than just P(x) or P(y)?">
+          <div class="ex-q">A spam filter's inputs look unchanged, but spammers adopt a brand-new phrasing so the <em>same</em> words now mean something different and accuracy collapses. Which of the three shifts is this — <b>covariate</b>, <b>label</b>, or <b>concept</b>? (one word)</div>
+          <div class="ex-reveal-src">The feature distribution \(P(x)\) is stable, but the mapping \(P(y\mid x)\) — which words imply spam — has moved. That is <b>concept</b> drift, the one invisible in the inputs and the one that genuinely requires relearning the function (EQ V5.1).</div>
+        </div>
+      </section>
+
+      <!-- ====================== 5.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">5.2</span><h2>Population Stability Index (PSI) &amp; CSI</h2></div>
+        <p>Before you can react to drift you have to <em>measure</em> it, and the industry's workhorse — born in credit-risk scorecards and now ubiquitous — is the <strong>Population Stability Index</strong>. Take a feature (or the model's output score), bin it once on a reference period to get expected proportions \(E_i\), then count the same bins on the live period to get actual proportions \(A_i\). PSI is the symmetric relative-entropy-style sum over bins:</p>
+
+        <div class="eq"><span class="eq-tag">EQ V5.2 — POPULATION STABILITY INDEX</span>
+        $$ \mathrm{PSI} \;=\; \sum_{i=1}^{B}\big(A_i - E_i\big)\,\ln\!\frac{A_i}{E_i} $$
+        <div class="eq-note">\(B\) bins; \(E_i\) is the expected (reference) fraction of mass in bin \(i\), \(A_i\) the actual (current) fraction; both sets sum to 1. Each term is \(\ge 0\) — a bin that gained or lost mass contributes a positive amount, and the larger the relative move, the larger the term. PSI is exactly the <b>symmetrized KL divergence</b> (the Jeffreys divergence) between the two binned distributions: \(\mathrm{KL}(A\Vert E) + \mathrm{KL}(E\Vert A)\). It is zero only when every bin matches and grows without bound as mass migrates. <b>The number is a single scalar you can alarm on.</b></div>
+        </div>
+
+        <p>PSI earns its keep because, empirically, its magnitude maps onto a stable rule of thumb that has survived decades of scorecard practice:</p>
+        <table class="data">
+          <thead><tr><th>PSI</th><th>Interpretation</th><th>Action</th></tr></thead>
+          <tbody>
+            <tr><td class="m">&lt; 0.10</td><td>No significant population change</td><td>continue monitoring</td></tr>
+            <tr><td class="m">0.10 – 0.25</td><td class="hl">Moderate shift — worth investigating</td><td>investigate, watch closely</td></tr>
+            <tr><td class="m">&gt; 0.25</td><td>Significant shift</td><td class="hl">act — retrain or recalibrate</td></tr>
+          </tbody>
+        </table>
+        <p class="note">Those thresholds (0.1 and 0.25) are heuristic, not theorems — they predate any distributional theory and assume roughly 10 bins of reasonable size. Treat them as alarm levels, not laws: with very large samples even a trivial, harmless shift can clear 0.25, and with tiny samples noise inflates PSI. Always pair the number with a look at <em>which</em> bins moved.</p>
+
+        <p>Apply EQ V5.2 to the model's <strong>output score</strong> and people call it <strong>PSI</strong>; apply the identical formula to a single <strong>input feature</strong> and the same community calls it the <strong>Characteristic Stability Index (CSI)</strong>. The math is the same; only the target differs — and the pairing is diagnostic. A stable PSI with a drifting CSI says an input moved but the model's score has so far absorbed it; a drifting PSI tells you the score distribution itself has shifted, which is what actually feeds downstream decisions and cutoffs.</p>
+
+        <div class="eq"><span class="eq-tag">EQ V5.3 — ONE PSI BUCKET'S CONTRIBUTION</span>
+        $$ \mathrm{psi}_i \;=\; (A_i - E_i)\,\ln\!\frac{A_i}{E_i}, \qquad \mathrm{PSI} = \sum_i \mathrm{psi}_i $$
+        <div class="eq-note">The per-bucket term is the unit you actually reason about. A bucket whose expected mass was \(E_i = 0.20\) and whose actual mass rose to \(A_i = 0.30\) contributes \((0.30-0.20)\ln(0.30/0.20) = 0.10 \times \ln 1.5 = 0.10 \times 0.405 = \mathbf{0.0405}\). Sum these across bins and one or two large terms usually dominate — <b>read the bucket breakdown, not just the total</b>, because it points straight at the feature region that moved.</div>
+        </div>
+
+        <div class="exercise" data-answer="0.0405" data-tol="0.02" data-unit="" data-hint="One PSI term is (A − E)·ln(A/E); here A = 0.30, E = 0.20, and ln(1.5) ≈ 0.405.">
+          <div class="ex-q">Using EQ V5.3, a PSI bucket has expected proportion \( E_i = 0.20 \) and actual proportion \( A_i = 0.30 \). What is this single bucket's contribution to PSI, \( (A_i - E_i)\ln(A_i/E_i) \)? (Use \( \ln 1.5 = 0.405 \).)</div>
+          <div class="ex-reveal-src">\( A_i - E_i = 0.30 - 0.20 = 0.10 \); the ratio \( A_i/E_i = 0.30/0.20 = 1.5 \), so \( \ln 1.5 = 0.405 \). The contribution is \( 0.10 \times 0.405 = \) <b>0.0405</b>. Four or five buckets of that size already push the total past the 0.25 alarm.</div>
+        </div>
+
+        <div class="exercise" data-answer="true" data-tol="0" data-unit="" data-hint="Recall the PSI rule-of-thumb table: which band starts at 0.25?">
+          <div class="ex-q">A PSI above <b>0.25</b> usually signals a significant population shift that warrants action (retrain or recalibrate). True or false? (Answer <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">By the standard scorecard rule of thumb, PSI &lt; 0.1 is stable, 0.1–0.25 is a moderate shift worth investigating, and PSI &gt; 0.25 is a significant shift that calls for action. So the statement is <b>true</b> — with the honest caveat that the 0.25 line is a heuristic, not a proof, and must be read alongside sample size and the per-bucket breakdown.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># PSI between an expected (reference) and actual (live) binned distribution.
+import numpy as np
+
+# Fixed reference scores; fit 10 equal-width bins ONCE on the reference.
+rng = np.random.default_rng(0)
+ref  = rng.normal(0.0, 1.0, 5000)            # training-time score distribution
+live = rng.normal(0.5, 1.1, 5000)            # production: shifted right + wider
+
+edges = np.linspace(-4, 4, 11)               # 10 bins, frozen on the reference
+E = np.histogram(ref,  edges)[0] / len(ref)
+A = np.histogram(live, edges)[0] / len(live)
+
+eps = 1e-6                                    # guard empty bins (ln 0 is undefined)
+E = np.clip(E, eps, None); A = np.clip(A, eps, None)
+terms = (A - E) * np.log(A / E)              # EQ V5.3, one per bin
+psi = terms.sum()                            # EQ V5.2
+
+print("bin   E      A      contribution")
+for i in range(len(E)):
+    print(f"{i:2d}  {E[i]:.3f}  {A[i]:.3f}    {terms[i]:+.4f}")
+band = "STABLE" if psi < 0.10 else "MODERATE" if psi < 0.25 else "SIGNIFICANT SHIFT"
+print(f"\nPSI = {psi:.3f}  ->  {band}")
+print(f"biggest single bucket: bin {int(np.argmax(terms))} "
+      f"({terms.max():.4f}) -- read the breakdown, not just the total.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="drift-psi-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT V5.1 — PSI CALCULATOR</span><span class="w-sub">SHIFT A DISTRIBUTION · CROSS 0.10 / 0.25 · EQ V5.2</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>MEAN SHIFT (σ) <output id="drift-psi-shift-out">+0.50</output></label><input type="range" id="drift-psi-shift" min="0" max="2" step="0.05" value="0.5"/></div>
+              <div class="ctl"><label>SPREAD CHANGE ×σ <output id="drift-psi-scale-out">1.10</output></label><input type="range" id="drift-psi-scale" min="0.6" max="2" step="0.05" value="1.1"/></div>
+              <div class="ctl"><label>BINS B <output id="drift-psi-bins-out">10</output></label><input type="range" id="drift-psi-bins" min="5" max="20" step="1" value="10"/></div>
+            </div>
+            <canvas class="w-canvas" id="drift-psi-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">PSI</div><div class="r-value" id="drift-psi-val">—</div></div>
+              <div class="readout"><div class="r-label">VERDICT</div><div class="r-value" id="drift-psi-band" style="font-size:13px;">—</div></div>
+              <div class="readout"><div class="r-label">TOP BUCKET TERM</div><div class="r-value" id="drift-psi-top">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The <span style="color:var(--secondary);">grey</span> outline is the reference (expected) distribution; the <span style="color:var(--accent);">mint</span> bars are the live (actual) one. Bins are frozen on the reference. Push <b>MEAN SHIFT</b> from 0 and watch PSI climb through the dashed <span style="color:var(--blue);">0.10</span> line into the <span style="color:var(--danger);">0.25</span> danger zone; widening the spread alone moves both tails and also raises PSI even with zero mean shift. Add bins to see the total wobble — PSI is bin-count sensitive, which is why a fixed binning matters.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 5.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">5.3</span><h2>Detecting drift in production</h2></div>
+        <p>PSI is a <em>batch</em> statistic: you compute it over a window. Production also wants <em>streaming</em> detectors that raise a flag the moment a process changes, and they split cleanly by what they watch.</p>
+
+        <h3>Watch the inputs (label-free)</h3>
+        <p>Labels usually arrive late — a loan defaults months after approval, a churn label resolves a quarter later — so the first line of defence watches the feature distribution, which is available instantly. The tools are statistical two-sample tests between a reference window and a recent window:</p>
+        <ul>
+          <li><strong>Kolmogorov–Smirnov</strong> for a continuous feature: the maximum gap between the two empirical CDFs.</li>
+          <li><strong>Chi-squared</strong> for a categorical feature: observed-vs-expected counts per category.</li>
+          <li><strong>PSI / CSI</strong> (§5.2) as a thresholded scalar, the operations-friendly summary.</li>
+          <li><strong>Maximum Mean Discrepancy (MMD)</strong> for the joint multivariate input, when per-feature tests miss a shift in the <em>correlations</em>.</li>
+        </ul>
+        <p class="note"><strong>The hard truth of label-free detection:</strong> it can only ever see covariate shift. A pure concept drift — \(P(y\mid x)\) moves while \(P(x)\) stays put — leaves every input test silent while accuracy quietly rots. Input monitoring is necessary and cheap, but it is not sufficient.</p>
+
+        <h3>Watch the errors (label-dependent)</h3>
+        <p>The only thing that <em>directly</em> sees concept drift is the model's own error stream. The classic online detector is <strong>DDM</strong> (Drift Detection Method): treat the per-example error as a Bernoulli sequence whose error rate \(p_t\) should fall or hold as a stable model sees more data. Track the running rate and its standard deviation \(s_t = \sqrt{p_t(1-p_t)/t}\), remember the minimum point \((p_{\min}, s_{\min})\) reached, and alarm when the current point drifts a few standard deviations above that best:</p>
+
+        <div class="eq"><span class="eq-tag">EQ V5.4 — DDM WARNING &amp; DRIFT LEVELS</span>
+        $$ \text{warning: } p_t + s_t \ge p_{\min} + 2\,s_{\min}, \qquad \text{drift: } p_t + s_t \ge p_{\min} + 3\,s_{\min} $$
+        <div class="eq-note">As long as the model is stable, \(p_t\) drifts down and \(p_{\min}+2s_{\min}\) tracks the best-so-far error. When the error climbs two standard deviations above that floor, DDM enters a <b>warning</b> zone (start buffering recent data); at three it declares <b>drift</b> (the buffered window becomes the retraining set). The \(2\sigma/3\sigma\) bands are the Gaussian-tail logic of a control chart applied to a learning curve. Variants — EDDM (watches the <em>distance between</em> errors, better for gradual drift), ADWIN (an adaptive window with a formal false-positive bound), Page-Hinkley (a CUSUM on the error) — trade sensitivity against false alarms.</div>
+        </div>
+
+        <p>The honest framing is a detection-theory trade-off, not a free lunch: a sensitive detector catches drift early but cries wolf on noise and seasonality; a conservative one is quiet but lets the model rot longer before it fires. There is no setting that is both early and silent — you tune the operating point to the cost of a missed drift versus the cost of a needless retrain.</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Concept-drift detection with a rolling error monitor (DDM-style, EQ V5.4).
+import numpy as np
+rng = np.random.default_rng(1)
+
+# A stream of 0/1 errors: stable ~8% for 600 steps, then concept drift -> ~32%.
+n1, n2 = 600, 400
+errors = np.concatenate([rng.random(n1) < 0.08,
+                         rng.random(n2) < 0.32]).astype(int)
+
+p, s = 0.0, 0.0                       # running error rate and its std
+p_min, s_min = 1.0, 1.0              # best (lowest) point reached so far
+warn_at = drift_at = None
+err_sum = 0
+for t in range(1, len(errors) + 1):
+    err_sum += errors[t - 1]
+    p = err_sum / t
+    s = np.sqrt(p * (1 - p) / t)
+    if p + s < p_min + s_min:        # new best -> reset the floor
+        p_min, s_min = p, s
+    if drift_at is None and p + s >= p_min + 3 * s_min and t > 30:
+        drift_at = t
+    elif warn_at is None and p + s >= p_min + 2 * s_min and t > 30:
+        warn_at = t
+
+print(f"true change point         : {n1}")
+print(f"DDM warning raised at step: {warn_at}")
+print(f"DDM drift declared at step: {drift_at}")
+print(f"detection delay           : {drift_at - n1} steps after the real shift")
+plot_xy(np.arange(len(errors)), np.cumsum(errors) / np.arange(1, len(errors) + 1))</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="drift-stream-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT V5.2 — STREAMING DRIFT DETECTOR</span><span class="w-sub">ROLLING z-TEST ON A FEATURE · WARNING → DRIFT</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>DRIFT MAGNITUDE (σ) <output id="drift-stream-mag-out">2.0</output></label><input type="range" id="drift-stream-mag" min="0" max="4" step="0.1" value="2"/></div>
+              <div class="ctl"><label>WINDOW W <output id="drift-stream-win-out">40</output></label><input type="range" id="drift-stream-win" min="15" max="80" step="5" value="40"/></div>
+              <div class="ctl"><label>SENSITIVITY (z) <output id="drift-stream-z-out">3.0</output></label><input type="range" id="drift-stream-z" min="1.5" max="5" step="0.1" value="3"/></div>
+            </div>
+            <canvas class="w-canvas" id="drift-stream-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">DETECTED AT STEP</div><div class="r-value" id="drift-stream-det">—</div></div>
+              <div class="readout"><div class="r-label">DETECTION DELAY</div><div class="r-value" id="drift-stream-delay">—</div></div>
+              <div class="readout"><div class="r-label">FALSE ALARMS (PRE-DRIFT)</div><div class="r-value" id="drift-stream-fa">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">A feature streams across 240 steps. It is stationary until the dashed <span style="color:var(--secondary);">change line</span> at step 120, then its mean jumps by DRIFT MAGNITUDE. The detector keeps a reference window and a recent window of width \(W\) and fires when their means differ by more than \(z\) standard errors; the <span style="color:var(--accent);">mint</span> marker is the first detection. Crank sensitivity down (low \(z\)) to catch tiny drifts at the cost of <span style="color:var(--danger);">false alarms</span> before the change; raise it for silence-but-late. There is no setting that is both early and quiet — that is the detection trade-off made visible.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 5.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">5.4</span><h2>Monitoring &amp; retraining triggers</h2></div>
+        <p>Detection is only half the loop. A monitoring system has to turn a signal into a decision: <em>do nothing, alert a human, or retrain.</em> Three trigger philosophies, roughly in order of maturity:</p>
+        <ul>
+          <li><strong>Scheduled retraining.</strong> Refit on a fixed cadence — nightly, weekly, monthly. Dead simple and predictable, but it is both wasteful (you retrain when nothing changed) and dangerous (you wait until the next cycle while the model rots). It is a default, not an answer.</li>
+          <li><strong>Performance-triggered.</strong> Retrain when a live metric — accuracy, AUC, calibration, a business KPI — crosses a threshold. The gold standard, because it reacts to what you actually care about, but it needs <strong>ground-truth labels</strong>, and those often arrive with a long, costly delay.</li>
+          <li><strong>Drift-triggered.</strong> Retrain when an input statistic (PSI/CSI, KS, a streaming detector) crosses a threshold. Available immediately and label-free — the proxy you reach for while labels are in flight — but it can fire on harmless covariate shift and stay silent on pure concept drift. In practice you run drift triggers as an <em>early</em> warning and performance triggers as the <em>authoritative</em> one.</li>
+        </ul>
+
+        <p>Every trigger needs a <strong>reference window</strong> to compare against, and the choice is consequential. A fixed reference (the training set) detects drift relative to the world the model actually learned — the correct baseline for "is my model still valid?" A sliding reference (last month) detects <em>change</em> but normalizes away slow incremental drift, so the model can boil like the proverbial frog while every week looks like the last. Most mature stacks keep the training distribution as the anchor and add seasonality-aware comparisons on top.</p>
+
+        <p>The cost side has its own arithmetic. Suppose drift erodes value at a roughly linear rate after each retrain, so the average performance gap you carry scales with the time between retrains. Retrain too often and you pay compute and review for nothing; too rarely and you eat accumulating decay. The optimum balances the two — a classic inventory-style trade-off:</p>
+
+        <div class="eq"><span class="eq-tag">EQ V5.5 — RETRAIN-CADENCE COST</span>
+        $$ \text{Cost}(T) \;=\; \underbrace{\frac{c_{\text{retrain}}}{T}}_{\text{amortized retrain}} \;+\; \underbrace{\tfrac{1}{2}\,d\,T}_{\text{average decay carried}} \qquad\Longrightarrow\qquad T^\star = \sqrt{\frac{2\,c_{\text{retrain}}}{d}} $$
+        <div class="eq-note">\(T\) is the interval between retrains, \(c_{\text{retrain}}\) the cost (compute + validation + risk) of one retrain, and \(d\) the per-unit-time rate at which value decays after a fresh fit. The first term falls with \(T\) (retrain less, amortize more); the second rises with \(T\) (carry more accumulated decay on average). Setting the derivative to zero gives the square-root cadence \(T^\star=\sqrt{2c_{\text{retrain}}/d}\) — the same shape as the economic-order-quantity rule. <b>Faster-drifting models (large \(d\)) should retrain more often; expensive retrains (large \(c\)) push the cadence out.</b> It is a back-of-envelope model, not gospel — real decay is rarely linear and seasonality breaks the smoothness — but it gives the right instinct for the dial.</div>
+        </div>
+
+        <div class="exercise" data-answer="20" data-tol="0.02" data-unit="days" data-hint="T* = sqrt(2·c/d) with c = 200 and d = 1.">
+          <div class="ex-q">Using EQ V5.5, one retrain costs \( c_{\text{retrain}} = 200 \) units and value decays at \( d = 1 \) unit per day. What is the cost-optimal interval between retrains, \( T^\star = \sqrt{2c_{\text{retrain}}/d} \), in days?</div>
+          <div class="ex-reveal-src">\( 2 c_{\text{retrain}}/d = 2 \times 200 / 1 = 400 \), and \( \sqrt{400} = \) <b>20</b> days. Halve the retrain cost and the cadence tightens to \(\sqrt{200}\approx14\) days; double the drift rate and it tightens to \(\sqrt{200}\approx14\) days too — the square root makes the dial gentle.</div>
+        </div>
+
+        <div class="callout warn">
+          <span class="co-icon">PITFALLS</span>
+          <p><strong>Four ways drift monitoring goes wrong:</strong> (1) <em>alarm fatigue</em> — a detector tuned so hot it fires on every Monday; teams learn to ignore it and miss the real one. (2) <em>seasonality mistaken for drift</em> — comparing December to November instead of to last December. (3) <em>retraining on contaminated data</em> — the freshly buffered window includes the very anomaly that triggered the alarm, so you retrain the model to expect the disaster. (4) <em>silent label delay</em> — your performance trigger cannot fire because the labels for the drifted period have not arrived yet, and your input triggers cannot see concept drift; the gap between them is where models die quietly.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 5.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">5.5</span><h2>A model decaying in the wild</h2></div>
+        <p>Put the pieces together and a deployed model's life has a characteristic arc: a fresh fit performs near its validation score, holds for a while, then bends downward as the world drifts away from the snapshot it learned. The slope of that bend is the decay rate \(d\); a retrain snaps performance back toward the top and the clock restarts. The whole job of this chapter is to see the bend early enough — through PSI on the inputs and error monitors on the outputs — to retrain on the way down rather than at the bottom.</p>
+
+        <div class="eq"><span class="eq-tag">EQ V5.6 — PERFORMANCE DECAY &amp; SAWTOOTH RECOVERY</span>
+        $$ \mathrm{Acc}(t) \;=\; \mathrm{Acc}_0 \;-\; d\,(t - t_{\text{last}}) \;+\; \varepsilon_t, \qquad \text{retrain at } t \;\Rightarrow\; t_{\text{last}}\leftarrow t,\;\; \mathrm{Acc}\leftarrow \mathrm{Acc}_0 $$
+        <div class="eq-note">Between retrains, accuracy falls roughly linearly from its post-fit ceiling \(\mathrm{Acc}_0\) at rate \(d\), buried in measurement noise \(\varepsilon_t\); a retrain resets the elapsed-time clock \(t-t_{\text{last}}\) and lifts performance back toward the ceiling. Trace this over many cycles and you get the familiar <b>sawtooth</b>: decay, snap, decay, snap. <b>The area between the ceiling and the sawtooth is the value lost to drift</b> — and retraining more often trades compute to shrink it, exactly the EQ V5.5 balance. Real curves are noisier, sometimes step rather than slope, and a retrain on bad data can fail to recover at all.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Sawtooth decay (EQ V5.6): no-retrain vs periodic retrain -> value recovered.
+import numpy as np
+rng = np.random.default_rng(2)
+
+T = 180                                  # days in service
+acc0, d, noise = 0.90, 0.0015, 0.004    # ceiling, decay/day, measurement noise
+
+# Scenario A: never retrain -> monotone decay from the ceiling.
+never = acc0 - d * np.arange(T) + rng.normal(0, noise, T)
+
+# Scenario B: retrain every 30 days -> reset the clock each cycle.
+period, retr = 30, acc0 - d * (np.arange(T) % 30) + rng.normal(0, noise, T)
+
+print(f"day  0  : never {never[0]:.3f}   retrained {retr[0]:.3f}")
+print(f"day 90  : never {never[90]:.3f}   retrained {retr[90]:.3f}")
+print(f"day 179 : never {never[179]:.3f}   retrained {retr[179]:.3f}")
+print(f"\nmean accuracy, never-retrain : {never.mean():.3f}")
+print(f"mean accuracy, retrain @30d  : {retr.mean():.3f}")
+print(f"value recovered by retraining: {retr.mean() - never.mean():+.3f} acc")
+plot_xy(np.arange(T), retr)              # the sawtooth: decay, snap, decay, snap</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="drift-decay-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT V5.3 — PERFORMANCE-DECAY SIMULATOR</span><span class="w-sub">SAWTOOTH RECOVERY · EQ V5.5 / V5.6</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>DECAY RATE d (acc/period) <output id="drift-decay-d-out">0.0015</output></label><input type="range" id="drift-decay-d" min="0" max="0.005" step="0.0001" value="0.0015"/></div>
+              <div class="ctl"><label>RETRAIN EVERY <output id="drift-decay-t-out">30</output></label><input type="range" id="drift-decay-t" min="5" max="90" step="5" value="30"/></div>
+              <div class="ctl"><label>RETRAIN COST c <output id="drift-decay-c-out">200</output></label><input type="range" id="drift-decay-c" min="20" max="600" step="20" value="200"/></div>
+            </div>
+            <canvas class="w-canvas" id="drift-decay-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">MEAN ACCURACY HELD</div><div class="r-value" id="drift-decay-mean">—</div></div>
+              <div class="readout acc"><div class="r-label">TOTAL COST (RETRAIN + DECAY)</div><div class="r-value" id="drift-decay-cost">—</div></div>
+              <div class="readout"><div class="r-label">COST-OPTIMAL T★</div><div class="r-value" id="drift-decay-opt">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The <span style="color:var(--secondary);">grey</span> ceiling is the post-fit accuracy \(\mathrm{Acc}_0\); the <span style="color:var(--accent);">mint</span> sawtooth is live accuracy decaying at rate \(d\) and snapping back at every retrain. The shaded gap between them is value lost to drift. Slide <b>RETRAIN EVERY</b> down to chase the ceiling — but watch TOTAL COST, which adds the price of all those retrains via EQ V5.5. The readout marks \(T^\star=\sqrt{2c/d}\): set the interval near it and the total cost sits in its valley. Raise \(d\) (faster-drifting world) and the optimal cadence tightens; raise \(c\) and it loosens.</div>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>Drift monitoring tells you <em>that</em> the model changed; it never tells you <em>why</em>.</strong> When PSI spikes and accuracy bends, the next question is always "which feature, which interaction, which case?" — and answering it is the job of the explainability toolkit. Chapter 06: SHAP and its game-theoretic guarantees, LIME's local surrogates, partial dependence and ICE, and the honest limits of post-hoc explanation.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 5.R — References ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">5.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://doi.org/10.1145/2523813" target="_blank" rel="noopener">Gama, J., Žliobaitė, I., Bifet, A., Pechenizkiy, M. &amp; Bouchachia, A. (2014). <span class="ref-venue">A Survey on Concept Drift Adaptation</span>.</a> <span class="ref-meta">ACM Computing Surveys 46(4) — the canonical taxonomy of drift types and adaptation strategies (§5.1).</span></li>
+          <li><a href="https://doi.org/10.1007/s10618-015-0448-4" target="_blank" rel="noopener">Webb, G. I., Hyde, R., Cao, H., Nguyen, H. L. &amp; Petitjean, F. (2016). <span class="ref-venue">Characterizing Concept Drift</span>.</a> <span class="ref-meta">Data Mining and Knowledge Discovery 30 — a quantitative framework for describing how concepts drift over time.</span></li>
+          <li><a href="https://doi.org/10.1007/978-3-540-28645-5_29" target="_blank" rel="noopener">Gama, J., Medas, P., Castillo, G. &amp; Rodrigues, P. (2004). <span class="ref-venue">Learning with Drift Detection (DDM)</span>.</a> <span class="ref-meta">SBIA 2004, LNCS 3171 — the error-rate drift detector behind EQ V5.4.</span></li>
+          <li><a href="https://doi.org/10.1137/1.9781611972771.42" target="_blank" rel="noopener">Bifet, A. &amp; Gavaldà, R. (2007). <span class="ref-venue">Learning from Time-Changing Data with Adaptive Windowing (ADWIN)</span>.</a> <span class="ref-meta">SIAM SDM 2007 — an adaptive-window detector with a formal false-positive bound.</span></li>
+          <li><a href="https://jmlr.org/papers/v10/gretton09a.html" target="_blank" rel="noopener">Gretton, A., Borgwardt, K., Rasch, M., Schölkopf, B. &amp; Smola, A. (2012). <span class="ref-venue">A Kernel Two-Sample Test (MMD)</span>.</a> <span class="ref-meta">JMLR 13 — the maximum-mean-discrepancy test for multivariate covariate-shift detection (§5.3).</span></li>
+          <li><a href="https://doi.org/10.7551/mitpress/9780262170055.001.0001" target="_blank" rel="noopener">Quiñonero-Candela, J., Sugiyama, M., Schwaighofer, A. &amp; Lawrence, N. (eds.) (2009). <span class="ref-venue">Dataset Shift in Machine Learning</span>.</a> <span class="ref-meta">MIT Press — the reference volume formalizing covariate, prior, and concept shift (EQ V5.1).</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../mlops/04-ranking-calibration.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">04</span> Ranking &amp; Calibration</div></a>
+        <a class="next" href="../mlops/06-explainability.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">06</span> Explainability</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — MODEL VALIDATION &amp; RISK · CH 05</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* ============================================================
+   Stability & Drift — chapter instruments
+   Single IIFE, no globals. Deterministic mulberry32 RNG keeps
+   every render reproducible; setTimeout (never rAF) is used for
+   resize re-renders so background tabs stay quiet.
+   ============================================================ */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
+  /* standard normal density (unit area), for drawing reference/live curves */
+  function npdf(x, mu, sd) {
+    var z = (x - mu) / sd;
+    return Math.exp(-0.5 * z * z) / (sd * Math.sqrt(2 * Math.PI));
+  }
+  /* analytic normal CDF via erf approximation (Abramowitz & Stegun 7.1.26) */
+  function ncdf(x, mu, sd) {
+    var z = (x - mu) / (sd * Math.SQRT2);
+    var t = 1 / (1 + 0.3275911 * Math.abs(z));
+    var y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t
+              - 0.284496736) * t + 0.254829592) * t * Math.exp(-z * z);
+    var erf = z >= 0 ? y : -y;
+    return 0.5 * (1 + erf);
+  }
+
+  /* ========================================================
+     INSTRUMENT V5.1 — PSI calculator
+     A fixed N(0,1) reference, binned once on [-4,4]. A live
+     N(shift, scale) distribution is binned on the same edges;
+     PSI = sum (A-E) ln(A/E). Bars (live) vs outline (reference)
+     plus the 0.10 / 0.25 verdict and the dominant bucket term.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("drift-psi-demo");
+    if (!root) return;
+    var canvas = document.getElementById("drift-psi-canvas");
+    var shiftEl = document.getElementById("drift-psi-shift");
+    var scaleEl = document.getElementById("drift-psi-scale");
+    var binsEl = document.getElementById("drift-psi-bins");
+    var shiftOut = document.getElementById("drift-psi-shift-out");
+    var scaleOut = document.getElementById("drift-psi-scale-out");
+    var binsOut = document.getElementById("drift-psi-bins-out");
+    var psiOut = document.getElementById("drift-psi-val");
+    var bandOut = document.getElementById("drift-psi-band");
+    var topOut = document.getElementById("drift-psi-top");
+
+    var LO = -4, HI = 4, EPS = 1e-6;
+
+    /* probability mass of N(mu,sd) in [a,b] from the analytic CDF */
+    function massIn(a, b, mu, sd) { return ncdf(b, mu, sd) - ncdf(a, mu, sd); }
+
+    function compute(B, shift, scale) {
+      var E = [], A = [], terms = [], i, a, b;
+      var step = (HI - LO) / B;
+      for (i = 0; i < B; i++) {
+        a = LO + i * step; b = a + step;
+        var e = Math.max(massIn(a, b, 0, 1), EPS);     /* reference N(0,1) */
+        var ac = Math.max(massIn(a, b, shift, scale), EPS); /* live */
+        E.push(e); A.push(ac);
+      }
+      /* renormalize so each set sums to 1 over the visible range */
+      var sE = 0, sA = 0; for (i = 0; i < B; i++) { sE += E[i]; sA += A[i]; }
+      var psi = 0, top = 0, topIdx = 0;
+      for (i = 0; i < B; i++) {
+        E[i] /= sE; A[i] /= sA;
+        var term = (A[i] - E[i]) * Math.log(A[i] / E[i]);
+        terms.push(term); psi += term;
+        if (term > top) { top = term; topIdx = i; }
+      }
+      return { E: E, A: A, terms: terms, psi: psi, top: top, topIdx: topIdx, step: step };
+    }
+
+    function render() {
+      var B = +binsEl.value, shift = +shiftEl.value, scale = +scaleEl.value;
+      shiftOut.textContent = (shift >= 0 ? "+" : "") + shift.toFixed(2);
+      scaleOut.textContent = scale.toFixed(2);
+      binsOut.textContent = B;
+
+      var r = compute(B, shift, scale);
+
+      var c = FM.setupCanvas(canvas, 300);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      ctx.clearRect(0, 0, w, h);
+
+      var padL = 40, padR = 16, padT = 18, padB = 30;
+      var plotW = w - padL - padR, plotH = h - padT - padB;
+      var maxP = 0, i;
+      for (i = 0; i < B; i++) maxP = Math.max(maxP, r.E[i], r.A[i]);
+      maxP = maxP * 1.15 || 1;
+      var bw = plotW / B;
+
+      /* y grid */
+      ctx.font = C.MONO; ctx.textBaseline = "middle";
+      ctx.strokeStyle = "rgba(47,50,52,.6)"; ctx.lineWidth = 1;
+      ctx.fillStyle = C.MUT; ctx.textAlign = "right";
+      var g;
+      for (g = 0; g <= 4; g++) {
+        var yy = padT + plotH * (1 - g / 4);
+        ctx.beginPath(); ctx.moveTo(padL, yy); ctx.lineTo(w - padR, yy); ctx.stroke();
+        ctx.fillText((maxP * g / 4).toFixed(2), padL - 6, yy);
+      }
+
+      /* live bars (mint) */
+      for (i = 0; i < B; i++) {
+        var x = padL + i * bw;
+        var bh = (r.A[i] / maxP) * plotH;
+        ctx.fillStyle = "rgba(166,242,204,.65)";
+        ctx.fillRect(x + 1, padT + plotH - bh, bw - 2, bh);
+      }
+      /* reference outline (grey step) */
+      ctx.strokeStyle = C.SEC; ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      for (i = 0; i < B; i++) {
+        var xa = padL + i * bw, xb = xa + bw;
+        var yE = padT + plotH - (r.E[i] / maxP) * plotH;
+        if (i === 0) ctx.moveTo(xa, yE); else ctx.lineTo(xa, yE);
+        ctx.lineTo(xb, yE);
+      }
+      ctx.stroke();
+
+      /* x axis label */
+      ctx.fillStyle = C.MUT; ctx.textAlign = "center"; ctx.textBaseline = "top";
+      ctx.fillText("SCORE / FEATURE VALUE  (" + B + " FIXED BINS)", padL + plotW / 2, h - padB + 14);
+
+      /* legend */
+      ctx.textAlign = "left"; ctx.textBaseline = "middle";
+      ctx.fillStyle = "rgba(166,242,204,.65)"; ctx.fillRect(padL, padT + 2, 9, 9);
+      ctx.fillStyle = C.SEC; ctx.fillText("LIVE (A)", padL + 14, padT + 6);
+      ctx.strokeStyle = C.SEC; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(padL + 78, padT + 6); ctx.lineTo(padL + 94, padT + 6); ctx.stroke();
+      ctx.fillStyle = C.SEC; ctx.fillText("REFERENCE (E)", padL + 100, padT + 6);
+
+      /* readouts */
+      psiOut.textContent = r.psi.toFixed(3);
+      var band, col;
+      if (r.psi < 0.10) { band = "STABLE"; col = C.MINT; }
+      else if (r.psi < 0.25) { band = "MODERATE — INVESTIGATE"; col = C.BLUE; }
+      else { band = "SIGNIFICANT — ACT"; col = C.RED; }
+      bandOut.textContent = band; bandOut.style.color = col;
+      psiOut.style.color = col;
+      topOut.textContent = "bin " + r.topIdx + " · " + r.top.toFixed(3);
+    }
+
+    shiftEl.addEventListener("input", render);
+    scaleEl.addEventListener("input", render);
+    binsEl.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();   /* meaningful initial state with zero interaction */
+  })();
+
+  /* ========================================================
+     INSTRUMENT V5.2 — Streaming drift detector
+     240 steps of a feature: stationary until step 120, then a
+     mean jump of MAG sigma. A reference window (first W steps)
+     and a sliding recent window of width W are compared by a
+     z-test on the means; first crossing of |z| > Z is the
+     detection. False alarms before the change are counted.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("drift-stream-demo");
+    if (!root) return;
+    var canvas = document.getElementById("drift-stream-canvas");
+    var magEl = document.getElementById("drift-stream-mag");
+    var winEl = document.getElementById("drift-stream-win");
+    var zEl = document.getElementById("drift-stream-z");
+    var magOut = document.getElementById("drift-stream-mag-out");
+    var winOut = document.getElementById("drift-stream-win-out");
+    var zOut = document.getElementById("drift-stream-z-out");
+    var detOut = document.getElementById("drift-stream-det");
+    var delayOut = document.getElementById("drift-stream-delay");
+    var faOut = document.getElementById("drift-stream-fa");
+
+    var N = 240, CHANGE = 120, SEED = 424242;
+
+    /* deterministic standard-normal stream via Box-Muller on mulberry32 */
+    function buildStream(mag) {
+      var rng = FM.mulberry32(SEED);
+      var s = [], i;
+      for (i = 0; i < N; i++) {
+        var u1 = Math.max(rng(), 1e-9), u2 = rng();
+        var zz = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+        var mu = i >= CHANGE ? mag : 0;
+        s.push(mu + zz);
+      }
+      return s;
+    }
+
+    function detect(stream, W, Z) {
+      /* reference = first W samples (assumed clean); recent = sliding W */
+      var refMean = 0, i;
+      for (i = 0; i < W; i++) refMean += stream[i];
+      refMean /= W;
+      var det = -1, falseAlarms = 0, zs = [];
+      for (i = 0; i < N; i++) {
+        if (i < W - 1) { zs.push(0); continue; }
+        var m = 0, j;
+        for (j = i - W + 1; j <= i; j++) m += stream[j];
+        m /= W;
+        /* unit-variance feature -> SE of a window mean is 1/sqrt(W) per side */
+        var se = Math.sqrt(2 / W);
+        var z = (m - refMean) / se;
+        zs.push(z);
+        if (Math.abs(z) >= Z) {
+          if (i < CHANGE) falseAlarms++;
+          if (det < 0 && i >= CHANGE) det = i;
+        }
+      }
+      return { det: det, falseAlarms: falseAlarms, zs: zs };
+    }
+
+    function render() {
+      var mag = +magEl.value, W = +winEl.value, Z = +zEl.value;
+      magOut.textContent = mag.toFixed(1);
+      winOut.textContent = W;
+      zOut.textContent = Z.toFixed(1);
+
+      var stream = buildStream(mag);
+      var res = detect(stream, W, Z);
+
+      var c = FM.setupCanvas(canvas, 300);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      ctx.clearRect(0, 0, w, h);
+
+      var padL = 16, padR = 16, padT = 16, padB = 28;
+      var plotW = w - padL - padR, plotH = h - padT - padB;
+      var lo = -3.5, hi = 3.5 + mag;
+      function px(i) { return padL + (i / (N - 1)) * plotW; }
+      function py(v) { return padT + (1 - (v - lo) / (hi - lo)) * plotH; }
+
+      /* zero / shifted-mean reference lines */
+      ctx.strokeStyle = "rgba(47,50,52,.7)"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(padL, py(0)); ctx.lineTo(w - padR, py(0)); ctx.stroke();
+
+      /* change line */
+      ctx.strokeStyle = C.SEC; ctx.setLineDash([4, 4]); ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(px(CHANGE), padT); ctx.lineTo(px(CHANGE), padT + plotH); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT; ctx.textBaseline = "top"; ctx.textAlign = "left";
+      ctx.fillText("CHANGE @120", px(CHANGE) + 4, padT + 2);
+
+      /* the feature stream as faint dots */
+      var i;
+      ctx.fillStyle = "rgba(155,155,155,.45)";
+      for (i = 0; i < N; i++) {
+        ctx.beginPath(); ctx.arc(px(i), py(clamp(stream[i], lo, hi)), 1.3, 0, 2 * Math.PI); ctx.fill();
+      }
+      /* sliding-window mean as a mint line */
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 1.5; ctx.beginPath();
+      var started = false, run = [];
+      for (i = 0; i < N; i++) {
+        if (i < W - 1) continue;
+        var m = 0, j; for (j = i - W + 1; j <= i; j++) m += stream[j]; m /= W;
+        var X = px(i), Y = py(clamp(m, lo, hi));
+        if (!started) { ctx.moveTo(X, Y); started = true; } else ctx.lineTo(X, Y);
+      }
+      ctx.stroke();
+
+      /* detection marker */
+      if (res.det >= 0) {
+        ctx.strokeStyle = C.MINT; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.moveTo(px(res.det), padT); ctx.lineTo(px(res.det), padT + plotH); ctx.stroke();
+        ctx.fillStyle = C.MINT; ctx.beginPath(); ctx.arc(px(res.det), padT + 8, 4, 0, 2 * Math.PI); ctx.fill();
+        ctx.textAlign = "left"; ctx.fillText("DETECTED", px(res.det) + 5, padT + 4);
+      }
+
+      /* x ticks */
+      ctx.fillStyle = C.MUT; ctx.textAlign = "center"; ctx.textBaseline = "top";
+      var t;
+      for (t = 0; t <= N; t += 60) ctx.fillText(String(t), px(Math.min(t, N - 1)), padT + plotH + 8);
+
+      /* readouts */
+      detOut.textContent = res.det >= 0 ? "step " + res.det : "—";
+      delayOut.textContent = res.det >= 0 ? (res.det - CHANGE) + " steps" : "missed";
+      detOut.style.color = res.det >= 0 ? C.MINT : C.RED;
+      faOut.textContent = String(res.falseAlarms);
+      faOut.style.color = res.falseAlarms > 0 ? C.RED : C.SEC;
+    }
+
+    magEl.addEventListener("input", render);
+    winEl.addEventListener("input", render);
+    zEl.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();   /* meaningful initial state with zero interaction */
+  })();
+
+  /* ========================================================
+     INSTRUMENT V5.3 — Performance-decay simulator
+     180 periods. Accuracy decays linearly at rate d from a
+     ceiling Acc0 and snaps back every T periods (sawtooth).
+     Total cost = retrain cost amortized + average decay carried
+     (EQ V5.5); the cost-optimal T* = sqrt(2c/d) is reported.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("drift-decay-demo");
+    if (!root) return;
+    var canvas = document.getElementById("drift-decay-canvas");
+    var dEl = document.getElementById("drift-decay-d");
+    var tEl = document.getElementById("drift-decay-t");
+    var cEl = document.getElementById("drift-decay-c");
+    var dOut = document.getElementById("drift-decay-d-out");
+    var tOut = document.getElementById("drift-decay-t-out");
+    var cOut = document.getElementById("drift-decay-c-out");
+    var meanOut = document.getElementById("drift-decay-mean");
+    var costOut = document.getElementById("drift-decay-cost");
+    var optOut = document.getElementById("drift-decay-opt");
+
+    var T = 180, ACC0 = 0.90, SEED = 90210;
+
+    function render() {
+      var d = +dEl.value, period = +tEl.value, c = +cEl.value;
+      dOut.textContent = d.toFixed(4);
+      tOut.textContent = period;
+      cOut.textContent = c;
+
+      /* deterministic noisy sawtooth */
+      var rng = FM.mulberry32(SEED);
+      var acc = [], i, since = 0, mean = 0;
+      for (i = 0; i < T; i++) {
+        if (i > 0 && i % period === 0) since = 0;       /* retrain: reset clock */
+        var noise = (rng() - 0.5) * 0.008;
+        var a = clamp(ACC0 - d * since + noise, 0, 1);
+        acc.push(a); mean += a; since++;
+      }
+      mean /= T;
+
+      /* cost model EQ V5.5: amortized retrains + average decay carried */
+      var nRetrain = Math.floor((T - 1) / period);
+      var amortRetrain = c * nRetrain;                  /* total retrain cost */
+      var decayCarried = 0.5 * d * period * T * 1000;   /* scaled to comparable units */
+      var totalCost = amortRetrain + decayCarried;
+      var tStar = d > 0 ? Math.sqrt(2 * c / (d * 1000)) : Infinity;
+
+      var cv = FM.setupCanvas(canvas, 300);
+      var ctx = cv.ctx, w = cv.w, h = cv.h;
+      ctx.clearRect(0, 0, w, h);
+
+      var padL = 42, padR = 16, padT = 16, padB = 28;
+      var plotW = w - padL - padR, plotH = h - padT - padB;
+      var lo = Math.min(0.7, ACC0 - d * period - 0.02), hi = ACC0 + 0.02;
+      function px(i) { return padL + (i / (T - 1)) * plotW; }
+      function py(v) { return padT + (1 - (v - lo) / (hi - lo)) * plotH; }
+
+      ctx.font = C.MONO; ctx.textBaseline = "middle";
+
+      /* y grid */
+      ctx.fillStyle = C.MUT; ctx.textAlign = "right"; ctx.strokeStyle = "rgba(47,50,52,.6)"; ctx.lineWidth = 1;
+      var g;
+      for (g = 0; g <= 4; g++) {
+        var v = lo + (hi - lo) * g / 4;
+        var yy = py(v);
+        ctx.beginPath(); ctx.moveTo(padL, yy); ctx.lineTo(w - padR, yy); ctx.stroke();
+        ctx.fillText(v.toFixed(2), padL - 6, yy);
+      }
+
+      /* ceiling line (grey) */
+      ctx.strokeStyle = C.SEC; ctx.setLineDash([5, 4]); ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(padL, py(ACC0)); ctx.lineTo(w - padR, py(ACC0)); ctx.stroke();
+      ctx.setLineDash([]);
+
+      /* shaded gap between ceiling and live accuracy */
+      ctx.fillStyle = "rgba(255,65,54,.10)";
+      ctx.beginPath(); ctx.moveTo(px(0), py(ACC0));
+      for (i = 0; i < T; i++) ctx.lineTo(px(i), py(acc[i]));
+      ctx.lineTo(px(T - 1), py(ACC0)); ctx.closePath(); ctx.fill();
+
+      /* retrain markers (vertical ticks) */
+      ctx.strokeStyle = "rgba(78,138,247,.4)"; ctx.lineWidth = 1;
+      for (i = period; i < T; i += period) {
+        ctx.beginPath(); ctx.moveTo(px(i), padT); ctx.lineTo(px(i), padT + plotH); ctx.stroke();
+      }
+
+      /* live accuracy sawtooth (mint) */
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 1.6; ctx.beginPath();
+      for (i = 0; i < T; i++) { var X = px(i), Y = py(acc[i]); if (i === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y); }
+      ctx.stroke();
+
+      /* labels */
+      ctx.fillStyle = C.SEC; ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText("CEILING Acc₀ = " + ACC0.toFixed(2), padL + 4, py(ACC0) - 14);
+      ctx.fillStyle = C.MUT; ctx.textAlign = "center";
+      ctx.fillText("PERIODS IN SERVICE →", padL + plotW / 2, h - padB + 10);
+
+      /* readouts */
+      meanOut.textContent = (100 * mean).toFixed(1) + "%";
+      costOut.textContent = FM.siFormat(totalCost, 1).replace(".0", "");
+      optOut.textContent = isFinite(tStar) ? "≈ " + tStar.toFixed(0) + " periods" : "∞ (no decay)";
+      /* color the optimum readout: green when current T is near T* */
+      optOut.style.color = isFinite(tStar) && Math.abs(period - tStar) <= 8 ? C.MINT : C.SEC;
+    }
+
+    dEl.addEventListener("input", render);
+    tEl.addEventListener("input", render);
+    cEl.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();   /* meaningful initial state with zero interaction */
+  })();
+
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

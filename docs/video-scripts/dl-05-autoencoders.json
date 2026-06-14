@@ -1,0 +1,161 @@
+{
+  "concepts": [
+    {
+      "id": "dl-05-autoencoders-s1",
+      "chapter": "dl/05-autoencoders",
+      "section": "s1",
+      "title": "Autoencoders — learning to compress",
+      "eyebrow": "DEEP LEARNING",
+      "beats": [
+        {
+          "text": "An autoencoder is trained to copy its input to its output, a task that only becomes useful once you choke the path between them.",
+          "visual": { "type": "title", "text": "Autoencoders", "sub": "learning to compress" }
+        },
+        {
+          "text": "An encoder maps the input down to a narrow code, and a decoder maps that code back up to a reconstruction trained to match the input.",
+          "visual": { "type": "equation", "tex": "z = f_\\theta(x), \\quad \\hat{x} = g_\\phi(z), \\quad \\mathcal{L} = \\tfrac{1}{N}\\sum_i \\lVert x^{(i)} - g_\\phi(f_\\theta(x^{(i)})) \\rVert_2^2", "note": "reconstruction objective" }
+        },
+        {
+          "text": "The bottleneck makes a perfect copy impossible, so the network must spend its few code dimensions on whatever explains the most variance.",
+          "visual": { "type": "bars", "values": [784, 32], "labels": ["INPUT d", "CODE k"], "highlight": 1 }
+        },
+        {
+          "text": "A 28 by 28 image has 784 pixels, but handwritten digits occupy a far thinner sheet inside that 784-dimensional cube.",
+          "visual": { "type": "stat", "value": 784, "label": "pixels per image", "unit": "dims" }
+        },
+        {
+          "text": "With a linear encoder and squared-error loss, the optimum spans exactly the top-k principal components, so a linear autoencoder rediscovers PCA.",
+          "visual": { "type": "plot", "ys": [1.0, 0.62, 0.41, 0.28, 0.19, 0.13, 0.09], "dot": 2, "xlabel": "component", "ylabel": "variance", "mark": "PCA axis" }
+        }
+      ]
+    },
+    {
+      "id": "dl-05-autoencoders-s2",
+      "chapter": "dl/05-autoencoders",
+      "section": "s2",
+      "title": "Denoising & overcomplete variants",
+      "eyebrow": "DEEP LEARNING",
+      "beats": [
+        {
+          "text": "A bottleneck is one way to stop an autoencoder from learning the identity map, but it is not the only way and not always the best.",
+          "visual": { "type": "title", "text": "Denoising & overcomplete", "sub": "pressure on the code" }
+        },
+        {
+          "text": "If the code is as wide as the input, a vanilla autoencoder can cheat by copying the input straight through and learning nothing.",
+          "visual": { "type": "bars", "values": [64, 96], "labels": ["UNDERCOMPLETE k<d", "OVERCOMPLETE k>=d"], "highlight": 1 }
+        },
+        {
+          "text": "A denoising autoencoder corrupts the input with noise and then demands a clean reconstruction, so copying is no longer possible.",
+          "visual": { "type": "equation", "tex": "\\mathcal{L}_{\\text{DAE}} = \\mathbb{E}_{x}\\,\\mathbb{E}_{\\tilde{x}\\sim q(\\cdot\\mid x)} \\lVert x - g_\\phi(f_\\theta(\\tilde{x})) \\rVert_2^2", "note": "denoising objective" }
+        },
+        {
+          "text": "To undo corruption the denoiser learns the score, the gradient of the log-density pointing back toward where real data lives.",
+          "visual": { "type": "equation", "tex": "\\nabla_x \\log p(x)", "note": "the learned score, the seed of diffusion" }
+        },
+        {
+          "text": "Sparse autoencoders penalize how many units fire at once, and contractive autoencoders penalize the encoder Jacobian to stay locally invariant.",
+          "visual": { "type": "bars", "values": [12, 12, 12, 12], "labels": ["undercomplete", "denoising", "sparse", "contractive"], "highlight": 2 }
+        },
+        {
+          "text": "All four variants share one moral: an autoencoder is only as good as the pressure you put on its code.",
+          "visual": { "type": "lattice" }
+        }
+      ]
+    },
+    {
+      "id": "dl-05-autoencoders-s3",
+      "chapter": "dl/05-autoencoders",
+      "section": "s3",
+      "title": "The latent space",
+      "eyebrow": "DEEP LEARNING",
+      "beats": [
+        {
+          "text": "The code is not just a compressed file, it is a place: the set of all codes the encoder can produce is the latent space.",
+          "visual": { "type": "title", "text": "The latent space", "sub": "geometry of the code" }
+        },
+        {
+          "text": "Distances in latent space track perceptual and semantic distance far better than raw pixel distance does.",
+          "visual": { "type": "bars", "values": [9, 2], "labels": ["PIXEL DISTANCE", "LATENT DISTANCE"], "highlight": 1 }
+        },
+        {
+          "text": "You can interpolate between two codes and decode the path to morph smoothly from one example to another.",
+          "visual": { "type": "equation", "tex": "g_\\phi\\big((1-t)\\,z_a + t\\,z_b\\big), \\quad t \\in [0,1]", "note": "latent interpolation" }
+        },
+        {
+          "text": "A point the autoencoder reconstructs poorly is off the learned manifold, so reconstruction error is an unsupervised novelty score.",
+          "visual": { "type": "plot", "ys": [0.04, 0.05, 0.06, 0.05, 0.81, 0.07], "dot": 4, "xlabel": "sample", "ylabel": "recon error", "mark": "anomaly" }
+        },
+        {
+          "text": "But a plain autoencoder's latent has holes: decode a random midpoint and you often get garbage, which is the entire motivation for the VAE.",
+          "visual": { "type": "stat", "value": 0, "label": "constraint on space between codes", "unit": "" }
+        }
+      ]
+    },
+    {
+      "id": "dl-05-autoencoders-s4",
+      "chapter": "dl/05-autoencoders",
+      "section": "s4",
+      "title": "Variational autoencoders",
+      "eyebrow": "DEEP LEARNING",
+      "beats": [
+        {
+          "text": "The variational autoencoder closes the holes by making the encoder output a distribution instead of a single point.",
+          "visual": { "type": "title", "text": "Variational autoencoders", "sub": "a sampleable latent" }
+        },
+        {
+          "text": "The encoder emits a mean and a variance defining a Gaussian, and the loss regularizes that toward a standard normal prior.",
+          "visual": { "type": "equation", "tex": "q_\\phi(z\\mid x) = \\mathcal{N}(\\mu, \\sigma^2 I), \\quad p(z) = \\mathcal{N}(0, I)", "note": "posterior and prior" }
+        },
+        {
+          "text": "The objective is the evidence lower bound: a reconstruction term in tension with a KL divergence pulling the code toward the prior.",
+          "visual": { "type": "equation", "tex": "\\log p_\\theta(x) \\ge \\mathbb{E}_{q_\\phi(z\\mid x)}\\!\\big[\\log p_\\theta(x\\mid z)\\big] - D_{\\mathrm{KL}}\\!\\big(q_\\phi(z\\mid x)\\,\\Vert\\,p(z)\\big)", "note": "the ELBO" }
+        },
+        {
+          "text": "For diagonal Gaussians the KL term has a clean closed form that is zero exactly when each dimension matches the prior.",
+          "visual": { "type": "equation", "tex": "D_{\\mathrm{KL}} = \\tfrac{1}{2}\\sum_{j=1}^{k}\\big(\\sigma_j^2 + \\mu_j^2 - 1 - \\log\\sigma_j^2\\big)", "note": "KL of diagonal Gaussian to N(0,I)" }
+        },
+        {
+          "text": "A unit dimension with mean one and variance one costs exactly half a nat, since the variance matches and the mean is one deviation off.",
+          "visual": { "type": "stat", "value": 0.5, "label": "KL for mu=1, sigma=1", "unit": "nats", "decimals": 1 }
+        },
+        {
+          "text": "The reparameterization trick moves randomness outside the network so gradients flow through the mean and variance cleanly.",
+          "visual": { "type": "equation", "tex": "z = \\mu(x) + \\sigma(x) \\odot \\varepsilon, \\quad \\varepsilon \\sim \\mathcal{N}(0, I)", "note": "makes the VAE trainable end-to-end" }
+        }
+      ]
+    },
+    {
+      "id": "dl-05-autoencoders-s5",
+      "chapter": "dl/05-autoencoders",
+      "section": "s5",
+      "title": "Representation learning & uses",
+      "eyebrow": "DEEP LEARNING",
+      "beats": [
+        {
+          "text": "Autoencoders matter today less as standalone generators and more as representation learners that feed everything downstream.",
+          "visual": { "type": "title", "text": "Representation & uses", "sub": "the compression layer" }
+        },
+        {
+          "text": "Train an encoder unsupervised on unlabelled data, then attach a small head and fine-tune; masked autoencoding made this the dominant vision recipe.",
+          "visual": { "type": "bars", "values": [100, 5], "labels": ["UNLABELLED", "LABELLED"], "highlight": 0 }
+        },
+        {
+          "text": "Train on normal data only and flag inputs the model reconstructs poorly, catching fraud, defects, intrusions, and equipment faults.",
+          "visual": { "type": "plot", "ys": [0.03, 0.04, 0.05, 0.72, 0.04, 0.06, 0.88], "dot": 3, "xlabel": "input", "ylabel": "recon error", "mark": "fault" }
+        },
+        {
+          "text": "Stable Diffusion runs its expensive denoising inside a VAE-compressed latent grid, which is why a consumer GPU can generate megapixel images.",
+          "visual": { "type": "stat", "value": 48, "label": "latent compression factor", "unit": "x" }
+        },
+        {
+          "text": "VAE samples are notoriously blurry, and posterior collapse can drive the latent to carry no information at all.",
+          "visual": { "type": "bars", "values": [3, 8, 9], "labels": ["VAE", "GAN", "DIFFUSION"], "highlight": 0 }
+        },
+        {
+          "text": "The VAE's enduring win is not photorealism but a well-organized, sampleable latent space, exactly what the generative stack needed.",
+          "visual": { "type": "lattice" }
+        }
+      ]
+    }
+  ]
+}

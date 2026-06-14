@@ -152,7 +152,7 @@
   /* ---------- reading progress (localStorage, no accounts) ---------- */
   function initProgress() {
     var path = location.pathname.replace(/\.html$/, "");
-    var isChapter = /\/(chapters|ml|prompting|agents)\//.test(path);
+    var isChapter = /\/(chapters|ml|prompting|agents|stats|data|mlops|dl|rl|game-theory|timeseries|quant|frameworks|multimodal|openmodels)\//.test(path);
     if (!isChapter) return;
     /* record last-visited chapter so the landing can offer "continue" */
     try {
@@ -406,4 +406,22 @@
   } else {
     boot();
   }
+})();
+
+/* load shared runtime (config + auth, in order) and the page widgets */
+(function () {
+  "use strict";
+  if (window.__AIE_RUNTIME_LOADED__) return;
+  window.__AIE_RUNTIME_LOADED__ = true;
+  function load(src, ordered) {
+    var s = document.createElement("script");
+    s.src = src;
+    if (ordered) s.async = false; else s.defer = true; // async=false keeps insertion order
+    document.head.appendChild(s);
+  }
+  load("/assets/js/aie-config.js", true);
+  load("/assets/js/auth.js", true);
+  load("/assets/js/account.js", false);
+  load("/assets/js/feedback.js", false);
+  load("/assets/js/notation.js", false);
 })();

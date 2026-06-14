@@ -1,0 +1,169 @@
+{
+  "concepts": [
+    {
+      "id": "mlops-07-mlops-governance-s1",
+      "chapter": "mlops/07-mlops-governance",
+      "section": "s1",
+      "title": "From notebook to production pipeline",
+      "eyebrow": "MODEL RISK",
+      "beats": [
+        {
+          "text": "Almost every real machine learning failure happens outside the model, in the surrounding configuration, data, serving, and monitoring code.",
+          "visual": { "type": "title", "text": "From notebook to production pipeline", "sub": "ML code is a small box in a large system" }
+        },
+        {
+          "text": "In the Sculley diagram the ML code is a few percent of the system, dwarfed by the infrastructure around it.",
+          "visual": { "type": "bars", "values": [3, 12, 15, 18, 22, 30], "labels": ["ML code", "config", "features", "serving", "monitoring", "process"], "highlight": 0 }
+        },
+        {
+          "text": "A run is reproducible only if fixing the data, code, config, environment, and seed fixes the output exactly.",
+          "visual": { "type": "equation", "tex": "\\text{artifact} = f(\\text{data}_v, \\text{code}_c, \\text{config}_h, \\text{env}_e, \\text{seed}_s)", "note": "Drop any one input and you have a story, not a result" }
+        },
+        {
+          "text": "The asset you ship is not the weights file, it is the versioned recipe that regenerates the weights file.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "Content-addressed stages let a pipeline skip whatever did not change and rerun only what is downstream of an edit.",
+          "visual": { "type": "stat", "value": 5, "label": "explicit inputs to pin", "unit": "" }
+        },
+        {
+          "text": "Maturity climbs a ladder from manual notebooks to governed monitoring, and you do not get to skip rungs.",
+          "visual": { "type": "plot", "ys": [0, 1, 2, 3, 4], "dot": 4, "xlabel": "team", "ylabel": "maturity level", "mark": "level 4" }
+        }
+      ]
+    },
+    {
+      "id": "mlops-07-mlops-governance-s2",
+      "chapter": "mlops/07-mlops-governance",
+      "section": "s2",
+      "title": "Experiment tracking & model registries",
+      "eyebrow": "MODEL RISK",
+      "beats": [
+        {
+          "text": "Two systems sit at the heart of any serious ML platform, and they answer two very different questions.",
+          "visual": { "type": "title", "text": "Tracking and registries", "sub": "What did we try, and what is live right now" }
+        },
+        {
+          "text": "An experiment tracker logs the parameters, metrics, data hash, and commit of every run so past results stay searchable.",
+          "visual": { "type": "bars", "values": [4, 4, 4, 4, 4], "labels": ["params", "metrics", "data hash", "commit", "artifacts"] }
+        },
+        {
+          "text": "A model registry is a state machine over versions, moving none to staging to production to archived through gated transitions.",
+          "visual": { "type": "equation", "tex": "\\texttt{None} \\rightarrow \\texttt{Staging} \\rightarrow \\texttt{Production} \\rightarrow \\texttt{Archived}", "note": "Each arrow is a guarded, recorded transition" }
+        },
+        {
+          "text": "The one invariant that matters: at most one version is production per deployment slot, and you can name it in a single query.",
+          "visual": { "type": "stat", "value": 1, "label": "production version per slot", "unit": "" }
+        },
+        {
+          "text": "Because full lineage is attached, rolling back is just re-pointing the serving slot at an already validated artifact.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "In 2026 the tracker and registry are often one platform, and a model version is increasingly a tuple of base model, adapter, and tools.",
+          "visual": { "type": "title", "text": "One platform, richer artifacts", "sub": "base model + adapter + tool schema" }
+        }
+      ]
+    },
+    {
+      "id": "mlops-07-mlops-governance-s3",
+      "chapter": "mlops/07-mlops-governance",
+      "section": "s3",
+      "title": "CI/CD & automated retraining",
+      "eyebrow": "MODEL RISK",
+      "beats": [
+        {
+          "text": "Software CI/CD tests code, but ML CI/CD must also test data and models, since any of the three can break production.",
+          "visual": { "type": "title", "text": "CI/CD and automated retraining", "sub": "Gates for data, model, and infrastructure" }
+        },
+        {
+          "text": "The ML Test Score runs three layers of gates: tests for the data, tests for the model, and tests for the infrastructure.",
+          "visual": { "type": "bars", "values": [3, 3, 3], "labels": ["data", "model", "infra"] }
+        },
+        {
+          "text": "A challenger is promoted only if it beats the champion by a real margin and breaks no guardrail metric.",
+          "visual": { "type": "equation", "tex": "\\text{promote} \\iff (M_{chal} - M_{champ} > \\delta) \\wedge (G_{chal} \\ge G_{min})", "note": "The challenger is presumed guilty until it earns its place" }
+        },
+        {
+          "text": "On a frozen holdout of two thousand rows at ninety percent accuracy, the promotion margin must clear about thirteen thousandths.",
+          "visual": { "type": "stat", "value": 0.013, "label": "promotion margin delta", "unit": "", "decimals": 3 }
+        },
+        {
+          "text": "Continuous training retrains on fresh data, but automated retraining never means automated deployment, since the gate stays in the loop.",
+          "visual": { "type": "plot", "ys": [0.842, 0.848, 0.851, 0.855, 0.857], "dot": 4, "xlabel": "retrain cycle", "ylabel": "holdout AUC", "mark": "challenger" }
+        },
+        {
+          "text": "Editing one stage dirties everything downstream while upstream stages stay cached, so iteration is cheap.",
+          "visual": { "type": "lattice" }
+        }
+      ]
+    },
+    {
+      "id": "mlops-07-mlops-governance-s4",
+      "chapter": "mlops/07-mlops-governance",
+      "section": "s4",
+      "title": "Monitoring, lineage & reproducibility",
+      "eyebrow": "MODEL RISK",
+      "beats": [
+        {
+          "text": "A deployed model decays even though its weights never change, because the world the weights describe keeps moving.",
+          "visual": { "type": "title", "text": "Monitoring, lineage, reproducibility", "sub": "Two distinct kinds of decay" }
+        },
+        {
+          "text": "Data drift moves the input distribution, while concept drift changes the relationship between inputs and the right answer.",
+          "visual": { "type": "equation", "tex": "P(x) \\text{ shifts} \\quad\\text{vs}\\quad P(y \\mid x) \\text{ shifts}", "note": "Only concept drift necessarily degrades accuracy" }
+        },
+        {
+          "text": "Labels arrive late, so the first defence is the Population Stability Index comparing baseline against a recent window.",
+          "visual": { "type": "equation", "tex": "\\mathrm{PSI} = \\sum_{i=1}^{B} (a_i - e_i)\\,\\ln\\frac{a_i}{e_i}", "note": "A symmetrized relative-entropy distance" }
+        },
+        {
+          "text": "The industry rule of thumb reads PSI as stable, moderate, or significant across the tenth and quarter thresholds.",
+          "visual": { "type": "bars", "values": [0.1, 0.25], "labels": ["watch line", "act line"], "highlight": 1 }
+        },
+        {
+          "text": "One bucket shifting from twenty to thirty percent contributes four hundredths to the total PSI score.",
+          "visual": { "type": "stat", "value": 0.04, "label": "single-bucket PSI term", "unit": "", "decimals": 2 }
+        },
+        {
+          "text": "Behind every alert sits lineage, which tells you which model is responsible, what it trained on, and what to roll back to.",
+          "visual": { "type": "plot", "ys": [0.91, 0.91, 0.90, 0.89, 0.87, 0.86], "dot": 5, "xlabel": "day", "ylabel": "live accuracy", "mark": "SLO breach" }
+        }
+      ]
+    },
+    {
+      "id": "mlops-07-mlops-governance-s5",
+      "chapter": "mlops/07-mlops-governance",
+      "section": "s5",
+      "title": "Model risk management & governance",
+      "eyebrow": "MODEL RISK",
+      "beats": [
+        {
+          "text": "Governance is the layer that makes engineering controls accountable: who may deploy, who signed off, and what evidence exists.",
+          "visual": { "type": "title", "text": "Model risk and governance", "sub": "Making controls accountable" }
+        },
+        {
+          "text": "SR 11-7 frames model risk as two sources at once: a model can be wrong, and a good model can be misused.",
+          "visual": { "type": "equation", "tex": "\\text{Model risk} = P(\\text{model is wrong}) + P(\\text{model is misused})", "note": "Both sources must be managed" }
+        },
+        {
+          "text": "The guidance prescribes three pillars: robust development, independent validation, and governance with policies and controls.",
+          "visual": { "type": "bars", "values": [3, 3, 3], "labels": ["development", "validation", "governance"] }
+        },
+        {
+          "text": "The same controls reappear across the EU AI Act, the NIST framework, and ISO forty-two thousand and one.",
+          "visual": { "type": "stat", "value": 4, "label": "regulatory frameworks aligned", "unit": "" }
+        },
+        {
+          "text": "Mature organisations keep five governance artifacts, from the model inventory to the monitoring and incident log.",
+          "visual": { "type": "bars", "values": [1, 1, 1, 1, 1], "labels": ["inventory", "model card", "validation", "sign-off", "incident log"] }
+        },
+        {
+          "text": "The defensible middle is risk-tiered governance, matching the weight of controls to the stakes of the decision.",
+          "visual": { "type": "plot", "ys": [1, 2, 3, 4, 5], "dot": 4, "xlabel": "decision stakes", "ylabel": "control weight", "mark": "tiered" }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,787 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Repeated &amp; Cooperative Games — AI Encyclopedia</title>
+<meta name="description" content="Cooperation that is irrational in a one-shot game becomes rational when the game repeats. The shadow of the future, the Prisoner's Dilemma, tit-for-tat and Axelrod's tournament, evolutionary stability (ESS), and the Shapley value for fair division." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+<link rel="canonical" href="https://ai-encyclopedia.com/game-theory/02-repeated-cooperative" />
+<meta property="og:url" content="https://ai-encyclopedia.com/game-theory/02-repeated-cooperative" />
+</head>
+<body data-track="game-theory" data-level="core">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ GAME THEORY / 02 / REPEATED GAMES</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../game-theory/03-games-in-ai.html">NEXT: GAMES IN AI →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">GAME THEORY · CHAPTER 02 / 03</div>
+    <h1>Repeated &amp; Cooperative Games</h1>
+    <p class="lede">In a single encounter, rational self-interest can drive two players to an outcome both of them reject, as the Prisoner's Dilemma demonstrates. Almost no real interaction happens exactly once. <strong>Cooperation that is irrational in one shot becomes rational when the game repeats, because the prospect of future rounds changes the calculation.</strong> This chapter traces that idea from the one-shot dilemma through tit-for-tat and Axelrod's tournament into evolutionary stability, then turns to cooperative game theory and the question of how a jointly produced payoff should be divided fairly.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 26 MIN</b></span>
+      <span>BUILDS ON<b>GT 01 · NASH EQUILIBRIUM</b></span>
+      <span>INSTRUMENTS<b>IPD ARENA · REPLICATOR · SHAPLEY</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">2.1</span>The shadow of the future</a>
+      <a href="#s2"><span class="n">2.2</span>The Prisoner's Dilemma</a>
+      <a href="#s3"><span class="n">2.3</span>Tit-for-tat &amp; Axelrod</a>
+      <a href="#s4"><span class="n">2.4</span>Evolutionary games &amp; ESS</a>
+      <a href="#s5"><span class="n">2.5</span>Cooperative games &amp; Shapley</a>
+      <a href="#s6"><span class="n">2.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 2.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">2.1</span><h2>Repeated games &amp; the shadow of the future</h2></div>
+        <p>Chapter 01 left us with a uncomfortable fact: a Nash equilibrium can be jointly terrible. Two players, each best-responding to the other, can lock into an outcome that both would gladly trade away if only they could trust one another. The escape is not a cleverer one-shot argument — there is none. The escape is <strong>repetition</strong>. When the same players meet again and again, today's defection can be punished tomorrow, and the prospect of that punishment makes cooperation a credible, self-enforcing equilibrium.</p>
+
+        <p>A <strong>repeated game</strong> takes a one-shot game — the <em>stage game</em> — and plays it over and over, the same opponents each round. What changes is that a player's <em>strategy</em> is no longer a single action; it is a plan that can <em>condition on history</em>. "Cooperate, but defect forever the moment you defect on me" is only expressible when there is a future to threaten. The value of that future is governed by a single number, the discount factor \(\delta\): how much a payoff one round from now is worth today.</p>
+
+        <div class="eq"><span class="eq-tag">EQ G2.1 — DISCOUNTED PAYOFF OF A REPEATED GAME</span>
+        $$ U \;=\; \sum_{t=0}^{\infty} \delta^{t}\, u_t \;=\; u_0 + \delta\,u_1 + \delta^{2} u_2 + \cdots, \qquad \delta \in [0, 1) $$
+        <div class="eq-note">\(u_t\) is the stage payoff in round \(t\); \(\delta\) discounts the future. <b>\(\delta\) is the "shadow of the future"</b> — it can be read as patience, or as the per-round probability the relationship continues. A constant stream of \(c\) per round is worth \(c/(1-\delta)\), the same geometric sum that tames returns in reinforcement learning (Vol RL · EQ R1.3). The larger \(\delta\), the more a future punishment outweighs a one-round gain from cheating — which is exactly the lever that makes cooperation rational.</div>
+        </div>
+
+        <p>This is not a vague hope; it is a theorem. The <strong>Folk Theorem</strong> says that in an infinitely repeated game with players patient enough (\(\delta\) close to 1), <em>any</em> outcome in which every player does at least as well as their guaranteed minimum (their <em>minmax</em> payoff) can be sustained as a subgame-perfect equilibrium. Cooperation is one such outcome — but so are many others, which is both the power and the embarrassment of the result: repetition explains how cooperation <em>can</em> arise, not which equilibrium will be selected. We will be honest about that gap throughout.</p>
+
+        <p class="note">The contrast with the one-shot world is stark. In a single play, a strategy is just an action and the only stable thing is mutual defection. In the repeated world, a strategy is a <em>policy over histories</em> and the set of equilibria explodes. The rest of this chapter is about which of those equilibria are robust — to a clever opponent, to mutation, to noise.</p>
+
+        <div class="exercise" data-answer="20" data-tol="0.001" data-hint="A constant stream of c per round is worth c/(1-delta).">
+          <div class="ex-q">A relationship yields a constant payoff of \(c = 5\) every round, discounted at \(\delta = 0.75\). Using \(U = c/(1-\delta)\) (EQ G2.1 with constant \(u_t\)), what is the total discounted value \(U\) of cooperating forever?</div>
+          <div class="ex-reveal-src">\(U = \dfrac{c}{1-\delta} = \dfrac{5}{1 - 0.75} = \dfrac{5}{0.25} = \) <b>20</b>. The future is worth four rounds of present payoff — patient players have a lot to lose, which is precisely what deters them from cheating.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 2.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">2.2</span><h2>The Prisoner's Dilemma</h2></div>
+        <p>The <strong>Prisoner's Dilemma</strong> is the cleanest specimen of the conflict between individual and collective rationality. Two suspects, held separately, can each <em>cooperate</em> (stay silent) or <em>defect</em> (betray the other). The payoffs are usually written with four letters: <span class="m">T</span>emptation (defect on a cooperator), <span class="m">R</span>eward (mutual cooperation), <span class="m">P</span>unishment (mutual defection), and <span class="m">S</span>ucker (cooperate against a defector).</p>
+
+        <table class="data">
+          <thead><tr><th>You ↓ / Them →</th><th>Cooperate</th><th>Defect</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Cooperate</strong></td><td class="m hl">R, R = 3, 3</td><td class="m">S, T = 0, 5</td></tr>
+            <tr><td><strong>Defect</strong></td><td class="m">T, S = 5, 0</td><td class="m">P, P = 1, 1</td></tr>
+          </tbody>
+        </table>
+
+        <p>A game is a Prisoner's Dilemma whenever the payoffs obey two inequalities. The first makes defection dominant; the second makes mutual cooperation the socially better outcome:</p>
+
+        <div class="eq"><span class="eq-tag">EQ G2.2 — WHAT MAKES IT A DILEMMA</span>
+        $$ T > R > P > S \qquad\text{and}\qquad 2R > T + S $$
+        <div class="eq-note">The first chain, \(T > R > P > S\), means that <b>whatever the opponent does, defecting pays more</b>: against a cooperator \(T > R\); against a defector \(P > S\). So <em>defect strictly dominates cooperate</em> — and two rational players both defect, landing on \((P,P) = (1,1)\). The second condition, \(2R > T + S\), ensures that mutual cooperation \((R,R)\) beats the average of taking turns exploiting, so alternating is not a way out. With our numbers: \(5 > 3 > 1 > 0\) ✓ and \(6 > 5\) ✓. <b>The tragedy is exact: the unique Nash equilibrium \((1,1)\) is the one outcome both players would pay to avoid \((3,3)\).</b></div>
+        </div>
+
+        <p>In one shot, that is the end of the story. There is no trick of reasoning that recovers cooperation, no "if I cooperate maybe they will too" — the dominance argument is airtight, and the chapter on equilibria proved it. Defection is not a failure of intelligence; it is what intelligence prescribes when the game is played exactly once. The dilemma is real, and it is why the one-shot answer to the headline true/false below is unambiguous.</p>
+
+        <div class="exercise" data-answer="true" data-tol="0" data-hint="Compare the payoff to defecting vs cooperating against each opponent move; check T>R and P>S.">
+          <div class="ex-q">True or false: in a one-shot Prisoner's Dilemma satisfying EQ G2.2, the dominant strategy for a rational player is to <em>defect</em>. (Answer <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">Against a cooperating opponent, defect pays \(T = 5\) versus cooperate's \(R = 3\); against a defecting opponent, defect pays \(P = 1\) versus cooperate's \(S = 0\). Defecting beats cooperating in <em>both</em> columns, so it strictly dominates and a rational one-shot player defects. The statement is <b>true</b>. (The whole point of this chapter is that repetition overturns this — but only when the game repeats.)</div>
+        </div>
+
+        <p>Now repeat the game. Suppose both players adopt <strong>Grim Trigger</strong>: cooperate every round, but if the opponent ever defects, defect forever after. Is mutual cooperation stable? A player tempted to defect once gains \(T - R\) this round, then is punished with \(P\) instead of \(R\) for the rest of time. Cooperation is an equilibrium exactly when the one-time gain does not beat the discounted stream of forfeited rewards:</p>
+
+        <div class="eq"><span class="eq-tag">EQ G2.3 — WHEN DOES COOPERATION HOLD?</span>
+        $$ \underbrace{T - R}_{\text{tempting gain now}} \;\le\; \underbrace{\frac{\delta}{1-\delta}\,(R - P)}_{\text{discounted future loss}} \qquad\Longleftrightarrow\qquad \delta \;\ge\; \frac{T - R}{T - P} $$
+        <div class="eq-note">Deviating buys \(T-R\) once, but trades a future of \(R\) for a future of \(P\), starting next round — a loss of \((R-P)\) per round discounted by \(\delta/(1-\delta)\). Cooperation survives iff the future loss dominates the present gain. <b>For our payoffs the threshold is \(\delta \ge (5-3)/(5-1) = 0.5\):</b> any pair patient enough to value tomorrow at least half as much as today can sustain cooperation forever. Below \(\delta = 0.5\), the future is too faint a threat and the relationship collapses back to mutual defection. This single inequality is the engine of the whole chapter.</div>
+        </div>
+
+        <div class="exercise" data-answer="0.5" data-tol="0.001" data-hint="The Grim-Trigger threshold is delta >= (T-R)/(T-P).">
+          <div class="ex-q">With \(T = 5,\ R = 3,\ P = 1\), what is the minimum discount factor \(\delta\) at which Grim Trigger sustains cooperation, \(\delta = \dfrac{T-R}{T-P}\) (EQ G2.3)?</div>
+          <div class="ex-reveal-src">\(\delta = \dfrac{T-R}{T-P} = \dfrac{5-3}{5-1} = \dfrac{2}{4} = \) <b>0.5</b>. At or above \(\delta = 0.5\) the future is heavy enough that the threat of "defect forever" deters a one-round betrayal; below it, cooperation unravels.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Grim-Trigger: when is "cooperate forever" worth more than "defect once"?
+import numpy as np
+T, R, P, S = 5, 3, 1, 0                      # PD payoffs (EQ G2.2)
+
+# value of always cooperating vs deviating once then being punished forever
+def coop_value(delta):  return R / (1 - delta)            # R, R, R, ...
+def defect_value(delta): return T + delta * P / (1 - delta)  # T now, then P forever
+
+thresh = (T - R) / (T - P)                   # closed-form threshold (EQ G2.3)
+print(f"theoretical cooperation threshold: delta >= {thresh:.3f}\n")
+
+print(" delta   coop_value   defect_value   cooperation holds?")
+for d in (0.30, 0.49, 0.50, 0.75, 0.95):
+    c, x = coop_value(d), defect_value(d)
+    print(f" {d:4}    {c:9.2f}    {x:11.2f}      {c >= x}")
+
+print("\ncooperation becomes the better choice exactly at delta = 0.5,")
+print("matching (T-R)/(T-P). The shadow of the future has a sharp edge.")
+plot_xy([0.3,0.49,0.5,0.75,0.95],
+        [coop_value(d)-defect_value(d) for d in (0.3,0.49,0.5,0.75,0.95)])</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 2.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">2.3</span><h2>Tit-for-tat &amp; Axelrod's tournament</h2></div>
+        <p>Theory tells us cooperation <em>can</em> be an equilibrium. It does not tell us which strategy a real population will land on. In 1980 the political scientist Robert Axelrod ran an experiment to find out: he invited game theorists to submit computer strategies for the iterated Prisoner's Dilemma, then played them all against each other in a round-robin and summed each one's score. The winner — submitted by Anatol Rapoport, and the <em>shortest</em> program entered — was <strong>Tit-for-Tat (TFT)</strong>: cooperate on the first move, then on every move after, simply copy what the opponent did last round.</p>
+
+        <div class="eq"><span class="eq-tag">EQ G2.4 — TIT-FOR-TAT</span>
+        $$ a^{\text{TFT}}_{t} = \begin{cases} \texttt{C} & t = 0 \\ a^{\text{opp}}_{t-1} & t \ge 1 \end{cases} $$
+        <div class="eq-note">One line, no memory beyond the last round. Axelrod distilled its success into four properties. It is <b>nice</b> — never the first to defect; <b>retaliatory</b> — it punishes a defection immediately, so it is not a patsy; <b>forgiving</b> — it returns to cooperation the instant the opponent does, so grudges do not spiral; and <b>clear</b> — its behavior is trivially legible, which lets opponents learn that cooperating pays. <b>Tit-for-tat never beats any single opponent — it can only tie or lose by one defection — yet it wins the tournament,</b> because it is not trying to beat opponents, it is trying to elicit cooperation.</div>
+        </div>
+
+        <p>That last point is the deep lesson, and it is genuinely counter-intuitive. In a zero-sum world you win by making the other player lose. The iterated PD is <em>not</em> zero-sum: two cooperators each score \(R\) per round, far more than two defectors' \(P\). TFT racks up its total not by exploiting anyone but by spending most of its rounds in the lucrative \((R,R)\) groove with other nice strategies. Strategies that tried to be clever — probing for weakness, defecting "just once" — poisoned their own relationships and scored worse. Greed was self-defeating in a way that only repetition makes visible.</p>
+
+        <p>TFT is not a flawless oracle, and honesty requires the caveats. First, it is fragile to <strong>noise</strong>: if a single move is misimplemented — a cooperate flips to a defect by error — two TFT players fall into an endless echo of mutual recrimination, each punishing the other's punishment. Variants like <em>Tit-for-Two-Tats</em> (retaliate only after two defections) and <em>Generous TFT</em> (forgive a defection with some probability) were designed to break that echo. Second, TFT's victory is <em>tournament-dependent</em>: change the population of opponents and a different strategy can top the table. Against a field with no exploitable cooperators, the relentless defector <em>ALLD</em> can win; Axelrod's result holds because his fields were rich in nice, retaliatory strategies. The instrument below lets you feel exactly this — and the one after it shows what happens when strategies must <em>survive</em>, not just score.</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># A mini Axelrod tournament: round-robin, sum each strategy's total score
+import numpy as np
+T, R, P, S = 5, 3, 1, 0
+rng = np.random.default_rng(0)
+
+def TFT(me, opp):   return 'C' if not opp else opp[-1]          # copy last move
+def ALLD(me, opp):  return 'D'                                  # always defect
+def ALLC(me, opp):  return 'C'                                  # always cooperate
+def GRIM(me, opp):  return 'D' if 'D' in opp else 'C'           # never forgive
+def RAND(me, opp):  return 'C' if rng.random() < 0.5 else 'D'
+
+def match(a, b, rounds=200):
+    ha, hb, sa, sb = [], [], 0, 0
+    pay = {('C','C'):(R,R), ('C','D'):(S,T), ('D','C'):(T,S), ('D','D'):(P,P)}
+    for _ in range(rounds):
+        x, y = a(ha, hb), b(hb, ha)
+        pa, pb = pay[(x, y)]; sa += pa; sb += pb; ha.append(x); hb.append(y)
+    return sa, sb
+
+strats = {'TFT':TFT, 'ALLD':ALLD, 'ALLC':ALLC, 'GRIM':GRIM, 'RAND':RAND}
+score = {n: 0 for n in strats}
+for i in strats:
+    for j in strats:                      # round-robin, includes self-play
+        score[i] += match(strats[i], strats[j])[0]
+
+for n in sorted(score, key=lambda k: -score[k]):
+    print(f"{n:5s} total score {score[n]:5d}")
+print("\nTFT and GRIM win the lucrative (R,R) groove with nice strategies;")
+print("ALLC is exploited, ALLD poisons its own matches. Niceness pays.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="rep-arena" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT G2.1 — ITERATED PRISONER'S-DILEMMA ARENA</span><span class="w-sub">TIT-FOR-TAT · ALWAYS-DEFECT · RANDOM · ROUND-ROBIN</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>ROUNDS PER MATCH <output id="rep-arena-rounds-out">200</output></label><input type="range" id="rep-arena-rounds" min="10" max="400" step="10" value="200"/></div>
+              <div class="ctl"><label>NOISE (MOVE FLIP %) <output id="rep-arena-noise-out">0%</output></label><input type="range" id="rep-arena-noise" min="0" max="0.2" step="0.01" value="0"/></div>
+            </div>
+            <canvas class="w-canvas" id="rep-arena-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">TOURNAMENT WINNER</div><div class="r-value" id="rep-arena-winner">—</div></div>
+              <div class="readout"><div class="r-label">TFT TOTAL</div><div class="r-value" id="rep-arena-tft">—</div></div>
+              <div class="readout"><div class="r-label">ALLD TOTAL</div><div class="r-value" id="rep-arena-alld">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Three strategies — <span style="color:var(--accent);">Tit-for-Tat</span>, <span style="color:var(--danger);">Always-Defect</span>, and <span style="color:var(--text-secondary);">Random</span> — meet in a full round-robin (each plays every strategy, itself included), and the bars show total score. With no noise, <b>TFT wins</b>: it ties ALLD to within a single defection, mutually cooperates with itself, and harvests Random. Now drag the noise slider up. A single mistaken move sends two TFTs into a retaliation echo, their score collapses, and the unforgiving defector climbs the table — the precise fragility that motivated Generous-TFT. Cooperation is robust, but not unconditionally.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 2.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">2.4</span><h2>Evolutionary game theory &amp; ESS</h2></div>
+        <p>Axelrod's tournament scored strategies once. But in biology — and in any population of learning agents — a successful strategy does more than score: it <em>reproduces</em>. Strategies that earn more payoff become more common; strategies that earn less die out. This shift in perspective, from a rational chooser to a population under selection, is <strong>evolutionary game theory</strong>, introduced by John Maynard Smith and George Price in 1973. It needs no assumption that players are rational — only that fitter strategies spread.</p>
+
+        <p>The central solution concept is the <strong>Evolutionarily Stable Strategy (ESS)</strong>: a strategy that, if adopted by the whole population, cannot be invaded by a small group of mutants playing anything else. Formally, an incumbent strategy \(x\) is an ESS if, against itself, it does at least as well as any mutant \(y\) — and, in the knife-edge case where they tie against the incumbent, \(x\) beats \(y\) when the mutant has to play against other mutants.</p>
+
+        <div class="eq"><span class="eq-tag">EQ G2.5 — EVOLUTIONARILY STABLE STRATEGY</span>
+        $$ \text{either } u(x, x) > u(y, x), \quad\text{or}\quad u(x, x) = u(y, x) \ \text{ and } \ u(x, y) > u(y, y) \qquad \forall\, y \neq x $$
+        <div class="eq-note">\(u(a, b)\) is the payoff to a player using \(a\) against an opponent using \(b\). The first clause says the incumbent strictly out-earns the mutant in the prevailing population (which is almost all incumbents). The second handles the tie: if the mutant matches the incumbent against incumbents, it must lose against <em>itself</em>, so a rare mutant cluster cannot get a foothold. <b>Every ESS is a Nash equilibrium, but not every Nash equilibrium is an ESS</b> — ESS is a strict refinement that adds robustness to invasion, which is exactly what "stable" should mean.</div>
+        </div>
+
+        <p>How a population gets to an ESS is described by the <strong>replicator dynamics</strong>: the share of each strategy grows in proportion to how much its fitness beats the population average. Strategies above average expand; strategies below average shrink. The rest points of this flow are the Nash equilibria, and its <em>stable</em> rest points are the ESSs.</p>
+
+        <div class="eq"><span class="eq-tag">EQ G2.6 — REPLICATOR DYNAMICS</span>
+        $$ \dot{x}_i \;=\; x_i\,\big(\, f_i(x) - \bar{f}(x) \,\big), \qquad f_i(x) = (A x)_i, \quad \bar{f}(x) = x^{\top} A x $$
+        <div class="eq-note">\(x_i\) is the fraction of the population playing strategy \(i\); \(A\) is the payoff matrix (\(A_{ij}\) = payoff to \(i\) against \(j\)); \(f_i\) is strategy \(i\)'s fitness against the current mix and \(\bar f\) the mean fitness. The bracket is strategy \(i\)'s <b>advantage over the average</b> — positive shares grow, negative shrink, and the simplex \(\sum_i x_i = 1\) is preserved. <b>Note the form: it is the soft, population-level cousin of a policy-gradient step</b> (Vol RL), pushing mass toward above-average strategies. Run it on a Hawk–Dove game and it spirals into the mixed ESS, never to a pure one.</div>
+        </div>
+
+        <p>The canonical illustration is <strong>Hawk–Dove</strong>, Maynard Smith's own example. Animals contest a resource of value \(V\). Hawks escalate and risk injury of cost \(C\); Doves display and retreat. Two Hawks split the resource minus the expected injury, \((V-C)/2\); a Hawk meeting a Dove takes the whole \(V\); two Doves share it, \(V/2\). When \(C > V\), neither pure strategy is stable — a population of all Hawks is invadable by Doves (who avoid the ruinous fights) and vice versa. The unique ESS is a <em>mixed</em> population with a Hawk fraction \(p^{*} = V/C\), and the replicator dynamics converges there from almost any start.</p>
+
+        <div class="exercise" data-answer="false" data-tol="0" data-hint="Every ESS is a Nash equilibrium, but the converse direction is what is being claimed here.">
+          <div class="ex-q">True or false: <em>every Nash equilibrium is automatically an Evolutionarily Stable Strategy.</em> (Answer <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">The implication runs the other way. Every ESS <em>is</em> a Nash equilibrium (an ESS must be a best response to itself), but ESS adds a strict invasion-resistance condition (EQ G2.5) that some Nash equilibria fail — for example, equilibria sustained only by weakly-best-response ties can be invaded by neutral mutants. So the statement is <b>false</b>: ESS is a strict refinement of Nash.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Replicator dynamics on Hawk-Dove: converge to the mixed ESS p* = V/C
+import numpy as np
+V, C = 2.0, 4.0                              # resource value, injury cost (C > V)
+# rows/cols: 0 = Hawk, 1 = Dove ; A[i,j] = payoff to i against j  (EQ G2.6)
+A = np.array([[(V - C) / 2,  V   ],
+              [ 0.0,         V / 2]])
+p_star = V / C                              # predicted ESS Hawk fraction
+print(f"predicted mixed ESS: Hawk fraction p* = V/C = {p_star:.3f}\n")
+
+x = np.array([0.90, 0.10])                  # start: mostly Hawks
+dt = 0.05
+traj = []
+for step in range(600):
+    f = A @ x                              # fitness of each strategy
+    phi = x @ f                            # mean fitness  x^T A x
+    x = x + dt * x * (f - phi)             # replicator update
+    x = x / x.sum()                        # renormalize onto the simplex
+    if step % 120 == 0:
+        print(f"step {step:3d}: Hawk={x[0]:.3f}  Dove={x[1]:.3f}")
+    traj.append(x[0])
+
+print(f"\nconverged Hawk fraction: {x[0]:.3f}  (matches V/C = {p_star:.3f})")
+print("neither pure strategy survives: the population settles at the mix.")
+plot_xy(list(range(len(traj))), traj)</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="rep-replicator" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT G2.2 — REPLICATOR-DYNAMICS SIMULATOR</span><span class="w-sub">HAWK–DOVE · CONVERGENCE TO THE MIXED ESS · EQ G2.6</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>RESOURCE VALUE V <output id="rep-rep-v-out">2.0</output></label><input type="range" id="rep-rep-v" min="1" max="6" step="0.5" value="2"/></div>
+              <div class="ctl"><label>INJURY COST C <output id="rep-rep-c-out">4.0</output></label><input type="range" id="rep-rep-c" min="1" max="8" step="0.5" value="4"/></div>
+              <div class="ctl"><label>INITIAL HAWK SHARE <output id="rep-rep-x0-out">0.90</output></label><input type="range" id="rep-rep-x0" min="0.02" max="0.98" step="0.02" value="0.9"/></div>
+            </div>
+            <canvas class="w-canvas" id="rep-rep-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">PREDICTED ESS p* = V/C</div><div class="r-value" id="rep-rep-pstar">—</div></div>
+              <div class="readout"><div class="r-label">CONVERGED HAWK SHARE</div><div class="r-value" id="rep-rep-conv">—</div></div>
+              <div class="readout"><div class="r-label">REGIME</div><div class="r-value" id="rep-rep-regime" style="font-size:12px;">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The <span style="color:var(--danger);">red</span> curve is the Hawk fraction over time; the <span style="color:var(--accent);">mint</span> dashed line is the predicted ESS \(p^{*} = V/C\). Start the population anywhere and watch it flow to the same interior mix — that is what makes the ESS <em>attracting</em>, not merely an equilibrium. Push \(C\) below \(V\) and the math changes character entirely: injuries become cheap, \(V/C\) exceeds 1, and Hawk becomes a pure ESS that sweeps the population — the regime readout flips to tell you which world you are in. No interaction is needed to see the answer: the default \(V=2,\,C=4\) already converges to a 50/50 mix.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 2.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">2.5</span><h2>Cooperative games &amp; the Shapley value</h2></div>
+        <p>Everything so far has been <strong>non-cooperative</strong> game theory: players choose actions independently and we ask what they will do. <strong>Cooperative</strong> (or <em>coalitional</em>) game theory asks a different question. Suppose the players <em>can</em> form binding agreements and pool their efforts — the only question is how to divide the joint payoff <em>fairly</em>. The primitive is no longer a payoff matrix but a <strong>characteristic function</strong> \(v(S)\): for every possible coalition \(S\) of players, the total value that coalition can guarantee on its own.</p>
+
+        <p>The most celebrated answer to "what is each player's fair share?" is the <strong>Shapley value</strong>, introduced by Lloyd Shapley in 1953. Its idea is disarmingly simple: a player's worth is their <em>average marginal contribution</em> across every order in which the coalition could have been assembled. Imagine the players walking into a room one at a time in a random order; each player is credited with how much they add to the value of those already present. Average that credit over all \(n!\) orders, and you have the Shapley value.</p>
+
+        <div class="eq"><span class="eq-tag">EQ G2.7 — THE SHAPLEY VALUE</span>
+        $$ \phi_i(v) \;=\; \sum_{S \subseteq N \setminus \{i\}} \frac{|S|!\,\big(n - |S| - 1\big)!}{n!}\,\Big[\, v(S \cup \{i\}) - v(S) \,\Big] $$
+        <div class="eq-note">\(N\) is the set of all \(n\) players; the sum runs over every coalition \(S\) that excludes \(i\); the bracket \([v(S\cup\{i\}) - v(S)]\) is \(i\)'s <b>marginal contribution</b> to that coalition; and the weight \(\tfrac{|S|!\,(n-|S|-1)!}{n!}\) is the probability that, in a uniformly random arrival order, \(i\) arrives exactly after the players in \(S\). So \(\phi_i\) is precisely the <b>expected marginal contribution over a random ordering of arrivals</b>. The shares always exhaust the grand coalition's value, \(\sum_i \phi_i = v(N)\) — nothing is created or lost in the division.</div>
+        </div>
+
+        <p>The Shapley value is the <em>unique</em> allocation satisfying four axioms that any reasonable notion of fairness should demand. <strong>Efficiency:</strong> the shares sum to the total value \(v(N)\). <strong>Symmetry:</strong> two players who contribute identically to every coalition get equal shares. <strong>Null player:</strong> a player who adds nothing to any coalition gets zero. <strong>Additivity:</strong> the value of two games played together is the sum of the values played separately. That a single formula is forced by these four innocuous requirements is the result's quiet power — and it is why the Shapley value reaches far beyond economics.</p>
+
+        <p>That reach is the bridge to the next chapter. In machine learning, <strong>SHAP</strong> (SHapley Additive exPlanations) treats a model's input features as "players" cooperating to produce a prediction, and uses the Shapley value to attribute the prediction fairly among them — the dominant method for feature attribution in 2026, and the rare interpretability tool with an axiomatic guarantee. The same idea credits data points for a model's accuracy (data valuation) and apportions cost in shared infrastructure. Fair division, it turns out, is a computational problem the field cannot stop needing.</p>
+
+        <div class="exercise" data-answer="true" data-tol="0" data-hint="Re-read what phi_i computes: an average over arrival orders of the value a player adds.">
+          <div class="ex-q">True or false: the Shapley value distributes a coalition's total payoff to each player according to their <em>average marginal contribution</em> across all possible orderings of the players. (Answer <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">EQ G2.7 is exactly an average of the marginal contributions \(v(S\cup\{i\}) - v(S)\), weighted by the probability of each arrival order — i.e. the expected marginal contribution over a uniformly random ordering. So the statement is <b>true</b>; this is the defining intuition of the Shapley value.</div>
+        </div>
+
+        <div class="exercise" data-answer="23.33" data-tol="0.01" data-hint="Average player 0's marginal contribution over all 6 arrival orders, or use the weighted formula.">
+          <div class="ex-q">Three players have a characteristic function \(v\) with \(v(\{0\})=10,\ v(\{1\})=20,\ v(\{2\})=30,\ v(\{0,1\})=50,\ v(\{0,2\})=60,\ v(\{1,2\})=70,\ v(\{0,1,2\})=100\) (and \(v(\varnothing)=0\)). What is player 0's Shapley value \(\phi_0\)? (Round to two decimals.)</div>
+          <div class="ex-reveal-src">Average player 0's marginal contribution over all \(3! = 6\) orders. Orders and player 0's marginal: (0,1,2)→10; (0,2,1)→10; (1,0,2)→\(50-20=30\); (2,0,1)→\(60-30=30\); (1,2,0)→\(100-70=30\); (2,1,0)→\(100-70=30\). Sum \(= 10+10+30+30+30+30 = 140\); divide by 6: \(\phi_0 = 140/6 = \) <b>23.33</b>. (Check: by symmetry of the arithmetic, \(\phi_1 = 33.33\), \(\phi_2 = 43.33\), and they sum to exactly \(100 = v(N)\) — efficiency.)</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Shapley value of a 3-player game, by averaging over all arrival orders
+import numpy as np
+from itertools import permutations
+
+# characteristic function v(S): value each coalition can secure (EQ G2.7)
+v = {(): 0, (0,): 10, (1,): 20, (2,): 30,
+     (0,1): 50, (0,2): 60, (1,2): 70, (0,1,2): 100}
+def val(S): return v[tuple(sorted(S))]
+
+n = 3
+phi = np.zeros(n)
+orders = list(permutations(range(n)))         # all n! = 6 arrival orders
+for order in orders:
+    present = set()
+    for p in order:
+        before = val(present)                 # value without player p
+        present.add(p)
+        phi[p] += val(present) - before       # p's marginal contribution
+phi /= len(orders)                            # average over orderings
+
+for i in range(n):
+    print(f"player {i}: Shapley value phi = {phi[i]:.3f}")
+print(f"\nsum of shares      = {phi.sum():.3f}")
+print(f"grand-coalition v(N) = {val(range(n))}   <- efficiency: they match exactly")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="rep-shapley" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT G2.3 — SHAPLEY-VALUE CALCULATOR</span><span class="w-sub">3-PLAYER COALITIONAL GAME · EQ G2.7</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>v(A) <output id="rep-sh-a-out">10</output></label><input type="range" id="rep-sh-a" min="0" max="50" step="5" value="10"/></div>
+              <div class="ctl"><label>v(B) <output id="rep-sh-b-out">20</output></label><input type="range" id="rep-sh-b" min="0" max="50" step="5" value="20"/></div>
+              <div class="ctl"><label>v(C) <output id="rep-sh-c-out">30</output></label><input type="range" id="rep-sh-c" min="0" max="50" step="5" value="30"/></div>
+            </div>
+            <div class="ctl-row">
+              <div class="ctl"><label>v(AB) <output id="rep-sh-ab-out">50</output></label><input type="range" id="rep-sh-ab" min="0" max="120" step="5" value="50"/></div>
+              <div class="ctl"><label>v(AC) <output id="rep-sh-ac-out">60</output></label><input type="range" id="rep-sh-ac" min="0" max="120" step="5" value="60"/></div>
+              <div class="ctl"><label>v(BC) <output id="rep-sh-bc-out">70</output></label><input type="range" id="rep-sh-bc" min="0" max="120" step="5" value="70"/></div>
+            </div>
+            <div class="ctl-row">
+              <div class="ctl"><label>v(ABC) — GRAND COALITION <output id="rep-sh-abc-out">100</output></label><input type="range" id="rep-sh-abc" min="0" max="200" step="5" value="100"/></div>
+            </div>
+            <canvas class="w-canvas" id="rep-sh-canvas" height="200"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">φ(A)</div><div class="r-value" id="rep-sh-phia">—</div></div>
+              <div class="readout acc"><div class="r-label">φ(B)</div><div class="r-value" id="rep-sh-phib">—</div></div>
+              <div class="readout acc"><div class="r-label">φ(C)</div><div class="r-value" id="rep-sh-phic">—</div></div>
+            </div>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">Σ φ (SHOULD EQUAL v(ABC))</div><div class="r-value" id="rep-sh-sum">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Set the value every coalition can secure on its own, and the calculator splits the grand-coalition payoff by each player's average marginal contribution across all 6 arrival orders (EQ G2.7). The bars are the three Shapley shares; the sum readout always equals \(v(\text{ABC})\) — that is <b>efficiency</b>, baked in. Try making one player a <em>null</em> player (set every coalition's value identical with and without them) and watch their share fall to zero; make two players symmetric and their bars equalize. The defaults already give the worked-exercise answer: \(\phi = (23.3,\,33.3,\,43.3)\).</div>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>We have seen how games stabilize cooperation and how to divide its rewards fairly. Now watch these ideas leave the blackboard.</strong> Chapter 03 follows game theory into modern AI: self-play that bootstrapped superhuman Go and poker, GANs as a literal two-player minimax, multi-agent reinforcement learning, RLHF as a game between a model and a reward, and SHAP — the Shapley value of this chapter — as the field's leading tool for explaining what a model decided and why.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 2.R — References ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">2.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://www.hachettebookgroup.com/titles/robert-axelrod/the-evolution-of-cooperation/9780465005642/" target="_blank" rel="noopener">Axelrod, R. (1984). <span class="ref-venue">The Evolution of Cooperation</span>.</a> <span class="ref-meta">Basic Books — the round-robin tournaments and the four properties of tit-for-tat (EQ G2.4, §2.3); the founding popular text on repeated cooperation.</span></li>
+          <li><a href="https://doi.org/10.1126/science.7466396" target="_blank" rel="noopener">Axelrod, R. &amp; Hamilton, W. D. (1981). <span class="ref-venue">The Evolution of Cooperation</span>.</a> <span class="ref-meta">Science 211(4489) — the peer-reviewed account of the iterated-PD tournaments and the evolutionary stability of tit-for-tat.</span></li>
+          <li><a href="https://doi.org/10.1038/246015a0" target="_blank" rel="noopener">Maynard Smith, J. &amp; Price, G. R. (1973). <span class="ref-venue">The Logic of Animal Conflict</span>.</a> <span class="ref-meta">Nature 246 — introduces the Evolutionarily Stable Strategy (EQ G2.5) and the Hawk–Dove game (§2.4).</span></li>
+          <li><a href="https://doi.org/10.1515/9781400881970-018" target="_blank" rel="noopener">Shapley, L. S. (1953). <span class="ref-venue">A Value for n-Person Games</span>.</a> <span class="ref-meta">In <em>Contributions to the Theory of Games II</em>, Princeton University Press — defines the Shapley value (EQ G2.7) and its axiomatic characterization (§2.5).</span></li>
+          <li><a href="https://doi.org/10.1017/CBO9780511806292" target="_blank" rel="noopener">Maynard Smith, J. (1982). <span class="ref-venue">Evolution and the Theory of Games</span>.</a> <span class="ref-meta">Cambridge University Press — the book-length development of ESS and the replicator perspective (EQ G2.6).</span></li>
+          <li><a href="https://doi.org/10.1142/9789814335478_0010" target="_blank" rel="noopener">Friedman, J. W. (1971). <span class="ref-venue">A Non-cooperative Equilibrium for Supergames</span>.</a> <span class="ref-meta">Review of Economic Studies 38(1) — Grim-Trigger equilibria and an early form of the Folk Theorem behind EQ G2.3 (§2.1).</span></li>
+          <li><a href="https://papers.nips.cc/paper/2017/hash/8a20a8621978632d76c43dfd28b67767-Abstract.html" target="_blank" rel="noopener">Lundberg, S. M. &amp; Lee, S.-I. (2017). <span class="ref-venue">A Unified Approach to Interpreting Model Predictions</span>.</a> <span class="ref-meta">NeurIPS 30 (SHAP) — the Shapley value applied to machine-learning feature attribution, the §2.5 bridge into Chapter 03.</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../game-theory/01-games-equilibria.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">01</span> Games &amp; Equilibria</div></a>
+        <a class="next" href="../game-theory/03-games-in-ai.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">03</span> Games in AI</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — GAME THEORY · CH 02</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* ============================================================
+   Repeated & Cooperative Games — chapter instruments
+   Single IIFE, no globals. setTimeout-only animation.
+   Every widget guarded by element existence; meaningful
+   initial render with zero interaction.
+   ============================================================ */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  function fnum(x, d) { d = d === undefined ? 2 : d; return x.toFixed(d); }
+
+  /* ========================================================
+     INSTRUMENT G2.1 — Iterated Prisoner's-Dilemma arena
+     Round-robin of TFT, ALLD, RAND (self-play included).
+     Bars = total score. Noise flips a move with prob p.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("rep-arena");
+    if (!root) return;
+    var canvas = document.getElementById("rep-arena-canvas");
+    var rIn = document.getElementById("rep-arena-rounds");
+    var rOut = document.getElementById("rep-arena-rounds-out");
+    var nIn = document.getElementById("rep-arena-noise");
+    var nOut = document.getElementById("rep-arena-noise-out");
+    var winEl = document.getElementById("rep-arena-winner");
+    var tftEl = document.getElementById("rep-arena-tft");
+    var alldEl = document.getElementById("rep-arena-alld");
+
+    // PD payoffs: T=5, R=3, P=1, S=0
+    var PAY = { CC: [3, 3], CD: [0, 5], DC: [5, 0], DD: [1, 1] };
+    var STRATS = ["TFT", "ALLD", "RAND"];
+    var COL = { TFT: C.MINT, ALLD: C.RED, RAND: C.SEC };
+
+    // a deterministic RNG so the chart is stable across renders
+    function move(strat, myHist, oppHist, rng) {
+      if (strat === "ALLD") return "D";
+      if (strat === "RAND") return rng() < 0.5 ? "C" : "D";
+      // TFT: cooperate first, then copy opponent's last move
+      return oppHist.length === 0 ? "C" : oppHist[oppHist.length - 1];
+    }
+
+    function match(sA, sB, rounds, noise, rng) {
+      var hA = [], hB = [], sa = 0, sb = 0;
+      for (var t = 0; t < rounds; t++) {
+        var a = move(sA, hA, hB, rng);
+        var b = move(sB, hB, hA, rng);
+        if (noise > 0) {                       // noisy channel: flip a move
+          if (rng() < noise) a = a === "C" ? "D" : "C";
+          if (rng() < noise) b = b === "C" ? "D" : "C";
+        }
+        var key = a + b;
+        var p = PAY[key];
+        sa += p[0]; sb += p[1];
+        hA.push(a); hB.push(b);
+      }
+      return [sa, sb];
+    }
+
+    function tournament(rounds, noise) {
+      var rng = FM.mulberry32(12345);          // fixed seed → reproducible bars
+      var score = { TFT: 0, ALLD: 0, RAND: 0 };
+      for (var i = 0; i < STRATS.length; i++) {
+        for (var j = 0; j < STRATS.length; j++) {
+          var res = match(STRATS[i], STRATS[j], rounds, noise, rng);
+          score[STRATS[i]] += res[0];
+        }
+      }
+      return score;
+    }
+
+    function render() {
+      var rounds = parseInt(rIn.value, 10);
+      var noise = +nIn.value;
+      rOut.textContent = rounds + "";
+      nOut.textContent = Math.round(noise * 100) + "%";
+
+      var score = tournament(rounds, noise);
+      var winner = STRATS[0], best = -Infinity;
+      STRATS.forEach(function (s) { if (score[s] > best) { best = score[s]; winner = s; } });
+      winEl.textContent = winner;
+      winEl.style.color = COL[winner];
+      tftEl.textContent = score.TFT + "";
+      alldEl.textContent = score.ALLD + "";
+
+      var c = FM.setupCanvas(canvas, 320);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      ctx.clearRect(0, 0, w, h);
+
+      var padL = 70, padR = 18, padT = 24, padB = 34;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      var maxV = Math.max(score.TFT, score.ALLD, score.RAND, 1);
+      // round maxV up to a clean grid top
+      var top = Math.ceil(maxV / 200) * 200;
+
+      // frame + gridlines
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(x0, y1, x1 - x0, y0 - y1);
+      ctx.font = C.MONO; ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      for (var g = 0; g <= 4; g++) {
+        var gv = top * g / 4, gy = y0 - (g / 4) * (y0 - y1);
+        ctx.strokeStyle = "rgba(47,50,52,.5)";
+        ctx.beginPath(); ctx.moveTo(x0, gy); ctx.lineTo(x1, gy); ctx.stroke();
+        ctx.fillStyle = C.MUT; ctx.fillText(gv.toFixed(0), x0 - 8, gy);
+      }
+
+      // bars
+      var bw = (x1 - x0) / STRATS.length;
+      for (var i = 0; i < STRATS.length; i++) {
+        var s = STRATS[i];
+        var bx = x0 + i * bw;
+        var bh = (score[s] / top) * (y0 - y1);
+        var isWin = s === winner;
+        ctx.fillStyle = COL[s];
+        ctx.globalAlpha = isWin ? 1 : 0.62;
+        ctx.fillRect(bx + bw * 0.22, y0 - bh, bw * 0.56, bh);
+        ctx.globalAlpha = 1;
+        // value on top
+        ctx.font = C.MONO; ctx.fillStyle = isWin ? C.BRIGHT : C.SEC;
+        ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+        ctx.fillText(score[s] + "", bx + bw / 2, y0 - bh - 4);
+        // label
+        ctx.fillStyle = COL[s]; ctx.textBaseline = "top";
+        ctx.fillText(s, bx + bw / 2, y0 + 6);
+        if (isWin) {
+          ctx.fillStyle = C.MUT;
+          ctx.fillText("★ winner", bx + bw / 2, y0 + 18);
+        }
+      }
+
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText("TOTAL SCORE · ROUND-ROBIN incl. SELF-PLAY · T5 R3 P1 S0", x0, y1 - 16);
+    }
+
+    rIn.addEventListener("input", render);
+    nIn.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT G2.2 — Replicator-dynamics simulator (Hawk-Dove)
+     Integrate dx/dt = x*(f - phi) on the 2-strategy simplex,
+     plot the Hawk-fraction trajectory + the predicted ESS V/C.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("rep-replicator");
+    if (!root) return;
+    var canvas = document.getElementById("rep-rep-canvas");
+    var vIn = document.getElementById("rep-rep-v");
+    var cIn = document.getElementById("rep-rep-c");
+    var x0In = document.getElementById("rep-rep-x0");
+    var vOut = document.getElementById("rep-rep-v-out");
+    var cOut = document.getElementById("rep-rep-c-out");
+    var x0Out = document.getElementById("rep-rep-x0-out");
+    var pstarEl = document.getElementById("rep-rep-pstar");
+    var convEl = document.getElementById("rep-rep-conv");
+    var regimeEl = document.getElementById("rep-rep-regime");
+
+    function simulate(V, Cc, x0) {
+      // payoff matrix A: row 0 = Hawk, row 1 = Dove
+      var A = [
+        [(V - Cc) / 2, V],
+        [0, V / 2]
+      ];
+      var x = [x0, 1 - x0];
+      var dt = 0.05, steps = 600;
+      var traj = [x[0]];
+      for (var t = 0; t < steps; t++) {
+        var f0 = A[0][0] * x[0] + A[0][1] * x[1];   // Hawk fitness
+        var f1 = A[1][0] * x[0] + A[1][1] * x[1];   // Dove fitness
+        var phi = x[0] * f0 + x[1] * f1;            // mean fitness
+        var nx0 = x[0] + dt * x[0] * (f0 - phi);
+        var nx1 = x[1] + dt * x[1] * (f1 - phi);
+        var sum = nx0 + nx1;
+        if (sum <= 0) { nx0 = x[0]; nx1 = x[1]; sum = nx0 + nx1; }
+        x = [nx0 / sum, nx1 / sum];
+        traj.push(x[0]);
+      }
+      return { traj: traj, final: x[0] };
+    }
+
+    function render() {
+      var V = +vIn.value, Cc = +cIn.value, x0 = +x0In.value;
+      vOut.textContent = fnum(V, 1);
+      cOut.textContent = fnum(Cc, 1);
+      x0Out.textContent = fnum(x0, 2);
+
+      var ratio = V / Cc;                           // V/C
+      var pstar = Math.min(1, ratio);               // interior ESS if V<C else 1
+      var mixed = Cc > V;
+      var sim = simulate(V, Cc, x0);
+
+      pstarEl.textContent = mixed ? fnum(ratio, 3) : "1.000 (pure)";
+      convEl.textContent = fnum(sim.final, 3);
+      regimeEl.textContent = mixed ? "MIXED ESS (C > V)" : "PURE HAWK ESS (V ≥ C)";
+      regimeEl.style.color = mixed ? C.MINT : C.RED;
+
+      var c = FM.setupCanvas(canvas, 300);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      ctx.clearRect(0, 0, w, h);
+
+      var padL = 42, padR = 16, padT = 18, padB = 30;
+      var x0p = padL, x1p = w - padR, y0p = h - padB, y1p = padT;
+
+      // frame + y gridlines (Hawk fraction 0..1)
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(x0p, y1p, x1p - x0p, y0p - y1p);
+      ctx.font = C.MONO; ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      for (var gl = 0; gl <= 4; gl++) {
+        var gv = gl / 4, gy = y0p - gv * (y0p - y1p);
+        ctx.strokeStyle = "rgba(47,50,52,.5)";
+        ctx.beginPath(); ctx.moveTo(x0p, gy); ctx.lineTo(x1p, gy); ctx.stroke();
+        ctx.fillStyle = C.MUT; ctx.fillText(gv.toFixed(2), x0p - 6, gy);
+      }
+
+      // predicted ESS line (mint dashed)
+      var ey = y0p - pstar * (y0p - y1p);
+      ctx.strokeStyle = C.MINT; ctx.setLineDash([5, 4]); ctx.lineWidth = 1.4;
+      ctx.beginPath(); ctx.moveTo(x0p, ey); ctx.lineTo(x1p, ey); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = C.MINT; ctx.textAlign = "left"; ctx.textBaseline = "bottom";
+      ctx.fillText("p* = " + (mixed ? "V/C" : "1"), x0p + 6, ey - 2);
+
+      // trajectory (red)
+      var N = sim.traj.length;
+      ctx.strokeStyle = C.RED; ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      for (var i = 0; i < N; i++) {
+        var px = x0p + (i / (N - 1)) * (x1p - x0p);
+        var py = y0p - sim.traj[i] * (y0p - y1p);
+        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+
+      // start dot
+      ctx.fillStyle = C.BLUE;
+      ctx.beginPath();
+      ctx.arc(x0p, y0p - sim.traj[0] * (y0p - y1p), 3.5, 0, 2 * Math.PI);
+      ctx.fill();
+
+      // labels
+      ctx.font = C.MONO; ctx.fillStyle = C.RED;
+      ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText("HAWK FRACTION x(t)", x0p + 6, y1p + 4);
+      ctx.fillStyle = C.MUT; ctx.textAlign = "right";
+      ctx.fillText("time →", x1p, y0p + 6);
+    }
+
+    vIn.addEventListener("input", render);
+    cIn.addEventListener("input", render);
+    x0In.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT G2.3 — Shapley-value calculator (3 players)
+     phi_i = average marginal contribution over all 6 orders.
+     Bars = the three shares; sum readout = v(ABC) (efficiency).
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("rep-shapley");
+    if (!root) return;
+    var canvas = document.getElementById("rep-sh-canvas");
+    var ids = ["a", "b", "c", "ab", "ac", "bc", "abc"];
+    var inp = {}, out = {};
+    var ok = true;
+    ids.forEach(function (k) {
+      inp[k] = document.getElementById("rep-sh-" + k);
+      out[k] = document.getElementById("rep-sh-" + k + "-out");
+      if (!inp[k]) ok = false;
+    });
+    if (!ok) return;
+    var phiaEl = document.getElementById("rep-sh-phia");
+    var phibEl = document.getElementById("rep-sh-phib");
+    var phicEl = document.getElementById("rep-sh-phic");
+    var sumEl = document.getElementById("rep-sh-sum");
+
+    // coalition value: bitmask over players {0:A, 1:B, 2:C}
+    function vmap(vals) {
+      // vals keyed by sorted-tuple string
+      return function (mask) {
+        if (mask === 0) return 0;
+        if (mask === 1) return vals.a;      // {A}
+        if (mask === 2) return vals.b;      // {B}
+        if (mask === 4) return vals.c;      // {C}
+        if (mask === 3) return vals.ab;     // {A,B}
+        if (mask === 5) return vals.ac;     // {A,C}
+        if (mask === 6) return vals.bc;     // {B,C}
+        return vals.abc;                    // {A,B,C}
+      };
+    }
+
+    // all 6 orderings of [0,1,2]
+    var ORDERS = [
+      [0, 1, 2], [0, 2, 1], [1, 0, 2],
+      [1, 2, 0], [2, 0, 1], [2, 1, 0]
+    ];
+
+    function shapley(vals) {
+      var v = vmap(vals);
+      var phi = [0, 0, 0];
+      for (var o = 0; o < ORDERS.length; o++) {
+        var present = 0;
+        for (var k = 0; k < 3; k++) {
+          var p = ORDERS[o][k];
+          var before = v(present);
+          present |= (1 << p);
+          phi[p] += v(present) - before;
+        }
+      }
+      return [phi[0] / 6, phi[1] / 6, phi[2] / 6];
+    }
+
+    function render() {
+      var vals = {};
+      ids.forEach(function (k) {
+        vals[k] = +inp[k].value;
+        out[k].textContent = inp[k].value;
+      });
+      var phi = shapley(vals);
+      phiaEl.textContent = fnum(phi[0], 1);
+      phibEl.textContent = fnum(phi[1], 1);
+      phicEl.textContent = fnum(phi[2], 1);
+      var sum = phi[0] + phi[1] + phi[2];
+      sumEl.textContent = fnum(sum, 1) + "  =  v(ABC) " + fnum(vals.abc, 0);
+
+      var c = FM.setupCanvas(canvas, 200);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      ctx.clearRect(0, 0, w, h);
+
+      var padL = 46, padR = 18, padT = 16, padB = 28;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      // axis top: max share or a sensible floor (handle negatives gracefully)
+      var maxv = Math.max(phi[0], phi[1], phi[2], 1);
+      var minv = Math.min(phi[0], phi[1], phi[2], 0);
+      var span = maxv - minv;
+      if (span < 1e-6) span = 1;
+      var zeroY = y0 - ((0 - minv) / span) * (y0 - y1);
+
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(x0, y1, x1 - x0, y0 - y1);
+      // zero baseline
+      ctx.strokeStyle = "rgba(155,155,155,.4)";
+      ctx.beginPath(); ctx.moveTo(x0, zeroY); ctx.lineTo(x1, zeroY); ctx.stroke();
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      ctx.fillText("0", x0 - 6, zeroY);
+
+      var labels = ["φ(A)", "φ(B)", "φ(C)"];
+      var bw = (x1 - x0) / 3;
+      for (var i = 0; i < 3; i++) {
+        var bx = x0 + i * bw;
+        var bh = (phi[i] / span) * (y0 - y1);
+        ctx.fillStyle = C.MINT;
+        ctx.fillRect(bx + bw * 0.24, zeroY - bh, bw * 0.52, bh);
+        ctx.font = C.MONO; ctx.fillStyle = C.BRIGHT;
+        ctx.textAlign = "center"; ctx.textBaseline = bh >= 0 ? "bottom" : "top";
+        ctx.fillText(fnum(phi[i], 1), bx + bw / 2, zeroY - bh - (bh >= 0 ? 3 : -3));
+        ctx.fillStyle = C.SEC; ctx.textBaseline = "top";
+        ctx.fillText(labels[i], bx + bw / 2, y0 + 6);
+      }
+    }
+
+    ids.forEach(function (k) { inp[k].addEventListener("input", render); });
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

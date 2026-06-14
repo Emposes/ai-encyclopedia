@@ -1,0 +1,169 @@
+{
+  "concepts": [
+    {
+      "id": "multimodal-06-embodied-s1",
+      "chapter": "multimodal/06-embodied",
+      "section": "s1",
+      "title": "From perception to action",
+      "eyebrow": "MULTIMODAL",
+      "beats": [
+        {
+          "text": "A language model and a robot policy are the same shape of object: both read a context and emit the next symbol.",
+          "visual": { "type": "title", "text": "From perception to action", "sub": "Next token, next motor command" }
+        },
+        {
+          "text": "The difference is the consequence. The model's mistake costs a token; the robot's mistake costs a dropped cup or a stripped gear.",
+          "visual": { "type": "bars", "values": [1, 1000], "labels": ["wrong token", "broken gear"], "highlight": 1 }
+        },
+        {
+          "text": "Control is a partially observed Markov decision process: a policy maps observation history and a goal to a distribution over actions.",
+          "visual": { "type": "equation", "tex": "a_t \\sim \\pi_\\theta(a_t \\mid o_{\\le t},\\, \\ell)", "note": "swap next token for next action and a transformer is a policy" }
+        },
+        {
+          "text": "The output is continuous: a seven degree-of-freedom arm command is seven real numbers, not a pick from a fixed vocabulary.",
+          "visual": { "type": "stat", "value": 7, "label": "real numbers per arm command", "unit": "DoF" }
+        },
+        {
+          "text": "Errors compound, because each action changes the world the next observation is drawn from, drifting the robot into unseen states.",
+          "visual": { "type": "plot", "ys": [0.02, 0.06, 0.15, 0.33, 0.6, 0.95], "dot": 5, "xlabel": "steps", "ylabel": "drift", "mark": "covariate shift" }
+        },
+        {
+          "text": "Real data is brutally expensive: a web crawl is free, but a demonstration is a human teleoperating a physical arm in real time.",
+          "visual": { "type": "bars", "values": [10000, 1], "labels": ["text tokens", "robot demos"], "highlight": 1 }
+        }
+      ]
+    },
+    {
+      "id": "multimodal-06-embodied-s2",
+      "chapter": "multimodal/06-embodied",
+      "section": "s2",
+      "title": "Vision-language-action models (RT-2, π0)",
+      "eyebrow": "MULTIMODAL",
+      "beats": [
+        {
+          "text": "A vision-language-action model is a vision-language model whose output space is extended to include motor commands.",
+          "visual": { "type": "title", "text": "Vision-language-action models", "sub": "RT-2 and π0" }
+        },
+        {
+          "text": "RT-2 writes each action as a short string of tokens drawn from the model's existing vocabulary, then generates it like a sentence.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "Tokenization clips a dimension to a range, splits it into B uniform bins, and maps a value to its bin index.",
+          "visual": { "type": "equation", "tex": "t = \\mathrm{clip}\\!\\left(\\left\\lfloor \\frac{a - a_{\\min}}{\\Delta} \\right\\rfloor,\\ 0,\\ B-1\\right)", "note": "RT-2 used B = 256 bins per dimension" }
+        },
+        {
+          "text": "The round trip is lossy. Over a normalized range with 256 bins, the worst-case quantization error is about 0.0039.",
+          "visual": { "type": "stat", "value": 0.0039, "label": "worst-case quant error at B=256", "decimals": 4 }
+        },
+        {
+          "text": "π0 keeps the backbone but rejects bins, attaching an action expert that produces continuous chunks by flow matching.",
+          "visual": { "type": "equation", "tex": "\\mathcal{L}(\\theta) = \\mathbb{E}\\big[\\lVert v_\\theta(a_\\tau, o, \\ell; \\tau) - (a_1 - a_0) \\rVert^2\\big]", "note": "no bins, no quantization floor" }
+        },
+        {
+          "text": "Continuous heads buy smooth high-frequency control: π0 runs up to roughly fifty hertz and commits to coherent multi-step motion.",
+          "visual": { "type": "stat", "value": 50, "label": "control rate", "unit": "Hz" }
+        }
+      ]
+    },
+    {
+      "id": "multimodal-06-embodied-s3",
+      "chapter": "multimodal/06-embodied",
+      "section": "s3",
+      "title": "Sim-to-real transfer",
+      "eyebrow": "MULTIMODAL",
+      "beats": [
+        {
+          "text": "Simulation is the escape from data scarcity: a physics engine can generate millions of trajectories overnight with perfect labels.",
+          "visual": { "type": "title", "text": "Sim-to-real transfer", "sub": "Crossing the reality gap" }
+        },
+        {
+          "text": "The catch is the reality gap: contact dynamics, friction, sensor noise, latency, and lighting all differ from the real world.",
+          "visual": { "type": "bars", "values": [0.95, 0.4], "labels": ["sim success", "real success"], "highlight": 1 }
+        },
+        {
+          "text": "Domain randomization widens the simulator's parameters so the real world looks like just another sample from training.",
+          "visual": { "type": "equation", "tex": "\\theta^\\star = \\arg\\max_\\theta\\ \\mathbb{E}_{\\xi \\sim p(\\xi)}\\big[\\mathbb{E}_{\\tau \\sim \\pi_\\theta, \\xi}[R(\\tau)]\\big]", "note": "maximize return averaged over a family of simulators" }
+        },
+        {
+          "text": "If the parameter distribution is wide enough to contain reality, the gap collapses into ordinary in-distribution generalization.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "Real return follows a U-shaped curve in randomization width: too narrow fails to transfer, too wide grows over-conservative.",
+          "visual": { "type": "plot", "ys": [0.2, 0.55, 0.78, 0.85, 0.7, 0.5], "dot": 3, "xlabel": "randomization width", "ylabel": "real return", "mark": "optimum" }
+        },
+        {
+          "text": "System identification centers the distribution on truth, and a small batch of real episodes is often the highest-leverage hour.",
+          "visual": { "type": "stat", "value": 1, "label": "highest-leverage real fine-tune", "unit": "hr" }
+        }
+      ]
+    },
+    {
+      "id": "multimodal-06-embodied-s4",
+      "chapter": "multimodal/06-embodied",
+      "section": "s4",
+      "title": "Imitation & RL for control",
+      "eyebrow": "MULTIMODAL",
+      "beats": [
+        {
+          "text": "Two recipes turn data into a policy, sitting at opposite ends of a sample-efficiency and safety trade-off.",
+          "visual": { "type": "title", "text": "Imitation & RL for control", "sub": "Clone first, reinforce second" }
+        },
+        {
+          "text": "Behavior cloning fits the policy by supervised learning, minimizing the gap between its action and the expert's.",
+          "visual": { "type": "equation", "tex": "\\theta^\\star = \\arg\\min_\\theta\\ \\frac{1}{N}\\sum_{i=1}^{N} \\lVert \\pi_\\theta(o_i) - a_i \\rVert^2", "note": "LLM pretraining with actions for tokens" }
+        },
+        {
+          "text": "Cloning a one-D policy on four expert pairs gives a least-squares slope of about 0.77, recovered from demonstrations alone.",
+          "visual": { "type": "stat", "value": 0.77, "label": "cloned policy slope w", "decimals": 2 }
+        },
+        {
+          "text": "Its fatal flaw is covariate shift: trained only on expert states, the policy drifts into states where its errors are larger still.",
+          "visual": { "type": "plot", "ys": [0.05, 0.12, 0.28, 0.5, 0.78, 1.0], "dot": 5, "xlabel": "horizon", "ylabel": "error", "mark": "compounds" }
+        },
+        {
+          "text": "Reinforcement learning lets the policy improve past the demonstrator, but can need orders of magnitude more interaction.",
+          "visual": { "type": "bars", "values": [1, 100], "labels": ["imitation", "RL interaction"], "highlight": 1 }
+        },
+        {
+          "text": "The pragmatic stack is imitation first, RL second: clone a competent base, then fine-tune for the last reliability.",
+          "visual": { "type": "plot", "ys": [0.6, 0.7, 0.8, 0.88, 0.92, 0.95], "dot": 5, "xlabel": "episodes", "ylabel": "success", "mark": "IL→RL" }
+        }
+      ]
+    },
+    {
+      "id": "multimodal-06-embodied-s5",
+      "chapter": "multimodal/06-embodied",
+      "section": "s5",
+      "title": "The data bottleneck in robotics",
+      "eyebrow": "MULTIMODAL",
+      "beats": [
+        {
+          "text": "Every modality unlocked once enough paired data existed. Text had the web, video had YouTube; robotics has no such corpus.",
+          "visual": { "type": "title", "text": "The data bottleneck", "sub": "Robotics has no web" }
+        },
+        {
+          "text": "The internet records what the world looks like, never the torques and grasps that act on it.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "Frontier language models train on the order of ten-to-the-thirteen tokens, a scale robotics cannot approach.",
+          "visual": { "type": "equation", "tex": "\\sim 10^{13}\\ \\text{text tokens}", "note": "all of shared robotics data is many orders smaller" }
+        },
+        {
+          "text": "The largest open robot dataset pooled roughly one million trajectories across twenty-two embodiments.",
+          "visual": { "type": "stat", "value": 1000000, "label": "Open X-Embodiment trajectories" }
+        },
+        {
+          "text": "A million trajectories of a hundred steps is ten-to-the-eight decision steps, still about a thousand times smaller than an LLM's set.",
+          "visual": { "type": "bars", "values": [10000000000, 10000000000000], "labels": ["robot action tokens", "LLM text tokens"], "highlight": 1 }
+        },
+        {
+          "text": "The honest summary: the architecture caught up to language models, but the data did not.",
+          "visual": { "type": "stat", "value": 1000, "label": "data gap vs frontier LLM", "unit": "x" }
+        }
+      ]
+    }
+  ]
+}

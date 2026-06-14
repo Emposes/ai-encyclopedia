@@ -1,0 +1,169 @@
+{
+  "concepts": [
+    {
+      "id": "ml-09-naive-bayes-s1",
+      "chapter": "ml/09-naive-bayes",
+      "section": "s1",
+      "title": "Generative vs discriminative classifiers",
+      "eyebrow": "MACHINE LEARNING",
+      "beats": [
+        {
+          "text": "Every classifier wants the probability of a class given the features, but there are two very different roads to it.",
+          "visual": { "type": "title", "text": "Generative vs Discriminative", "sub": "Two roads to p(y | x)" }
+        },
+        {
+          "text": "A discriminative model attacks the posterior directly, learning only where the boundary between classes sits.",
+          "visual": { "type": "equation", "tex": "p(y \\mid x)", "note": "Modeled head-on by logistic regression, SVMs, neural nets" }
+        },
+        {
+          "text": "A generative model instead learns how each class produces its data, then flips that with Bayes' rule to recover the posterior.",
+          "visual": { "type": "equation", "tex": "p(x \\mid y)\\,p(y)", "note": "A full story of each class, plus class prevalence" }
+        },
+        {
+          "text": "Generative classifiers are data-frugal because strong assumptions fill the gaps, while discriminative ones want more data to trace the boundary.",
+          "visual": { "type": "bars", "values": [10, 35], "labels": ["Generative", "Discriminative"], "highlight": 0 }
+        },
+        {
+          "text": "Ng and Jordan showed the generative model reaches its ceiling much faster, winning outright when labeled data is scarce.",
+          "visual": { "type": "plot", "ys": [0.62, 0.78, 0.86, 0.89, 0.90, 0.90], "dot": true, "xlabel": "training size", "ylabel": "accuracy", "mark": "generative" }
+        },
+        {
+          "text": "With ten examples the model that assumes more usually wins, which is why naive Bayes stays a strong baseline.",
+          "visual": { "type": "stat", "value": 10, "label": "examples where assumptions help", "unit": "pts" }
+        }
+      ]
+    },
+    {
+      "id": "ml-09-naive-bayes-s2",
+      "chapter": "ml/09-naive-bayes",
+      "section": "s2",
+      "title": "Bayes' rule for classification & the naive assumption",
+      "eyebrow": "MACHINE LEARNING",
+      "beats": [
+        {
+          "text": "The engine of naive Bayes is just Bayes' rule, read as a way to score each candidate class for an input.",
+          "visual": { "type": "title", "text": "Bayes' Rule as a Classifier", "sub": "Prior, likelihood, and the lie that follows" }
+        },
+        {
+          "text": "Prior times likelihood over evidence gives the posterior, and the evidence is the same for every class, so you can ignore it.",
+          "visual": { "type": "equation", "tex": "p(y \\mid x) = \\frac{p(x \\mid y)\\, p(y)}{p(x)}", "note": "EQ M9.1 — the denominator is pure normalization" }
+        },
+        {
+          "text": "The hard part hides in the likelihood: for fifty binary features the joint needs more parameters than you could ever count.",
+          "visual": { "type": "stat", "value": 50, "label": "binary features intractable to model jointly", "unit": "d" }
+        },
+        {
+          "text": "So the model makes its defining leap of faith, assuming that given the class, every feature is independent of the others.",
+          "visual": { "type": "equation", "tex": "p(x_1,\\ldots,x_d \\mid y) \\approx \\prod_{j=1}^{d} p(x_j \\mid y)", "note": "EQ M9.2 — the cost falls from 2^d parameters to order d" }
+        },
+        {
+          "text": "Plugging that in and working in log space turns prediction into a single argmax over a sum of log-probabilities.",
+          "visual": { "type": "equation", "tex": "\\hat{y} = \\arg\\max_{y}\\Big[\\log p(y) + \\sum_{j=1}^{d} \\log p(x_j \\mid y)\\Big]", "note": "EQ M9.3 — training is counting, inference is addition" }
+        },
+        {
+          "text": "A prediction is one weighted vote: start from the log-prior, then add each feature's log-evidence for that class.",
+          "visual": { "type": "bars", "values": [1, 3, 2, 4], "labels": ["prior", "f1", "f2", "f3"], "highlight": 3 }
+        }
+      ]
+    },
+    {
+      "id": "ml-09-naive-bayes-s3",
+      "chapter": "ml/09-naive-bayes",
+      "section": "s3",
+      "title": "Gaussian Naive Bayes",
+      "eyebrow": "MACHINE LEARNING",
+      "beats": [
+        {
+          "text": "For continuous features like heights or pixel intensities, each per-feature likelihood is modeled as a one-dimensional Gaussian.",
+          "visual": { "type": "title", "text": "Gaussian Naive Bayes", "sub": "Fit means and variances, then take an argmax" }
+        },
+        {
+          "text": "The fit is nothing but the sample mean and variance of each feature within each class.",
+          "visual": { "type": "equation", "tex": "p(x_j \\mid y) = \\frac{1}{\\sqrt{2\\pi\\,\\sigma_{y,j}^2}}\\,\\exp\\!\\left(-\\frac{(x_j - \\mu_{y,j})^2}{2\\,\\sigma_{y,j}^2}\\right)", "note": "EQ M9.4 — one Gaussian per feature per class" }
+        },
+        {
+          "text": "Because features are assumed independent, each class density is an axis-aligned Gaussian whose contours never tilt.",
+          "visual": { "type": "plot", "ys": [0.05, 0.24, 0.6, 0.95, 0.6, 0.24, 0.05], "xlabel": "feature value", "ylabel": "density", "mark": "axis-aligned" }
+        },
+        {
+          "text": "With shared variances the quadratic terms cancel and the boundary is a straight line, which is Linear Discriminant Analysis.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "With per-class variances those terms survive and the boundary bows into a conic, which is Quadratic Discriminant Analysis.",
+          "visual": { "type": "bars", "values": [1, 2], "labels": ["shared var (LDA)", "per-class var (QDA)"], "highlight": 1 }
+        },
+        {
+          "text": "One wrinkle: a near-zero variance makes a Gaussian explode, so production code adds a tiny smoothing term to every variance.",
+          "visual": { "type": "stat", "value": 0, "label": "variance that must never reach zero", "unit": "sigma^2" }
+        }
+      ]
+    },
+    {
+      "id": "ml-09-naive-bayes-s4",
+      "chapter": "ml/09-naive-bayes",
+      "section": "s4",
+      "title": "Multinomial & Bernoulli NB for text",
+      "eyebrow": "MACHINE LEARNING",
+      "beats": [
+        {
+          "text": "Naive Bayes' first and most enduring job was sorting documents, with spam filters making the technique famous.",
+          "visual": { "type": "title", "text": "Naive Bayes for Text", "sub": "Multinomial and Bernoulli, since 1961" }
+        },
+        {
+          "text": "Multinomial NB treats a document as a bag of word counts, giving each class a vocabulary-sized probability vector.",
+          "visual": { "type": "bars", "values": [9, 8, 7, 6, 5], "labels": ["free", "money", "win", "click", "now"], "highlight": 0 }
+        },
+        {
+          "text": "Each word's probability is its share of the class's tokens, with add-alpha smoothing so an unseen word never zeroes the product.",
+          "visual": { "type": "equation", "tex": "\\hat{\\theta}_{y,w} = \\frac{N_{y,w} + \\alpha}{N_{y} + \\alpha\\,V}", "note": "EQ M9.5 — alpha = 1 is Laplace, alpha = 0.5 is Lidstone" }
+        },
+        {
+          "text": "A worked example: a word seen zero times in a class with six tokens and vocabulary four still earns a smoothed sliver of mass.",
+          "visual": { "type": "stat", "value": 0.1, "label": "p(unseen word | class) with Laplace", "decimals": 2 }
+        },
+        {
+          "text": "Bernoulli NB instead flags each word as present or absent and treats a missing spammy word as evidence for ham.",
+          "visual": { "type": "bars", "values": [1, 1, 0, 0, 1], "labels": ["free", "money", "meeting", "report", "now"], "highlight": 4 }
+        },
+        {
+          "text": "Bernoulli tends to win on short texts while multinomial wins on longer documents, and both train in a single counting pass.",
+          "visual": { "type": "lattice" }
+        }
+      ]
+    },
+    {
+      "id": "ml-09-naive-bayes-s5",
+      "chapter": "ml/09-naive-bayes",
+      "section": "s5",
+      "title": "Smoothing, failure modes & why it works anyway",
+      "eyebrow": "MACHINE LEARNING",
+      "beats": [
+        {
+          "text": "The zero-frequency problem is fatal without smoothing: one unseen word drives its probability to zero and vetoes the whole class.",
+          "visual": { "type": "title", "text": "Why It Works Anyway", "sub": "Smoothing, double-counting, and the paradox" }
+        },
+        {
+          "text": "Read as a Bayesian posterior, alpha is a Dirichlet prior that pre-loads imaginary observations of every word.",
+          "visual": { "type": "equation", "tex": "p(w \\mid y) = \\frac{N_{y,w} + \\alpha}{N_{y} + \\alpha\\,V}", "note": "Regularization wearing a probabilistic costume" }
+        },
+        {
+          "text": "When features are correlated, naive Bayes double-counts evidence and grows overconfident, piling posteriors near zero and one.",
+          "visual": { "type": "plot", "ys": [0.5, 0.7, 0.9, 0.98, 0.999], "dot": true, "xlabel": "correlation", "ylabel": "posterior", "mark": "overconfident" }
+        },
+        {
+          "text": "Here is the paradox: the probabilities are often garbage, yet the classifications are excellent.",
+          "visual": { "type": "bars", "values": [0.999, 1], "labels": ["calibration", "decision"], "highlight": 1 }
+        },
+        {
+          "text": "Domingos and Pazzani showed the argmax only needs the right class to score highest, not to have an accurate probability.",
+          "visual": { "type": "stat", "value": 1997, "label": "Domingos & Pazzani explain the paradox" }
+        },
+        {
+          "text": "Robust to irrelevant features and trained in one pass, naive Bayes stays the baseline every other classifier must beat.",
+          "visual": { "type": "lattice" }
+        }
+      ]
+    }
+  ]
+}

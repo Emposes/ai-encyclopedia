@@ -1,0 +1,745 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Games &amp; Equilibria — AI Encyclopedia</title>
+<meta name="description" content="When your best move depends on everyone else's, optimality needs a new definition. Games and payoffs, dominant strategies, the Nash equilibrium, zero-sum games and minimax, and mixed strategies — the foundations of strategic reasoning." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+<link rel="canonical" href="https://ai-encyclopedia.com/game-theory/01-games-equilibria" />
+<meta property="og:url" content="https://ai-encyclopedia.com/game-theory/01-games-equilibria" />
+</head>
+<body data-track="game-theory" data-level="core">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ GAME THEORY / 01 / EQUILIBRIA</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../game-theory/02-repeated-cooperative.html">NEXT: REPEATED &amp; COOPERATIVE →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">GAME THEORY · CHAPTER 01 / 03</div>
+    <h1>Games &amp; Equilibria</h1>
+    <p class="lede">In single-agent optimization, "optimal" means picking the action with the highest payoff. Once a player's reward depends on what other rational agents do, and theirs on what the player does, that definition no longer applies: there is no fixed objective to maximize against. <strong>The replacement is the Nash equilibrium, a strategy profile in which no player can gain by changing their own move alone.</strong> This chapter develops the supporting machinery: games and payoffs, dominance, the equilibrium itself, the structure of zero-sum conflict, and the randomized strategies that guarantee equilibria exist.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 26 MIN</b></span>
+      <span>BUILDS ON<b>RL · PROBABILITY</b></span>
+      <span>INSTRUMENTS<b>PAYOFF MATRIX · MINIMAX · SIMPLEX</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">1.1</span>Games, players, strategies &amp; payoffs</a>
+      <a href="#s2"><span class="n">1.2</span>Dominant strategies &amp; iterated elimination</a>
+      <a href="#s3"><span class="n">1.3</span>Nash equilibrium</a>
+      <a href="#s4"><span class="n">1.4</span>Zero-sum games &amp; minimax</a>
+      <a href="#s5"><span class="n">1.5</span>Mixed strategies</a>
+      <a href="#s6"><span class="n">1.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 1.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">1.1</span><h2>Games, players, strategies &amp; payoffs</h2></div>
+        <p>A <strong>game</strong> in the sense of this volume is not a pastime; it is a model of interaction between agents whose outcomes are intertwined. The minimal data is a triple. There is a set of <strong>players</strong> \(N = \{1, 2, \ldots, n\}\). Each player \(i\) has a set of <strong>strategies</strong> \(S_i\) — the actions available to them. And each player has a <strong>payoff function</strong> \(u_i\) that assigns a real number to every combination of choices, one from each player:</p>
+
+        <div class="eq"><span class="eq-tag">EQ G1.1 — NORMAL-FORM GAME</span>
+        $$ \Gamma = \big(N,\; \{S_i\}_{i \in N},\; \{u_i\}_{i \in N}\big), \qquad u_i : S_1 \times S_2 \times \cdots \times S_n \to \mathbb{R} $$
+        <div class="eq-note">A choice of one strategy per player is a <b>strategy profile</b> \(s = (s_1, \ldots, s_n)\). The crucial feature — the one that breaks ordinary optimization — is that \(u_i\) depends on the <b>whole profile</b>, not just on \(s_i\). Player \(i\) controls only the \(i\)-th coordinate; the rest is chosen by others. We write \(s = (s_i, s_{-i})\), splitting player \(i\)'s move from everyone else's \(s_{-i}\).</div>
+        </div>
+
+        <p>For two players with finitely many actions, the game is a <strong>payoff matrix</strong>: rows are player 1's strategies, columns are player 2's, and each cell holds an ordered pair \((u_1, u_2)\). The canonical example is the <strong>Prisoner's Dilemma</strong>. Two suspects each choose to <em>Cooperate</em> (stay silent) or <em>Defect</em> (betray). Higher numbers are better; the cell entries are (row payoff, column payoff):</p>
+
+        <table class="data">
+          <thead><tr><th>row ↓ / col →</th><th>Cooperate</th><th>Defect</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Cooperate</strong></td><td class="m">(2, 2)</td><td class="m">(0, 3)</td></tr>
+            <tr><td><strong>Defect</strong></td><td class="m">(3, 0)</td><td class="hl">(1, 1)</td></tr>
+          </tbody>
+        </table>
+
+        <p>A central modeling assumption runs through everything below: players are <strong>rational</strong> (each maximizes their own payoff) and this rationality is <strong>common knowledge</strong> (each knows the others are rational, knows that they know it, and so on). This is a strong, often unrealistic idealization — real humans deviate systematically, and behavioral game theory exists precisely to map those deviations. We will be honest about where the idealization bites. But it is the assumption that gives the predictions their teeth.</p>
+
+        <p>The tool that turns this raw data into prediction is the <strong>best response</strong>. Holding everyone else's choices \(s_{-i}\) fixed, player \(i\)'s best responses are the strategies that maximize their payoff:</p>
+
+        <div class="eq"><span class="eq-tag">EQ G1.2 — BEST RESPONSE</span>
+        $$ \mathrm{BR}_i(s_{-i}) \;=\; \operatorname*{arg\,max}_{s_i \in S_i} \; u_i(s_i,\, s_{-i}) $$
+        <div class="eq-note">A set, not a single point — ties are allowed. Almost every equilibrium concept in game theory is a <b>fixed point of mutual best response</b>: a profile in which everyone is simultaneously best-responding to everyone else. The entire chapter is, in one sentence, the study of when such fixed points exist and how to find them.</div>
+        </div>
+
+        <div class="exercise" data-answer="3" data-tol="0.001" data-hint="hold the column fixed at Cooperate, then read off the row payoff of row's best response.">
+          <div class="ex-q">In the Prisoner's Dilemma above, suppose the column player has chosen <b>Cooperate</b>. Apply EQ G1.2: what is the row player's payoff \(u_1\) when they play their <em>best response</em> to a cooperating opponent?</div>
+          <div class="ex-reveal-src">Holding the column at Cooperate, row compares Cooperate (payoff \(2\)) against Defect (payoff \(3\)). The best response is Defect, paying \(u_1 = \) <b>3</b> — the "temptation" payoff. This is exactly why mutual cooperation is unstable: from \((2,2)\), a unilateral defection jumps you to \(3\).</div>
+        </div>
+      </section>
+
+      <!-- ====================== 1.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">1.2</span><h2>Dominant strategies &amp; iterated elimination</h2></div>
+        <p>Sometimes a strategy is good <em>no matter what anyone else does</em>. Strategy \(s_i\) <strong>strictly dominates</strong> \(s_i'\) when it pays more against every possible choice of the opponents:</p>
+
+        <div class="eq"><span class="eq-tag">EQ G1.3 — STRICT DOMINANCE</span>
+        $$ u_i(s_i,\, s_{-i}) \;&gt;\; u_i(s_i',\, s_{-i}) \qquad \text{for every } s_{-i} \in S_{-i} $$
+        <div class="eq-note">Replace the strict \(&gt;\) with \(\ge\) (strict somewhere) and you get <b>weak dominance</b>. A rational player never plays a strictly dominated strategy — it is beaten regardless of what the world does, so reasoning about the opponent is unnecessary. This is the rare corner of game theory where a player's optimal move requires <em>no</em> belief about the others.</div>
+        </div>
+
+        <p>In the Prisoner's Dilemma, Defect strictly dominates Cooperate for both players: against a Cooperating opponent, \(3 &gt; 2\); against a Defecting opponent, \(1 &gt; 0\). Each player has a <strong>strictly dominant strategy</strong> — Defect — so the predicted outcome is mutual defection, paying \((1, 1)\). And here is the dilemma's sting: both would have preferred \((2, 2)\), but \((2, 2)\) is not <em>stable</em>, because each could unilaterally jump to \(3\) by defecting. Individual rationality drives the pair to a jointly worse outcome. This single fact underwrites everything from arms races to tragedy-of-the-commons depletion to why multi-agent AI systems trained only on self-interest can converge on collectively destructive policies.</p>
+
+        <p>Most games have no dominant strategy. But dominance still buys leverage through <strong>iterated elimination of strictly dominated strategies (IESDS)</strong>: delete a dominated strategy, and in the smaller game some <em>other</em> strategy may now be dominated, so delete that too, and repeat. With strict dominance the order of deletion does not change the result. If the process leaves exactly one strategy per player, the game is <strong>dominance-solvable</strong> and we have a prediction without ever invoking equilibrium.</p>
+
+        <div class="widget" id="ge-pd-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT G1.1 — PAYOFF-MATRIX EXPLORER</span><span class="w-sub">EDIT A 2×2 GAME · FIND THE NASH EQUILIBRIA</span></div>
+          <div class="w-body">
+            <div style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.16em;color:#636363;margin-bottom:8px;">EACH CELL = (ROW PAYOFF , COLUMN PAYOFF) · EDIT ANY NUMBER · UNDERLINED = A BEST RESPONSE · MINT CELL = PURE NASH</div>
+            <div id="ge-pd-grid" style="margin-bottom:14px;"></div>
+            <div class="ctl-row" style="margin-bottom:8px;">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>PRESET GAME</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-ge-preset="pd">PRISONER'S DILEMMA</button>
+                  <button class="w-btn ghost" data-ge-preset="coord">COORDINATION</button>
+                  <button class="w-btn ghost" data-ge-preset="chicken">CHICKEN</button>
+                  <button class="w-btn ghost" data-ge-preset="pennies">MATCHING PENNIES</button>
+                </div>
+              </div>
+            </div>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">PURE NASH EQUILIBRIA</div><div class="r-value" id="ge-pd-nash" style="font-size:13px;line-height:1.5;">—</div></div>
+              <div class="readout"><div class="r-label">ROW DOMINANT STRATEGY</div><div class="r-value" id="ge-pd-rdom" style="font-size:14px;">—</div></div>
+              <div class="readout"><div class="r-label">COLUMN DOMINANT STRATEGY</div><div class="r-value" id="ge-pd-cdom" style="font-size:14px;">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">A pure Nash equilibrium is a cell where <em>both</em> numbers are underlined — row is best-responding in its column and column is best-responding in its row simultaneously. Prisoner's Dilemma has one (mutual defect); Coordination has two (both pure equilibria are stable but uncoordinated play is not); Matching Pennies has <b>none</b> — the underlines chase each other around the matrix, which is exactly why §1.5 needs randomization. Edit any payoff and watch the equilibria move.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Pure Nash equilibria of a 2x2 game by best response (EQ G1.2)
+import numpy as np
+# Prisoner's Dilemma, "higher is better". A = row payoffs, B = column payoffs.
+A = np.array([[2, 0],      # row plays Cooperate
+              [3, 1]])     # row plays Defect
+B = np.array([[2, 3],      # column payoffs, same cell layout
+              [0, 1]])
+acts = ["Cooperate", "Defect"]
+
+# A cell (i,j) is Nash if i maximizes row's payoff in column j
+# AND j maximizes column's payoff in row i.
+row_br = (A == A.max(axis=0, keepdims=True))   # best row responses per column
+col_br = (B == B.max(axis=1, keepdims=True))   # best col responses per row
+nash   = row_br & col_br
+
+print("row best-response mask (per column):\n", row_br.astype(int))
+print("col best-response mask (per row):\n",    col_br.astype(int))
+for i in range(2):
+    for j in range(2):
+        if nash[i, j]:
+            print(f"PURE NASH -> (row={acts[i]}, col={acts[j]}), "
+                  f"payoffs=({A[i,j]}, {B[i,j]})")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 1.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">1.3</span><h2>Nash equilibrium</h2></div>
+        <p>Dominance handles only the easy games. The concept that handles all of them — John Nash's 1950 contribution, and the reason game theory became the lingua franca of economics, biology, and multi-agent AI — is a notion of <strong>mutual stability</strong>. A strategy profile \(s^\star\) is a <strong>Nash equilibrium</strong> when no single player can improve their payoff by unilaterally changing their own strategy, holding everyone else's fixed:</p>
+
+        <div class="eq"><span class="eq-tag">EQ G1.4 — NASH EQUILIBRIUM</span>
+        $$ u_i\big(s_i^\star,\, s_{-i}^\star\big) \;\ge\; u_i\big(s_i,\, s_{-i}^\star\big) \qquad \text{for every player } i \text{ and every } s_i \in S_i $$
+        <div class="eq-note">Equivalently, every player is best-responding to everyone else at once: \(s_i^\star \in \mathrm{BR}_i(s_{-i}^\star)\) for all \(i\). The word "unilaterally" is load-bearing — equilibrium says nothing about <em>coordinated</em> deviations by coalitions (that is cooperative game theory, next chapter). It is a statement about <b>no profitable solo move</b>, and that is exactly why it can be self-enforcing without any contract.</div>
+        </div>
+
+        <p>Read the definition as a test, not a recipe: given a candidate profile, you check it by asking each player in turn, "could you do better by switching, assuming the others stand pat?" If every answer is no, it is an equilibrium. The Prisoner's Dilemma's \((D, D)\) passes: from payoff \(1\), unilaterally cooperating drops you to \(0\). The cooperative \((C, C)\) fails: from \(2\), unilaterally defecting jumps you to \(3\).</p>
+
+        <p>Two cautions the textbooks insist on, and rightly. First, <strong>equilibria need not be unique</strong> — coordination games have several, and the theory alone does not say which one rational players will land on (this is the <em>equilibrium selection</em> problem, genuinely unsettled). Second, <strong>equilibrium is not optimality</strong>: the Prisoner's Dilemma equilibrium is <em>Pareto-dominated</em> by mutual cooperation — every player prefers the non-equilibrium outcome. Nash equilibrium predicts what self-interested rational agents will do, not what is collectively best. Conflating the two is the most common error in applying the concept.</p>
+
+        <p>Nash's theorem — proved with the Kakutani fixed-point theorem — guarantees that <em>every</em> finite game has at least one equilibrium, provided we allow <strong>mixed strategies</strong> (randomization over actions, §1.5). Existence is the deep result; the Prisoner's Dilemma happens to have a pure one, but games like Matching Pennies have an equilibrium only once randomization is permitted.</p>
+
+        <div class="exercise" data-answer="true|t|yes|y" data-hint="apply EQ G1.4 literally: check whether ANY single player can gain by deviating alone.">
+          <div class="ex-q">By the definition in EQ G1.4: at a Nash equilibrium, <em>no player can increase their own payoff by deviating unilaterally</em> (changing only their own strategy while everyone else holds fixed). Is this statement <b>true</b> or <b>false</b>? (Answer "true" or "false".)</div>
+          <div class="ex-reveal-src">This is the definition itself. EQ G1.4 states \(u_i(s_i^\star, s_{-i}^\star) \ge u_i(s_i, s_{-i}^\star)\) for every player \(i\) and every alternative \(s_i\) — i.e., no unilateral deviation pays more. So the statement is <b>true</b>. (Note the equilibrium says nothing about coordinated multi-player deviations, only solo ones.)</div>
+        </div>
+      </section>
+
+      <!-- ====================== 1.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">1.4</span><h2>Zero-sum games &amp; minimax</h2></div>
+        <p>A <strong>two-player zero-sum game</strong> is pure conflict: whatever one player wins, the other loses, so \(u_1 + u_2 = 0\) in every cell. We can then describe the whole game by a single matrix \(A\), where \(A_{ij}\) is the row player's payoff (the column player's is \(-A_{ij}\)). The row player <em>maximizes</em>; the column player <em>minimizes</em>. This is the setting von Neumann solved in 1928, decades before the general Nash concept — and it is far better behaved.</p>
+
+        <p>The conservative move for the row player is to choose the strategy whose <em>worst case</em> is best — the <strong>maximin</strong>. The column player symmetrically picks the strategy whose worst case (from their side) is best — the <strong>minimax</strong>:</p>
+
+        <div class="eq"><span class="eq-tag">EQ G1.5 — MAXIMIN AND MINIMAX</span>
+        $$ \underline{v} = \max_{i} \min_{j} A_{ij} \;\le\; \overline{v} = \min_{j} \max_{i} A_{ij} $$
+        <div class="eq-note">\(\underline{v}\) is the most the row player can <b>guarantee</b> regardless of the opponent; \(\overline{v}\) is the most the column player can be <b>forced</b> to concede. The inequality \(\underline{v} \le \overline{v}\) always holds (the second mover never does worse). When the two coincide at a single cell, that cell is a <b>saddle point</b> — a pure-strategy equilibrium that is also the value of the game.</div>
+        </div>
+
+        <p>Von Neumann's <strong>Minimax Theorem</strong> is the crown jewel: in any finite two-player zero-sum game, once <em>mixed</em> strategies are allowed, the maximin and minimax are <em>always</em> equal. Their common value \(v\) is the <strong>value of the game</strong>, and the optimal mixed strategies are <em>interchangeable</em> and <em>worst-case optimal</em>:</p>
+
+        <div class="eq"><span class="eq-tag">EQ G1.6 — THE MINIMAX THEOREM</span>
+        $$ \max_{p \in \Delta(S_1)} \min_{q \in \Delta(S_2)} \; p^{\top} A\, q \;=\; \min_{q \in \Delta(S_2)} \max_{p \in \Delta(S_1)} \; p^{\top} A\, q \;=\; v $$
+        <div class="eq-note">\(p\) and \(q\) are probability distributions over the row and column actions (\(\Delta\) is the simplex). The order of "max then min" no longer matters — a property that fails for general-sum games. This is why zero-sum is uniquely tractable: a unique value, no equilibrium-selection ambiguity, and the optimal strategy is computable by <b>linear programming</b>. It is the mathematical backbone of self-play in AlphaZero-style systems and of robust/adversarial training, where the "opponent" is a worst-case perturbation.</div>
+        </div>
+
+        <div class="widget" id="ge-minimax-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT G1.2 — MINIMAX SOLVER</span><span class="w-sub">2×2 ZERO-SUM · ROW MAXIMIZES, COLUMN MINIMIZES · EQ G1.5–G1.6</span></div>
+          <div class="w-body">
+            <div style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.16em;color:#636363;margin-bottom:8px;">ROW-PAYOFF MATRIX A (COLUMN GETS −A) · EDIT ANY CELL</div>
+            <div id="ge-mm-grid" style="margin-bottom:14px;"></div>
+            <div class="ctl-row" style="margin-bottom:6px;">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>PRESET</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-ge-mm="pennies">MATCHING PENNIES</button>
+                  <button class="w-btn ghost" data-ge-mm="saddle">HAS A SADDLE</button>
+                  <button class="w-btn ghost" data-ge-mm="rps2">SKEWED</button>
+                </div>
+              </div>
+            </div>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">MAXIMIN v (PURE)</div><div class="r-value" id="ge-mm-maximin">—</div></div>
+              <div class="readout"><div class="r-label">MINIMAX v (PURE)</div><div class="r-value" id="ge-mm-minimax">—</div></div>
+              <div class="readout acc"><div class="r-label">SADDLE POINT?</div><div class="r-value" id="ge-mm-saddle" style="font-size:14px;">—</div></div>
+            </div>
+            <div class="readout-strip" style="margin-top:1px;">
+              <div class="readout acc"><div class="r-label">ROW MIX p* (TOP, BOTTOM)</div><div class="r-value" id="ge-mm-p" style="font-size:14px;">—</div></div>
+              <div class="readout acc"><div class="r-label">COLUMN MIX q* (LEFT, RIGHT)</div><div class="r-value" id="ge-mm-q" style="font-size:14px;">—</div></div>
+              <div class="readout acc"><div class="r-label">VALUE OF GAME v*</div><div class="r-value" id="ge-mm-value">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">When the maximin and minimax agree on a single cell, that pure cell is a saddle point and you are done — no randomization needed ("HAS A SADDLE"). When they disagree (Matching Pennies: maximin \(-1\), minimax \(+1\)), there is no pure equilibrium and the solver falls back to the closed-form mixed solution of EQ G1.7. The value sits <em>between</em> the pure maximin and minimax — exactly the gap that randomization closes.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Solve a 2x2 zero-sum game's mixed strategy + value (EQ G1.6-G1.7)
+import numpy as np
+A = np.array([[ 1.0, -1.0],     # Matching Pennies, row payoffs
+              [-1.0,  1.0]])
+
+# First check for a pure saddle point.
+maximin = A.min(axis=1).max()   # best worst-case row
+minimax = A.max(axis=0).min()   # best worst-case column
+print(f"pure maximin = {maximin:+.3f},  pure minimax = {minimax:+.3f}")
+
+if np.isclose(maximin, minimax):
+    print("saddle point exists -> pure value =", maximin)
+else:
+    a, b, c, d = A.ravel()
+    denom = a - b - c + d        # EQ G1.7 denominator
+    p = (d - c) / denom          # P(row plays top)
+    q = (d - b) / denom          # P(col plays left)
+    v = (a*d - b*c) / denom      # value of the game
+    print(f"no saddle -> mix needed")
+    print(f"row mix p* = ({p:.3f}, {1-p:.3f})")
+    print(f"col mix q* = ({q:.3f}, {1-q:.3f})")
+    print(f"value v*   = {v:+.3f}")
+    # sanity: with these mixes the column is indifferent (both columns equal)
+    col_payoffs = np.array([p, 1-p]) @ A
+    print("row's mix makes columns equal:", np.round(col_payoffs, 6))</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 1.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">1.5</span><h2>Mixed strategies</h2></div>
+        <p>Matching Pennies has no pure equilibrium — any pure choice you make, the opponent can exploit. The escape is to <strong>randomize</strong>. A <strong>mixed strategy</strong> for player \(i\) is a probability distribution \(\sigma_i\) over their actions; a pure strategy is the degenerate case that puts all mass on one action. Payoffs become <em>expected</em> payoffs, and the strategy space is now the <strong>simplex</strong> \(\Delta(S_i)\) — for two actions, just the line segment of probabilities \((p, 1-p)\).</p>
+
+        <p>The key to solving for a mixed equilibrium is the <strong>indifference principle</strong>: if a player is randomizing between several actions in equilibrium, every action they put positive weight on must yield the <em>same</em> expected payoff. Otherwise they would shift all their probability to the better one — so the opponent must mix precisely so as to leave them indifferent. This flips the intuition inside out: <em>your</em> mixing probabilities are pinned down by making the <em>other</em> player indifferent, not yourself.</p>
+
+        <p>For a 2×2 zero-sum game with row-payoff matrix \(A = \begin{psmallmatrix} a &amp; b \\ c &amp; d \end{psmallmatrix}\) and no saddle point, the indifference conditions give closed forms. The row player mixes with probability \(p\) on the top row so that the column player's two columns pay equally; the column player mixes with \(q\) on the left column likewise:</p>
+
+        <div class="eq"><span class="eq-tag">EQ G1.7 — 2×2 ZERO-SUM MIXED SOLUTION</span>
+        $$ p^\star = \frac{d - c}{a - b - c + d}, \qquad q^\star = \frac{d - b}{a - b - c + d}, \qquad v = \frac{a\,d - b\,c}{a - b - c + d} $$
+        <div class="eq-note">\(p^\star\) is the probability the row player puts on the top row; \(q^\star\) the probability the column player puts on the left column; \(v\) the value of the game. The shared denominator \(a - b - c + d\) is nonzero precisely when no saddle point exists. For <b>Matching Pennies</b> (\(a = d = 1,\; b = c = -1\)): denominator \(= 1 - (-1) - (-1) + 1 = 4\), so \(p^\star = (1-(-1))/4 = 0.5\), \(q^\star = 0.5\), and \(v = (1 - 1)/4 = 0\). Each side plays heads and tails with equal probability, and the game is fair.</div>
+        </div>
+
+        <p>The mixed equilibrium has a striking robustness: at \((p^\star, q^\star)\), neither player can be exploited, because each has made the other indifferent across all their options. There is nothing to grab. This is the precise sense in which a randomized strategy can be <em>safer</em> than any deterministic one — an idea that reappears, dressed differently, in adversarial robustness and in the stochastic policies of reinforcement learning.</p>
+
+        <div class="widget" id="ge-simplex-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT G1.3 — MIXED-STRATEGY SIMPLEX</span><span class="w-sub">MATCHING PENNIES · EXPECTED PAYOFF vs ROW MIX p · EQ G1.7</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>ROW MIX p = P(top row) <output id="ge-sx-p-out">0.50</output></label><input type="range" id="ge-sx-p" min="0" max="1" step="0.01" value="0.5"/></div>
+            </div>
+            <canvas class="w-canvas" id="ge-sx-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">PAYOFF IF COL PLAYS LEFT</div><div class="r-value" id="ge-sx-left">—</div></div>
+              <div class="readout"><div class="r-label">PAYOFF IF COL PLAYS RIGHT</div><div class="r-value" id="ge-sx-right">—</div></div>
+              <div class="readout acc"><div class="r-label">ROW'S GUARANTEE (min)</div><div class="r-value" id="ge-sx-guarantee">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The two lines are the row player's expected payoff against a pure-Left and a pure-Right column, as a function of their own mix \(p\). The column player will always exploit you down to the <em>lower</em> of the two lines — your guarantee is the mint curve (the lower envelope). It peaks exactly where the lines cross, at \(p^\star = 0.5\), giving value \(v = 0\). Drag \(p\) away from \(0.5\) and watch your guarantee fall: any tilt hands the opponent something to exploit. The crossing point is the indifference principle made visible.</div>
+        </div>
+
+        <div class="exercise" data-answer="0.5" data-tol="0.001" data-hint="symmetry: in Matching Pennies each action must be equally likely, or the opponent exploits the skew.">
+          <div class="ex-q">In Matching Pennies (row-payoff matrix \(\begin{psmallmatrix} +1 &amp; -1 \\ -1 &amp; +1 \end{psmallmatrix}\)), what probability does each player assign to each of their two actions at the unique mixed Nash equilibrium? (Give the probability of a single action, e.g. heads.)</div>
+          <div class="ex-reveal-src">By EQ G1.7 with \(a=d=1,\ b=c=-1\): denominator \(= 1-(-1)-(-1)+1 = 4\), so \(p^\star = (d-c)/4 = (1-(-1))/4 = 2/4 = \) <b>0.5</b>, and \(q^\star = 0.5\) by the same arithmetic. Each action — heads and tails — is played with probability 0.5. Any deviation from 0.5 lets the opponent tilt their own mix to exploit the imbalance, so 0.5 is the only unexploitable choice.</div>
+        </div>
+
+        <div class="exercise" data-answer="0.333" data-tol="0.02" data-hint="use p* = (d - c)/(a - b - c + d) with a=4, b=0, c=1, d=3.">
+          <div class="ex-q">A 2×2 zero-sum game has row-payoff matrix \(\begin{psmallmatrix} a &amp; b \\ c &amp; d \end{psmallmatrix} = \begin{psmallmatrix} 4 &amp; 0 \\ 1 &amp; 3 \end{psmallmatrix}\) and no saddle point. Using EQ G1.7, what is the row player's equilibrium probability \(p^\star\) of playing the <b>top</b> row? (Give a decimal.)</div>
+          <div class="ex-reveal-src">Denominator \(= a - b - c + d = 4 - 0 - 1 + 3 = 6\). Then \(p^\star = \dfrac{d - c}{6} = \dfrac{3 - 1}{6} = \dfrac{2}{6} = \dfrac{1}{3} \approx \) <b>0.333</b>. (As a check, the value is \(v = \dfrac{ad - bc}{6} = \dfrac{12 - 0}{6} = 2\), comfortably between the pure maximin of \(1\) and minimax of \(3\).)</div>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>One-shot games answer "what is stable?" — but life is repeated, and repetition changes everything.</strong> When the Prisoner's Dilemma is played again and again, cooperation can become rational through the shadow of the future, and entire strategies (tit-for-tat, grim trigger) emerge that have no meaning in a single round. Chapter 02 takes up repeated games, the Folk Theorem, and the cooperative side of game theory.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 1.R — References ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">1.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://press.princeton.edu/books/paperback/9780691130613/theory-of-games-and-economic-behavior" target="_blank" rel="noopener">von Neumann, J. &amp; Morgenstern, O. (1944). <span class="ref-venue">Theory of Games and Economic Behavior</span>.</a> <span class="ref-meta">Princeton University Press — the founding text; normal-form games (EQ G1.1), the minimax theorem (EQ G1.6), and expected-utility theory.</span></li>
+          <li><a href="https://doi.org/10.1073/pnas.36.1.48" target="_blank" rel="noopener">Nash, J. F. (1950). <span class="ref-venue">Equilibrium Points in n-Person Games</span>.</a> <span class="ref-meta">PNAS 36(1), 48–49 — the existence theorem for the equilibrium concept of EQ G1.4 in general finite games.</span></li>
+          <li><a href="https://doi.org/10.2307/1969529" target="_blank" rel="noopener">Nash, J. F. (1951). <span class="ref-venue">Non-Cooperative Games</span>.</a> <span class="ref-meta">Annals of Mathematics 54(2), 286–295 — the full development of non-cooperative equilibrium, dominance, and the proof via Kakutani's fixed-point theorem.</span></li>
+          <li><a href="https://doi.org/10.1007/BF01448847" target="_blank" rel="noopener">von Neumann, J. (1928). <span class="ref-venue">Zur Theorie der Gesellschaftsspiele</span>.</a> <span class="ref-meta">Mathematische Annalen 100 — the original minimax theorem for two-player zero-sum games (§1.4).</span></li>
+          <li><a href="https://mitpress.mit.edu/9780262061414/a-course-in-game-theory/" target="_blank" rel="noopener">Osborne, M. J. &amp; Rubinstein, A. (1994). <span class="ref-venue">A Course in Game Theory</span>.</a> <span class="ref-meta">MIT Press — standard graduate reference for dominance, IESDS, Nash equilibrium, and mixed strategies as presented in §§1.2–1.5.</span></li>
+          <li><a href="https://www.cs.cornell.edu/home/kleinber/networks-book/" target="_blank" rel="noopener">Easley, D. &amp; Kleinberg, J. (2010). <span class="ref-venue">Networks, Crowds, and Markets</span>.</a> <span class="ref-meta">Cambridge University Press (Ch. 6) — an accessible, freely available treatment of best response, dominant strategies, and equilibrium used to frame this chapter.</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../rl/06-rl-and-llms.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">06</span> RL &amp; LLMs</div></a>
+        <a class="next" href="../game-theory/02-repeated-cooperative.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">02</span> Repeated &amp; Cooperative</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — GAME THEORY · CH 01</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* ============================================================
+   Games & Equilibria — chapter instruments
+   Single IIFE, no globals. setTimeout-only animation.
+   Every widget guarded by element existence; meaningful
+   initial render with zero interaction.
+   ============================================================ */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  function fnum(x, d) { d = d === undefined ? 2 : d; return (Math.round(x * 1) === x && d === 0) ? String(x) : x.toFixed(d); }
+  function esc(s) { return String(s); }
+
+  /* ========================================================
+     INSTRUMENT G1.1 — Payoff-matrix explorer
+     Editable 2x2 bimatrix; underline best responses;
+     highlight pure Nash cells; report dominant strategies.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("ge-pd-demo");
+    if (!root) return;
+    var grid = document.getElementById("ge-pd-grid");
+    var nashEl = document.getElementById("ge-pd-nash");
+    var rdomEl = document.getElementById("ge-pd-rdom");
+    var cdomEl = document.getElementById("ge-pd-cdom");
+    var btns = root.querySelectorAll("[data-ge-preset]");
+
+    var presets = {
+      pd:      { A: [[2, 0], [3, 1]], B: [[2, 3], [0, 1]], r: ["Cooperate", "Defect"], c: ["Cooperate", "Defect"] },
+      coord:   { A: [[2, 0], [0, 1]], B: [[2, 0], [0, 1]], r: ["Hunt", "Forage"], c: ["Hunt", "Forage"] },
+      chicken: { A: [[0, -1], [1, -10]], B: [[0, 1], [-1, -10]], r: ["Swerve", "Straight"], c: ["Swerve", "Straight"] },
+      pennies: { A: [[1, -1], [-1, 1]], B: [[-1, 1], [1, -1]], r: ["Heads", "Tails"], c: ["Heads", "Tails"] }
+    };
+    // live state (deep copy so edits don't mutate presets)
+    var st = JSON.parse(JSON.stringify(presets.pd));
+
+    function colMaxRow(A) {
+      // for each column j, which rows i maximize A[i][j] (row best responses)
+      var out = [[false, false], [false, false]];
+      for (var j = 0; j < 2; j++) {
+        var mx = Math.max(A[0][j], A[1][j]);
+        for (var i = 0; i < 2; i++) if (Math.abs(A[i][j] - mx) < 1e-9) out[i][j] = true;
+      }
+      return out;
+    }
+    function rowMaxCol(B) {
+      // for each row i, which columns j maximize B[i][j] (col best responses)
+      var out = [[false, false], [false, false]];
+      for (var i = 0; i < 2; i++) {
+        var mx = Math.max(B[i][0], B[i][1]);
+        for (var j = 0; j < 2; j++) if (Math.abs(B[i][j] - mx) < 1e-9) out[i][j] = true;
+      }
+      return out;
+    }
+    function dominantRow(A) {
+      // row strategy strictly dominant if it beats the other in every column
+      if (A[0][0] > A[1][0] && A[0][1] > A[1][1]) return 0;
+      if (A[1][0] > A[0][0] && A[1][1] > A[0][1]) return 1;
+      return -1;
+    }
+    function dominantCol(B) {
+      if (B[0][0] > B[0][1] && B[1][0] > B[1][1]) return 0;  // left dominant
+      if (B[0][1] > B[0][0] && B[1][1] > B[1][0]) return 1;  // right dominant
+      return -1;
+    }
+
+    function cellHTML(i, j, rBR, cBR, isNash) {
+      var aStyle = "color:" + (rBR[i][j] ? C.MINT : C.SEC) + ";text-decoration:" + (rBR[i][j] ? "underline" : "none") + ";";
+      var bStyle = "color:" + (cBR[i][j] ? C.BLUE : C.SEC) + ";text-decoration:" + (cBR[i][j] ? "underline" : "none") + ";";
+      var bg = isNash ? "background:var(--accent-05);border-color:var(--accent-deep);" : "background:#000;border-color:var(--hairline);";
+      var inp = function (which, val) {
+        return '<input data-cell="' + which + i + j + '" value="' + val + '" inputmode="numeric" ' +
+          'style="width:38px;background:transparent;border:none;text-align:center;font-family:ui-monospace,Menlo,monospace;font-size:14px;' +
+          (which === "a" ? aStyle : bStyle) + '" />';
+      };
+      return '<div style="border:1px solid;border-radius:4px;padding:10px 4px;display:flex;align-items:center;justify-content:center;gap:1px;' + bg + '">' +
+        '<span style="color:' + C.MUT + ';">(</span>' + inp("a", st.A[i][j]) +
+        '<span style="color:' + C.MUT + ';">,</span>' + inp("b", st.B[i][j]) +
+        '<span style="color:' + C.MUT + ';">)</span></div>';
+    }
+
+    function render() {
+      var rBR = colMaxRow(st.A);
+      var cBR = rowMaxCol(st.B);
+      var nash = [];
+      var html = '<div style="display:grid;grid-template-columns:96px 1fr 1fr;gap:6px;align-items:center;">';
+      // header row
+      html += '<div></div>';
+      html += '<div style="text-align:center;font-family:ui-monospace,Menlo,monospace;font-size:10px;letter-spacing:.1em;color:' + C.SEC + ';">COL: ' + st.c[0].toUpperCase() + '</div>';
+      html += '<div style="text-align:center;font-family:ui-monospace,Menlo,monospace;font-size:10px;letter-spacing:.1em;color:' + C.SEC + ';">COL: ' + st.c[1].toUpperCase() + '</div>';
+      for (var i = 0; i < 2; i++) {
+        html += '<div style="font-family:ui-monospace,Menlo,monospace;font-size:10px;letter-spacing:.1em;color:' + C.SEC + ';">ROW: ' + st.r[i].toUpperCase() + '</div>';
+        for (var j = 0; j < 2; j++) {
+          var isNash = rBR[i][j] && cBR[i][j];
+          if (isNash) nash.push("(" + st.r[i] + ", " + st.c[j] + ")");
+          html += cellHTML(i, j, rBR, cBR, isNash);
+        }
+      }
+      html += '</div>';
+      grid.innerHTML = html;
+
+      // rewire inputs
+      var cells = grid.querySelectorAll("input[data-cell]");
+      for (var k = 0; k < cells.length; k++) {
+        cells[k].addEventListener("input", onCellEdit);
+      }
+
+      nashEl.innerHTML = nash.length ? nash.join("<br/>") : "NONE (needs mixing — §1.5)";
+      nashEl.style.color = nash.length ? C.MINT : C.RED;
+
+      var rd = dominantRow(st.A);
+      rdomEl.textContent = rd < 0 ? "none" : st.r[rd];
+      rdomEl.style.color = rd < 0 ? C.SEC : C.MINT;
+      var cd = dominantCol(st.B);
+      cdomEl.textContent = cd < 0 ? "none" : st.c[cd];
+      cdomEl.style.color = cd < 0 ? C.SEC : C.BLUE;
+    }
+
+    function onCellEdit(e) {
+      var id = e.target.getAttribute("data-cell"); // e.g. "a01"
+      var which = id[0], i = +id[1], j = +id[2];
+      var v = parseFloat(e.target.value);
+      if (!isFinite(v)) return;
+      if (which === "a") st.A[i][j] = v; else st.B[i][j] = v;
+      // recompute underlines/nash without full re-render of inputs (avoid focus loss):
+      recolor();
+    }
+    function recolor() {
+      var rBR = colMaxRow(st.A);
+      var cBR = rowMaxCol(st.B);
+      var nash = [];
+      var inputs = grid.querySelectorAll("input[data-cell]");
+      for (var n = 0; n < inputs.length; n++) {
+        var id = inputs[n].getAttribute("data-cell");
+        var which = id[0], i = +id[1], j = +id[2];
+        if (which === "a") {
+          inputs[n].style.color = rBR[i][j] ? C.MINT : C.SEC;
+          inputs[n].style.textDecoration = rBR[i][j] ? "underline" : "none";
+        } else {
+          inputs[n].style.color = cBR[i][j] ? C.BLUE : C.SEC;
+          inputs[n].style.textDecoration = cBR[i][j] ? "underline" : "none";
+        }
+        var parent = inputs[n].parentNode;
+        var isNash = rBR[i][j] && cBR[i][j];
+        if (which === "a") { // recolor cell box once per cell
+          parent.style.background = isNash ? "rgba(166,242,204,0.05)" : "#000";
+          parent.style.borderColor = isNash ? C.DEEP : C.HAIR;
+          if (isNash) nash.push("(" + st.r[i] + ", " + st.c[j] + ")");
+        }
+      }
+      nashEl.innerHTML = nash.length ? nash.join("<br/>") : "NONE (needs mixing — §1.5)";
+      nashEl.style.color = nash.length ? C.MINT : C.RED;
+      var rd = dominantRow(st.A);
+      rdomEl.textContent = rd < 0 ? "none" : st.r[rd];
+      rdomEl.style.color = rd < 0 ? C.SEC : C.MINT;
+      var cd = dominantCol(st.B);
+      cdomEl.textContent = cd < 0 ? "none" : st.c[cd];
+      cdomEl.style.color = cd < 0 ? C.SEC : C.BLUE;
+    }
+
+    for (var b = 0; b < btns.length; b++) {
+      btns[b].addEventListener("click", function () {
+        var key = this.getAttribute("data-ge-preset");
+        for (var z = 0; z < btns.length; z++) btns[z].classList.remove("on");
+        this.classList.add("on");
+        st = JSON.parse(JSON.stringify(presets[key]));
+        render();
+      });
+    }
+
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT G1.2 — Minimax solver (2x2 zero-sum)
+     Editable A; pure maximin/minimax + saddle detection;
+     closed-form mixed solution (EQ G1.7) when no saddle.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("ge-minimax-demo");
+    if (!root) return;
+    var grid = document.getElementById("ge-mm-grid");
+    var maximinEl = document.getElementById("ge-mm-maximin");
+    var minimaxEl = document.getElementById("ge-mm-minimax");
+    var saddleEl = document.getElementById("ge-mm-saddle");
+    var pEl = document.getElementById("ge-mm-p");
+    var qEl = document.getElementById("ge-mm-q");
+    var valEl = document.getElementById("ge-mm-value");
+    var btns = root.querySelectorAll("[data-ge-mm]");
+
+    var presets = {
+      pennies: [[1, -1], [-1, 1]],
+      saddle:  [[4, 3], [2, 1]],     // saddle at cell (top-right) value 3? check below
+      rps2:    [[3, -2], [-1, 2]]
+    };
+    var A = JSON.parse(JSON.stringify(presets.pennies));
+
+    function render() {
+      // build editable grid
+      var html = '<div style="display:grid;grid-template-columns:96px 1fr 1fr;gap:6px;align-items:center;">';
+      html += '<div></div>';
+      html += '<div style="text-align:center;font-family:ui-monospace,Menlo,monospace;font-size:10px;letter-spacing:.1em;color:' + C.SEC + ';">COL LEFT</div>';
+      html += '<div style="text-align:center;font-family:ui-monospace,Menlo,monospace;font-size:10px;letter-spacing:.1em;color:' + C.SEC + ';">COL RIGHT</div>';
+      var labels = ["ROW TOP", "ROW BOTTOM"];
+      for (var i = 0; i < 2; i++) {
+        html += '<div style="font-family:ui-monospace,Menlo,monospace;font-size:10px;letter-spacing:.1em;color:' + C.SEC + ';">' + labels[i] + '</div>';
+        for (var j = 0; j < 2; j++) {
+          html += '<div style="border:1px solid var(--hairline);border-radius:4px;padding:10px 4px;text-align:center;background:#000;">' +
+            '<input data-mm="' + i + j + '" value="' + A[i][j] + '" inputmode="numeric" ' +
+            'style="width:50px;background:transparent;border:none;text-align:center;font-family:ui-monospace,Menlo,monospace;font-size:15px;color:' + C.BRIGHT + ';" /></div>';
+        }
+      }
+      html += '</div>';
+      grid.innerHTML = html;
+      var inputs = grid.querySelectorAll("input[data-mm]");
+      for (var k = 0; k < inputs.length; k++) inputs[k].addEventListener("input", onEdit);
+      solve();
+    }
+
+    function onEdit(e) {
+      var id = e.target.getAttribute("data-mm");
+      var i = +id[0], j = +id[1];
+      var v = parseFloat(e.target.value);
+      if (!isFinite(v)) return;
+      A[i][j] = v;
+      solve();
+    }
+
+    function solve() {
+      var rowMins = [Math.min(A[0][0], A[0][1]), Math.min(A[1][0], A[1][1])];
+      var maximin = Math.max(rowMins[0], rowMins[1]);
+      var colMaxs = [Math.max(A[0][0], A[1][0]), Math.max(A[0][1], A[1][1])];
+      var minimax = Math.min(colMaxs[0], colMaxs[1]);
+
+      maximinEl.textContent = fnum(maximin, 2);
+      minimaxEl.textContent = fnum(minimax, 2);
+
+      var hasSaddle = Math.abs(maximin - minimax) < 1e-9;
+      saddleEl.textContent = hasSaddle ? "YES — pure value " + fnum(maximin, 2) : "no — mix required";
+      saddleEl.style.color = hasSaddle ? C.MINT : C.RED;
+
+      if (hasSaddle) {
+        // identify a pure saddle cell for the mixes (degenerate mix)
+        // find cell that is a row-min and col-max
+        var pr = "—", qr = "—";
+        for (var i = 0; i < 2; i++) for (var j = 0; j < 2; j++) {
+          if (Math.abs(A[i][j] - rowMins[i]) < 1e-9 && Math.abs(A[i][j] - colMaxs[j]) < 1e-9) {
+            pr = i === 0 ? "(1.00, 0.00)" : "(0.00, 1.00)";
+            qr = j === 0 ? "(1.00, 0.00)" : "(0.00, 1.00)";
+          }
+        }
+        pEl.textContent = pr;
+        qEl.textContent = qr;
+        valEl.textContent = fnum(maximin, 2);
+        return;
+      }
+
+      // closed-form mixed solution, EQ G1.7
+      var a = A[0][0], b = A[0][1], c = A[1][0], d = A[1][1];
+      var denom = a - b - c + d;
+      if (Math.abs(denom) < 1e-9) { pEl.textContent = qEl.textContent = valEl.textContent = "—"; return; }
+      var p = (d - c) / denom;
+      var q = (d - b) / denom;
+      var v = (a * d - b * c) / denom;
+      // clamp probabilities into [0,1] for display safety
+      var pc = Math.min(1, Math.max(0, p)), qc = Math.min(1, Math.max(0, q));
+      pEl.textContent = "(" + pc.toFixed(2) + ", " + (1 - pc).toFixed(2) + ")";
+      qEl.textContent = "(" + qc.toFixed(2) + ", " + (1 - qc).toFixed(2) + ")";
+      valEl.textContent = fnum(v, 2);
+    }
+
+    for (var bI = 0; bI < btns.length; bI++) {
+      btns[bI].addEventListener("click", function () {
+        var key = this.getAttribute("data-ge-mm");
+        for (var z = 0; z < btns.length; z++) btns[z].classList.remove("on");
+        this.classList.add("on");
+        A = JSON.parse(JSON.stringify(presets[key]));
+        render();
+      });
+    }
+
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT G1.3 — Mixed-strategy simplex visualizer
+     Matching Pennies: row's expected payoff vs pure-Left and
+     pure-Right column as a function of own mix p; lower
+     envelope = guarantee, maximized at the crossing p* = 0.5.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("ge-simplex-demo");
+    if (!root) return;
+    var canvas = document.getElementById("ge-sx-canvas");
+    var slider = document.getElementById("ge-sx-p");
+    var pOut = document.getElementById("ge-sx-p-out");
+    var leftEl = document.getElementById("ge-sx-left");
+    var rightEl = document.getElementById("ge-sx-right");
+    var guarEl = document.getElementById("ge-sx-guarantee");
+
+    // Matching Pennies row payoffs: A = [[1,-1],[-1,1]]
+    // payoff if column plays Left:  p*A[0][0] + (1-p)*A[1][0] = p*1 + (1-p)*(-1) = 2p - 1
+    // payoff if column plays Right: p*A[0][1] + (1-p)*A[1][1] = p*(-1)+(1-p)*1   = 1 - 2p
+    function payLeft(p) { return 2 * p - 1; }
+    function payRight(p) { return 1 - 2 * p; }
+
+    function render() {
+      var p = parseFloat(slider.value);
+      pOut.textContent = p.toFixed(2);
+      var L = payLeft(p), R = payRight(p);
+      var guarantee = Math.min(L, R);
+      leftEl.textContent = (L >= 0 ? "+" : "") + L.toFixed(2);
+      rightEl.textContent = (R >= 0 ? "+" : "") + R.toFixed(2);
+      guarEl.textContent = (guarantee >= 0 ? "+" : "") + guarantee.toFixed(2);
+      leftEl.style.color = C.SEC; rightEl.style.color = C.SEC;
+      guarEl.style.color = C.MINT;
+
+      var cc = FM.setupCanvas(canvas, 320);
+      var ctx = cc.ctx, w = cc.w, h = cc.h;
+      ctx.clearRect(0, 0, w, h);
+
+      var padL = 52, padR = 24, padT = 24, padB = 40;
+      var plotW = w - padL - padR, plotH = h - padT - padB;
+      // payoff range [-1, 1] on y; p in [0,1] on x
+      function X(pp) { return padL + pp * plotW; }
+      function Y(val) { return padT + (1 - (val + 1) / 2) * plotH; }
+
+      // grid + axes
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1; ctx.setLineDash([]);
+      ctx.beginPath();
+      for (var gy = -1; gy <= 1; gy += 0.5) { ctx.moveTo(padL, Y(gy)); ctx.lineTo(w - padR, Y(gy)); }
+      ctx.stroke();
+      // zero line emphasised
+      ctx.strokeStyle = C.MUT; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(padL, Y(0)); ctx.lineTo(w - padR, Y(0)); ctx.stroke();
+
+      // axis labels
+      ctx.fillStyle = C.MUT; ctx.font = C.MONO; ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      ctx.fillText("+1", padL - 8, Y(1));
+      ctx.fillText("0", padL - 8, Y(0));
+      ctx.fillText("-1", padL - 8, Y(-1));
+      ctx.textAlign = "center"; ctx.textBaseline = "top";
+      ctx.fillText("p = 0", X(0), h - padB + 8);
+      ctx.fillText("p = 0.5", X(0.5), h - padB + 8);
+      ctx.fillText("p = 1", X(1), h - padB + 8);
+      ctx.save();
+      ctx.translate(14, padT + plotH / 2); ctx.rotate(-Math.PI / 2);
+      ctx.textAlign = "center"; ctx.fillText("ROW EXPECTED PAYOFF", 0, 0);
+      ctx.restore();
+
+      // line: column plays Left (blue)
+      ctx.strokeStyle = C.BLUE; ctx.lineWidth = 1.6; ctx.setLineDash([5, 4]);
+      ctx.beginPath(); ctx.moveTo(X(0), Y(payLeft(0))); ctx.lineTo(X(1), Y(payLeft(1))); ctx.stroke();
+      // line: column plays Right (secondary white)
+      ctx.strokeStyle = C.SEC; ctx.setLineDash([5, 4]);
+      ctx.beginPath(); ctx.moveTo(X(0), Y(payRight(0))); ctx.lineTo(X(1), Y(payRight(1))); ctx.stroke();
+      ctx.setLineDash([]);
+
+      // lower envelope (guarantee) in mint, thick
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 2.4;
+      ctx.beginPath();
+      var steps = 80;
+      for (var k = 0; k <= steps; k++) {
+        var pp = k / steps;
+        var env = Math.min(payLeft(pp), payRight(pp));
+        if (k === 0) ctx.moveTo(X(pp), Y(env)); else ctx.lineTo(X(pp), Y(env));
+      }
+      ctx.stroke();
+
+      // optimal point p* = 0.5, value 0
+      ctx.fillStyle = C.MINT;
+      ctx.beginPath(); ctx.arc(X(0.5), Y(0), 4.5, 0, Math.PI * 2); ctx.fill();
+      ctx.font = C.MONO; ctx.fillStyle = C.MINT; ctx.textAlign = "left"; ctx.textBaseline = "bottom";
+      ctx.fillText("p* = 0.5,  v = 0", X(0.5) + 8, Y(0) - 6);
+
+      // current p marker
+      ctx.strokeStyle = C.BRIGHT; ctx.lineWidth = 1; ctx.setLineDash([2, 3]);
+      ctx.beginPath(); ctx.moveTo(X(p), padT); ctx.lineTo(X(p), h - padB); ctx.stroke();
+      ctx.setLineDash([]);
+      // dots at the two lines for current p
+      ctx.fillStyle = C.BLUE; ctx.beginPath(); ctx.arc(X(p), Y(L), 3.5, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = C.SEC; ctx.beginPath(); ctx.arc(X(p), Y(R), 3.5, 0, Math.PI * 2); ctx.fill();
+
+      // legend
+      ctx.font = C.MONO; ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillStyle = C.BLUE; ctx.fillText("— col plays LEFT", w - padR - 150, padT + 2);
+      ctx.fillStyle = C.SEC;  ctx.fillText("— col plays RIGHT", w - padR - 150, padT + 16);
+      ctx.fillStyle = C.MINT; ctx.fillText("— your guarantee", w - padR - 150, padT + 30);
+    }
+
+    slider.addEventListener("input", render);
+    var rt;
+    window.addEventListener("resize", function () {
+      clearTimeout(rt);
+      rt = setTimeout(render, 120);
+    });
+    render();
+  })();
+
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

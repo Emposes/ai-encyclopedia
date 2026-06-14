@@ -1,0 +1,592 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Image &amp; Video Generation — AI Encyclopedia</title>
+<meta name="description" content="The same denoising idea that powers diffusion now paints photorealistic images and renders coherent video from a sentence. Latent diffusion, DALL·E and Stable Diffusion, autoregressive and masked image models, and Sora-class video." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+<link rel="canonical" href="https://ai-encyclopedia.com/multimodal/03-image-generation" />
+<meta property="og:url" content="https://ai-encyclopedia.com/multimodal/03-image-generation" />
+</head>
+<body data-track="multimodal" data-level="core">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ MULTIMODAL / 03 / IMAGE &amp; VIDEO GEN</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../multimodal/04-speech-audio.html">NEXT: SPEECH &amp; AUDIO →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">MULTIMODAL &amp; WORLD MODELS · CHAPTER 03 / 06</div>
+    <h1>Image &amp; Video Generation</h1>
+    <p class="lede">Text-to-image generation cycled through adversarial, autoregressive, and energy-based models before diffusion displaced them. <strong>One denoising procedure now produces photorealistic images and coherent video from a text prompt.</strong> A network is trained to remove a small amount of noise; run a few dozen times, it condenses a structured image out of static. Moving the process into a compressed latent space makes it run on a single GPU, and a transformer over space and time extends it to video.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 24 MIN</b></span>
+      <span>BUILDS ON<b>Vol II · CH 10 · MM 02</b></span>
+      <span>INSTRUMENTS<b>LATENT vs PIXEL · CFG SCALE · VIDEO COHERENCE</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">3.1</span>The text-to-image landscape</a>
+      <a href="#s2"><span class="n">3.2</span>Diffusion for images</a>
+      <a href="#s3"><span class="n">3.3</span>Latent diffusion</a>
+      <a href="#s4"><span class="n">3.4</span>Autoregressive &amp; masked image models</a>
+      <a href="#s5"><span class="n">3.5</span>Video generation</a>
+      <a href="#s6"><span class="n">3.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 3.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">3.1</span><h2>The text-to-image landscape</h2></div>
+        <p>Text-to-image is a <strong>conditional generative modeling</strong> problem: given a caption \(c\), sample an image \(x\) from \(p(x \mid c)\). Three families have taken turns owning it, and the order matters because each fixed the previous one's failure.</p>
+
+        <p><strong>GANs</strong> (Chapter on adversarial networks, Vol N) produced the first sharp synthetic faces but were notoriously hard to scale to open-vocabulary prompts — the discriminator's signal collapses as the conditioning space explodes, and mode collapse drops whole concepts. <strong>Autoregressive</strong> models (DALL·E 1, Parti) reframed an image as a sequence of discrete tokens and predicted them like text; they scale beautifully but pay an \(O(N)\) generation cost over thousands of tokens. <strong>Diffusion</strong> models won the open-domain prize after 2021: stable to train, mode-covering by construction, and — once moved into a latent space (§3.3) — fast enough to run on a laptop GPU.</p>
+
+        <table class="data">
+          <thead><tr><th>Family</th><th>How it generates</th><th>Strengths</th><th>Weaknesses</th></tr></thead>
+          <tbody>
+            <tr><td><strong>GAN</strong></td><td class="m">one forward pass G(z)</td><td>Instant sampling; razor-sharp at narrow domains</td><td>Training instability, mode collapse; hard to scale to arbitrary text</td></tr>
+            <tr><td><strong>Autoregressive</strong></td><td class="m">predict image tokens one by one</td><td>Reuses the LLM stack; clean likelihood; unifies with text</td><td>Slow (\(O(N)\) steps); needs a good discrete tokenizer (VQ)</td></tr>
+            <tr><td><strong>Diffusion</strong></td><td class="m">iterative denoising, ~20–50 steps</td><td>Stable training, full mode coverage, controllable via guidance</td><td>Many sequential steps; pixel-space versions are compute-hungry</td></tr>
+            <tr><td><strong>Masked / parallel</strong></td><td class="m">unmask token batches in a few rounds</td><td>Far fewer steps than AR; token-native editing</td><td>Slightly behind diffusion on raw fidelity at scale</td></tr>
+          </tbody>
+        </table>
+
+        <p class="note">The boundaries blur in 2026: state-of-the-art systems are increasingly <em>diffusion transformers</em> (DiT) that borrow the transformer backbone from the autoregressive camp, and frontier multimodal models (covered in MM 02) fold image generation into a single token stream. The denoising idea is the connective tissue, so we develop it first.</p>
+      </section>
+
+      <!-- ====================== 3.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">3.2</span><h2>Diffusion for images, in one page</h2></div>
+        <p>A diffusion model is defined by two opposing processes. The <strong>forward process</strong> takes a clean image \(x_0\) and adds Gaussian noise in \(T\) small steps until nothing but static remains. It is fixed, has no parameters, and — crucially — admits a closed form that jumps straight to any timestep \(t\):</p>
+
+        <div class="eq"><span class="eq-tag">EQ MM3.1 — FORWARD (NOISING) PROCESS</span>
+        $$ x_t \;=\; \sqrt{\bar\alpha_t}\, x_0 \;+\; \sqrt{1 - \bar\alpha_t}\;\varepsilon, \qquad \varepsilon \sim \mathcal{N}(0, I), \qquad \bar\alpha_t = \prod_{s=1}^{t}\alpha_s $$
+        <div class="eq-note">\(\bar\alpha_t\) is the surviving signal fraction: it slides from \(\bar\alpha_0 \approx 1\) (the clean image) to \(\bar\alpha_T \approx 0\) (pure noise). The whole forward chain collapses into <b>one</b> reparameterized draw — you never simulate \(T\) steps to make a training example, you sample a random \(t\), corrupt \(x_0\) once, and ask the network to undo it. This is the DDPM training trick. Full derivation: Vol II · Ch 10.</div>
+        </div>
+
+        <p>The <strong>reverse process</strong> is what we learn. A neural network \(\varepsilon_\theta(x_t, t)\) is trained to predict the noise that was added, and the entire loss is a denoising regression:</p>
+
+        <div class="eq"><span class="eq-tag">EQ MM3.2 — DENOISING OBJECTIVE</span>
+        $$ \mathcal{L} \;=\; \mathbb{E}_{x_0,\,\varepsilon,\,t}\Big[\,\big\lVert\, \varepsilon - \varepsilon_\theta\!\big(\sqrt{\bar\alpha_t}\,x_0 + \sqrt{1-\bar\alpha_t}\,\varepsilon,\; t\big) \big\rVert^2\,\Big] $$
+        <div class="eq-note">Predict the noise, not the image — equivalent up to the affine relation in EQ MM3.1, but far easier to optimize because the target \(\varepsilon\) is unit-variance at every \(t\). At sampling time you start from pure noise \(x_T \sim \mathcal{N}(0,I)\) and walk backward, subtracting a slice of the predicted noise at each step. <b>The same trained \(\varepsilon_\theta\) is reused at every timestep</b> — depth in time comes from iteration, not from more parameters.</div>
+        </div>
+
+        <p>Conditioning on a caption turns \(\varepsilon_\theta(x_t, t)\) into \(\varepsilon_\theta(x_t, t, c)\): the text embedding \(c\) (from a frozen text encoder such as CLIP or T5) is injected through cross-attention at every block. Everything else is identical. The architecture that carries the denoiser is historically a <strong>U-Net</strong>; since 2023 the field has shifted to <strong>diffusion transformers (DiT)</strong>, which tile the latent into patches and process them with a plain transformer — the design behind Stable Diffusion 3 and Sora.</p>
+
+        <div class="exercise" data-answer="0.6" data-tol="0.02" data-hint="Coefficient on the clean image is sqrt(alpha-bar); square it to recover alpha-bar.">
+          <div class="ex-q">At timestep \(t\) you measure the signal fraction \(\bar\alpha_t = 0.36\). Using EQ MM3.1, what is the coefficient \(\sqrt{\bar\alpha_t}\) that multiplies the <b>clean</b> image \(x_0\)?</div>
+          <div class="ex-reveal-src">\(\sqrt{\bar\alpha_t} = \sqrt{0.36} = \) <b>0.6</b>. The clean image contributes 60% of its amplitude, and the noise term carries \(\sqrt{1-0.36}=\sqrt{0.64}=0.8\) — the two coefficients satisfy \(0.6^2 + 0.8^2 = 1\), so total variance is preserved at every step.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Toy latent diffusion: denoise a 2D latent toward a target (EQ MM3.1-3.2)
+import numpy as np
+rng = np.random.default_rng(0)
+
+x0 = np.array([1.5, -0.8])                 # the "clean" latent we want to recover
+T  = 40
+betas = np.linspace(1e-3, 0.08, T)         # noise schedule
+abar  = np.cumprod(1 - betas)              # signal fraction at each step (EQ MM3.1)
+
+# An ORACLE denoiser: a real net learns eps_theta; here we know the true noise.
+xt = rng.normal(0, 1, 2)                   # start from pure noise  x_T ~ N(0,I)
+for t in range(T - 1, -1, -1):
+    eps_hat = (xt - np.sqrt(abar[t]) * x0) / np.sqrt(1 - abar[t])   # implied noise
+    x0_hat  = (xt - np.sqrt(1 - abar[t]) * eps_hat) / np.sqrt(abar[t])
+    a_prev  = abar[t - 1] if t > 0 else 1.0
+    xt = np.sqrt(a_prev) * x0_hat + np.sqrt(1 - a_prev) * rng.normal(0, 1, 2) * (t > 0)
+
+print("target latent  x0   :", x0.round(3))
+print("recovered      x_hat:", xt.round(3))
+print("L2 error            :", float(np.linalg.norm(xt - x0).round(4)))
+print("signal fraction abar: start", round(float(abar[-1]),3),
+      "-> end", round(float(abar[0]),3))</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 3.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">3.3</span><h2>Latent diffusion — DALL·E, Imagen, Stable Diffusion</h2></div>
+        <p>Pixel-space diffusion works but is brutally expensive: a single denoising step on a \(512\times512\times3\) image touches ~786k values, and you need dozens of steps. The 2022 breakthrough — <strong>latent diffusion</strong> — was to stop diffusing pixels. First train a <strong>VAE</strong> autoencoder that compresses an image into a small latent \(z = \mathcal{E}(x)\) and decodes it back, \(x \approx \mathcal{D}(z)\). Then run the entire diffusion process <em>in that latent space</em>, decoding only once at the end.</p>
+
+        <div class="eq"><span class="eq-tag">EQ MM3.3 — LATENT COMPRESSION RATIO</span>
+        $$ z = \mathcal{E}(x),\quad x \in \mathbb{R}^{H \times W \times 3},\quad z \in \mathbb{R}^{\frac{H}{f} \times \frac{W}{f} \times c_z}, \qquad \text{ratio} = \frac{3\,H\,W}{c_z\,(H/f)(W/f)} = \frac{3 f^2}{c_z} $$
+        <div class="eq-note">With the canonical Stable Diffusion settings — downsampling factor \(f = 8\) and latent channels \(c_z = 4\) — the spatial grid shrinks 64× and the value count drops by \(3 f^2 / c_z = 3\cdot 64 / 4 = 48\times\). <b>Diffusion runs on the 48×-smaller tensor;</b> the VAE handles all the perceptual detail. This single move is what put a text-to-image model on consumer hardware. (SD3 uses 16 latent channels — better fidelity, a smaller 12× ratio.)</div>
+        </div>
+
+        <p>The three landmark systems differ mostly in where they spend their compute:</p>
+        <table class="data">
+          <thead><tr><th>System</th><th>Diffusion space</th><th>Text encoder</th><th>Signature idea</th></tr></thead>
+          <tbody>
+            <tr><td><strong>DALL·E 2</strong> (2022)</td><td class="m">CLIP latent → pixels</td><td class="m">CLIP</td><td>A <em>prior</em> maps text → CLIP image embedding, then a diffusion <em>decoder</em> renders it ("unCLIP")</td></tr>
+            <tr><td><strong>Imagen</strong> (2022)</td><td class="m">pixel-space, cascaded</td><td class="m">T5-XXL (frozen)</td><td>A large frozen language model gives the best prompt fidelity; super-resolution cascade 64→256→1024</td></tr>
+            <tr><td><strong>Stable Diffusion</strong> (2022)</td><td class="hl">VAE latent (f=8)</td><td class="m">CLIP / T5 (SD3)</td><td>Latent diffusion (EQ MM3.3) — the open-weights model that democratized the field</td></tr>
+          </tbody>
+        </table>
+
+        <p>Quality at sampling time is shaped by <strong>classifier-free guidance (CFG)</strong>. The model is trained to denoise both with the caption and, occasionally, with the caption dropped (the unconditional case). At sampling you run it both ways and <em>extrapolate</em> along the direction the caption points:</p>
+
+        <div class="eq"><span class="eq-tag">EQ MM3.4 — CLASSIFIER-FREE GUIDANCE</span>
+        $$ \tilde\varepsilon_\theta(x_t, t, c) \;=\; \varepsilon_\theta(x_t, t, \varnothing) \;+\; s\,\big[\,\varepsilon_\theta(x_t, t, c) - \varepsilon_\theta(x_t, t, \varnothing)\,\big] $$
+        <div class="eq-note">\(s\) is the guidance scale. \(s = 1\) is ordinary conditional sampling; \(s = 0\) ignores the prompt entirely. Pushing \(s\) up (typical range 5–12) <b>increases prompt adherence at the cost of diversity</b> and, too high, of realism — colors oversaturate and textures fry. The term in brackets is the "conditional direction"; CFG simply walks \(s\) times further along it than the model would on its own. No separate classifier is needed — hence the name.</div>
+        </div>
+
+        <div class="exercise" data-answer="2.45" data-tol="0.01" data-hint="Apply EQ MM3.4: eps_uncond + s*(eps_cond - eps_uncond).">
+          <div class="ex-q">A pixel's unconditional noise estimate is \(\varepsilon_\varnothing = 0.20\) and its conditional estimate is \(\varepsilon_c = 0.50\). At guidance scale \(s = 7.5\), what guided noise value \(\tilde\varepsilon\) does EQ MM3.4 produce?</div>
+          <div class="ex-reveal-src">\(\tilde\varepsilon = 0.20 + 7.5\,(0.50 - 0.20) = 0.20 + 7.5 \times 0.30 = 0.20 + 2.25 = \) <b>2.45</b>. The guided estimate is pushed far beyond either endpoint — that extrapolation is exactly why high CFG sharpens the prompt but can overshoot into oversaturation.</div>
+        </div>
+
+        <div class="exercise" data-answer="true" data-tol="0" data-hint="Raising s in EQ MM3.4 walks further along the conditional direction.">
+          <div class="ex-q">True or false: raising the classifier-free guidance scale \(s\) increases how closely the sample obeys the prompt, but reduces the diversity of samples drawn from the same caption. (Answer <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">EQ MM3.4 extrapolates \(s\) times along the conditional direction \([\varepsilon_c - \varepsilon_\varnothing]\). A larger \(s\) pulls every sample harder toward what the caption specifies — improving adherence — while collapsing the spread of outcomes, since all samples are dragged toward the same direction; push it too far and realism degrades into oversaturation. The statement is <b>true</b>.</div>
+        </div>
+
+        <div class="exercise" data-answer="true" data-tol="0" data-hint="Latent diffusion's entire premise is replacing the pixel grid with a VAE latent.">
+          <div class="ex-q">True or false: latent diffusion runs the noising/denoising process in a compressed latent space produced by a VAE encoder, <b>not</b> directly on pixels — that is what makes EQ MM3.3's 48× reduction possible. (Answer <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">This is precisely the latent-diffusion construction. The VAE encoder \(\mathcal{E}\) compresses the image to \(z\), the U-Net/DiT denoises \(z\), and the decoder \(\mathcal{D}\) renders pixels only once at the end. Diffusing the 48×-smaller latent — rather than the full pixel grid — is what dropped the compute enough to run on a single GPU. The statement is <b>true</b>.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Classifier-free guidance: interpolate/extrapolate cond vs uncond (EQ MM3.4)
+import numpy as np
+
+eps_uncond = np.array([0.20, -0.10, 0.05])    # prediction with prompt dropped
+eps_cond   = np.array([0.50,  0.30, 0.05])    # prediction with the prompt
+direction  = eps_cond - eps_uncond            # the "conditional direction"
+
+print(" s     guided eps              ||guided||   vs cond")
+for s in [0.0, 1.0, 3.0, 7.5, 15.0]:
+    guided = eps_uncond + s * direction       # EQ MM3.4
+    print(f"{s:5.1f}  {np.round(guided,3)}   {np.linalg.norm(guided):7.3f}")
+
+print("\ns=0 -> ignores prompt (uncond); s=1 -> plain conditional;")
+print("s>1 EXTRAPOLATES past the conditional sample: stronger prompt adherence,")
+print("but the norm keeps growing -> the oversaturation you see at high CFG.")
+plot_xy([0,1,3,7.5,15],
+        [np.linalg.norm(eps_uncond + s*direction) for s in [0,1,3,7.5,15]])</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="imgen-lp-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT MM3.1 — LATENT vs PIXEL DIFFUSION</span><span class="w-sub">EQ MM3.3 · COMPRESSION ↔ COST</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>IMAGE SIDE H = W <output id="imgen-lp-side-out">512 px</output></label><input type="range" id="imgen-lp-side" min="256" max="1024" step="128" value="512"/></div>
+              <div class="ctl"><label>DOWNSAMPLE FACTOR f <output id="imgen-lp-f-out">8</output></label><input type="range" id="imgen-lp-f" min="1" max="16" step="1" value="8"/></div>
+              <div class="ctl"><label>LATENT CHANNELS c_z <output id="imgen-lp-cz-out">4</output></label><input type="range" id="imgen-lp-cz" min="3" max="16" step="1" value="4"/></div>
+            </div>
+            <canvas class="w-canvas" id="imgen-lp-canvas" height="200"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">PIXEL TENSOR (3·H·W)</div><div class="r-value" id="imgen-lp-pix">—</div></div>
+              <div class="readout acc"><div class="r-label">LATENT TENSOR</div><div class="r-value" id="imgen-lp-lat">—</div></div>
+              <div class="readout acc"><div class="r-label">COMPRESSION (3f²/c_z)</div><div class="r-value" id="imgen-lp-ratio">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">At f = 1 the latent <em>is</em> the pixel grid — you are doing pixel-space diffusion, and the cost bar fills the canvas. Slide f to 8 (Stable Diffusion) and the per-step cost collapses ~48×. Push channels up (SD3 uses 16) to trade a little compression back for fidelity. The cost roughly scales with the latent value count squared in attention — small grids matter a lot.</div>
+        </div>
+
+        <div class="widget" id="imgen-cfg-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT MM3.2 — GUIDANCE SCALE (CFG)</span><span class="w-sub">EQ MM3.4 · ADHERENCE ↔ DIVERSITY</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>GUIDANCE SCALE s <output id="imgen-cfg-s-out">7.5</output></label><input type="range" id="imgen-cfg-s" min="0" max="20" step="0.5" value="7.5"/></div>
+            </div>
+            <canvas class="w-canvas" id="imgen-cfg-canvas" height="240"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">REGIME</div><div class="r-value" id="imgen-cfg-regime">—</div></div>
+              <div class="readout acc"><div class="r-label">PROMPT ADHERENCE</div><div class="r-value" id="imgen-cfg-adh">—</div></div>
+              <div class="readout acc"><div class="r-label">SAMPLE DIVERSITY</div><div class="r-value" id="imgen-cfg-div">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The grey cloud is unconditional samples; the mint arrow is the conditional direction; the bright dot is where guidance lands a sample at scale s. At s = 0 samples ignore the prompt and scatter widely; sweet spot is ~5–9; past ~15 the dot shoots far outside the data cloud — that is the over-saturated, fried look of excessive CFG.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 3.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">3.4</span><h2>Autoregressive &amp; masked image models</h2></div>
+        <p>Diffusion is not the only route. The autoregressive camp treats an image the way a language model treats text: tokenize it, then predict the tokens. The tokenizer is a <strong>VQ-VAE / VQGAN</strong> — an autoencoder whose bottleneck snaps each latent vector to the nearest entry in a learned codebook, turning a \(32\times32\) latent grid into a sequence of \(1024\) discrete indices. A transformer then models that sequence exactly like language:</p>
+
+        <div class="eq"><span class="eq-tag">EQ MM3.5 — AUTOREGRESSIVE IMAGE LIKELIHOOD</span>
+        $$ p_\theta(z_{1:N} \mid c) \;=\; \prod_{i=1}^{N} p_\theta\!\big(z_i \mid z_{&lt;i},\, c\big), \qquad z_i \in \{1,\dots,K\}\ \text{(codebook of size } K) $$
+        <div class="eq-note">Identical to next-token prediction (Vol II · Ch 01), just over image tokens. This is how <b>DALL·E 1</b> and <b>Parti</b> work, and it unifies cleanly with text — a single transformer can interleave words and image tokens. The cost is \(N\) sequential steps; for \(N = 1024\) that is 1024 forward passes per image, the autoregressive tax. Fidelity is bounded by the codebook reconstruction quality.</div>
+        </div>
+
+        <p><strong>Masked image modeling</strong> (MaskGIT, Muse) breaks the sequential bottleneck. Instead of one token at a time, the model is trained like a bidirectional masked autoencoder and, at generation, <em>unmasks many tokens in parallel</em> over a handful of rounds: predict all tokens, keep the most confident, re-mask the rest, repeat. A \(256\times256\) image that costs ~256 autoregressive steps drops to ~8–12 parallel rounds — comparable to a fast diffusion sampler, with the editing convenience of a token grid.</p>
+
+        <p class="note"><strong>Where it stands in 2026.</strong> Pure autoregressive image models lost the fidelity crown to diffusion, but the architecture is resurgent inside <em>unified</em> multimodal models, where generating image tokens in the same stream as text is worth the speed penalty. Masked/parallel decoding sits between the two and increasingly underpins fast in-context image editing.</p>
+      </section>
+
+      <!-- ====================== 3.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">3.5</span><h2>Video generation — Sora-class models</h2></div>
+        <p>Video is an image problem with one extra axis: time. The naïve approach — generate frames independently — fails immediately, because nothing forces frame \(k+1\) to resemble frame \(k\); objects flicker, identities swap, motion is incoherent. The whole challenge is <strong>temporal coherence</strong>: the model must denoise the entire clip <em>jointly</em> so that pixels are consistent across both space and time.</p>
+
+        <p>The Sora-class recipe (2024 onward) is latent diffusion lifted into space-time. A video autoencoder compresses the clip into a grid of <strong>spacetime latent patches</strong> — small cubes spanning a few pixels and a few frames — and a <strong>diffusion transformer</strong> denoises the whole grid at once, attending across space and time together:</p>
+
+        <div class="eq"><span class="eq-tag">EQ MM3.6 — SPACETIME PATCH COUNT</span>
+        $$ N \;=\; \underbrace{\frac{T_f}{p_t}}_{\text{temporal}} \times \underbrace{\frac{H}{p_h}\,\frac{W}{p_w}}_{\text{spatial}}, \qquad \text{cost}_{\text{attn}} \sim O(N^2) $$
+        <div class="eq-note">\(T_f\) frames are cut into chunks of \(p_t\); each frame's \(H\times W\) latent is cut into \(p_h\times p_w\) patches. Joint space-time attention is what enforces coherence — but its \(O(N^2)\) cost is why video is so much harder than images: <b>doubling the clip length quadruples the attention bill</b>. Production systems use factorized or windowed attention (separate spatial and temporal passes) to tame it. The same model handles variable resolution and duration by simply changing \(N\).</div>
+        </div>
+
+        <p>Two honest caveats, current as of 2026. First, these systems are sometimes marketed as <strong>"world simulators"</strong>: by predicting coherent future frames they implicitly learn 3D structure, object permanence, and crude physics. That is real but partial — they still violate physics (objects pass through each other, liquids defy conservation, counts drift) because nothing enforces a physical prior; coherence is learned statistically, not derived. Second, costs are steep: a few seconds of high-resolution video is many thousands of spacetime patches denoised over dozens of steps, which is why generation latency and price remain the binding constraints, not quality. Audio is usually generated by a separate model and aligned afterward (MM 04).</p>
+
+        <div class="widget" id="imgen-vid-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT MM3.3 — FRAME COHERENCE</span><span class="w-sub">JOINT vs PER-FRAME DENOISING</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>TEMPORAL ATTENTION (COHERENCE) <output id="imgen-vid-coh-out">0.85</output></label><input type="range" id="imgen-vid-coh" min="0" max="1" step="0.05" value="0.85"/></div>
+              <div class="ctl"><label>FRAMES T_f <output id="imgen-vid-frames-out">8</output></label><input type="range" id="imgen-vid-frames" min="4" max="12" step="1" value="8"/></div>
+            </div>
+            <canvas class="w-canvas" id="imgen-vid-canvas" height="180"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">REGIME</div><div class="r-value" id="imgen-vid-regime">—</div></div>
+              <div class="readout acc"><div class="r-label">MEAN FRAME-TO-FRAME JUMP</div><div class="r-value" id="imgen-vid-jump">—</div></div>
+              <div class="readout acc"><div class="r-label">ATTN COST ~O(N²)</div><div class="r-value" id="imgen-vid-cost">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Each strip is one frame; the dot is a tracked object. At coherence 0 the model denoises every frame independently — the object teleports, the classic flicker failure. Slide coherence up and joint space-time attention pins the trajectory into a smooth path. Add frames and watch the \(O(N^2)\) cost climb: that quadratic is why long video is the hard part.</div>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>You can now paint a still or a moving image from a sentence — but the world also makes sound.</strong> Chapter 04 turns the denoising and tokenization machinery toward audio: text-to-speech, neural codecs, and music generation, where the time axis is everything and a single second is tens of thousands of samples.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 3.R — References ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">3.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://arxiv.org/abs/2006.11239" target="_blank" rel="noopener">Ho, J., Jain, A. &amp; Abbeel, P. (2020). <span class="ref-venue">Denoising Diffusion Probabilistic Models</span>.</a> <span class="ref-meta">NeurIPS 2020 — the noise-prediction objective and forward reparameterization behind EQ MM3.1–MM3.2.</span></li>
+          <li><a href="https://arxiv.org/abs/2112.10752" target="_blank" rel="noopener">Rombach, R., Blattmann, A., Lorenz, D., Esser, P. &amp; Ommer, B. (2022). <span class="ref-venue">High-Resolution Image Synthesis with Latent Diffusion Models</span>.</a> <span class="ref-meta">CVPR 2022 — Stable Diffusion: diffusion in a VAE latent (EQ MM3.3), the move that put text-to-image on a single GPU.</span></li>
+          <li><a href="https://arxiv.org/abs/2204.06125" target="_blank" rel="noopener">Ramesh, A., Dhariwal, P., Nichol, A., Chu, C. &amp; Chen, M. (2022). <span class="ref-venue">Hierarchical Text-Conditional Image Generation with CLIP Latents</span>.</a> <span class="ref-meta">DALL·E 2 — the CLIP-latent prior plus diffusion decoder ("unCLIP") of §3.3.</span></li>
+          <li><a href="https://arxiv.org/abs/2207.12598" target="_blank" rel="noopener">Ho, J. &amp; Salimans, T. (2022). <span class="ref-venue">Classifier-Free Diffusion Guidance</span>.</a> <span class="ref-meta">NeurIPS 2021 Workshop — the conditional/unconditional extrapolation of EQ MM3.4.</span></li>
+          <li><a href="https://arxiv.org/abs/2205.11487" target="_blank" rel="noopener">Saharia, C. et al. (2022). <span class="ref-venue">Photorealistic Text-to-Image Diffusion Models with Deep Language Understanding</span>.</a> <span class="ref-meta">Imagen — a large frozen T5 text encoder plus a pixel-space super-resolution cascade.</span></li>
+          <li><a href="https://arxiv.org/abs/2212.09748" target="_blank" rel="noopener">Peebles, W. &amp; Xie, S. (2023). <span class="ref-venue">Scalable Diffusion Models with Transformers</span>.</a> <span class="ref-meta">ICCV 2023 — DiT, the transformer backbone that replaced the U-Net and scaled to SD3 and Sora.</span></li>
+          <li><a href="https://arxiv.org/abs/2202.04200" target="_blank" rel="noopener">Chang, H., Zhang, H., Jiang, L., Liu, C. &amp; Freeman, W. T. (2022). <span class="ref-venue">MaskGIT: Masked Generative Image Transformer</span>.</a> <span class="ref-meta">CVPR 2022 — parallel masked-token decoding, the few-round alternative to autoregression in §3.4.</span></li>
+          <li><a href="https://openai.com/research/video-generation-models-as-world-simulators" target="_blank" rel="noopener">Brooks, T. et al. (2024). <span class="ref-venue">Video Generation Models as World Simulators</span>.</a> <span class="ref-meta">OpenAI (Sora) — spacetime latent patches and a diffusion transformer over video, the basis of §3.5 and EQ MM3.6.</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../multimodal/02-multimodal-llms.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">02</span> Multimodal LLMs</div></a>
+        <a class="next" href="../multimodal/04-speech-audio.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">04</span> Speech &amp; Audio</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — MULTIMODAL · CH 03</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* chapter instruments — single IIFE, no globals */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  var C = FM.C;
+
+  function fmtN(n) {
+    if (n >= 1e6) return (n / 1e6).toFixed(n >= 1e7 ? 0 : 2) + "M";
+    if (n >= 1e3) return (n / 1e3).toFixed(n >= 1e4 ? 0 : 1) + "K";
+    return String(Math.round(n));
+  }
+
+  /* ===== INSTRUMENT MM3.1 — LATENT vs PIXEL DIFFUSION ===== */
+  (function () {
+    var root = document.getElementById("imgen-lp-demo");
+    if (!root) return;
+    var side = document.getElementById("imgen-lp-side");
+    var fIn = document.getElementById("imgen-lp-f");
+    var czIn = document.getElementById("imgen-lp-cz");
+    var sideOut = document.getElementById("imgen-lp-side-out");
+    var fOut = document.getElementById("imgen-lp-f-out");
+    var czOut = document.getElementById("imgen-lp-cz-out");
+    var pixOut = document.getElementById("imgen-lp-pix");
+    var latOut = document.getElementById("imgen-lp-lat");
+    var ratioOut = document.getElementById("imgen-lp-ratio");
+    var canvas = document.getElementById("imgen-lp-canvas");
+
+    function render() {
+      var S = parseInt(side.value, 10);
+      var f = parseInt(fIn.value, 10);
+      var cz = parseInt(czIn.value, 10);
+      var gridSide = Math.max(1, Math.round(S / f));
+      var pixVals = 3 * S * S;
+      var latVals = cz * gridSide * gridSide;
+      var ratio = pixVals / latVals;
+
+      sideOut.textContent = S + " px";
+      fOut.textContent = f;
+      czOut.textContent = cz;
+      pixOut.textContent = fmtN(pixVals);
+      latOut.textContent = fmtN(latVals) + " (" + gridSide + "²·" + cz + ")";
+      ratioOut.textContent = ratio.toFixed(ratio >= 10 ? 0 : 1) + "×";
+
+      var d = FM.setupCanvas(canvas, 200);
+      var ctx = d.ctx, w = d.w, h = d.h;
+      ctx.clearRect(0, 0, w, h);
+
+      // left: pixel grid block; right: latent grid block, areas ~ value counts (log-damped)
+      var pad = 16, gap = 40;
+      var half = (w - 2 * pad - gap) / 2;
+      var maxBox = Math.min(half, h - 56);
+      // map value counts to box areas using sqrt of value count, normalized to pixel block
+      var pixBox = maxBox;
+      var latBox = maxBox * Math.sqrt(latVals / pixVals);
+      if (latBox < 6) latBox = 6;
+
+      function drawBlock(cx, box, color, topLabel, botLabel) {
+        var x0 = cx - box / 2, y0 = (h - 24) / 2 - box / 2;
+        ctx.fillStyle = "rgba(166,242,204,0.06)";
+        ctx.strokeStyle = color; ctx.lineWidth = 1.5;
+        ctx.fillRect(x0, y0, box, box);
+        ctx.strokeRect(x0, y0, box, box);
+        // faint internal grid lines (max 8)
+        var n = Math.min(8, Math.max(2, Math.round(box / 14)));
+        ctx.strokeStyle = "rgba(99,99,99,0.45)"; ctx.lineWidth = 0.5;
+        for (var i = 1; i < n; i++) {
+          var gx = x0 + box * i / n, gy = y0 + box * i / n;
+          ctx.beginPath(); ctx.moveTo(gx, y0); ctx.lineTo(gx, y0 + box); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(x0, gy); ctx.lineTo(x0 + box, gy); ctx.stroke();
+        }
+        ctx.fillStyle = color; ctx.font = C.MONO;
+        ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+        ctx.fillText(topLabel, cx, y0 - 8);
+        ctx.fillStyle = C.SEC;
+        ctx.fillText(botLabel, cx, y0 + box + 16);
+      }
+
+      drawBlock(pad + half / 2, pixBox, C.SEC, "PIXELS — DIFFUSE HERE? (SLOW)", fmtN(pixVals) + " values");
+      drawBlock(pad + half + gap + half / 2, latBox, C.MINT, "LATENT — DIFFUSE HERE", fmtN(latVals) + " values");
+    }
+
+    [side, fIn, czIn].forEach(function (el) { el.addEventListener("input", render); });
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ===== INSTRUMENT MM3.2 — GUIDANCE SCALE (CFG) ===== */
+  (function () {
+    var root = document.getElementById("imgen-cfg-demo");
+    if (!root) return;
+    var sIn = document.getElementById("imgen-cfg-s");
+    var sOut = document.getElementById("imgen-cfg-s-out");
+    var regimeOut = document.getElementById("imgen-cfg-regime");
+    var adhOut = document.getElementById("imgen-cfg-adh");
+    var divOut = document.getElementById("imgen-cfg-div");
+    var canvas = document.getElementById("imgen-cfg-canvas");
+
+    // deterministic unconditional cloud
+    var rng = FM.mulberry32(7);
+    var cloud = [];
+    for (var i = 0; i < 90; i++) {
+      var a = rng() * Math.PI * 2, r = Math.sqrt(rng()) * 1.0;
+      cloud.push([Math.cos(a) * r, Math.sin(a) * r]);
+    }
+    var uncond = [0, 0];          // mean of cloud (unit-variance, centered)
+    var cond = [1.0, 0.55];       // conditional sample direction
+
+    function render() {
+      var s = parseFloat(sIn.value);
+      sOut.textContent = s.toFixed(1);
+
+      // guided point = uncond + s*(cond - uncond)  (EQ MM3.4)
+      var gx = uncond[0] + s * (cond[0] - uncond[0]);
+      var gy = uncond[1] + s * (cond[1] - uncond[1]);
+
+      var regime = s === 0 ? "IGNORES PROMPT"
+        : s < 1 ? "WEAK / DIFFUSE"
+        : s <= 3 ? "GENTLE"
+        : s <= 9 ? "SWEET SPOT"
+        : s <= 15 ? "OVER-GUIDED"
+        : "FRIED / SATURATED";
+      regimeOut.textContent = regime;
+      // adherence rises and saturates; diversity falls
+      var adh = 100 * (1 - Math.exp(-s / 4));
+      var div = 100 * Math.exp(-s / 6);
+      adhOut.textContent = adh.toFixed(0) + " %";
+      divOut.textContent = div.toFixed(0) + " %";
+
+      var d = FM.setupCanvas(canvas, 240);
+      var ctx = d.ctx, w = d.w, h = d.h;
+      ctx.clearRect(0, 0, w, h);
+
+      var cxp = w * 0.30, cyp = h * 0.55;     // screen position of uncond mean
+      var scale = Math.min(w, h) / 9;          // units -> px
+
+      function toPx(p) { return [cxp + p[0] * scale, cyp - p[1] * scale]; }
+
+      // data cloud (unconditional)
+      ctx.fillStyle = "rgba(155,155,155,0.5)";
+      for (var k = 0; k < cloud.length; k++) {
+        var p = toPx(cloud[k]);
+        ctx.beginPath(); ctx.arc(p[0], p[1], 2, 0, Math.PI * 2); ctx.fill();
+      }
+      // cloud boundary
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(cxp, cyp, scale, 0, Math.PI * 2); ctx.stroke();
+
+      // conditional direction arrow (mint), to the s=1 conditional sample
+      var pc = toPx(cond);
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(cxp, cyp); ctx.lineTo(pc[0], pc[1]); ctx.stroke();
+      ctx.fillStyle = C.MINT;
+      ctx.beginPath(); ctx.arc(pc[0], pc[1], 3.5, 0, Math.PI * 2); ctx.fill();
+
+      // guided point (bright), clamped to canvas for visibility
+      var pg = toPx([gx, gy]);
+      var clx = Math.max(8, Math.min(w - 8, pg[0]));
+      var cly = Math.max(8, Math.min(h - 8, pg[1]));
+      var clamped = (clx !== pg[0] || cly !== pg[1]);
+      ctx.strokeStyle = "rgba(255,255,255,0.35)"; ctx.lineWidth = 1;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath(); ctx.moveTo(cxp, cyp); ctx.lineTo(clx, cly); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = s > 15 ? C.RED : C.BRIGHT;
+      ctx.beginPath(); ctx.arc(clx, cly, 5, 0, Math.PI * 2); ctx.fill();
+
+      ctx.font = C.MONO; ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillStyle = C.MUT; ctx.fillText("· uncond cloud", 10, 10);
+      ctx.fillStyle = C.MINT; ctx.fillText("— conditional dir (s=1)", 10, 24);
+      ctx.fillStyle = C.BRIGHT; ctx.fillText("● guided sample (s=" + s.toFixed(1) + ")", 10, 38);
+      if (clamped) { ctx.fillStyle = C.RED; ctx.fillText("(off-canvas — far outside the data)", 10, 52); }
+    }
+
+    sIn.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ===== INSTRUMENT MM3.3 — FRAME COHERENCE ===== */
+  (function () {
+    var root = document.getElementById("imgen-vid-demo");
+    if (!root) return;
+    var cohIn = document.getElementById("imgen-vid-coh");
+    var framesIn = document.getElementById("imgen-vid-frames");
+    var cohOut = document.getElementById("imgen-vid-coh-out");
+    var framesOut = document.getElementById("imgen-vid-frames-out");
+    var regimeOut = document.getElementById("imgen-vid-regime");
+    var jumpOut = document.getElementById("imgen-vid-jump");
+    var costOut = document.getElementById("imgen-vid-cost");
+    var canvas = document.getElementById("imgen-vid-canvas");
+
+    function render() {
+      var coh = parseFloat(cohIn.value);
+      var F = parseInt(framesIn.value, 10);
+      cohOut.textContent = coh.toFixed(2);
+      framesOut.textContent = F;
+
+      // deterministic per-frame independent target positions, smoothed by coherence
+      var rng = FM.mulberry32(101);
+      var indep = [];
+      for (var i = 0; i < F; i++) indep.push([rng(), rng()]);
+      // a smooth "true" trajectory the coherent model would find
+      var smooth = [];
+      for (var j = 0; j < F; j++) {
+        var u = F > 1 ? j / (F - 1) : 0;
+        smooth.push([0.15 + 0.70 * u, 0.5 + 0.30 * Math.sin(u * Math.PI)]);
+      }
+      // blend independent (flicker) vs smooth (coherent) by coherence
+      var pos = [];
+      for (var m = 0; m < F; m++) {
+        pos.push([
+          smooth[m][0] * coh + indep[m][0] * (1 - coh),
+          smooth[m][1] * coh + indep[m][1] * (1 - coh)
+        ]);
+      }
+      // mean frame-to-frame jump
+      var totalJump = 0;
+      for (var n = 1; n < F; n++) {
+        var dx = pos[n][0] - pos[n - 1][0], dy = pos[n][1] - pos[n - 1][1];
+        totalJump += Math.sqrt(dx * dx + dy * dy);
+      }
+      var meanJump = F > 1 ? totalJump / (F - 1) : 0;
+
+      regimeOut.textContent = coh < 0.15 ? "PER-FRAME (FLICKER)"
+        : coh < 0.6 ? "PARTIAL COHERENCE"
+        : "JOINT SPACE-TIME";
+      jumpOut.textContent = (meanJump * 100).toFixed(0) + " /100";
+      // attn cost ~ O(N^2), N proportional to frames (fixed spatial here)
+      var N = F * 16;            // 16 spatial patches per frame (toy)
+      costOut.textContent = fmtN(N * N) + " (N=" + N + ")";
+
+      var d = FM.setupCanvas(canvas, 180);
+      var ctx = d.ctx, w = d.w, h = d.h;
+      ctx.clearRect(0, 0, w, h);
+
+      var pad = 14;
+      var stripW = (w - pad * 2) / F;
+      var fh = h - 44;
+      var y0 = 22;
+      // draw frame strips
+      var centers = [];
+      for (var f = 0; f < F; f++) {
+        var x0 = pad + f * stripW;
+        ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+        ctx.strokeRect(x0 + 1, y0, stripW - 2, fh);
+        var px = x0 + 2 + pos[f][0] * (stripW - 6);
+        var py = y0 + 4 + pos[f][1] * (fh - 8);
+        centers.push([px, py]);
+      }
+      // trajectory line connecting tracked object across frames
+      ctx.strokeStyle = coh < 0.15 ? C.RED : C.MINT;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      for (var c2 = 0; c2 < centers.length; c2++) {
+        if (c2 === 0) ctx.moveTo(centers[c2][0], centers[c2][1]);
+        else ctx.lineTo(centers[c2][0], centers[c2][1]);
+      }
+      ctx.stroke();
+      // dots
+      for (var c3 = 0; c3 < centers.length; c3++) {
+        ctx.fillStyle = coh < 0.15 ? C.RED : C.MINT;
+        ctx.beginPath(); ctx.arc(centers[c3][0], centers[c3][1], 4, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.fillStyle = C.MUT; ctx.font = C.MONO;
+      ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText("FRAME 1", pad, h - 14);
+      ctx.textAlign = "right";
+      ctx.fillText("FRAME " + F, w - pad, h - 14);
+    }
+
+    [cohIn, framesIn].forEach(function (el) { el.addEventListener("input", render); });
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

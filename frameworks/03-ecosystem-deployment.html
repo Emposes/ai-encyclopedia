@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>The Ecosystem &amp; Deployment — AI Encyclopedia</title>
+<meta name="description" content="A model that only runs in your notebook isn't shipped. ONNX, TorchScript, SavedModel, TFLite and the serving stack — TorchServe, Triton — are how a trained model reaches production." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+<link rel="canonical" href="https://ai-encyclopedia.com/frameworks/03-ecosystem-deployment" />
+<meta property="og:url" content="https://ai-encyclopedia.com/frameworks/03-ecosystem-deployment" />
+</head>
+<body data-track="frameworks" data-level="advanced">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ FRAMEWORKS / 03 / DEPLOYMENT</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../index.html#toc">NEXT: INDEX →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">FRAMEWORKS · CHAPTER 03 / 03</div>
+    <h1>The Ecosystem &amp; Deployment</h1>
+    <p class="lede">Training and deployment operate under different constraints. <strong>A model confined to a notebook has not shipped; ONNX, TorchScript, and the serving stack are how trained weights reach production.</strong> This chapter follows one set of weights out of its training framework, through an interchange format, a serialized artifact, an optimized runtime, and finally an inference server handling many concurrent requests.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>ADVANCED</b></span>
+      <span>READING TIME<b>≈ 26 MIN</b></span>
+      <span>BUILDS ON<b>FRAMEWORKS 01 · 02</b></span>
+      <span>INSTRUMENTS<b>PATH TREE · FORMAT MATRIX · TRADE-OFF</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">3.1</span>Notebook to artifact</a>
+      <a href="#s2"><span class="n">3.2</span>ONNX — interchange</a>
+      <a href="#s3"><span class="n">3.3</span>TorchScript · SavedModel · TFLite</a>
+      <a href="#s4"><span class="n">3.4</span>Serving — TorchServe &amp; Triton</a>
+      <a href="#s5"><span class="n">3.5</span>JAX &amp; the wider ecosystem</a>
+      <a href="#s6"><span class="n">3.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 3.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">3.1</span><h2>From notebook to artifact</h2></div>
+        <p>Inside a training loop, a model is not really a <em>thing</em> — it is a live Python object: a graph of <code>nn.Module</code> calls, autograd tape, optimizer state, and a pile of imports that only exist because someone ran <code>pip install</code> on a research box. That object is perfect for experimentation and useless for production. The first job of deployment is to turn it into an <strong>artifact</strong>: a self-contained, versioned, serializable representation of <em>just</em> the forward computation and its learned parameters, with the training scaffolding stripped away.</p>
+
+        <p>Three properties separate an artifact from a notebook. It is <strong>portable</strong> — it runs without the original training code, often without Python at all (a C++ service, a phone, a browser). It is <strong>frozen</strong> — the graph and weights are fixed, so the same input gives the same output forever, which is what makes it auditable. And it is <strong>optimizable</strong> — once the graph is static, a compiler can fuse operators, fold constants, and pick kernels for the target hardware. Everything in this chapter is a different answer to the question <em>"what is the artifact, and who runs it?"</em></p>
+
+        <table class="data">
+          <thead><tr><th>Stage</th><th>Representation</th><th>Lives where</th><th>Optimizable?</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Research</strong></td><td class="m">live Python <code>nn.Module</code> + autograd</td><td>training cluster / notebook</td><td>no — dynamic, eager</td></tr>
+            <tr><td><strong>Checkpoint</strong></td><td class="m">weight tensors (<code>state_dict</code>, safetensors)</td><td>object store</td><td>weights only, no graph</td></tr>
+            <tr><td><strong>Artifact</strong></td><td class="m">graph + weights (ONNX, TorchScript, SavedModel)</td><td>artifact registry</td><td>yes — graph is static</td></tr>
+            <tr><td><strong>Engine</strong></td><td class="m">compiled kernels (TensorRT, TFLite, CoreML)</td><td>the target device</td><td>already optimized, hardware-locked</td></tr>
+          </tbody>
+        </table>
+
+        <p>The unit that matters at the artifact stage is the <strong>computational graph</strong>: nodes are operators (matmul, add, softmax, layer-norm), edges are tensors, and the whole thing is a directed acyclic graph from inputs to outputs. Two techniques recover that graph from eager Python. <strong>Tracing</strong> runs one example through the model and records the operations it actually executed — fast and universal, but it bakes in whatever control flow that one input took (an <code>if</code> on tensor shape becomes a constant). <strong>Scripting</strong> parses the Python source itself and compiles control flow into the graph — it preserves loops and branches, but only over a typed subset of the language. Every export path below is built on one of these two.</p>
+
+        <div class="eq"><span class="eq-tag">EQ F3.1 — MODEL SIZE FROM PARAMETERS</span>
+        $$ \text{bytes} \;=\; N_{\text{params}} \times \frac{b_{\text{bits}}}{8}, \qquad \text{FP32} \to 4,\;\; \text{FP16/BF16} \to 2,\;\; \text{INT8} \to 1,\;\; \text{INT4} \to 0.5 \;\; \tfrac{\text{bytes}}{\text{param}} $$
+        <div class="eq-note">The artifact's on-disk and in-memory footprint is, to first order, just the parameter count times the per-element width. A 7-billion-parameter model is <b>28 GB in FP32, 14 GB in FP16, 7 GB in INT8, 3.5 GB in INT4</b>. This single line drives the whole deployment funnel: dtype choice decides whether the artifact fits on a server GPU, a laptop, or a phone — which in turn decides <em>which format</em> from §3.2–3.3 you reach for.</div>
+        </div>
+
+        <div class="exercise" data-answer="3.5" data-tol="0.01" data-unit="GB" data-hint="INT4 is 0.5 bytes per parameter (EQ F3.1).">
+          <div class="ex-q">Using EQ F3.1, how many <b>GB</b> does a 7-billion-parameter model occupy when quantized to <b>INT4</b> (0.5 bytes/param)?</div>
+          <div class="ex-reveal-src">\(7\times10^9 \text{ params} \times 0.5 \text{ bytes} = 3.5\times10^9\) bytes \(=\) <b>3.5</b> GB. That is small enough to load on a high-end phone or a modest laptop GPU — the reason edge formats lean so hard on aggressive quantization.</div>
+        </div>
+
+        <div class="exercise" data-answer="2" data-tol="0.001" data-unit="×" data-hint="Compression ratio is the byte-width ratio: FP16 is 2 bytes, INT8 is 1 byte.">
+          <div class="ex-q">An artifact is exported in FP16 (2 bytes/param) and then quantized to INT8 (1 byte/param). By what factor does its file size shrink? (Give the ratio.)</div>
+          <div class="ex-reveal-src">Size scales linearly with the per-element width (EQ F3.1), so the ratio is \(2/1 =\) <b>2</b>×. Halving the bit-width halves the bytes — and, in the memory-bound decode regime of §3.5, roughly halves per-token latency too.</div>
+        </div>
+
+        <div class="widget" id="deploy-path-tree" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT F3.1 — DEPLOYMENT-PATH DECISION TREE</span><span class="w-sub">PICK A TARGET · GET THE EXPORT PATH</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>SOURCE FRAMEWORK</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-deploy-src="pytorch">PyTORCH</button>
+                  <button class="w-btn ghost" data-deploy-src="tf">TF / KERAS</button>
+                  <button class="w-btn ghost" data-deploy-src="jax">JAX</button>
+                </div>
+              </div>
+            </div>
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>DEPLOYMENT TARGET</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-deploy-target="server">SERVER GPU</button>
+                  <button class="w-btn ghost" data-deploy-target="mobile">MOBILE / EDGE</button>
+                  <button class="w-btn ghost" data-deploy-target="browser">BROWSER</button>
+                  <button class="w-btn ghost" data-deploy-target="cross">CROSS-FRAMEWORK</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="deploy-path-canvas" height="240"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">RECOMMENDED ARTIFACT</div><div class="r-value" id="deploy-path-artifact">—</div></div>
+              <div class="readout"><div class="r-label">RUNTIME / ENGINE</div><div class="r-value" id="deploy-path-runtime">—</div></div>
+              <div class="readout"><div class="r-label">EXPORT VERB</div><div class="r-value" id="deploy-path-verb">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Pick a framework and a target; the tree draws the canonical route from live model to running engine. Note that <b>cross-framework</b> always funnels through ONNX — it is the only target where the source framework stops mattering. Mobile and browser force a quantized edge format; the server path keeps full precision and leans on a runtime compiler (TensorRT) instead.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 3.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">3.2</span><h2>ONNX — the interchange format</h2></div>
+        <p>Frameworks are silos. A model trained in PyTorch is a graph of PyTorch ops; a TensorFlow model is a graph of TensorFlow ops; the runtimes that execute them fastest (NVIDIA's, Intel's, Qualcomm's, Apple's) are written by hardware vendors who do not want to maintain a separate backend for every framework. <strong>ONNX — the Open Neural Network Exchange</strong> — is the lingua franca that breaks the deadlock: a single, framework-agnostic graph format plus a versioned, standardized <em>operator set</em>. Export from any framework into ONNX once, and every ONNX-aware runtime can run your model.</p>
+
+        <p>An ONNX file is a serialized protobuf describing exactly the graph from §3.1: a list of nodes (each naming an operator from the standard set — <code>MatMul</code>, <code>Gemm</code>, <code>Conv</code>, <code>Softmax</code>, <code>LayerNormalization</code>, …), the tensors flowing between them, the initializer tensors that hold the trained weights, and typed input/output shapes. The contract that makes it portable is the <strong>opset version</strong>: opset 17 means "these operators behave exactly as the opset-17 spec says," so a model exported against opset 17 produces identical results on any runtime that implements opset 17, regardless of who wrote that runtime.</p>
+
+        <div class="eq"><span class="eq-tag">EQ F3.2 — THE INTERCHANGE COUNT</span>
+        $$ \underbrace{F \times R}_{\text{point-to-point}} \;\longrightarrow\; \underbrace{F + R}_{\text{hub-and-spoke via ONNX}}, \qquad F \text{ frameworks},\; R \text{ runtimes} $$
+        <div class="eq-note">Without a hub, connecting \(F\) frameworks to \(R\) runtimes is an \(F\times R\) matrix of bespoke converters that someone must write and maintain. With ONNX as the hub, each framework writes <b>one</b> exporter and each runtime writes <b>one</b> importer: \(F+R\) connectors total. For 5 frameworks and 6 runtimes that is 30 integrations collapsing to 11 — the network-effect argument for why a standard interchange format exists at all.</div>
+        </div>
+
+        <div class="exercise" data-answer="11" data-tol="0.001" data-hint="Hub-and-spoke is F + R connectors, not F × R.">
+          <div class="ex-q">You have \(F = 5\) training frameworks and \(R = 6\) inference runtimes. Using EQ F3.2, how many connectors are needed in the <b>hub-and-spoke</b> design where ONNX is the hub (\(F + R\))?</div>
+          <div class="ex-reveal-src">Each framework writes one exporter and each runtime one importer: \(F + R = 5 + 6 =\) <b>11</b> connectors — versus \(F \times R = 30\) for point-to-point. The savings grow with every new framework or runtime added to the ecosystem.</div>
+        </div>
+
+        <p>The runtime side of the standard is <strong>ONNX Runtime (ORT)</strong>, a high-performance C++ engine with a graph optimizer and a system of pluggable <em>execution providers</em>: the same ONNX graph dispatches to CUDA, TensorRT, OpenVINO (Intel), CoreML (Apple), DirectML (Windows), or a portable CPU kernel set, chosen at load time. There is even <strong>ONNX Runtime Web</strong>, which runs the graph in a browser via WebAssembly and WebGPU — no server round-trip. This is exactly why §3.1's tree routes every <em>cross-framework</em> and <em>browser</em> target through ONNX.</p>
+
+        <p class="note"><strong>Honest caveats.</strong> ONNX is not free. Models with dynamic control flow or framework-specific custom ops do not always export cleanly — you hit "unsupported operator" or a traced graph that hard-codes a shape. The opset moves, so an old runtime may not implement the operator a fresh export emits, and numerical results can differ at the last few bits because two runtimes fuse operators differently. For large language models the picture is mixed: ONNX export works but the serving ecosystem has largely standardized on framework-native paths (vLLM, TensorRT-LLM) for the heaviest workloads. ONNX shines brightest for <em>portability</em> — vision models, classical nets, anything that must run on heterogeneous edge hardware.</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Export-then-load round trip: serialize weights to JSON, reload, verify match.
+# Stand-in for ONNX/TorchScript export: the artifact must reproduce outputs.
+import numpy as np, json
+rng = np.random.default_rng(0)
+
+# A tiny 2-layer MLP "model": just weights + a fixed forward graph.
+W1 = rng.normal(0, 0.3, (4, 6)); b1 = rng.normal(0, 0.1, 6)
+W2 = rng.normal(0, 0.3, (6, 2)); b2 = rng.normal(0, 0.1, 2)
+def forward(x, p):
+    h = np.maximum(0.0, x @ p["W1"] + p["b1"])     # ReLU layer
+    return h @ p["W2"] + p["b2"]                    # linear head
+
+x = rng.normal(0, 1, (3, 4))                        # a batch of 3 inputs
+live = forward(x, {"W1": W1, "b1": b1, "W2": W2, "b2": b2})
+
+# "Serialize the artifact": graph is fixed, only weights travel (as JSON).
+blob = json.dumps({k: v.tolist() for k, v in
+                   {"W1": W1, "b1": b1, "W2": W2, "b2": b2}.items()})
+print(f"serialized artifact size : {len(blob):,} bytes of JSON")
+
+# "Load on the serving side" and re-run the SAME graph.
+loaded = {k: np.array(v) for k, v in json.loads(blob).items()}
+reloaded = forward(x, loaded)
+
+print("max abs output diff      :", float(np.abs(live - reloaded).max()))
+print("artifact reproduces model:", np.allclose(live, reloaded))
+print("(this exact-match check is what 'export validation' means in prod)")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="exercise" data-answer="true" data-tol="0" data-hint="ONNX defines one graph format plus a standard operator set that any framework can target.">
+          <div class="ex-q">True or false: ONNX is a <b>cross-framework model interchange format</b> — a single graph representation that lets a model trained in one framework run on runtimes written for another. (Answer <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">ONNX defines a framework-agnostic graph plus a versioned standard operator set; a model exported from PyTorch or TensorFlow into ONNX runs on any ONNX-compatible runtime (ONNX Runtime, TensorRT, OpenVINO, CoreML, …). That is precisely what "cross-framework interchange" means, so the statement is <b>true</b>.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 3.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">3.3</span><h2>TorchScript, SavedModel &amp; TFLite</h2></div>
+        <p>ONNX is the neutral hub; each framework also has a <em>native</em> artifact that stays inside its own ecosystem and often preserves more than ONNX can. These native formats are what you reach for when source and serving live in the same world.</p>
+
+        <h3>PyTorch: TorchScript and <code>torch.export</code></h3>
+        <p><strong>TorchScript</strong> was PyTorch's original answer to "run my model without Python." It captures the model via tracing or scripting (the two techniques from §3.1) into an intermediate representation that the libtorch C++ runtime executes — so a PyTorch model can be loaded and run inside a C++ service, an iOS app (via PyTorch Mobile / ExecuTorch), or anywhere libtorch builds. As of 2026 TorchScript is in maintenance mode: the strategic direction is <strong><code>torch.export</code></strong>, which produces a clean, ahead-of-time-captured graph (an FX <em>ExportedProgram</em>) that feeds <code>torch.compile</code>, the Inductor backend, and the ExecuTorch edge runtime. The mental model is unchanged — capture the graph once, run it without the training stack — but the machinery is newer and the captured graph is more faithful to dynamic shapes.</p>
+
+        <h3>TensorFlow: SavedModel and TFLite</h3>
+        <p><strong>SavedModel</strong> is TensorFlow's complete, language-neutral serialization: the graph (as one or more typed <em>signatures</em>), the trained variables, and any assets, in a directory that TensorFlow Serving, TensorFlow.js, or the C/Java/Go APIs can all load. It is the SavedModel a Keras <code>model.export()</code> writes, and the thing TF Serving from §3.4 actually mounts.</p>
+        <p><strong>TFLite</strong> (now <em>LiteRT</em>) is the edge sibling: a converter takes a SavedModel and emits a single <code>.tflite</code> FlatBuffer — a compact, mmap-able artifact tuned for phones, microcontrollers, and embedded accelerators. The conversion typically applies <strong>post-training quantization</strong> (float32 → int8, or float16) and can target hardware delegates (the NNAPI / GPU / Hexagon / CoreML delegates). TFLite is the canonical answer to the <em>mobile / edge</em> branch of §3.1's tree, and the reason that branch always forces a quantized format.</p>
+
+        <table class="data">
+          <thead><tr><th>Format</th><th>Origin</th><th>Runs on</th><th>Best for</th></tr></thead>
+          <tbody>
+            <tr><td><strong>ONNX</strong></td><td class="m">neutral hub</td><td>ONNX Runtime, TensorRT, OpenVINO, CoreML, browser (ORT-Web)</td><td>cross-framework portability; heterogeneous edge</td></tr>
+            <tr><td><strong>TorchScript / <code>torch.export</code></strong></td><td class="m">PyTorch</td><td>libtorch (C++), PyTorch Mobile, ExecuTorch</td><td>staying in the PyTorch world; C++ services, iOS</td></tr>
+            <tr><td><strong>SavedModel</strong></td><td class="m">TensorFlow</td><td>TF Serving, TensorFlow.js, TF C/Java APIs</td><td>TF-native server deployment</td></tr>
+            <tr><td><strong>TFLite / LiteRT</strong></td><td class="hl">TensorFlow (edge)</td><td>phones, MCUs, embedded NPUs (NNAPI / GPU / CoreML delegates)</td><td>on-device, latency- and battery-bound mobile/edge</td></tr>
+            <tr><td><strong>TensorRT engine</strong></td><td class="m">NVIDIA (from ONNX/TF/Torch)</td><td>NVIDIA GPUs only</td><td>last-mile, hardware-locked server speed</td></tr>
+          </tbody>
+        </table>
+
+        <div class="exercise" data-answer="true" data-tol="0" data-hint="TFLite / LiteRT is the converter and runtime aimed at phones, MCUs, and embedded accelerators.">
+          <div class="ex-q">True or false: <b>TFLite</b> (LiteRT) targets <b>mobile / edge deployment</b> — phones, microcontrollers, and embedded accelerators — rather than server-side GPU serving. (Answer <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">TFLite converts a SavedModel into a compact FlatBuffer designed to run on-device, typically with int8/float16 quantization and hardware delegates (NNAPI, GPU, CoreML), under tight latency and battery budgets. That is the mobile/edge niche by design, so the statement is <b>true</b>.</div>
+        </div>
+
+        <div class="widget" id="deploy-format-matrix" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT F3.2 — MODEL-FORMAT COMPARISON MATRIX</span><span class="w-sub">FILTER BY CAPABILITY · HIGHLIGHT THE FIT</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>REQUIRE</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-deploy-cap="any">SHOW ALL</button>
+                  <button class="w-btn ghost" data-deploy-cap="crossfw">CROSS-FRAMEWORK</button>
+                  <button class="w-btn ghost" data-deploy-cap="nopy">NO-PYTHON RUNTIME</button>
+                  <button class="w-btn ghost" data-deploy-cap="edge">EDGE / MOBILE</button>
+                  <button class="w-btn ghost" data-deploy-cap="quant">BUILT-IN QUANT</button>
+                </div>
+              </div>
+            </div>
+            <div id="deploy-matrix-grid" style="margin-top:10px;"></div>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">FORMATS MATCHING</div><div class="r-value" id="deploy-matrix-count">—</div></div>
+              <div class="readout"><div class="r-label">BEST PICK</div><div class="r-value" id="deploy-matrix-best">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Each row is a format; green cells are capabilities it has. Click a requirement and the matrix dims every format that lacks it, leaving the candidates lit. Notice that only <b>ONNX</b> survives the cross-framework filter, and only the edge formats (TFLite, ExecuTorch, ONNX) survive the mobile filter — the same logic the decision tree in F3.1 encodes, here laid flat.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 3.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">3.4</span><h2>Serving — TorchServe, Triton &amp; friends</h2></div>
+        <p>An artifact is a passive file. A <strong>serving system</strong> is the process that loads it, listens on a network port, and turns a stream of requests into a stream of predictions — while squeezing every drop of throughput out of expensive accelerators. Serving is where most of the engineering lives, because the naive loop ("read request, run model, return") wastes the hardware almost completely. The single most important trick is <strong>dynamic batching</strong>: hold incoming requests for a few milliseconds and run them through the model together, because a GPU runs a batch of 32 almost as fast as a batch of 1.</p>
+
+        <div class="eq"><span class="eq-tag">EQ F3.3 — THROUGHPUT VS LATENCY UNDER BATCHING</span>
+        $$ \text{throughput} \;=\; \frac{B}{t_{\text{batch}}(B)}, \qquad t_{\text{batch}}(B) \approx t_0 + \beta B \;\;(\beta \ll t_0\ \text{while compute-bound}) $$
+        <div class="eq-note">\(B\) is the batch size; \(t_{\text{batch}}(B)\) is the time to process the whole batch. Because there is a large fixed per-call cost \(t_0\) (kernel launches, weight reads) and only a small marginal cost \(\beta\) per extra item, <b>throughput rises sharply with \(B\) until the GPU saturates</b>. The catch: a request that waits to fill a batch sees its tail latency grow. Serving is the art of choosing the batch window that maximizes throughput inside a latency budget — exactly the SLA trade-off below.</div>
+        </div>
+
+        <p>The two reference servers occupy different points on the generality axis:</p>
+        <ul>
+          <li><strong>TorchServe</strong> — PyTorch's own server. You package a model into a <code>.mar</code> archive with a Python <em>handler</em> (pre-process → infer → post-process), and it gives you HTTP/gRPC endpoints, dynamic batching, multi-model hosting, versioning, and metrics. Simplest path when everything is PyTorch. (Its stewardship moved to the community in 2024–25; check current maintenance status before standardizing on it.)</li>
+          <li><strong>NVIDIA Triton Inference Server</strong> — the framework-agnostic workhorse. A single Triton process serves models in <em>many</em> backends at once — TensorRT, ONNX Runtime, PyTorch (libtorch), TensorFlow, Python, vLLM — behind one HTTP/gRPC API. It adds concurrent model execution (multiple model instances per GPU), dynamic batching, model ensembles / business-logic scripting (chain pre-process → model → post-process on the server), and rich Prometheus metrics. When a fleet must serve a zoo of models from different frameworks on shared GPUs, Triton is the default.</li>
+        </ul>
+        <p>Alongside them sit the targeted specialists: <strong>TensorFlow Serving</strong> (mounts a SavedModel directory, hot-swaps versions), and for large language models specifically, throughput-oriented engines like <strong>vLLM</strong> (paged-attention KV cache, continuous batching) and <strong>TensorRT-LLM</strong> — frequently run <em>as a Triton backend</em> so the LLM gets vLLM's scheduler and Triton's serving plumbing together.</p>
+
+        <div class="eq"><span class="eq-tag">EQ F3.4 — LITTLE'S LAW (FLEET SIZING)</span>
+        $$ L \;=\; \lambda \, W \quad\Longrightarrow\quad \text{concurrent requests in flight} = (\text{arrival rate}) \times (\text{mean latency}) $$
+        <div class="eq-note">A queueing identity that sizes serving fleets: the average number of requests <em>in the system</em> equals the arrival rate \(\lambda\) times the average time each spends there \(W\). At 200 requests/sec with a 0.5 s mean latency, \(L = 100\) requests are always in flight — so your replicas must hold 100 concurrent slots or the queue grows without bound. Batching lowers effective \(W\) per request at high \(\lambda\), which is why it is the lever that keeps fleets small.</div>
+        </div>
+
+        <div class="exercise" data-answer="100" data-tol="0.001" data-hint="Little's Law: L = λ·W with λ in req/s and W in seconds.">
+          <div class="ex-q">A service receives \(\lambda = 200\) requests per second with a mean end-to-end latency of \(W = 0.5\) s. By Little's Law (EQ F3.4), how many requests are <b>in flight</b> on average (\(L = \lambda W\))?</div>
+          <div class="ex-reveal-src">\(L = \lambda \, W = 200 \text{ req/s} \times 0.5 \text{ s} =\) <b>100</b> concurrent requests. The serving fleet must provision at least this much concurrency (across replicas and batch slots) or the queue — and tail latency — blows up.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Simulate a quantization size/latency trade-off table for a 7B model.
+# Latency model: decode is memory-bandwidth-bound, so per-token time scales
+# with bytes moved per param (EQ F3.1) -> smaller dtype, faster + smaller.
+import numpy as np
+N = 7e9                                   # parameters (7B)
+bw = 2.0e12                               # ~2 TB/s memory bandwidth (server GPU)
+
+dtypes = ["FP32", "FP16", "INT8", "INT4"]
+bytes_per = np.array([4.0, 2.0, 1.0, 0.5])
+size_gb   = N * bytes_per / 1e9           # on-disk / VRAM footprint
+# memory-bound per-token latency ~ (weight bytes read) / bandwidth
+lat_ms    = (N * bytes_per / bw) * 1e3
+acc_drop  = np.array([0.0, 0.1, 0.7, 2.5])  # typical % task-accuracy loss
+
+print(f"{'dtype':6}{'size(GB)':>10}{'lat(ms/tok)':>13}{'tok/s':>9}{'acc drop':>10}")
+for d, s, l, a in zip(dtypes, size_gb, lat_ms, acc_drop):
+    print(f"{d:6}{s:10.1f}{l:13.2f}{1000/l:9.0f}{a:9.1f}%")
+
+base = lat_ms[0]
+print("\nINT4 vs FP32: "
+      f"{size_gb[0]/size_gb[3]:.0f}x smaller, {base/lat_ms[3]:.0f}x faster decode,")
+print("at the cost of ~2.5% accuracy -- the core deployment bargain.")
+plot_xy(size_gb, lat_ms)   # smaller artifact -> lower latency (down-left is best)</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="deploy-tradeoff" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT F3.3 — LATENCY / SIZE TRADE-OFF EXPLORER</span><span class="w-sub">QUANTIZE + BATCH UNDER AN SLA · EQ F3.1 / F3.3</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>MODEL SIZE <output id="deploy-tradeoff-n-out">7B params</output></label><input type="range" id="deploy-tradeoff-n" min="0.5" max="70" step="0.5" value="7"/></div>
+              <div class="ctl"><label>BATCH SIZE B <output id="deploy-tradeoff-b-out">8</output></label><input type="range" id="deploy-tradeoff-b" min="1" max="64" step="1" value="8"/></div>
+              <div class="ctl"><label>LATENCY SLA <output id="deploy-tradeoff-sla-out">50 ms</output></label><input type="range" id="deploy-tradeoff-sla" min="5" max="200" step="5" value="50"/></div>
+            </div>
+            <canvas class="w-canvas" id="deploy-tradeoff-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">BEST DTYPE WITHIN SLA</div><div class="r-value" id="deploy-tradeoff-pick">—</div></div>
+              <div class="readout"><div class="r-label">ARTIFACT SIZE</div><div class="r-value" id="deploy-tradeoff-size">—</div></div>
+              <div class="readout"><div class="r-label">THROUGHPUT</div><div class="r-value" id="deploy-tradeoff-tput">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Four dots — FP32, FP16, INT8, INT4 — plotted as (artifact size, batch latency). The <span style="color:var(--danger);">red</span> line is your latency SLA; dots under it pass. Smaller dtype moves a dot down-and-left (smaller <em>and</em> faster, EQ F3.1), and the instrument picks the highest-precision dtype that still clears the SLA at your batch size. Raise the batch and latency climbs (EQ F3.3) while throughput rises — push it until the only survivors are the aggressive quantizations. This is the quantize-vs-quality bargain made visual.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 3.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">3.5</span><h2>JAX &amp; the wider ecosystem</h2></div>
+        <p>The deployment story so far is PyTorch- and TensorFlow-shaped, but the modern frontier runs through a third stack. <strong>JAX</strong> is a NumPy-compatible library of <em>composable function transformations</em>: <code>grad</code> (reverse-mode autodiff), <code>vmap</code> (automatic vectorization over a batch axis), <code>pmap</code>/<code>shard_map</code> (parallelism across devices), and above all <code>jit</code>, which traces a pure Python function into <strong>XLA</strong> — the same Accelerated Linear Algebra compiler underneath TensorFlow — and ahead-of-time compiles it into fused kernels for TPUs and GPUs.</p>
+
+        <div class="eq"><span class="eq-tag">EQ F3.5 — JAX AS FUNCTION TRANSFORMATIONS</span>
+        $$ f \;\xrightarrow{\;\texttt{jit}\;}\; \text{XLA}(f), \qquad f \;\xrightarrow{\;\texttt{grad}\;}\; \nabla f, \qquad f \;\xrightarrow{\;\texttt{vmap}\;}\; f^{\,(\text{batched})}, \qquad \text{and they } \textbf{compose} $$
+        <div class="eq-note">JAX's defining idea is that these transformations are <em>orthogonal and composable</em>: <code>jit(grad(vmap(f)))</code> is a single compiled, batched gradient — written once, lowered by XLA to optimal kernels. The price is purity: transformed functions must be side-effect-free, which is why JAX is loved for research clarity and large-scale training (it underpins much frontier-lab TPU work) and why its deployment path is distinct — you typically export the traced computation via <b>StableHLO</b> rather than ONNX.</div>
+        </div>
+
+        <p>For serving, JAX's natural route is <strong>StableHLO</strong> (the portable, versioned dialect XLA consumes) feeding either an XLA runtime, the Orbax checkpoint format, or — increasingly — conversion to TFLite/LiteRT for edge. The wider ecosystem clusters around three poles you should be able to place:</p>
+        <ul>
+          <li><strong>Compilers / IRs:</strong> XLA and StableHLO (TF/JAX), TorchInductor and the FX graph (PyTorch), Apache TVM and MLIR as cross-cutting compiler infrastructure. All do the same job — lower a high-level graph to fused device kernels.</li>
+          <li><strong>Vendor engines:</strong> TensorRT and TensorRT-LLM (NVIDIA), OpenVINO (Intel), CoreML (Apple), the Qualcomm / Hexagon stack (mobile NPUs). These are the last-mile, hardware-locked artifacts from §3.1's bottom row.</li>
+          <li><strong>Weight formats:</strong> <code>safetensors</code> has become the de-facto safe, fast, zero-copy checkpoint format (no arbitrary-code <code>pickle</code> risk), and GGUF dominates the local/consumer LLM world (llama.cpp), pairing weights with quantization metadata in one mmap-able file.</li>
+        </ul>
+
+        <p class="note"><strong>The honest 2026 summary.</strong> There is no single winning format, and anyone who tells you otherwise is selling something. The durable pattern is the funnel this chapter walked: <em>train</em> in a research framework (PyTorch dominant, JAX strong at the frontier), <em>capture</em> the graph into an artifact (ONNX for portability, native formats to stay in-ecosystem), <em>compile</em> to a hardware engine (TensorRT, TFLite, CoreML), and <em>serve</em> behind a batching server (Triton for heterogeneous fleets, vLLM/TensorRT-LLM for LLMs). Each arrow loses some generality and gains some speed. Knowing <em>which</em> arrow you are on — and what it costs you — is the whole skill of shipping a model.</p>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>You have reached the end of the Frameworks volume — and the path from a tensor to a served model is now complete.</strong> From the autograd engines and tensor libraries that train a model (Frameworks 01), through TensorFlow and Keras' high-level construction (Frameworks 02), to the export formats, runtimes, and serving stack that carry it into production (Frameworks 03), the loop closes: build it, capture it, compile it, serve it. Return to the <a href="../index.html#toc">index</a> to continue across the other volumes.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 3.R References ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">3.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://onnx.ai" target="_blank" rel="noopener">Bai, J., Lu, F., Zhang, K. et al. (2019). <span class="ref-venue">ONNX: Open Neural Network Exchange</span>.</a> <span class="ref-meta">onnx.ai — the framework-agnostic graph format and standard operator set at the heart of §3.2.</span></li>
+          <li><a href="https://github.com/google/jax" target="_blank" rel="noopener">Bradbury, J., Frostig, R., Hawkins, P. et al. (2018). <span class="ref-venue">JAX: composable transformations of Python+NumPy programs</span>.</a> <span class="ref-meta">github.com/google/jax — jit/grad/vmap/pmap over XLA (EQ F3.5).</span></li>
+          <li><a href="https://developer.nvidia.com/triton-inference-server" target="_blank" rel="noopener">NVIDIA. <span class="ref-venue">Triton Inference Server</span>.</a> <span class="ref-meta">developer.nvidia.com — multi-framework serving with concurrent execution and dynamic batching (§3.4).</span></li>
+          <li><a href="https://www.tensorflow.org/lite" target="_blank" rel="noopener">Google. <span class="ref-venue">TensorFlow Lite / LiteRT — On-Device Machine Learning</span>.</a> <span class="ref-meta">tensorflow.org/lite — the SavedModel→FlatBuffer converter and edge runtime of §3.3.</span></li>
+          <li><a href="https://onnxruntime.ai" target="_blank" rel="noopener">Microsoft. <span class="ref-venue">ONNX Runtime</span>.</a> <span class="ref-meta">onnxruntime.ai — the cross-platform inference engine with pluggable execution providers (CUDA, TensorRT, OpenVINO, CoreML, WebGPU).</span></li>
+          <li><a href="https://docs.pytorch.org/docs/stable/export.html" target="_blank" rel="noopener">PyTorch Team. <span class="ref-venue">torch.export &amp; ExecuTorch</span>.</a> <span class="ref-meta">docs.pytorch.org — ahead-of-time graph capture (ExportedProgram) and the edge runtime succeeding TorchScript.</span></li>
+          <li><a href="https://www.tensorflow.org/tfx/guide/serving" target="_blank" rel="noopener">Google. <span class="ref-venue">TensorFlow Serving</span>.</a> <span class="ref-meta">tensorflow.org/tfx — SavedModel hosting with versioned hot-swap, the TF-native serving path.</span></li>
+          <li><a href="https://github.com/vllm-project/vllm" target="_blank" rel="noopener">Kwon, W., Li, Z., Zhuang, S. et al. (2023). <span class="ref-venue">Efficient Memory Management for LLM Serving with PagedAttention (vLLM)</span>.</a> <span class="ref-meta">github.com/vllm-project/vllm — paged-attention KV cache and continuous batching for LLM throughput.</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../frameworks/02-tensorflow-keras.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">02</span> TensorFlow &amp; Keras</div></a>
+        <a class="next" href="../index.html#toc"><div class="p-dir">BACK TO</div><div class="p-title"><span class="p-num">··</span> Index</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — FRAMEWORKS · CH 03</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* ============================================================
+   The Ecosystem & Deployment — Frameworks Ch 03
+   Chapter instruments. Single IIFE, no globals.
+   F3.1 deployment-path decision tree
+   F3.2 model-format comparison matrix
+   F3.3 latency/size trade-off explorer
+   ============================================================ */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  function el(id) { return document.getElementById(id); }
+  function fmtGB(gb) {
+    if (gb >= 1000) return (gb / 1000).toFixed(1) + " TB";
+    if (gb >= 10) return gb.toFixed(0) + " GB";
+    if (gb >= 1) return gb.toFixed(1) + " GB";
+    return (gb * 1000).toFixed(0) + " MB";
+  }
+  var BYTES_PER = { FP32: 4, FP16: 2, INT8: 1, INT4: 0.5 };
+
+  /* ========================================================
+     INSTRUMENT F3.1 — deployment-path decision tree
+     framework + target -> recommended artifact / runtime / verb,
+     drawn as a 3-node flow: MODEL -> ARTIFACT -> ENGINE.
+     ======================================================== */
+  (function () {
+    var root = el("deploy-path-tree");
+    if (!root) return;
+    var canvas = el("deploy-path-canvas");
+    var artOut = el("deploy-path-artifact");
+    var runOut = el("deploy-path-runtime");
+    var verbOut = el("deploy-path-verb");
+    var src = "pytorch", target = "server";
+
+    /* recommendation table: keyed by target, with framework nuance */
+    function recommend(fw, tg) {
+      if (tg === "cross") {
+        return { art: "ONNX", run: "ONNX Runtime", verb: "EXPORT → ONNX",
+                 mid: "ONNX graph" };
+      }
+      if (tg === "browser") {
+        return { art: "ONNX", run: "ORT-Web (WASM/WebGPU)", verb: "EXPORT → ONNX",
+                 mid: "ONNX graph" };
+      }
+      if (tg === "mobile") {
+        if (fw === "pytorch") return { art: "ExecuTorch (.pte)", run: "ExecuTorch RT",
+          verb: "torch.export → lower", mid: ".pte (int8)" };
+        if (fw === "jax")     return { art: "TFLite / LiteRT", run: "LiteRT delegates",
+          verb: "StableHLO → TFLite", mid: ".tflite (int8)" };
+        return { art: "TFLite / LiteRT", run: "LiteRT delegates",
+          verb: "convert → TFLite", mid: ".tflite (int8)" };
+      }
+      /* server */
+      if (fw === "pytorch") return { art: "TorchScript / torch.export", run: "Triton + TensorRT",
+        verb: "trace / torch.export", mid: "TS / FX graph" };
+      if (fw === "jax")     return { art: "StableHLO", run: "XLA / Triton",
+        verb: "jit → StableHLO", mid: "StableHLO" };
+      return { art: "SavedModel", run: "TF Serving / Triton",
+        verb: "model.export()", mid: "SavedModel" };
+    }
+
+    function render() {
+      var r = recommend(src, target);
+      artOut.textContent = r.art;
+      runOut.textContent = r.run;
+      verbOut.textContent = r.verb;
+
+      var c = FM.setupCanvas(canvas, 240);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      ctx.clearRect(0, 0, w, h);
+
+      var fwLabel = src === "pytorch" ? "PyTORCH MODEL"
+                  : src === "tf" ? "TF / KERAS MODEL" : "JAX FUNCTION";
+      var tgLabel = target === "server" ? "SERVER GPU"
+                  : target === "mobile" ? "MOBILE / EDGE"
+                  : target === "browser" ? "BROWSER" : "ANY RUNTIME";
+      var nodes = [
+        { t1: fwLabel, t2: "live model", col: C.SEC },
+        { t1: r.mid.toUpperCase(), t2: "artifact", col: C.MINT },
+        { t1: r.run.toUpperCase(), t2: tgLabel, col: C.BLUE }
+      ];
+      var cy = h / 2;
+      var boxW = Math.min(150, (w - 60) / 3);
+      var gap = (w - 3 * boxW) / 4;
+      var cx = [];
+      var i;
+      for (i = 0; i < 3; i++) cx.push(gap * (i + 1) + boxW * i + boxW / 2);
+
+      /* arrows between boxes */
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1.5;
+      for (i = 0; i < 2; i++) {
+        var x0 = cx[i] + boxW / 2, x1 = cx[i + 1] - boxW / 2;
+        ctx.beginPath(); ctx.moveTo(x0, cy); ctx.lineTo(x1 - 7, cy); ctx.stroke();
+        ctx.fillStyle = C.MUT;
+        ctx.beginPath();
+        ctx.moveTo(x1, cy); ctx.lineTo(x1 - 7, cy - 4); ctx.lineTo(x1 - 7, cy + 4);
+        ctx.closePath(); ctx.fill();
+      }
+      /* arrow verbs */
+      ctx.font = C.MONO; ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+      ctx.fillStyle = C.MUT;
+      ctx.fillText("capture", (cx[0] + cx[1]) / 2, cy - 6);
+      ctx.fillText("compile / serve", (cx[1] + cx[2]) / 2, cy - 6);
+
+      /* boxes */
+      var bh = 56;
+      for (i = 0; i < 3; i++) {
+        var bx = cx[i] - boxW / 2, by = cy - bh / 2;
+        ctx.fillStyle = "rgba(30,33,36,0.7)";
+        ctx.strokeStyle = nodes[i].col; ctx.lineWidth = 1.4;
+        roundRect(ctx, bx, by, boxW, bh, 5); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = nodes[i].col; ctx.textAlign = "center";
+        ctx.textBaseline = "middle"; ctx.font = "600 11px ui-monospace, Menlo, monospace";
+        wrapText(ctx, nodes[i].t1, cx[i], cy - 7, boxW - 12, 12);
+        ctx.fillStyle = C.MUT; ctx.font = C.MONO;
+        ctx.fillText(nodes[i].t2, cx[i], cy + 16);
+      }
+    }
+    function roundRect(ctx, x, y, w, h, r) {
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.arcTo(x + w, y, x + w, y + h, r);
+      ctx.arcTo(x + w, y + h, x, y + h, r);
+      ctx.arcTo(x, y + h, x, y, r);
+      ctx.arcTo(x, y, x + w, y, r);
+      ctx.closePath();
+    }
+    function wrapText(ctx, text, x, y, maxW, lh) {
+      var words = text.split(" "), line = "", lines = [], n;
+      for (n = 0; n < words.length; n++) {
+        var test = line ? line + " " + words[n] : words[n];
+        if (ctx.measureText(test).width > maxW && line) { lines.push(line); line = words[n]; }
+        else line = test;
+      }
+      if (line) lines.push(line);
+      var y0 = y - (lines.length - 1) * lh / 2;
+      for (n = 0; n < lines.length; n++) ctx.fillText(lines[n], x, y0 + n * lh);
+    }
+
+    function wire(attr, set) {
+      var btns = root.querySelectorAll("[" + attr + "]");
+      btns.forEach(function (b) {
+        b.addEventListener("click", function () {
+          btns.forEach(function (o) { o.classList.remove("on"); });
+          b.classList.add("on");
+          set(b.getAttribute(attr));
+          render();
+        });
+      });
+    }
+    wire("data-deploy-src", function (v) { src = v; });
+    wire("data-deploy-target", function (v) { target = v; });
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT F3.2 — model-format comparison matrix
+     rows = formats, columns = capabilities. A "REQUIRE" filter
+     dims formats lacking the chosen capability.
+     ======================================================== */
+  (function () {
+    var root = el("deploy-format-matrix");
+    if (!root) return;
+    var grid = el("deploy-matrix-grid");
+    var countOut = el("deploy-matrix-count");
+    var bestOut = el("deploy-matrix-best");
+    var filter = "any";
+
+    /* capability flags: crossfw, nopy, edge, quant, server */
+    var caps = ["crossfw", "nopy", "edge", "quant", "server"];
+    var capLabel = { crossfw: "X-FW", nopy: "NO-PY", edge: "EDGE", quant: "QUANT", server: "SERVER" };
+    var formats = [
+      { name: "ONNX",        crossfw: 1, nopy: 1, edge: 1, quant: 1, server: 1, rank: 5 },
+      { name: "TorchScript", crossfw: 0, nopy: 1, edge: 1, quant: 1, server: 1, rank: 3 },
+      { name: "SavedModel",  crossfw: 0, nopy: 1, edge: 0, quant: 0, server: 1, rank: 2 },
+      { name: "TFLite",      crossfw: 0, nopy: 1, edge: 1, quant: 1, server: 0, rank: 4 },
+      { name: "ExecuTorch",  crossfw: 0, nopy: 1, edge: 1, quant: 1, server: 0, rank: 3 },
+      { name: "TensorRT",    crossfw: 0, nopy: 1, edge: 0, quant: 1, server: 1, rank: 4 },
+      { name: "StableHLO",   crossfw: 0, nopy: 1, edge: 1, quant: 0, server: 1, rank: 2 }
+    ];
+
+    function passes(f) { return filter === "any" || f[filter] === 1; }
+
+    function render() {
+      var html = '<div style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.14em;color:#636363;margin-bottom:8px;">FORMAT × CAPABILITY  (■ = supported)</div>';
+      html += '<div style="display:grid;grid-template-columns:120px repeat(5,1fr);gap:3px;">';
+      html += '<div></div>';
+      caps.forEach(function (c2) {
+        var hot = filter === c2;
+        html += '<div style="font-family:ui-monospace,Menlo,monospace;font-size:9px;letter-spacing:.1em;text-align:center;color:' +
+          (hot ? "#a6f2cc" : "#9b9b9b") + ';">' + capLabel[c2] + '</div>';
+      });
+      var matchCount = 0, best = null;
+      formats.forEach(function (f) {
+        var ok = passes(f);
+        if (ok) { matchCount++; if (!best || f.rank > best.rank) best = f; }
+        var op = ok ? "1" : "0.28";
+        html += '<div style="opacity:' + op + ';font-family:ui-monospace,Menlo,monospace;font-size:10px;color:' +
+          (ok ? "#e5e5e5" : "#636363") + ';display:flex;align-items:center;">' + f.name + '</div>';
+        caps.forEach(function (c2) {
+          var on = f[c2] === 1;
+          var isFilterCol = filter === c2;
+          var bg = on ? (isFilterCol && ok ? "#a6f2cc" : "rgba(166,242,204,0.45)") : "rgba(47,50,52,0.5)";
+          html += '<div style="opacity:' + op + ';height:20px;border-radius:2px;background:' + bg + ';"></div>';
+        });
+      });
+      html += '</div>';
+      grid.innerHTML = html;
+      countOut.textContent = matchCount + " / " + formats.length;
+      bestOut.textContent = best ? best.name : "—";
+    }
+
+    var btns = root.querySelectorAll("[data-deploy-cap]");
+    btns.forEach(function (b) {
+      b.addEventListener("click", function () {
+        btns.forEach(function (o) { o.classList.remove("on"); });
+        b.classList.add("on");
+        filter = b.getAttribute("data-deploy-cap");
+        render();
+      });
+    });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT F3.3 — latency / size trade-off explorer
+     4 dtype points (size, latency) under an SLA line; pick the
+     highest-precision dtype that clears the SLA at batch B.
+     ======================================================== */
+  (function () {
+    var root = el("deploy-tradeoff");
+    if (!root) return;
+    var canvas = el("deploy-tradeoff-canvas");
+    var nIn = el("deploy-tradeoff-n");
+    var bIn = el("deploy-tradeoff-b");
+    var slaIn = el("deploy-tradeoff-sla");
+    var nOut = el("deploy-tradeoff-n-out");
+    var bOut = el("deploy-tradeoff-b-out");
+    var slaOut = el("deploy-tradeoff-sla-out");
+    var pickEl = el("deploy-tradeoff-pick");
+    var sizeEl = el("deploy-tradeoff-size");
+    var tputEl = el("deploy-tradeoff-tput");
+
+    var order = ["FP32", "FP16", "INT8", "INT4"];   // high → low precision
+    var BW = 2.0e12;                                 // ~2 TB/s memory bandwidth
+    /* per-batch latency: memory-bound floor (read weights once per step) plus a
+       small compute term that grows with batch.  t = t_mem + beta * B          */
+    function latencyMs(bytesParam, N, B) {
+      var tMem = (N * bytesParam) / BW * 1e3;        // ms to stream weights once
+      var beta = tMem * 0.04;                         // marginal cost per item
+      return tMem + beta * B;
+    }
+
+    function render() {
+      var Nbil = +nIn.value, B = +bIn.value, sla = +slaIn.value;
+      var N = Nbil * 1e9;
+      nOut.textContent = (Nbil >= 1 ? Nbil : Nbil) + "B params";
+      bOut.textContent = B;
+      slaOut.textContent = sla + " ms";
+
+      var pts = order.map(function (d) {
+        var bp = BYTES_PER[d];
+        return { d: d, size: N * bp / 1e9, lat: latencyMs(bp, N, B) };
+      });
+
+      /* best = highest precision (lowest index) that clears the SLA */
+      var pick = null, i;
+      for (i = 0; i < pts.length; i++) {
+        if (pts[i].lat <= sla) { pick = pts[i]; break; }
+      }
+      if (!pick) pick = pts[pts.length - 1];   // none clear: report fastest
+
+      pickEl.textContent = pick.lat <= sla ? pick.d : pick.d + " (over SLA)";
+      sizeEl.textContent = fmtGB(pick.size);
+      tputEl.textContent = (B / pick.lat * 1000).toFixed(0) + " tok/s";
+
+      var c = FM.setupCanvas(canvas, 300);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      var padL = 50, padR = 18, padT = 22, padB = 42;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      ctx.clearRect(0, 0, w, h);
+
+      var maxSize = pts[0].size * 1.12;
+      var maxLat = Math.max(sla * 1.25, pts[0].lat * 1.12);
+      function px(s) { return x0 + (s / maxSize) * (x1 - x0); }
+      function py(l) { return y0 - (l / maxLat) * (y0 - y1); }
+
+      /* axes */
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y0); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x0, y1); ctx.stroke();
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "center"; ctx.textBaseline = "top";
+      ctx.fillText("ARTIFACT SIZE (GB) →", (x0 + x1) / 2, y0 + 22);
+      ctx.save();
+      ctx.translate(x0 - 38, (y0 + y1) / 2); ctx.rotate(-Math.PI / 2);
+      ctx.textBaseline = "middle"; ctx.fillText("BATCH LATENCY (ms) →", 0, 0);
+      ctx.restore();
+
+      /* SLA line */
+      ctx.strokeStyle = C.RED; ctx.lineWidth = 1.6; ctx.setLineDash([5, 4]);
+      ctx.beginPath(); ctx.moveTo(x0, py(sla)); ctx.lineTo(x1, py(sla)); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = C.RED; ctx.textAlign = "right"; ctx.textBaseline = "bottom";
+      ctx.fillText("SLA " + sla + " ms", x1 - 2, py(sla) - 3);
+
+      /* dots */
+      var k;
+      for (k = 0; k < pts.length; k++) {
+        var p = pts[k];
+        var under = p.lat <= sla;
+        var isPick = (p.d === pick.d);
+        var X = px(p.size), Y = py(p.lat);
+        ctx.beginPath();
+        ctx.arc(X, Y, isPick ? 8 : 5, 0, 2 * Math.PI);
+        ctx.fillStyle = under ? (isPick ? C.MINT : "rgba(166,242,204,0.5)")
+                              : "rgba(255,65,54,0.65)";
+        ctx.fill();
+        if (isPick) { ctx.strokeStyle = C.BRIGHT; ctx.lineWidth = 1.4; ctx.stroke(); }
+        ctx.fillStyle = under ? C.MINT : C.RED;
+        ctx.font = "600 10px ui-monospace, Menlo, monospace";
+        ctx.textAlign = "left"; ctx.textBaseline = "middle";
+        ctx.fillText("  " + p.d, X + 4, Y - 9);
+      }
+    }
+    [nIn, bIn, slaIn].forEach(function (e2) { e2.addEventListener("input", render); });
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

@@ -1,0 +1,671 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>09 · Naive Bayes &amp; Generative Classifiers — AI Encyclopedia</title>
+<meta name="description" content="Naive Bayes from the ground up: generative vs discriminative models, Bayes' rule for classification and the naive independence assumption, Gaussian and multinomial/Bernoulli variants, Laplace smoothing, and why a model built on a lie still wins — with a draggable decision-boundary explorer, a live spam filter, and a correlated-feature toy." />
+<link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
+<meta name="theme-color" content="#000000" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+<link rel="canonical" href="https://ai-encyclopedia.com/ml/09-naive-bayes" />
+<meta property="og:url" content="https://ai-encyclopedia.com/ml/09-naive-bayes" />
+</head>
+<body data-track="ml" data-level="intro">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ MACHINE LEARNING / 09 / NAIVE BAYES</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../ml/10-svm-kernels.html">NEXT: SVM &amp; KERNELS →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">MACHINE LEARNING · CHAPTER 09 / 15</div>
+    <h1>Naive Bayes &amp; Generative Classifiers</h1>
+    <p class="lede">Most classifiers learn where to draw the line between classes. A <em>generative</em> classifier instead learns to model each class, then asks which class would most plausibly have produced what it sees. Naive Bayes is the simplest such model, named for one shortcut. <strong>Assume every feature is independent of the others given the class, an assumption almost no real data obeys, and you get a classifier that trains in a single pass, needs little data, and remains hard to beat.</strong></p>
+    <div class="ch-meta">
+      <span>LEVEL<b>INTRO</b></span>
+      <span>READING TIME<b>≈ 22 MIN</b></span>
+      <span>BUILDS ON<b>CH 03 · STATS CH 01</b></span>
+      <span>INSTRUMENTS<b>GAUSSIAN BOUNDARY · SPAM FILTER · INDEPENDENCE TOY</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">9.1</span>Generative vs discriminative</a>
+      <a href="#s2"><span class="n">9.2</span>Bayes' rule &amp; the naive lie</a>
+      <a href="#s3"><span class="n">9.3</span>Gaussian Naive Bayes</a>
+      <a href="#s4"><span class="n">9.4</span>Multinomial &amp; Bernoulli for text</a>
+      <a href="#s5"><span class="n">9.5</span>Smoothing &amp; why it works</a>
+      <a href="#s6"><span class="n">§</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 9.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">9.1</span><h2>Generative vs discriminative classifiers</h2></div>
+        <p>Every classifier ultimately wants \(p(y \mid x)\): the probability of class \(y\) given features \(x\). There are two roads to it, and they split machine learning down the middle.</p>
+        <p>A <strong>discriminative</strong> model attacks \(p(y \mid x)\) head-on. Logistic regression (Chapter 03), neural nets (Chapter 07), SVMs (next chapter) — all of them learn the boundary between classes directly and never bother modeling what the inputs themselves look like. A <strong>generative</strong> model takes the long way around: it learns \(p(x \mid y)\) — a full story of how each class <em>generates</em> its data — plus the class prevalences \(p(y)\), and only then flips them with Bayes' rule to recover \(p(y \mid x)\). You could literally <em>sample</em> from a trained generative classifier to hallucinate new examples of "spam" or "not spam".</p>
+        <table class="data">
+          <thead><tr><th>Aspect</th><th>Generative — models \(p(x,y)\)</th><th>Discriminative — models \(p(y \mid x)\)</th></tr></thead>
+          <tbody>
+            <tr><td>Learns</td><td class="m">how each class produces data</td><td class="m">where the boundary sits</td></tr>
+            <tr><td>Examples</td><td>Naive Bayes, LDA/QDA, GMMs, HMMs</td><td>Logistic regression, SVM, neural nets</td></tr>
+            <tr><td>Data hunger</td><td class="hl">low — strong assumptions fill the gaps</td><td>higher — wants enough to trace the boundary</td></tr>
+            <tr><td>Asymptotic accuracy</td><td>often lower (model is wrong)</td><td class="hl">often higher (fewer assumptions)</td></tr>
+            <tr><td>Can generate samples?</td><td class="hl">yes</td><td>no</td></tr>
+          </tbody>
+        </table>
+        <p>The trade-off is captured in a classic result of Ng &amp; Jordan (2002): a generative classifier and its discriminative twin (e.g. naive Bayes vs logistic regression) approach <em>different</em> error rates as data grows, but the generative one approaches its (sometimes higher) ceiling <strong>much faster</strong> — and wins outright in the small-data regime. With ten examples, the model that assumes more often beats the model that assumes less. With ten million, the assumptions become a liability. Naive Bayes lives at the assumption-heavy end of this spectrum, which is exactly why it remains a strong baseline whenever labeled data is scarce or latency is brutal.</p>
+
+        <div class="callout">
+          <span class="co-icon">INTUITION</span>
+          <p>A discriminative model is a border guard who has learned to spot a forged passport without ever picturing a real citizen. A generative model is a forger who has studied what genuine documents look like and judges a new one by how easily they could have produced it. Both can flag fakes — they just know the world differently.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 9.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">9.2</span><h2>Bayes' rule for classification &amp; the naive assumption</h2></div>
+        <p>The engine is Bayes' rule (Stats · EQ 1.x), read as a classifier. To score class \(y\) for an input \(x = (x_1, \ldots, x_d)\):</p>
+
+        <div class="eq"><span class="eq-tag">EQ M9.1 — BAYES' RULE AS A CLASSIFIER</span>
+        $$ p(y \mid x) \;=\; \frac{p(x \mid y)\, p(y)}{p(x)} \;=\; \frac{p(x \mid y)\, p(y)}{\sum_{y'} p(x \mid y')\, p(y')} $$
+        <div class="eq-note">The <b>prior</b> \(p(y)\) is just how common each class is. The <b>likelihood</b> \(p(x \mid y)\) is the class's story of the data. The <b>evidence</b> \(p(x)\) in the denominator is the same for every class, so for picking the winner it is <b>pure normalization</b> — you can ignore it entirely until you need calibrated probabilities. That single observation is why naive Bayes never has to compute the hard part.</div>
+        </div>
+
+        <p>The problem hides in \(p(x \mid y)\). For \(d\) binary features there are \(2^d - 1\) free numbers per class — a joint distribution over every combination of feature values. With \(d = 50\) that is more parameters than atoms you could ever count. No dataset estimates it. So naive Bayes makes its defining leap of faith: <strong>given the class, the features are mutually independent.</strong></p>
+
+        <div class="eq"><span class="eq-tag">EQ M9.2 — THE NAIVE CONDITIONAL-INDEPENDENCE ASSUMPTION</span>
+        $$ p(x_1, x_2, \ldots, x_d \mid y) \;\approx\; \prod_{j=1}^{d} p(x_j \mid y) $$
+        <div class="eq-note">The full joint — exponential in \(d\) — collapses into a <b>product of \(d\) one-dimensional pieces</b>, each trivially estimated by counting. The cost falls from \(2^d\) parameters to \(O(d)\) per class. This is almost never literally true (in text, "new" and "york" are wildly correlated), yet it is the entire trick. The assumption is the price; linear-time learning and inference is what you buy.</div>
+        </div>
+
+        <p>Plug EQ M9.2 into EQ M9.1 and drop the constant evidence. The decision rule becomes a single argmax, and — because likelihoods are tiny products that underflow to zero in floating point — you always compute it in <strong>log space</strong>, where the product becomes a sum:</p>
+
+        <div class="eq"><span class="eq-tag">EQ M9.3 — THE NAIVE BAYES DECISION RULE</span>
+        $$ \hat{y} \;=\; \underset{y}{\arg\max}\;\Big[\, \log p(y) + \sum_{j=1}^{d} \log p(x_j \mid y) \,\Big] $$
+        <div class="eq-note">A prediction is one <b>weighted vote</b>: start from the log-prior, then add each feature's log-evidence for that class. No iteration, no gradient descent — training is counting, inference is addition. Because the scores are sums of log-probabilities, naive Bayes is <b>linear in feature log-likelihoods</b>; with the right parameterization it shares the exact functional form of logistic regression, just fit differently.</div>
+        </div>
+
+        <div class="exercise" data-answer="true" data-tol="0" data-hint="It is the single defining assumption of the model — read the name.">
+          <div class="ex-q">True or false: Naive Bayes assumes that the features are independent of one another <em>given the class label</em>. (Answer <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">This is precisely EQ M9.2 — the conditional-independence assumption that lets the joint likelihood factor into \(\prod_j p(x_j \mid y)\). It is the model's namesake "naive" leap. The answer is <b>true</b>. (Note the subtlety: features need not be marginally independent — only independent <em>conditioned on the class</em>.)</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># EQ M9.3 by hand: log-prior + sum of feature log-likelihoods, then argmax.
+# Two classes, two binary features. p(x_j=1 | y) given directly.
+import numpy as np
+
+prior   = {0: 0.6, 1: 0.4}                 # p(y): class 0 is more common
+p1      = {0: [0.2, 0.7], 1: [0.8, 0.3]}   # p(x_j = 1 | y) for j = 0, 1
+x       = [1, 0]                            # observe feature0 = 1, feature1 = 0
+
+def logscore(y):
+    s = np.log(prior[y])
+    for j, xj in enumerate(x):
+        pj = p1[y][j] if xj == 1 else 1 - p1[y][j]   # Bernoulli per feature
+        s += np.log(pj)
+    return s
+
+scores = {y: logscore(y) for y in (0, 1)}
+print("log-scores:", {y: round(s, 4) for y, s in scores.items()})
+yhat = max(scores, key=scores.get)
+# turn log-scores into a calibrated posterior via the log-sum-exp normalizer
+m  = max(scores.values())
+Z  = sum(np.exp(s - m) for s in scores.values())
+post = {y: float(np.exp(s - m) / Z) for y, s in scores.items()}
+print("posterior :", {y: round(p, 4) for y, p in post.items()})
+print("prediction:", yhat, "  (evidence p(x) cancelled, never computed)")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 9.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">9.3</span><h2>Gaussian Naive Bayes</h2></div>
+        <p>For continuous features — heights, pixel intensities, sensor readings — each per-feature likelihood \(p(x_j \mid y)\) is modeled as a one-dimensional Gaussian. The training "fit" is nothing but estimating, from each class's data, a mean and a variance for every feature:</p>
+
+        <div class="eq"><span class="eq-tag">EQ M9.4 — GAUSSIAN PER-FEATURE LIKELIHOOD</span>
+        $$ p(x_j \mid y) \;=\; \frac{1}{\sqrt{2\pi\,\sigma_{y,j}^2}}\,\exp\!\left(-\frac{(x_j - \mu_{y,j})^2}{2\,\sigma_{y,j}^2}\right) $$
+        <div class="eq-note">\(\mu_{y,j}\) and \(\sigma_{y,j}^2\) are simply the sample mean and variance of feature \(j\) among the training points of class \(y\). Because features are assumed independent given the class, the joint per-class density is an <b>axis-aligned</b> Gaussian — its contours are ellipses whose axes line up with the coordinate axes, never tilted. That single restriction is the visible footprint of the naive assumption in 2-D.</div>
+        </div>
+
+        <p>Where do the decision boundaries come from? Take the log-ratio of the two class posteriors. With <em>shared</em> variances the quadratic terms cancel and you get a <strong>straight line</strong> — this is Linear Discriminant Analysis. With per-class variances the quadratic terms survive and the boundary becomes a <strong>conic</strong> (a parabola, ellipse, or hyperbola) — Quadratic Discriminant Analysis. Gaussian NB is exactly QDA with the off-diagonal covariances forced to zero.</p>
+
+        <div class="widget" id="nb-gauss" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT M9.1 — GAUSSIAN-NB BOUNDARY EXPLORER</span><span class="w-sub">DRAG CLASS MEANS · TUNE VARIANCE · EQ M9.4</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>CLASS A SPREAD σ <output id="nb-g-sa-out">1.00</output></label><input type="range" id="nb-g-sa" min="0.4" max="2.4" step="0.05" value="1.0"/></div>
+              <div class="ctl"><label>CLASS B SPREAD σ <output id="nb-g-sb-out">1.00</output></label><input type="range" id="nb-g-sb" min="0.4" max="2.4" step="0.05" value="1.0"/></div>
+              <div class="ctl"><label>PRIOR p(A) <output id="nb-g-prior-out">0.50</output></label><input type="range" id="nb-g-prior" min="0.1" max="0.9" step="0.05" value="0.5"/></div>
+            </div>
+            <canvas class="w-canvas" id="nb-g-canvas" height="340"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">BOUNDARY SHAPE</div><div class="r-value" id="nb-g-shape">—</div></div>
+              <div class="readout acc"><div class="r-label">A-MEAN (drag the dot)</div><div class="r-value" id="nb-g-ma">—</div></div>
+              <div class="readout acc"><div class="r-label">B-MEAN (drag the dot)</div><div class="r-value" id="nb-g-mb">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Drag either coloured dot to move a class mean. Equal spreads give a <b>straight</b> boundary (LDA); make the spreads unequal and it bows into a <b>conic</b> (QDA). Skew the prior and the whole boundary slides toward the rarer class — Bayes-optimally demanding more evidence to call something uncommon. The shaded region is wherever class A wins the argmax of EQ M9.3.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Gaussian Naive Bayes from scratch: fit = means + variances, predict = argmax.
+import numpy as np
+rng = np.random.default_rng(0)
+
+# two 2-D classes, 200 points each, drawn from axis-aligned Gaussians
+mu = {0: [0.0, 0.0], 1: [3.0, 2.5]}
+Xy = [(rng.normal(mu[y], [1.0, 1.3], (200, 2)), np.full(200, y)) for y in (0, 1)]
+X  = np.vstack([a for a, _ in Xy]); y = np.concatenate([b for _, b in Xy])
+
+# --- fit: per class, per feature mean and variance (eps guards zero variance)
+classes = np.unique(y); eps = 1e-9
+means = np.array([X[y == c].mean(0) for c in classes])
+vars  = np.array([X[y == c].var(0)  for c in classes]) + eps
+logpr = np.log(np.array([(y == c).mean() for c in classes]))
+
+# --- predict: log-prior + sum_j log N(x_j; mu, var)  (EQ M9.3 + M9.4)
+def log_gauss(Xb, m, v):
+    return -0.5 * (np.log(2 * np.pi * v) + (Xb[:, None, :] - m) ** 2 / v).sum(2)
+scores = log_gauss(X, means, vars) + logpr          # (N, n_classes)
+pred   = classes[scores.argmax(1)]
+acc    = (pred == y).mean()
+print(f"fitted means:\n{means.round(2)}")
+print(f"fitted variances:\n{vars.round(2)}")
+print(f"train accuracy: {acc:.3f}")
+plot_scatter(X[:, 0], X[:, 1], list(pred.astype(int)))   # colour = predicted class</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <p class="note"><strong>One practical wrinkle.</strong> If a feature has near-zero variance within a class — a constant column, common in real data — the Gaussian collapses to a spike and the log-likelihood explodes. Production implementations (scikit-learn's <code>GaussianNB</code>) add a tiny smoothing term to every variance, a fixed fraction of the largest feature variance, to keep the densities well-behaved. The same impulse — never let a probability go to zero or infinity — drives the smoothing we meet next for discrete features.</p>
+      </section>
+
+      <!-- ====================== 9.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">9.4</span><h2>Multinomial &amp; Bernoulli NB for text</h2></div>
+        <p>Naive Bayes' first and most enduring job was sorting documents — Maron's 1961 "automatic indexing" experiments are arguably the technique's debut, and spam filters made it famous. Text needs a different per-feature model than the Gaussian, and there are two canonical choices that differ in <em>what they count</em>.</p>
+
+        <p><strong>Multinomial NB</strong> treats a document as a bag of word <em>counts</em>. Each class \(y\) has a vocabulary-sized probability vector \(\theta_{y}\) — "how likely is each word in a document of this class" — and a document's likelihood is the multinomial probability of its counts. The estimate for one word is the share of that class's total word-tokens it accounts for, with <strong>Laplace (add-\(\alpha\)) smoothing</strong> so an unseen word never zeroes out the whole product:</p>
+
+        <div class="eq"><span class="eq-tag">EQ M9.5 — MULTINOMIAL NB WITH LAPLACE SMOOTHING</span>
+        $$ \hat{\theta}_{y,w} \;=\; p(w \mid y) \;=\; \frac{N_{y,w} + \alpha}{N_{y} + \alpha\,V}, \qquad N_{y} = \sum_{w'} N_{y,w'} $$
+        <div class="eq-note">\(N_{y,w}\) is how many times word \(w\) appears across all class-\(y\) documents; \(N_{y}\) is that class's total token count; \(V\) is the vocabulary size; \(\alpha\) is the smoothing strength (\(\alpha = 1\) is "Laplace", \(\alpha = 0.5\) is "Lidstone/Jeffreys"). The \(+\alpha\) in the numerator and \(+\alpha V\) in the denominator together form a <b>valid probability distribution</b> — they sum to 1 over the vocabulary — and guarantee every word keeps a sliver of probability mass.</div>
+        </div>
+
+        <p><strong>Bernoulli NB</strong> instead treats each vocabulary word as a binary <em>presence/absence</em> flag and explicitly models the <em>absence</em> of words too — a "free" word that never appears in spam is positive evidence for ham. It tends to win on short texts (tweets, subject lines) where a word appearing once vs. thrice carries little extra signal; multinomial wins on longer documents where counts matter. Both are linear classifiers in log space; both are one counting pass to train.</p>
+
+        <div class="exercise" data-answer="0.1" data-tol="0.01" data-hint="Use EQ M9.5: (count + alpha) / (class total + alpha · V) with alpha = 1, V = 4.">
+          <div class="ex-q">A word appears \(N_{y,w} = 0\) times in class \(y\). The class has \(N_y = 6\) total tokens, the vocabulary size is \(V = 4\), and you use Laplace smoothing with \(\alpha = 1\). What smoothed probability \(p(w \mid y)\) does EQ M9.5 assign this unseen word? (Give a decimal.)</div>
+          <div class="ex-reveal-src">Apply EQ M9.5 directly: \(p(w \mid y) = \dfrac{N_{y,w} + \alpha}{N_y + \alpha V} = \dfrac{0 + 1}{6 + 1\times 4} = \dfrac{1}{10} = \) <b>0.1</b>. Without smoothing the answer would be \(0/6 = 0\), which would force the entire document's likelihood to zero — the catastrophe smoothing exists to prevent.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Multinomial Naive Bayes on a toy bag-of-words, with Laplace smoothing (EQ M9.5).
+import numpy as np
+vocab = ["win", "free", "money", "meeting", "report", "lunch"]
+V = len(vocab)
+# rows = documents (word counts), labels: 1 = spam, 0 = ham
+X = np.array([[2,1,1,0,0,0],   # spam
+              [1,1,0,0,0,0],   # spam
+              [0,0,0,1,1,0],   # ham
+              [0,0,0,1,0,1]])  # ham
+y = np.array([1, 1, 0, 0])
+alpha = 1.0
+
+# fit: per-class token totals -> smoothed word probabilities (EQ M9.5)
+theta, logprior = {}, {}
+for c in (0, 1):
+    counts = X[y == c].sum(0)                         # N_{y,w}
+    theta[c] = (counts + alpha) / (counts.sum() + alpha * V)
+    logprior[c] = np.log((y == c).mean())
+
+# predict a new document: "free money meeting"
+doc = np.array([0,1,1,1,0,0])
+score = {c: logprior[c] + (doc * np.log(theta[c])).sum() for c in (0, 1)}
+m = max(score.values()); Z = sum(np.exp(s - m) for s in score.values())
+post = {c: float(np.exp(s - m) / Z) for c, s in score.items()}
+print("p(win|spam) =", round(float(theta[1][0]), 3), " p(win|ham) =", round(float(theta[0][0]), 3))
+print("posterior   :", {c: round(p, 3) for c, p in post.items()})
+print("prediction  :", "SPAM" if score[1] > score[0] else "HAM")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="nb-spam" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT M9.2 — LIVE SPAM FILTER</span><span class="w-sub">MULTINOMIAL NB · TYPE WORDS · POSTERIOR UPDATES PER TOKEN</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl" style="flex:1 1 100%;">
+                <label>MESSAGE (type freely — known words shown below)</label>
+                <input type="text" id="nb-spam-in" class="w-input" value="free money click now" autocomplete="off" spellcheck="false" style="width:100%;"/>
+              </div>
+            </div>
+            <div class="ctl-row">
+              <div class="ctl"><label>LAPLACE α <output id="nb-spam-a-out">1.0</output></label><input type="range" id="nb-spam-a" min="0.05" max="3" step="0.05" value="1"/></div>
+            </div>
+            <div id="nb-spam-tokens" style="display:flex;flex-wrap:wrap;gap:5px;margin:4px 0 12px;min-height:22px;"></div>
+            <div style="border:1px solid var(--hairline);border-radius:4px;padding:14px;">
+              <div style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.16em;color:#636363;margin-bottom:8px;">P(SPAM | MESSAGE)</div>
+              <div style="height:16px;background:rgba(47,50,52,.4);border-radius:2px;overflow:hidden;">
+                <div id="nb-spam-bar" style="height:100%;width:50%;background:#ff4136;transition:width .25s ease-in-out;"></div>
+              </div>
+            </div>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">LOG-SCORE SPAM</div><div class="r-value" id="nb-spam-ls">—</div></div>
+              <div class="readout"><div class="r-label">LOG-SCORE HAM</div><div class="r-value" id="nb-spam-lh">—</div></div>
+              <div class="readout acc"><div class="r-label">VERDICT</div><div class="r-value" id="nb-spam-verdict">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">A tiny corpus is baked in (spammy words: <em>free, money, win, click, offer, now, prize</em>; hammy words: <em>meeting, report, lunch, project, team, schedule</em>). Each token you add casts a log-vote (EQ M9.3); the bar is the softmaxed posterior. Words the model has never seen contribute only the smoothed floor — turn α up and watch unknown words pull every verdict toward 50/50.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 9.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">9.5</span><h2>Smoothing, failure modes &amp; why it works anyway</h2></div>
+        <p>We have already met the most important fix. The <strong>zero-frequency problem</strong> is fatal without it: one word the training set never saw in a class drives \(p(w \mid y) = 0\), and a single zero in the product of EQ M9.3 sends the whole log-likelihood to \(-\infty\), vetoing that class no matter how strong the other evidence. Laplace/Lidstone smoothing (EQ M9.5) is the cure — read as a <em>Bayesian posterior</em>, \(\alpha\) is the strength of a Dirichlet prior that pre-loads \(\alpha\) imaginary observations of every word. It is regularization wearing a probabilistic costume.</p>
+
+        <p>The deeper failure mode is the assumption itself. When features are correlated — and they always are — naive Bayes <strong>double-counts evidence</strong>. The bigram "New York" contributes "new" <em>and</em> "york" as if they were two independent witnesses, so the model becomes <em>overconfident</em>: its posteriors pile up near 0 and 1, badly miscalibrated. Here is the surprise that has fascinated the field for decades:</p>
+
+        <div class="callout warn">
+          <span class="co-icon">THE PARADOX</span>
+          <p><strong>Naive Bayes' probabilities are often garbage, yet its <em>classifications</em> are excellent.</strong> Domingos &amp; Pazzani (1997) showed why: the argmax only needs the correct class to score highest, not to have an accurate probability. The independence assumption can be massively violated — pushing the estimated posterior to a wildly wrong value like 0.9999 — and the decision still lands on the right side of the boundary. The model is reliably wrong about <em>how sure</em> it is, and reliably right about <em>which class</em>. If you need calibrated probabilities, post-hoc calibration (Platt scaling, isotonic regression) is mandatory; if you only need labels, ship it.</p>
+        </div>
+
+        <p>Three more practical truths round out the picture: (1) NB is robust to irrelevant features, which simply contribute roughly equal log-votes to every class and cancel; (2) it is sensitive to <em>strongly</em> correlated features, so de-duplicating obvious redundancy (or using TF-IDF weighting for text) helps; (3) its training cost is a single pass and its model is a handful of count tables, making it the natural choice for streaming data, on-device inference, and any setting where a heavier model's accuracy gain does not justify its cost. It is the baseline every other classifier in this volume must beat — and on small, high-dimensional, sparse data, it frequently isn't beaten.</p>
+
+        <div class="widget" id="nb-indep" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT M9.3 — INDEPENDENCE-ASSUMPTION TOY</span><span class="w-sub">CORRELATE TWO FEATURES · WATCH NB DEGRADE</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>FEATURE CORRELATION ρ <output id="nb-i-rho-out">0.00</output></label><input type="range" id="nb-i-rho" min="0" max="0.97" step="0.01" value="0"/></div>
+            </div>
+            <canvas class="w-canvas" id="nb-i-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">TRUE-MODEL ACCURACY</div><div class="r-value" id="nb-i-true">—</div></div>
+              <div class="readout acc"><div class="r-label">NAIVE-BAYES ACCURACY</div><div class="r-value" id="nb-i-nb">—</div></div>
+              <div class="readout"><div class="r-label">MEAN |POSTERIOR ERROR|</div><div class="r-value" id="nb-i-cal">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Two classes drawn from correlated Gaussians; NB still fits them as axis-aligned (ρ forced to 0). At ρ = 0 the assumption holds and NB matches the optimal classifier. Crank ρ up: the calibration error climbs steadily — NB grows overconfident — while its <b>accuracy barely moves</b>. That gap is the paradox of §9.5 made visible: wrong probabilities, right decisions.</div>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>Naive Bayes draws boundaries by modeling each class; the next chapter draws the single best boundary directly.</strong> Chapter 10 — Support Vector Machines &amp; Kernels: maximum-margin separation, the kernel trick that buys nonlinear boundaries for free, and what changes when you stop modeling the data and start carving it.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 9.6 References ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">9.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://doi.org/10.1023/A:1007413511361" target="_blank" rel="noopener">Domingos, P. &amp; Pazzani, M. (1997). <span class="ref-venue">On the Optimality of the Simple Bayesian Classifier under Zero-One Loss</span>.</a> <span class="ref-meta">Machine Learning 29 — explains why a model with violated independence assumptions still classifies well (the paradox of §9.5).</span></li>
+          <li><a href="https://doi.org/10.1145/321075.321084" target="_blank" rel="noopener">Maron, M. E. (1961). <span class="ref-venue">Automatic Indexing: An Experimental Inquiry</span>.</a> <span class="ref-meta">Journal of the ACM 8(3) — arguably the first application of naive-Bayes-style probabilistic classification to text.</span></li>
+          <li><a href="https://doi.org/10.1023/A:1007692713085" target="_blank" rel="noopener">McCallum, A. &amp; Nigam, K. (1998). <span class="ref-venue">A Comparison of Event Models for Naive Bayes Text Classification</span>.</a> <span class="ref-meta">AAAI-98 Workshop — the canonical multinomial vs. Bernoulli comparison (EQ M9.5 and §9.4).</span></li>
+          <li><a href="https://papers.nips.cc/paper/2020-on-discriminative-vs-generative-classifiers-a-comparison-of-logistic-regression-and-naive-bayes" target="_blank" rel="noopener">Ng, A. Y. &amp; Jordan, M. I. (2002). <span class="ref-venue">On Discriminative vs. Generative Classifiers: A Comparison of Logistic Regression and Naive Bayes</span>.</a> <span class="ref-meta">NeurIPS 14 — the generative/discriminative trade-off and small-data advantage of §9.1.</span></li>
+          <li><a href="https://hastie.su.domains/ElemStatLearn/" target="_blank" rel="noopener">Hastie, T., Tibshirani, R. &amp; Friedman, J. (2009). <span class="ref-venue">The Elements of Statistical Learning</span> (2nd ed.).</a> <span class="ref-meta">Springer — §6.6.3 naive Bayes, §4.3 LDA/QDA (the Gaussian-NB connection of §9.3). Free PDF.</span></li>
+          <li><a href="https://web.stanford.edu/~jurafsky/slp3/4.pdf" target="_blank" rel="noopener">Jurafsky, D. &amp; Martin, J. H. (2024). <span class="ref-venue">Speech and Language Processing</span> (3rd ed. draft), Ch. 4: Naive Bayes and Sentiment Classification.</a> <span class="ref-meta">Stanford — a modern, worked treatment of multinomial NB for text with smoothing.</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../ml/08-backpropagation.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">08</span> Backpropagation</div></a>
+        <a class="next" href="../ml/10-svm-kernels.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">10</span> SVM &amp; Kernels</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — MACHINE LEARNING · CH 09</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* chapter instruments — single IIFE, no globals */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  /* ============================================================
+     INSTRUMENT M9.1 — Gaussian-NB boundary explorer
+     Two axis-aligned Gaussians; drag means, tune per-class sigma
+     and the prior; shade the region where class A wins argmax.
+     ============================================================ */
+  (function () {
+    var root = document.getElementById("nb-gauss");
+    if (!root) return;
+    var canvas = document.getElementById("nb-g-canvas");
+    var saEl = document.getElementById("nb-g-sa"), saOut = document.getElementById("nb-g-sa-out");
+    var sbEl = document.getElementById("nb-g-sb"), sbOut = document.getElementById("nb-g-sb-out");
+    var prEl = document.getElementById("nb-g-prior"), prOut = document.getElementById("nb-g-prior-out");
+    var shapeEl = document.getElementById("nb-g-shape");
+    var maEl = document.getElementById("nb-g-ma"), mbEl = document.getElementById("nb-g-mb");
+
+    // data coords run -6..6 in both axes; means in data space
+    var muA = { x: -1.6, y: 1.0 }, muB = { x: 2.0, y: -0.8 };
+    var DMIN = -6, DMAX = 6, dragging = null;
+
+    function dataToPx(dim, pt) {
+      var pad = 8;
+      var x = pad + (pt.x - DMIN) / (DMAX - DMIN) * (dim.w - 2 * pad);
+      var y = pad + (DMAX - pt.y) / (DMAX - DMIN) * (dim.h - 2 * pad);
+      return { x: x, y: y };
+    }
+    function pxToData(dim, px, py) {
+      var pad = 8;
+      var x = DMIN + (px - pad) / (dim.w - 2 * pad) * (DMAX - DMIN);
+      var y = DMAX - (py - pad) / (dim.h - 2 * pad) * (DMAX - DMIN);
+      return { x: x, y: y };
+    }
+    // log p(class) up to additive const: log prior - sum (xj-mu)^2/(2 sig^2) - log sig (per dim)
+    function logScore(pt, mu, sig, prior) {
+      var v = sig * sig;
+      var dx = pt.x - mu.x, dy = pt.y - mu.y;
+      return Math.log(prior) - (dx * dx + dy * dy) / (2 * v) - 2 * Math.log(sig);
+    }
+
+    function render() {
+      var dim = FM.setupCanvas(canvas, 340);
+      var ctx = dim.ctx, w = dim.w, h = dim.h;
+      var sa = parseFloat(saEl.value), sb = parseFloat(sbEl.value);
+      var pA = parseFloat(prEl.value), pB = 1 - pA;
+      ctx.clearRect(0, 0, w, h);
+
+      // ---- shade decision region on a coarse grid (class A wins -> mint tint)
+      var step = 8;
+      for (var py = 0; py < h; py += step) {
+        for (var px = 0; px < w; px += step) {
+          var d = pxToData(dim, px + step / 2, py + step / 2);
+          var aWins = logScore(d, muA, sa, pA) >= logScore(d, muB, sb, pB);
+          ctx.fillStyle = aWins ? "rgba(166,242,204,0.10)" : "rgba(78,138,247,0.09)";
+          ctx.fillRect(px, py, step, step);
+        }
+      }
+      // ---- boundary line: cells whose neighbor flips
+      ctx.fillStyle = C.BRIGHT;
+      for (py = 0; py < h; py += 3) {
+        var prev = null;
+        for (px = 0; px < w; px += 3) {
+          var dd = pxToData(dim, px, py);
+          var cur = logScore(dd, muA, sa, pA) >= logScore(dd, muB, sb, pB);
+          if (prev !== null && cur !== prev) ctx.fillRect(px - 1, py - 1, 2, 2);
+          prev = cur;
+        }
+      }
+      // ---- 1-sigma ellipses + means
+      function drawClass(mu, sig, col) {
+        var c = dataToPx(dim, mu);
+        var rx = sig / (DMAX - DMIN) * (w - 16);
+        var ry = sig / (DMAX - DMIN) * (h - 16);
+        ctx.strokeStyle = col; ctx.lineWidth = 1.4; ctx.globalAlpha = 0.85;
+        ctx.beginPath(); ctx.ellipse(c.x, c.y, rx, ry, 0, 0, Math.PI * 2); ctx.stroke();
+        ctx.beginPath(); ctx.ellipse(c.x, c.y, rx * 2, ry * 2, 0, 0, Math.PI * 2);
+        ctx.globalAlpha = 0.35; ctx.stroke(); ctx.globalAlpha = 1;
+        ctx.fillStyle = col; ctx.beginPath(); ctx.arc(c.x, c.y, 6, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = "#000"; ctx.beginPath(); ctx.arc(c.x, c.y, 2.2, 0, Math.PI * 2); ctx.fill();
+      }
+      drawClass(muA, sa, C.MINT);
+      drawClass(muB, sb, C.BLUE);
+
+      // ---- labels + readouts
+      ctx.font = C.MONO; ctx.fillStyle = C.MINT; ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText("CLASS A", 10, 10);
+      ctx.fillStyle = C.BLUE; ctx.fillText("CLASS B", 10, 24);
+      saOut.textContent = sa.toFixed(2);
+      sbOut.textContent = sb.toFixed(2);
+      prOut.textContent = pA.toFixed(2);
+      maEl.textContent = "(" + muA.x.toFixed(1) + ", " + muA.y.toFixed(1) + ")";
+      mbEl.textContent = "(" + muB.x.toFixed(1) + ", " + muB.y.toFixed(1) + ")";
+      shapeEl.textContent = Math.abs(sa - sb) < 0.06 ? "LINEAR (LDA)" : "CONIC (QDA)";
+    }
+
+    function pointerData(ev) {
+      var r = canvas.getBoundingClientRect();
+      var cx = (ev.touches ? ev.touches[0].clientX : ev.clientX) - r.left;
+      var cy = (ev.touches ? ev.touches[0].clientY : ev.clientY) - r.top;
+      var dim = { w: r.width, h: r.height };
+      return { px: cx, py: cy, dim: dim };
+    }
+    function nearest(ev) {
+      var p = pointerData(ev);
+      var a = dataToPx(p.dim, muA), b = dataToPx(p.dim, muB);
+      var da = Math.hypot(p.px - a.x, p.py - a.y), db = Math.hypot(p.px - b.x, p.py - b.y);
+      if (Math.min(da, db) > 24) return null;
+      return da <= db ? "A" : "B";
+    }
+    function moveTo(ev) {
+      if (!dragging) return;
+      var p = pointerData(ev);
+      var d = pxToData(p.dim, p.px, p.py);
+      d.x = Math.max(DMIN + 0.3, Math.min(DMAX - 0.3, d.x));
+      d.y = Math.max(DMIN + 0.3, Math.min(DMAX - 0.3, d.y));
+      if (dragging === "A") muA = d; else muB = d;
+      render();
+    }
+    canvas.addEventListener("mousedown", function (e) { dragging = nearest(e); if (dragging) e.preventDefault(); });
+    window.addEventListener("mousemove", moveTo);
+    window.addEventListener("mouseup", function () { dragging = null; });
+    canvas.addEventListener("touchstart", function (e) { dragging = nearest(e); if (dragging) e.preventDefault(); }, { passive: false });
+    canvas.addEventListener("touchmove", function (e) { if (dragging) { e.preventDefault(); moveTo(e); } }, { passive: false });
+    canvas.addEventListener("touchend", function () { dragging = null; });
+
+    [saEl, sbEl, prEl].forEach(function (el) { el.addEventListener("input", render); });
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ============================================================
+     INSTRUMENT M9.2 — live spam filter (multinomial NB)
+     Baked-in corpus -> per-class word probabilities (EQ M9.5);
+     each typed token casts a log-vote (EQ M9.3).
+     ============================================================ */
+  (function () {
+    var root = document.getElementById("nb-spam");
+    if (!root) return;
+    var input = document.getElementById("nb-spam-in");
+    var aEl = document.getElementById("nb-spam-a"), aOut = document.getElementById("nb-spam-a-out");
+    var tokWrap = document.getElementById("nb-spam-tokens");
+    var bar = document.getElementById("nb-spam-bar");
+    var lsEl = document.getElementById("nb-spam-ls"), lhEl = document.getElementById("nb-spam-lh");
+    var verdictEl = document.getElementById("nb-spam-verdict");
+
+    // toy training counts: word -> [count in spam, count in ham]
+    var COUNTS = {
+      free: [9, 0], money: [8, 0], win: [7, 0], click: [6, 1], offer: [6, 0],
+      now: [5, 1], prize: [5, 0], cash: [4, 0], urgent: [4, 0],
+      meeting: [0, 8], report: [0, 7], lunch: [0, 6], project: [1, 6],
+      team: [0, 5], schedule: [0, 5], please: [1, 4], thanks: [1, 4]
+    };
+    var vocab = Object.keys(COUNTS);
+    var V = vocab.length;
+    var totSpam = 0, totHam = 0;
+    vocab.forEach(function (w) { totSpam += COUNTS[w][0]; totHam += COUNTS[w][1]; });
+    // priors from #documents — say 5 spam, 5 ham docs -> 0.5 / 0.5 here
+    var logPrSpam = Math.log(0.5), logPrHam = Math.log(0.5);
+
+    function logp(word, cls, alpha) {
+      var c = COUNTS[word] ? COUNTS[word][cls] : 0;
+      var tot = cls === 0 ? totSpam : totHam;
+      return Math.log((c + alpha) / (tot + alpha * V));
+    }
+
+    function render() {
+      var alpha = parseFloat(aEl.value);
+      aOut.textContent = alpha.toFixed(2);
+      var raw = (input.value || "").toLowerCase().match(/[a-z]+/g) || [];
+      var ls = logPrSpam, lh = logPrHam;
+      tokWrap.innerHTML = "";
+      raw.forEach(function (tok) {
+        ls += logp(tok, 0, alpha);
+        lh += logp(tok, 1, alpha);
+        var known = !!COUNTS[tok];
+        var lean = logp(tok, 0, alpha) - logp(tok, 1, alpha); // >0 -> spammy
+        var chip = document.createElement("span");
+        chip.textContent = tok;
+        chip.style.cssText = "font:10px ui-monospace,Menlo,monospace;padding:3px 7px;border-radius:3px;border:1px solid " +
+          (!known ? C.MUT : (lean > 0 ? C.RED : C.MINT)) + ";color:" +
+          (!known ? C.MUT : (lean > 0 ? C.RED : C.MINT)) + ";";
+        if (!known) chip.title = "unseen word — smoothed floor only";
+        tokWrap.appendChild(chip);
+      });
+      // softmax over the two log-scores
+      var m = Math.max(ls, lh);
+      var es = Math.exp(ls - m), eh = Math.exp(lh - m);
+      var pSpam = es / (es + eh);
+      bar.style.width = (pSpam * 100).toFixed(1) + "%";
+      lsEl.textContent = ls.toFixed(2);
+      lhEl.textContent = lh.toFixed(2);
+      verdictEl.textContent = raw.length === 0 ? "—" :
+        (pSpam >= 0.5 ? "SPAM " + (pSpam * 100).toFixed(0) + "%" : "HAM " + ((1 - pSpam) * 100).toFixed(0) + "%");
+      verdictEl.style.color = raw.length === 0 ? C.SEC : (pSpam >= 0.5 ? C.RED : C.MINT);
+    }
+    input.addEventListener("input", render);
+    aEl.addEventListener("input", render);
+    render();
+  })();
+
+  /* ============================================================
+     INSTRUMENT M9.3 — independence-assumption toy
+     Two correlated Gaussians; the TRUE model uses the full
+     covariance, NB forces rho=0. Slide rho -> watch NB's
+     calibration error climb while accuracy stays flat.
+     ============================================================ */
+  (function () {
+    var root = document.getElementById("nb-indep");
+    if (!root) return;
+    var canvas = document.getElementById("nb-i-canvas");
+    var rhoEl = document.getElementById("nb-i-rho"), rhoOut = document.getElementById("nb-i-rho-out");
+    var trueEl = document.getElementById("nb-i-true");
+    var nbEl = document.getElementById("nb-i-nb");
+    var calEl = document.getElementById("nb-i-cal");
+
+    var rng = FM.mulberry32(7);
+    // standard-normal pair via Box-Muller, cached so the cloud is stable
+    var Z = [];
+    for (var i = 0; i < 600; i++) {
+      var u1 = Math.max(rng(), 1e-9), u2 = rng();
+      var r = Math.sqrt(-2 * Math.log(u1));
+      Z.push([r * Math.cos(2 * Math.PI * u2), r * Math.sin(2 * Math.PI * u2),
+              i % 2]); // last entry = class label 0/1
+    }
+    var muA = [-1.3, -1.3], muB = [1.3, 1.3];
+
+    function buildPoints(rho) {
+      // correlate the two features within each class via a shear of the 2nd axis
+      var L11 = 1, L21 = rho, L22 = Math.sqrt(Math.max(1e-6, 1 - rho * rho));
+      var pts = [];
+      Z.forEach(function (z) {
+        var cls = z[2], mu = cls === 0 ? muA : muB;
+        var x = mu[0] + L11 * z[0];
+        var y = mu[1] + L21 * z[0] + L22 * z[1];
+        pts.push([x, y, cls]);
+      });
+      return pts;
+    }
+    // gaussian log-density helpers
+    function logGaussFull(p, mu, rho) {
+      var v = 1, det = v * v * (1 - rho * rho);
+      var dx = p[0] - mu[0], dy = p[1] - mu[1];
+      var q = (dx * dx - 2 * rho * dx * dy + dy * dy) / (v * (1 - rho * rho));
+      return -0.5 * (Math.log(det) + q);
+    }
+    function logGaussDiag(p, mu) {
+      var dx = p[0] - mu[0], dy = p[1] - mu[1];
+      return -0.5 * (dx * dx + dy * dy);
+    }
+    function post(score0, score1) {
+      var m = Math.max(score0, score1);
+      var e0 = Math.exp(score0 - m), e1 = Math.exp(score1 - m);
+      return e1 / (e0 + e1); // P(class 1)
+    }
+
+    function render() {
+      var rho = parseFloat(rhoEl.value);
+      rhoOut.textContent = rho.toFixed(2);
+      var pts = buildPoints(rho);
+
+      var trueCorrect = 0, nbCorrect = 0, calSum = 0;
+      pts.forEach(function (p) {
+        // TRUE model: full covariance with correct rho
+        var pT = post(logGaussFull(p, muA, rho), logGaussFull(p, muB, rho));
+        // NAIVE BAYES: assumes rho = 0 (diagonal covariance)
+        var pN = post(logGaussDiag(p, muA), logGaussDiag(p, muB));
+        if ((pT >= 0.5 ? 1 : 0) === p[2]) trueCorrect++;
+        if ((pN >= 0.5 ? 1 : 0) === p[2]) nbCorrect++;
+        calSum += Math.abs(pN - pT); // how far NB's posterior strays from the truth
+      });
+      var n = pts.length;
+      trueEl.textContent = (100 * trueCorrect / n).toFixed(1) + "%";
+      nbEl.textContent = (100 * nbCorrect / n).toFixed(1) + "%";
+      calEl.textContent = (calSum / n).toFixed(3);
+
+      // ---- draw the cloud + NB's (axis-aligned) boundary
+      var dim = FM.setupCanvas(canvas, 320);
+      var ctx = dim.ctx, w = dim.w, h = dim.h, DMIN = -5, DMAX = 5;
+      ctx.clearRect(0, 0, w, h);
+      function toPx(x, y) {
+        return [8 + (x - DMIN) / (DMAX - DMIN) * (w - 16),
+                8 + (DMAX - y) / (DMAX - DMIN) * (h - 16)];
+      }
+      // NB decision shading (diag): boundary is the line x+y = const through origin midpoint
+      var step = 9;
+      for (var py = 0; py < h; py += step) {
+        for (var px = 0; px < w; px += step) {
+          var dx = DMIN + (px + step / 2 - 8) / (w - 16) * (DMAX - DMIN);
+          var dy = DMAX - (py + step / 2 - 8) / (h - 16) * (DMAX - DMIN);
+          var pN = post(logGaussDiag([dx, dy], muA), logGaussDiag([dx, dy], muB));
+          ctx.fillStyle = pN >= 0.5 ? "rgba(78,138,247,0.08)" : "rgba(166,242,204,0.08)";
+          ctx.fillRect(px, py, step, step);
+        }
+      }
+      pts.forEach(function (p) {
+        var q = toPx(p[0], p[1]);
+        ctx.fillStyle = p[2] === 0 ? C.MINT : C.BLUE;
+        ctx.globalAlpha = 0.7;
+        ctx.beginPath(); ctx.arc(q[0], q[1], 2.4, 0, Math.PI * 2); ctx.fill();
+      });
+      ctx.globalAlpha = 1;
+      ctx.font = C.MONO; ctx.fillStyle = C.SEC; ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText("NB FITS AXIS-ALIGNED (ρ ASSUMED 0)", 10, 10);
+    }
+    rhoEl.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

@@ -1,0 +1,839 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Explainability — SHAP, LIME &amp; Partial Dependence — AI Encyclopedia</title>
+<meta name="description" content="A model you cannot explain is one you cannot trust, debug, or defend to a regulator. Permutation importance and PDP/ICE for the global view; LIME and SHAP for the local one — with Shapley values giving every prediction an audit trail." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+<link rel="canonical" href="https://ai-encyclopedia.com/mlops/06-explainability" />
+<meta property="og:url" content="https://ai-encyclopedia.com/mlops/06-explainability" />
+</head>
+<body data-track="mlops" data-level="core">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ MODEL RISK / 06 / EXPLAINABILITY</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../mlops/07-mlops-governance.html">NEXT: 07 MLOPS &amp; GOVERNANCE →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">MODEL VALIDATION &amp; RISK · CHAPTER 06 / 07</div>
+    <h1>Explainability — SHAP, LIME &amp; Partial Dependence</h1>
+    <p class="lede">A model that predicts well is not the same as a model you can account for. When a loan is denied, a tumour flagged, or a transaction blocked, "the gradient-boosted ensemble said so" will not satisfy a customer, an engineer, or a regulator. <strong>Shapley values attribute each prediction to its input features, and the attributions sum exactly to the score the model produced.</strong></p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 28 MIN</b></span>
+      <span>BUILDS ON<b>ML 13 · STATS 04</b></span>
+      <span>INSTRUMENTS<b>FORCE PLOT · PDP/ICE · LIME</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">6.1</span>Why explainability</a>
+      <a href="#s2"><span class="n">6.2</span>Global vs local</a>
+      <a href="#s3"><span class="n">6.3</span>Permutation &amp; PDP/ICE</a>
+      <a href="#s4"><span class="n">6.4</span>LIME</a>
+      <a href="#s5"><span class="n">6.5</span>SHAP</a>
+      <a href="#s6"><span class="n">6.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 6.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">6.1</span><h2>Why explainability — trust, debugging, regulation</h2></div>
+        <p>A high cross-validated score (Chapter 01) tells you a model is <em>accurate on data that looks like your test set</em>. It tells you nothing about <em>why</em> a particular prediction came out the way it did, whether the model leans on a feature it should never have seen, or whether it will hold up when the world shifts under it. Explainability — also called interpretability — is the discipline of answering "why this output?" in terms a human can check. It serves three distinct masters.</p>
+
+        <table class="data">
+          <thead><tr><th>Driver</th><th>The question it asks</th><th>What an explanation buys</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Trust</strong></td><td>Should a clinician, underwriter, or operator act on this?</td><td>A reason the human can sanity-check against domain knowledge before deferring to the model.</td></tr>
+            <tr><td><strong>Debugging</strong></td><td>Why is this prediction wrong / surprising?</td><td>Exposes leakage, spurious correlations, and shortcut features — the snow-in-the-background-means-husky failures.</td></tr>
+            <tr><td><strong>Regulation</strong></td><td>Can you justify an adverse decision to the subject and an auditor?</td><td>A per-decision record that satisfies a legal right to an explanation.</td></tr>
+          </tbody>
+        </table>
+
+        <p>The regulatory pressure is no longer hypothetical. In the United States, the Equal Credit Opportunity Act and its Regulation B have for decades required lenders to give applicants the <em>specific principal reasons</em> for an adverse credit action; the CFPB confirmed in 2023 that this duty applies to opaque machine-learning models too — "the algorithm did it" is not a lawful reason. In the EU, the GDPR grants meaningful information about the logic of automated decisions, and the AI Act (in force from 2024, with high-risk obligations phasing in through 2026–2027) mandates transparency and human oversight for high-risk systems such as credit scoring and medical devices. Explanations are now a compliance artifact, not a research nicety.</p>
+
+        <div class="callout warn">
+          <span class="co-icon">A LOAD-BEARING CAVEAT</span>
+          <p><strong>An explanation is a model of a model, and models can lie.</strong> Every method in this chapter is a <em>post-hoc approximation</em> of an opaque function — it tells you what the model appears to do near a point, not the ground truth of the world. Post-hoc explanations can be unstable (small input changes flip them), unfaithful (they describe a surrogate, not the model), and even adversarially manipulable. The honest position, argued forcefully by Rudin (2019), is that for genuinely high-stakes decisions an <em>inherently interpretable</em> model (a sparse linear model, a short rule list, a small tree) is often preferable to a black box with an explanation bolted on. Use post-hoc tools, but never confuse them with understanding.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 6.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">6.2</span><h2>Global vs local explanations</h2></div>
+        <p>Explanations split along one axis above all others: <strong>scope</strong>. A <em>global</em> explanation describes the model's behaviour over the whole input distribution — "income is the most important feature on average." A <em>local</em> explanation describes one prediction — "<em>this</em> applicant was denied chiefly because of three recent late payments." The two answer different questions and must not be substituted for one another.</p>
+
+        <table class="data">
+          <thead><tr><th>Scope</th><th>Answers</th><th>Methods in this chapter</th><th>Typical consumer</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Global</strong></td><td>What does the model do overall?</td><td class="m">permutation importance, PDP</td><td>model owner, validator</td></tr>
+            <tr><td><strong>Local</strong></td><td>Why this single prediction?</td><td class="m">ICE, LIME, SHAP</td><td>end user, regulator, debugger</td></tr>
+          </tbody>
+        </table>
+
+        <p>A feature can be globally unimportant yet decisive for one row, and globally important yet irrelevant for another. Averaging local explanations recovers a global one — this is exactly how SHAP unifies the two scopes (§6.5) — but you cannot run the inference backwards: a single global importance bar does not tell any individual applicant why <em>they</em> were refused. The right-to-explanation laws of §6.1 are fundamentally demands for <em>local</em> explanations.</p>
+
+        <p>A second, orthogonal axis is <strong>model access</strong>. <em>Model-agnostic</em> methods (LIME, permutation importance, PDP, KernelSHAP) treat the model as a black box and only call its predict function, so one implementation works for any model. <em>Model-specific</em> methods exploit internal structure for speed or fidelity — TreeSHAP reads the splits of a tree ensemble to compute exact Shapley values in polynomial time; integrated gradients use a neural network's backward pass. Agnostic methods are universal but slow; specific methods are fast but tied to an architecture.</p>
+
+        <p class="note">A useful sanity rule: choose the explanation scope to match the decision being made. A board reviewing whether to deploy a fraud model wants a global picture; a customer disputing a blocked card wants a local one. Reporting the wrong scope is a more common error than computing either one incorrectly.</p>
+      </section>
+
+      <!-- ====================== 6.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">6.3</span><h2>Permutation importance &amp; PDP/ICE</h2></div>
+        <p>The cheapest global tool needs nothing but the trained model and a held-out set. <strong>Permutation importance</strong> asks a blunt question: if I destroy a feature's information by shuffling its column, how much worse does the model get? A feature the model relies on will see its score collapse when scrambled; a feature it ignores will not move the needle.</p>
+
+        <div class="eq"><span class="eq-tag">EQ V6.1 — PERMUTATION IMPORTANCE</span>
+        $$ \mathrm{Imp}_j \;=\; s\big(\hat{f},\, X,\, y\big) \;-\; \frac{1}{K}\sum_{k=1}^{K} s\big(\hat{f},\, X^{(\pi_k, j)},\, y\big) $$
+        <div class="eq-note">\(s\) is any score where higher is better (\(R^2\), accuracy, AUC); \(X^{(\pi_k, j)}\) is the data with column \(j\) randomly permuted under permutation \(\pi_k\), leaving every other feature and the labels untouched. Importance is the <b>drop in score caused by breaking the link between feature \(j\) and the target</b>, averaged over \(K\) shuffles to tame the randomness. Because it only calls \(\hat{f}\), it is fully model-agnostic and uses the same predict-and-score loop for any estimator.</div>
+        </div>
+
+        <p>Two warnings come with it. First, importance is measured on data the model was scored against, so prefer a <em>held-out</em> set: permutation importance on the training set rewards overfitting. Second — the one experts always raise — <strong>correlated features split and hide each other's importance</strong>. If two columns carry nearly the same information, shuffling one leaves the model propped up by the other, so both look unimportant even though the pair is decisive. With strong collinearity, permutation importance under-reports; cluster correlated features and permute the cluster, or reach for Shapley values, which share credit more fairly.</p>
+
+        <div class="exercise" data-answer="true" data-tol="0" data-unit="" data-hint="Re-read EQ V6.1: what does the score do when you shuffle a feature the model uses?">
+          <div class="ex-q">Permutation importance measures the <b>drop in model score</b> when a single feature's column is randomly shuffled (breaking its link to the target) while all other features and the labels are left intact. True or false? (Answer <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">That is exactly EQ V6.1: \(\mathrm{Imp}_j = s(\hat f, X, y) - \tfrac1K\sum_k s(\hat f, X^{(\pi_k,j)}, y)\). The first term is the score on intact data; the second is the score after column \(j\) is permuted. A feature the model leans on causes a large score drop when scrambled; an ignored feature causes none. The statement is <b>true</b>.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Permutation importance from scratch: rank features by the R^2 drop on shuffle.
+import numpy as np
+rng = np.random.default_rng(0)
+
+# A model that truly uses x0 strongly, x1 mildly, and ignores x2, x3.
+N, d = 400, 4
+X = rng.normal(0, 1, (N, d))
+w_true = np.array([3.0, 1.0, 0.0, 0.0])
+y = X @ w_true + rng.normal(0, 0.5, N)
+
+beta = np.linalg.lstsq(X, y, rcond=None)[0]      # the fitted "black box"
+def r2(Xp):
+    pred = Xp @ beta
+    return 1 - ((y - pred) ** 2).sum() / ((y - y.mean()) ** 2).sum()
+
+base = r2(X)                                      # score on intact data (EQ V6.1, term 1)
+print(f"baseline R^2 = {base:.4f}\n")
+
+names, imp = ["x0", "x1", "x2", "x3"], []
+for j in range(d):
+    drops = []
+    for _ in range(10):                           # K = 10 shuffles, average them
+        Xs = X.copy()
+        Xs[:, j] = rng.permutation(Xs[:, j])      # break feature j <-> target only
+        drops.append(base - r2(Xs))               # the score drop = importance
+    imp.append(np.mean(drops))
+
+for j in np.argsort(imp)[::-1]:                   # rank: most important first
+    print(f"{names[j]}: importance {imp[j]:+.4f}")
+print("\nx0 dominates, x1 is mild, x2/x3 ~ 0 -- the model's true reliance, recovered.")
+plot_xy(range(d), sorted(imp, reverse=True))</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <p>Permutation importance ranks features but says nothing about <em>shape</em>: is the effect of income linear, threshold-like, or U-shaped? The <strong>partial dependence plot</strong> (PDP), introduced by Friedman with gradient boosting, answers that. Fix feature \(j\) to a value \(v\), set it to \(v\) for <em>every</em> row in the data while leaving the other features as they are, average the predictions, and sweep \(v\) across its range:</p>
+
+        <div class="eq"><span class="eq-tag">EQ V6.2 — PARTIAL DEPENDENCE</span>
+        $$ \mathrm{PD}_j(v) \;=\; \mathbb{E}_{X_{-j}}\!\big[\,\hat{f}(v,\, X_{-j})\,\big] \;\approx\; \frac{1}{N}\sum_{i=1}^{N} \hat{f}\big(v,\, x^{(i)}_{-j}\big) $$
+        <div class="eq-note">\(X_{-j}\) is every feature except \(j\); the expectation marginalizes them out, leaving the <b>average effect of feature \(j\) alone</b> as a curve. The Monte-Carlo estimate just averages the model over the actual dataset with column \(j\) overwritten by \(v\). Its blind spot is the same as permutation importance: by overwriting \(j\) for all rows it can create <strong>off-manifold</strong> inputs (a pregnant 80-year-old) when \(j\) is correlated with the others, and by averaging it <strong>hides heterogeneity</strong> — opposite effects on two subgroups cancel to a flat line.</div>
+        </div>
+
+        <p><strong>Individual conditional expectation (ICE)</strong> curves fix that second flaw by <em>not</em> averaging: plot one line per row, each showing how that single prediction would move as \(j\) sweeps. The PDP is exactly the average of all the ICE lines. When the ICE lines are parallel, the PDP tells the whole story; when they fan out or cross, the feature interacts with others and the average is a lie of omission. PDP for the headline, ICE to check it is honest.</p>
+
+        <div class="widget" id="xai-pdp-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT V6.1 — PDP / ICE EXPLORER</span><span class="w-sub">AVERAGE EFFECT vs PER-ROW LINES · EQ V6.2</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>INTERACTION STRENGTH <output id="xai-pdp-int-out">0.0</output></label><input type="range" id="xai-pdp-int" min="0" max="2" step="0.1" value="0"/></div>
+              <div class="ctl"><label>ICE LINES SHOWN <output id="xai-pdp-n-out">14</output></label><input type="range" id="xai-pdp-n" min="0" max="24" step="1" value="14"/></div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>FEATURE SHAPE</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-xai-pdp-shape="sigmoid">THRESHOLD</button>
+                  <button class="w-btn ghost" data-xai-pdp-shape="linear">LINEAR</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="xai-pdp-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">PDP RANGE (MAX − MIN)</div><div class="r-value" id="xai-pdp-range">—</div></div>
+              <div class="readout"><div class="r-label">ICE SPREAD AT MID</div><div class="r-value" id="xai-pdp-spread">—</div></div>
+              <div class="readout"><div class="r-label">PDP TRUSTWORTHY?</div><div class="r-value" id="xai-pdp-trust" style="font-size:13px;">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The bold <span style="color:var(--accent);">mint</span> curve is the PDP — the model's average response as the feature sweeps left → right. The faint <span style="color:var(--secondary);">grey</span> lines are ICE curves, one per row, and the PDP is literally their average. Set <b>INTERACTION STRENGTH</b> to 0 and the ICE lines stay parallel: the average tells the whole story. Crank it up and the lines fan out and cross — now the flat-looking average is hiding subgroups that move in opposite directions, and the readout flips to "MISLEADING". This is precisely why you never trust a PDP without its ICE.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 6.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">6.4</span><h2>LIME — local surrogate models</h2></div>
+        <p>Global tools blur the individual case. <strong>LIME</strong> — Local Interpretable Model-agnostic Explanations, Ribeiro et al. (2016) — takes the opposite stance: forget the global function, just explain <em>one</em> prediction by approximating the black box with a simple, interpretable model in a small neighbourhood around that point. The intuition is that any wiggly decision surface looks roughly linear if you zoom in far enough.</p>
+
+        <p>The recipe for explaining a single instance \(x\): (1) generate a cloud of perturbed samples around \(x\); (2) ask the black box \(\hat{f}\) for its prediction on each; (3) weight each sample by how close it is to \(x\) with a kernel \(\pi_x\); (4) fit a sparse linear model \(g\) to that weighted, labelled cloud. The coefficients of \(g\) are the explanation: a signed weight per feature, valid only near \(x\).</p>
+
+        <div class="eq"><span class="eq-tag">EQ V6.3 — THE LIME OBJECTIVE</span>
+        $$ \xi(x) \;=\; \underset{g \in G}{\arg\min}\; \underbrace{\mathcal{L}\big(\hat{f},\, g,\, \pi_x\big)}_{\text{local fidelity}} \;+\; \underbrace{\Omega(g)}_{\text{simplicity}}, \qquad \pi_x(z) = \exp\!\left(\frac{-D(x,z)^2}{\sigma^2}\right) $$
+        <div class="eq-note">\(G\) is a family of interpretable models (sparse linear, short trees). \(\mathcal{L}\) penalizes \(g\) for disagreeing with \(\hat{f}\) on samples \(z\), each weighted by proximity \(\pi_x(z)\); \(\Omega\) penalizes complexity (e.g. number of nonzero weights). The result is the <b>simplest surrogate that is faithful to the black box right around \(x\)</b> — explicitly trading global accuracy for local interpretability. The neighbourhood width \(\sigma\) is a free knob, and that is exactly LIME's weak spot: the explanation can swing with the kernel width and with the random sample, so two runs can disagree.</div>
+        </div>
+
+        <p>LIME's appeal is that it is genuinely model-agnostic and produces a human-readable handful of "because feature X was high and feature Y was low" reasons. Its documented failure modes are equally real: the explanations can be <strong>unstable</strong> (re-running with a new random seed or a different bandwidth perturbs the weights), the linear surrogate can be a poor fit where the surface is sharply curved, and the choice of neighbourhood is more art than science. SHAP can be seen as the principled answer to "how should I have weighted those samples?" — which is the bridge to §6.5.</p>
+
+        <div class="widget" id="xai-lime-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT V6.2 — LIME LOCAL SURROGATE</span><span class="w-sub">BLACK-BOX BOUNDARY → LOCAL LINEAR FIT · EQ V6.3</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>NEIGHBOURHOOD WIDTH σ <output id="xai-lime-sig-out">0.30</output></label><input type="range" id="xai-lime-sig" min="0.08" max="1.2" step="0.02" value="0.30"/></div>
+              <div class="ctl"><label>PERTURBATION SAMPLES <output id="xai-lime-n-out">120</output></label><input type="range" id="xai-lime-n" min="20" max="300" step="10" value="120"/></div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>&nbsp;</label>
+                <div class="seg-row"><button class="w-btn ghost on" id="xai-lime-reseed">RESEED ▶</button></div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="xai-lime-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">LOCAL SURROGATE</div><div class="r-value" id="xai-lime-eq" style="font-size:12px;">—</div></div>
+              <div class="readout"><div class="r-label">LOCAL FIT (WEIGHTED R²)</div><div class="r-value" id="xai-lime-r2">—</div></div>
+              <div class="readout"><div class="r-label">STABILITY OVER RESEEDS</div><div class="r-value" id="xai-lime-stab">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The curved <span style="color:var(--blue);">blue</span> line is the black box's true decision boundary; the white dot is the instance we want to explain. Each <b>RESEED</b> draws a fresh cloud of perturbations (sized by σ), weighted by how close they sit to the dot, and fits a straight <span style="color:var(--accent);">mint</span> surrogate — LIME's local linear explanation. Shrink σ and the surrogate hugs the curve tightly (high local fidelity); widen it and the line tries to span a curved region and fits badly. Press <b>RESEED</b> a few times at a wide σ and watch the surrogate slope wander: that wobble is LIME's notorious instability, made visible.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 6.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">6.5</span><h2>SHAP — Shapley values for features</h2></div>
+        <p>SHAP — SHapley Additive exPlanations, Lundberg &amp; Lee (2017) — is the most-used method in the field because it rests on the one result everything else lacks: a uniqueness theorem. Borrow the <strong>Shapley value</strong> from cooperative game theory, where it is the provably unique fair way to split a coalition's payout among its players. Cast the prediction as the payout and the features as the players, and you get the only feature-attribution method satisfying a set of common-sense axioms simultaneously.</p>
+
+        <p>The Shapley value of feature \(j\) is its average marginal contribution across every possible order in which features could be added to the prediction. "Marginal contribution" means: how much does the model's output change when \(j\) joins a coalition \(S\) of features that are already "present" (set to their instance value) versus "absent" (marginalized to the background)?</p>
+
+        <div class="eq"><span class="eq-tag">EQ V6.4 — THE SHAPLEY VALUE</span>
+        $$ \phi_j \;=\; \sum_{S \subseteq F \setminus \{j\}} \frac{|S|!\,\big(|F| - |S| - 1\big)!}{|F|!}\;\Big[\, v\big(S \cup \{j\}\big) - v(S) \,\Big] $$
+        <div class="eq-note">\(F\) is the full feature set, \(S\) any coalition not containing \(j\), and \(v(S)\) the model's expected output when only the features in \(S\) are known. The bracket is \(j\)'s <b>marginal contribution</b> when it joins \(S\); the combinatorial weight is the fraction of orderings in which exactly that coalition precedes \(j\), so \(\phi_j\) is the average marginal contribution over <b>all orderings</b>. It is the unique attribution satisfying efficiency, symmetry, dummy (a feature that never changes \(v\) gets 0), and additivity.</div>
+        </div>
+
+        <p>The axiom that matters most for an audit is <strong>efficiency</strong> (also called local accuracy): the attributions and the base value must add up to exactly the prediction. Nothing is invented, nothing is lost — every unit of "why this number and not the average" is assigned to some feature.</p>
+
+        <div class="eq"><span class="eq-tag">EQ V6.5 — EFFICIENCY: THE EXPLANATION ADDS UP</span>
+        $$ \hat{f}(x) \;=\; \underbrace{\phi_0}_{\text{base value } \mathbb{E}[\hat f]} \;+\; \sum_{j=1}^{|F|} \phi_j \qquad\Longleftrightarrow\qquad \sum_{j=1}^{|F|} \phi_j \;=\; \hat{f}(x) - \mathbb{E}[\hat{f}(X)] $$
+        <div class="eq-note">\(\phi_0\) is the base value — the average prediction over the background, what you would guess knowing nothing about this row. The SHAP values are the <b>signed pushes from that baseline to the actual prediction</b>, and they must sum to the gap \(\hat f(x) - \mathbb{E}[\hat f]\) exactly. This is what turns a SHAP explanation into a literal audit trail: a regulator can check that the reasons sum to the decision. The force plot in Instrument V6.3 is this equation drawn as arrows.</div>
+        </div>
+
+        <p>Computing EQ V6.4 exactly costs \(2^{|F|}\) coalition evaluations — fine for a handful of features, hopeless for hundreds. SHAP's practical contribution is fast estimators: <strong>KernelSHAP</strong> recovers the Shapley values as the solution of a specially weighted linear regression (the principled cousin of LIME), and <strong>TreeSHAP</strong> computes them <em>exactly</em> for tree ensembles in time polynomial in the tree size — which is why SHAP and gradient boosting (Chapter on boosting) are the default explainability pairing in production. A persistent subtlety experts flag: how you define "feature absent" — marginalizing with the marginal distribution (interventional) versus the conditional (observational) — changes the values when features are correlated, and the two are answering subtly different causal questions.</p>
+
+        <div class="exercise" data-answer="0.52" data-tol="0.02" data-unit="" data-hint="Efficiency (EQ V6.5): the SHAP values sum to prediction minus base value.">
+          <div class="ex-q">A model's base (mean) value is \( \mathbb{E}[\hat f] = 0.30 \) and its prediction for one row is \( \hat f(x) = 0.82 \). By the efficiency axiom (EQ V6.5), what must the <b>sum of that row's SHAP values</b> equal, \( \hat f(x) - \mathbb{E}[\hat f] \)?</div>
+          <div class="ex-reveal-src">Efficiency forces the attributions plus the base value to reconstruct the prediction, so the SHAP values sum to \( \hat f(x) - \mathbb{E}[\hat f] = 0.82 - 0.30 = \) <b>0.52</b>. Whatever the individual feature pushes are, positive and negative, they must total exactly +0.52 — that is the property that makes the explanation an audit trail.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Exact Shapley values for a tiny 3-feature model -- and the efficiency check.
+import numpy as np
+from itertools import permutations
+
+# Model: linear part + one pairwise interaction between x0 and x1.
+def f(x):
+    return 3*x[0] + 2*x[1] - 1*x[2] + 4*x[0]*x[1]
+
+x        = np.array([1.0, 1.0, 1.0])    # the instance we explain
+baseline = np.array([0.0, 0.0, 0.0])    # "feature absent" = baseline value
+
+def v(S):                                # coalition value: S use x, rest use baseline
+    z = baseline.copy()
+    for i in S: z[i] = x[i]
+    return f(z)
+
+base_value = v([])                       # phi_0 = f(baseline)
+pred       = v([0, 1, 2])                # f(instance)
+
+# Shapley = average marginal contribution over ALL feature orderings (EQ V6.4).
+phi = np.zeros(3)
+orders = list(permutations(range(3)))
+for order in orders:
+    seen = []
+    for i in order:
+        before = v(seen); seen = seen + [i]
+        phi[i] += v(seen) - before       # marginal contribution of i in this order
+phi /= len(orders)
+
+print(f"base value phi_0      : {base_value:.1f}")
+print(f"shapley values phi    : {phi}")     # -> [5. 4. -1.]
+print(f"sum of shapley values : {phi.sum():.1f}")
+print(f"prediction - base     : {pred - base_value:.1f}")
+print(f"efficiency holds?     : {np.isclose(phi.sum(), pred - base_value)}")
+print("the 4*x0*x1 interaction is split evenly: +2 to x0, +2 to x1 (symmetry).")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="xai-force-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT V6.3 — SHAP FORCE PLOT</span><span class="w-sub">FEATURE PUSHES FROM BASE → PREDICTION · EQ V6.5</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>RECENT LATE PAYMENTS <output id="xai-f-late-out">0</output></label><input type="range" id="xai-f-late" min="0" max="6" step="1" value="0"/></div>
+              <div class="ctl"><label>INCOME (k/yr) <output id="xai-f-inc-out">60</output></label><input type="range" id="xai-f-inc" min="20" max="160" step="5" value="60"/></div>
+              <div class="ctl"><label>CREDIT UTILISATION % <output id="xai-f-util-out">30</output></label><input type="range" id="xai-f-util" min="0" max="100" step="5" value="30"/></div>
+            </div>
+            <div class="ctl-row">
+              <div class="ctl"><label>ACCOUNT AGE (yrs) <output id="xai-f-age-out">6</output></label><input type="range" id="xai-f-age" min="0" max="25" step="1" value="6"/></div>
+              <div class="ctl"><label>LOAN / INCOME RATIO <output id="xai-f-dti-out">3.0</output></label><input type="range" id="xai-f-dti" min="0.5" max="8" step="0.25" value="3.0"/></div>
+            </div>
+            <canvas class="w-canvas" id="xai-force-canvas" height="270"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">BASE VALUE E[f]</div><div class="r-value" id="xai-force-base">—</div></div>
+              <div class="readout acc"><div class="r-label">PREDICTED APPROVAL</div><div class="r-value" id="xai-force-pred">—</div></div>
+              <div class="readout"><div class="r-label">Σ φ = PRED − BASE?</div><div class="r-value" id="xai-force-check" style="font-size:13px;">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">A toy loan-approval score (additive log-odds, so contributions are exact Shapley values). The plot is EQ V6.5 drawn as forces: every prediction starts at the <b>base value</b> — the average approval probability — and each feature pushes it <span style="color:var(--accent);">right (mint, toward approval)</span> or <span style="color:var(--danger);">left (red, toward denial)</span> by its SHAP value. The arrows always land exactly on the prediction, and the bottom readout confirms Σφ = pred − base to the decimal. Drag <b>RECENT LATE PAYMENTS</b> up and watch a single red arrow grow until it alone flips the decision — that red bar <em>is</em> the principal adverse-action reason §6.1's regulations demand.</div>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>Explanations make a model legible; governance makes it accountable.</strong> Knowing <em>why</em> a prediction happened is one pillar of model risk — but a deployed model also needs versioning, reproducible pipelines, monitoring against the drift of Chapter 05, audit logs, and a human chain of responsibility. Chapter 07 assembles those pieces into MLOps and governance: how to ship, watch, and answer for a model in production once the math is done.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 6.R — References ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">6.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://arxiv.org/abs/1705.07874" target="_blank" rel="noopener">Lundberg, S. M. &amp; Lee, S.-I. (2017). <span class="ref-venue">A Unified Approach to Interpreting Model Predictions</span>.</a> <span class="ref-meta">NeurIPS 2017 — the SHAP framework and its uniqueness theorem (§6.5, EQ V6.4–V6.5).</span></li>
+          <li><a href="https://arxiv.org/abs/1602.04938" target="_blank" rel="noopener">Ribeiro, M. T., Singh, S. &amp; Guestrin, C. (2016). <span class="ref-venue">"Why Should I Trust You?": Explaining the Predictions of Any Classifier</span>.</a> <span class="ref-meta">KDD 2016 — LIME, local surrogate explanations (§6.4, EQ V6.3).</span></li>
+          <li><a href="https://doi.org/10.1214/aos/1013203451" target="_blank" rel="noopener">Friedman, J. H. (2001). <span class="ref-venue">Greedy Function Approximation: A Gradient Boosting Machine</span>.</a> <span class="ref-meta">Annals of Statistics 29(5) — partial dependence plots (§6.3, EQ V6.2).</span></li>
+          <li><a href="https://arxiv.org/abs/1802.03888" target="_blank" rel="noopener">Lundberg, S. M., Erion, G. G. &amp; Lee, S.-I. (2018). <span class="ref-venue">Consistent Individualized Feature Attribution for Tree Ensembles</span>.</a> <span class="ref-meta">arXiv — TreeSHAP, exact polynomial-time Shapley values for trees (§6.5).</span></li>
+          <li><a href="https://arxiv.org/abs/1309.6392" target="_blank" rel="noopener">Goldstein, A., Kapelner, A., Bleich, J. &amp; Pitkin, E. (2015). <span class="ref-venue">Peeking Inside the Black Box: Visualizing Statistical Learning with Plots of Individual Conditional Expectation</span>.</a> <span class="ref-meta">J. Computational and Graphical Statistics 24(1) — ICE curves (§6.3).</span></li>
+          <li><a href="https://www.shapley.org/" target="_blank" rel="noopener">Shapley, L. S. (1953). <span class="ref-venue">A Value for n-Person Games</span>.</a> <span class="ref-meta">Contributions to the Theory of Games II — the original Shapley value from cooperative game theory.</span></li>
+          <li><a href="https://arxiv.org/abs/1811.10154" target="_blank" rel="noopener">Rudin, C. (2019). <span class="ref-venue">Stop Explaining Black Box Machine Learning Models for High-Stakes Decisions and Use Interpretable Models Instead</span>.</a> <span class="ref-meta">Nature Machine Intelligence 1 — the case for inherently interpretable models (§6.1 caveat).</span></li>
+          <li><a href="https://christophm.github.io/interpretable-ml-book/" target="_blank" rel="noopener">Molnar, C. (2022). <span class="ref-venue">Interpretable Machine Learning</span> (2nd ed.).</a> <span class="ref-meta">Open textbook — the standard practical reference covering every method in this chapter.</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../mlops/05-stability-drift.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">05</span> Stability &amp; Drift</div></a>
+        <a class="next" href="../mlops/07-mlops-governance.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">07</span> MLOps &amp; Governance</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — MODEL VALIDATION &amp; RISK · CH 06</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* ============================================================
+   Explainability — SHAP, LIME & Partial Dependence
+   Chapter instruments. Single IIFE, no globals. Deterministic
+   mulberry32 RNG keeps every render reproducible; setTimeout
+   (never rAF) handles resize re-renders so background tabs stay
+   quiet. Each widget is guarded by element existence and renders
+   a meaningful initial state with zero interaction.
+   ============================================================ */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
+
+  /* ========================================================
+     INSTRUMENT V6.1 — PDP / ICE explorer
+     A toy model on one swept feature u in [0,1] plus a hidden
+     per-row covariate h in [-1,1]. The feature's effect is
+     g(u) (threshold sigmoid OR linear); an interaction term
+     beta * h * (u-0.5) makes per-row ICE lines fan out. The PDP
+     is the average of all ICE lines, exactly (EQ V6.2).
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("xai-pdp-demo");
+    if (!root) return;
+    var canvas = document.getElementById("xai-pdp-canvas");
+    var intEl = document.getElementById("xai-pdp-int");
+    var intOut = document.getElementById("xai-pdp-int-out");
+    var nEl = document.getElementById("xai-pdp-n");
+    var nOut = document.getElementById("xai-pdp-n-out");
+    var rangeEl = document.getElementById("xai-pdp-range");
+    var spreadEl = document.getElementById("xai-pdp-spread");
+    var trustEl = document.getElementById("xai-pdp-trust");
+    var shapeBtns = root.querySelectorAll("[data-xai-pdp-shape]");
+
+    var NROW = 24, NU = 41;
+    var shape = "sigmoid";
+
+    /* fixed per-row hidden covariate h_i in [-1,1], deterministic */
+    var rng = FM.mulberry32(60601);
+    var H = [];
+    for (var i = 0; i < NROW; i++) H.push(rng() * 2 - 1);
+
+    function gShape(u) {
+      if (shape === "linear") return u;                 /* 0..1 */
+      return 1 / (1 + Math.exp(-12 * (u - 0.5)));        /* threshold sigmoid 0..1 */
+    }
+    /* model prediction for row with covariate h at swept value u */
+    function predict(u, h, beta) {
+      return gShape(u) + beta * h * (u - 0.5);
+    }
+
+    function render() {
+      var beta = +intEl.value;
+      var nShown = +nEl.value;
+      intOut.textContent = beta.toFixed(1);
+      nOut.textContent = nShown;
+      var b;
+      for (b = 0; b < shapeBtns.length; b++) {
+        shapeBtns[b].classList.toggle("on", shapeBtns[b].getAttribute("data-xai-pdp-shape") === shape);
+      }
+
+      var c = FM.setupCanvas(canvas, 320);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      ctx.clearRect(0, 0, w, h);
+
+      var padL = 46, padR = 16, padT = 18, padB = 34;
+      var plotW = w - padL - padR, plotH = h - padT - padB;
+
+      /* build ICE curves + PDP across NU sweep points */
+      var us = [], ice = [], pdp = [], j, k;
+      for (k = 0; k < NU; k++) us.push(k / (NU - 1));
+      for (j = 0; j < NROW; j++) {
+        var row = [];
+        for (k = 0; k < NU; k++) row.push(predict(us[k], H[j], beta));
+        ice.push(row);
+      }
+      for (k = 0; k < NU; k++) {
+        var s = 0; for (j = 0; j < NROW; j++) s += ice[j][k];
+        pdp.push(s / NROW);
+      }
+      /* y range over everything shown */
+      var ymin = Infinity, ymax = -Infinity;
+      for (j = 0; j < NROW; j++) for (k = 0; k < NU; k++) {
+        if (ice[j][k] < ymin) ymin = ice[j][k];
+        if (ice[j][k] > ymax) ymax = ice[j][k];
+      }
+      if (ymax - ymin < 1e-6) { ymax += 0.5; ymin -= 0.5; }
+      var pad = (ymax - ymin) * 0.08; ymin -= pad; ymax += pad;
+
+      function X(u) { return padL + u * plotW; }
+      function Y(v) { return padT + (1 - (v - ymin) / (ymax - ymin)) * plotH; }
+
+      /* axes */
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(padL, padT); ctx.lineTo(padL, padT + plotH); ctx.lineTo(padL + plotW, padT + plotH); ctx.stroke();
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT; ctx.textBaseline = "middle";
+      ctx.textAlign = "right";
+      ctx.fillText(ymax.toFixed(2), padL - 6, padT + 4);
+      ctx.fillText(ymin.toFixed(2), padL - 6, padT + plotH - 4);
+      ctx.textAlign = "center"; ctx.textBaseline = "top";
+      ctx.fillText("SWEPT FEATURE  (low → high)", padL + plotW / 2, padT + plotH + 8);
+      ctx.save(); ctx.translate(13, padT + plotH / 2); ctx.rotate(-Math.PI / 2);
+      ctx.textBaseline = "middle"; ctx.textAlign = "center";
+      ctx.fillText("PREDICTION", 0, 0); ctx.restore();
+
+      /* ICE lines (faint grey) */
+      ctx.lineWidth = 1; ctx.strokeStyle = "rgba(155,155,155,.30)";
+      for (j = 0; j < Math.min(nShown, NROW); j++) {
+        ctx.beginPath();
+        for (k = 0; k < NU; k++) { var xx = X(us[k]), yy = Y(ice[j][k]); k === 0 ? ctx.moveTo(xx, yy) : ctx.lineTo(xx, yy); }
+        ctx.stroke();
+      }
+      /* PDP (bold mint) */
+      ctx.lineWidth = 2.5; ctx.strokeStyle = C.MINT;
+      ctx.beginPath();
+      for (k = 0; k < NU; k++) { var px = X(us[k]), py = Y(pdp[k]); k === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py); }
+      ctx.stroke();
+
+      /* legend */
+      ctx.textAlign = "left"; ctx.textBaseline = "middle";
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.moveTo(padL + 8, padT + 8); ctx.lineTo(padL + 26, padT + 8); ctx.stroke();
+      ctx.fillStyle = C.SEC; ctx.fillText("PDP (average)", padL + 31, padT + 8);
+      ctx.strokeStyle = "rgba(155,155,155,.6)"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(padL + 130, padT + 8); ctx.lineTo(padL + 148, padT + 8); ctx.stroke();
+      ctx.fillStyle = C.SEC; ctx.fillText("ICE (per row)", padL + 153, padT + 8);
+
+      /* readouts */
+      var pmin = Math.min.apply(null, pdp), pmax = Math.max.apply(null, pdp);
+      rangeEl.textContent = (pmax - pmin).toFixed(2);
+      /* ICE spread at the mid sweep point */
+      var mid = Math.floor(NU / 2), lo = Infinity, hi = -Infinity;
+      for (j = 0; j < NROW; j++) { if (ice[j][mid] < lo) lo = ice[j][mid]; if (ice[j][mid] > hi) hi = ice[j][mid]; }
+      var spread = hi - lo;
+      spreadEl.textContent = spread.toFixed(2);
+      var misleading = spread > 0.5 * Math.max(0.05, pmax - pmin);
+      trustEl.textContent = misleading ? "MISLEADING" : "FAITHFUL";
+      trustEl.style.color = misleading ? C.RED : C.MINT;
+    }
+
+    intEl.addEventListener("input", render);
+    nEl.addEventListener("input", render);
+    for (var bi = 0; bi < shapeBtns.length; bi++) {
+      shapeBtns[bi].addEventListener("click", function () {
+        shape = this.getAttribute("data-xai-pdp-shape"); render();
+      });
+    }
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();   /* meaningful initial state with zero interaction */
+  })();
+
+  /* ========================================================
+     INSTRUMENT V6.2 — LIME local surrogate
+     A 1-D black box y = sigmoid-ish curved boundary over x in
+     [-3,3]. We explain the instance at x0. Perturbations are
+     drawn ~ N(x0, sigma), weighted by an RBF kernel pi(z), and a
+     weighted least-squares LINE is fit (the local surrogate, EQ
+     V6.3). Reseeding shows instability; sigma trades fidelity.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("xai-lime-demo");
+    if (!root) return;
+    var canvas = document.getElementById("xai-lime-canvas");
+    var sigEl = document.getElementById("xai-lime-sig");
+    var sigOut = document.getElementById("xai-lime-sig-out");
+    var nEl = document.getElementById("xai-lime-n");
+    var nOut = document.getElementById("xai-lime-n-out");
+    var reseedBtn = document.getElementById("xai-lime-reseed");
+    var eqEl = document.getElementById("xai-lime-eq");
+    var r2El = document.getElementById("xai-lime-r2");
+    var stabEl = document.getElementById("xai-lime-stab");
+
+    var X0 = 0.7;            /* the instance we explain */
+    var seed = 70701;
+    var slopeHist = [];
+
+    /* the black box: a smooth curved response (logistic of a cubic-ish input) */
+    function blackbox(x) {
+      return 1 / (1 + Math.exp(-(1.6 * x + 0.4 * x * x * x * 0.2)));
+    }
+
+    /* weighted least squares line over points (xs) with weights (ws) */
+    function fitWLS(xs, ys, ws) {
+      var sw = 0, swx = 0, swy = 0, swxx = 0, swxy = 0, i;
+      for (i = 0; i < xs.length; i++) {
+        var W = ws[i];
+        sw += W; swx += W * xs[i]; swy += W * ys[i];
+        swxx += W * xs[i] * xs[i]; swxy += W * xs[i] * ys[i];
+      }
+      var denom = sw * swxx - swx * swx;
+      if (Math.abs(denom) < 1e-9) return { a: 0, b: swy / (sw || 1) };
+      var a = (sw * swxy - swx * swy) / denom;       /* slope */
+      var b = (swy - a * swx) / sw;                  /* intercept */
+      return { a: a, b: b };
+    }
+
+    function render() {
+      var sigma = +sigEl.value;
+      var nPts = +nEl.value;
+      sigOut.textContent = sigma.toFixed(2);
+      nOut.textContent = nPts;
+
+      var rng = FM.mulberry32(seed);
+      var xs = [], ys = [], ws = [], i;
+      for (i = 0; i < nPts; i++) {
+        /* Box-Muller-ish gaussian around X0 with std sigma */
+        var u1 = Math.max(1e-9, rng()), u2 = rng();
+        var g = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+        var z = X0 + sigma * g;
+        var d = z - X0;
+        var W = Math.exp(-(d * d) / (sigma * sigma));   /* RBF kernel pi_x(z) */
+        xs.push(z); ys.push(blackbox(z)); ws.push(W);
+      }
+      var fit = fitWLS(xs, ys, ws);
+
+      /* weighted R^2 of the surrogate */
+      var swy = 0, sw = 0;
+      for (i = 0; i < xs.length; i++) { swy += ws[i] * ys[i]; sw += ws[i]; }
+      var ybar = swy / (sw || 1), ssr = 0, sst = 0;
+      for (i = 0; i < xs.length; i++) {
+        var pr = fit.a * xs[i] + fit.b;
+        ssr += ws[i] * (ys[i] - pr) * (ys[i] - pr);
+        sst += ws[i] * (ys[i] - ybar) * (ys[i] - ybar);
+      }
+      var r2 = sst < 1e-12 ? 1 : clamp(1 - ssr / sst, -1, 1);
+
+      var c = FM.setupCanvas(canvas, 320);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      ctx.clearRect(0, 0, w, h);
+      var padL = 40, padR = 16, padT = 16, padB = 30;
+      var plotW = w - padL - padR, plotH = h - padT - padB;
+      var XMIN = -3, XMAX = 3, YMIN = 0, YMAX = 1;
+      function PX(x) { return padL + (x - XMIN) / (XMAX - XMIN) * plotW; }
+      function PY(y) { return padT + (1 - (y - YMIN) / (YMAX - YMIN)) * plotH; }
+
+      /* axes */
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(padL, padT); ctx.lineTo(padL, padT + plotH); ctx.lineTo(padL + plotW, padT + plotH); ctx.stroke();
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      ctx.fillText("1.0", padL - 6, PY(1)); ctx.fillText("0.0", padL - 6, PY(0));
+      ctx.textAlign = "center"; ctx.textBaseline = "top";
+      ctx.fillText("FEATURE x", padL + plotW / 2, padT + plotH + 8);
+
+      /* true black-box boundary (blue) */
+      ctx.strokeStyle = C.BLUE; ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (i = 0; i <= 120; i++) {
+        var xv = XMIN + (XMAX - XMIN) * i / 120;
+        var px = PX(xv), py = PY(blackbox(xv));
+        i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+
+      /* perturbation samples, opacity ~ weight */
+      for (i = 0; i < xs.length; i++) {
+        if (xs[i] < XMIN || xs[i] > XMAX) continue;
+        ctx.fillStyle = "rgba(229,229,229," + (0.15 + 0.55 * ws[i]) + ")";
+        ctx.beginPath(); ctx.arc(PX(xs[i]), PY(ys[i]), 2.4, 0, 2 * Math.PI); ctx.fill();
+      }
+
+      /* local surrogate line (mint), drawn across a local window around X0 */
+      var span = Math.max(0.6, 2.2 * sigma);
+      var xa = clamp(X0 - span, XMIN, XMAX), xb = clamp(X0 + span, XMIN, XMAX);
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(PX(xa), PY(clamp(fit.a * xa + fit.b, -0.2, 1.2)));
+      ctx.lineTo(PX(xb), PY(clamp(fit.a * xb + fit.b, -0.2, 1.2)));
+      ctx.stroke();
+
+      /* the explained instance */
+      var ix = PX(X0), iy = PY(blackbox(X0));
+      ctx.fillStyle = C.BRIGHT; ctx.beginPath(); ctx.arc(ix, iy, 5, 0, 2 * Math.PI); ctx.fill();
+      ctx.strokeStyle = "rgba(255,255,255,.6)"; ctx.lineWidth = 1;
+      ctx.setLineDash([2, 3]); ctx.beginPath(); ctx.moveTo(ix, padT); ctx.lineTo(ix, padT + plotH); ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillStyle = C.SEC; ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+      ctx.fillText("INSTANCE", ix, iy - 8);
+
+      /* legend */
+      ctx.textAlign = "left"; ctx.textBaseline = "middle";
+      ctx.strokeStyle = C.BLUE; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(padL + 8, padT + 10); ctx.lineTo(padL + 26, padT + 10); ctx.stroke();
+      ctx.fillStyle = C.SEC; ctx.fillText("black box", padL + 31, padT + 10);
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.moveTo(padL + 110, padT + 10); ctx.lineTo(padL + 128, padT + 10); ctx.stroke();
+      ctx.fillStyle = C.SEC; ctx.fillText("LIME surrogate", padL + 133, padT + 10);
+
+      /* readouts */
+      var sign = fit.a >= 0 ? "+" : "−";
+      eqEl.textContent = "g(x) = " + sign + Math.abs(fit.a).toFixed(2) + "·x " + (fit.b >= 0 ? "+ " : "− ") + Math.abs(fit.b).toFixed(2);
+      r2El.textContent = r2.toFixed(3);
+
+      slopeHist.push(fit.a);
+      if (slopeHist.length > 8) slopeHist.shift();
+      if (slopeHist.length < 2) { stabEl.textContent = "press RESEED"; }
+      else {
+        var m = 0, sd = 0, q;
+        for (q = 0; q < slopeHist.length; q++) m += slopeHist[q]; m /= slopeHist.length;
+        for (q = 0; q < slopeHist.length; q++) sd += (slopeHist[q] - m) * (slopeHist[q] - m);
+        sd = Math.sqrt(sd / (slopeHist.length - 1));
+        stabEl.textContent = "slope ±" + sd.toFixed(2);
+        stabEl.style.color = sd > 0.25 ? C.RED : C.MINT;
+      }
+    }
+
+    sigEl.addEventListener("input", render);
+    nEl.addEventListener("input", render);
+    reseedBtn.addEventListener("click", function () { seed = (seed * 1103515245 + 12345) >>> 0; render(); });
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();   /* meaningful initial state with zero interaction */
+  })();
+
+  /* ========================================================
+     INSTRUMENT V6.3 — SHAP force plot
+     A toy loan-approval model in log-odds space. The score is
+     ADDITIVE in the five features, so each feature's exact SHAP
+     value is its term minus the term at the baseline (background
+     mean). Efficiency (EQ V6.5) therefore holds exactly: base +
+     sum(phi) = prediction, and the force plot draws those pushes.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("xai-force-demo");
+    if (!root) return;
+    var canvas = document.getElementById("xai-force-canvas");
+    var baseEl = document.getElementById("xai-force-base");
+    var predEl = document.getElementById("xai-force-pred");
+    var checkEl = document.getElementById("xai-force-check");
+
+    var ids = {
+      late: document.getElementById("xai-f-late"),
+      inc: document.getElementById("xai-f-inc"),
+      util: document.getElementById("xai-f-util"),
+      age: document.getElementById("xai-f-age"),
+      dti: document.getElementById("xai-f-dti")
+    };
+    var outs = {
+      late: document.getElementById("xai-f-late-out"),
+      inc: document.getElementById("xai-f-inc-out"),
+      util: document.getElementById("xai-f-util-out"),
+      age: document.getElementById("xai-f-age-out"),
+      dti: document.getElementById("xai-f-dti-out")
+    };
+
+    /* background ("typical applicant") values -> define the base value */
+    var BG = { late: 1, inc: 60, util: 35, age: 6, dti: 3.0 };
+
+    /* per-feature log-odds contribution term (the model is additive in these) */
+    function term(name, v) {
+      switch (name) {
+        case "late": return -0.55 * v;                 /* each late payment hurts */
+        case "inc": return 0.018 * (v - 60);           /* income above 60k helps */
+        case "util": return -0.022 * (v - 35);         /* high utilisation hurts */
+        case "age": return 0.08 * (v - 6);             /* longer history helps */
+        case "dti": return -0.45 * (v - 3.0);          /* high loan/income hurts */
+      }
+      return 0;
+    }
+    var ORDER = ["late", "inc", "util", "age", "dti"];
+    var LABEL = { late: "LATE PAYMENTS", inc: "INCOME", util: "UTILISATION", age: "ACCOUNT AGE", dti: "LOAN/INCOME" };
+
+    function sigmoid(z) { return 1 / (1 + Math.exp(-z)); }
+
+    function render() {
+      var vals = {}, n;
+      for (n in ids) vals[n] = +ids[n].value;
+      outs.late.textContent = vals.late;
+      outs.inc.textContent = vals.inc;
+      outs.util.textContent = vals.util;
+      outs.age.textContent = vals.age;
+      outs.dti.textContent = vals.dti.toFixed(1);
+
+      /* base log-odds = intercept + every feature at its background value */
+      var intercept = 0.4;
+      var baseLogit = intercept;
+      var i;
+      for (i = 0; i < ORDER.length; i++) baseLogit += term(ORDER[i], BG[ORDER[i]]);
+
+      /* SHAP value of each feature (additive model => exact): term(x) - term(bg) */
+      var phi = {}, predLogit = baseLogit;
+      for (i = 0; i < ORDER.length; i++) {
+        var nm = ORDER[i];
+        phi[nm] = term(nm, vals[nm]) - term(nm, BG[nm]);
+        predLogit += phi[nm];
+      }
+      var baseP = sigmoid(baseLogit);
+      var predP = sigmoid(predLogit);
+
+      /* ---- draw the force plot in PROBABILITY space ---- */
+      var c = FM.setupCanvas(canvas, 270);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      ctx.clearRect(0, 0, w, h);
+      var padL = 16, padR = 16, padT = 30, padB = 78;
+      var plotW = w - padL - padR;
+      var axisY = padT + 6;
+      function PX(p) { return padL + clamp(p, 0, 1) * plotW; }
+
+      /* probability axis ticks */
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT; ctx.textBaseline = "bottom"; ctx.textAlign = "center";
+      var t;
+      for (t = 0; t <= 1.0001; t += 0.25) {
+        var tx = PX(t);
+        ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(tx, axisY); ctx.lineTo(tx, axisY + 4); ctx.stroke();
+        ctx.fillText(t.toFixed(2), tx, axisY - 3);
+      }
+
+      /* the force bar: base -> prediction, features stacked as arrows */
+      var barY = axisY + 22, barH = 34;
+      /* baseline marker */
+      var bx = PX(baseP);
+      ctx.strokeStyle = C.SEC; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+      ctx.beginPath(); ctx.moveTo(bx, barY - 8); ctx.lineTo(bx, barY + barH + 8); ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillStyle = C.SEC; ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+      ctx.fillText("BASE " + (100 * baseP).toFixed(0) + "%", bx, barY - 10);
+
+      /* stack positive (mint, push right) and negative (red, push left) pushes.
+         convert each phi (log-odds) into the probability segment it occupies,
+         walking from baseP to predP so the arrows tile exactly onto prediction. */
+      var contrib = [];
+      for (i = 0; i < ORDER.length; i++) contrib.push({ nm: ORDER[i], phi: phi[ORDER[i]] });
+      /* order arrows by |phi| descending for a readable plot */
+      contrib.sort(function (a, b) { return Math.abs(b.phi) - Math.abs(a.phi); });
+
+      /* walk in log-odds from base to pred, mapping each waypoint to probability */
+      var cumL = baseLogit, segStartP = baseP;
+      for (i = 0; i < contrib.length; i++) {
+        var ph = contrib[i].phi;
+        var fromP = sigmoid(cumL);
+        cumL += ph;
+        var toP = sigmoid(cumL);
+        var xa = PX(fromP), xb = PX(toP);
+        var left = Math.min(xa, xb), wseg = Math.abs(xb - xa);
+        var pos = ph >= 0;
+        ctx.fillStyle = pos ? "rgba(166,242,204,.85)" : "rgba(255,65,54,.80)";
+        if (wseg < 1) wseg = ph === 0 ? 0 : 1;
+        ctx.fillRect(left, barY, wseg, barH);
+        ctx.strokeStyle = "#000"; ctx.lineWidth = 1; ctx.strokeRect(left + 0.5, barY + 0.5, Math.max(0, wseg - 1), barH - 1);
+        /* label the larger segments inside/under */
+        if (wseg > 26) {
+          ctx.fillStyle = "#000"; ctx.font = "9px ui-monospace, Menlo, monospace";
+          ctx.textAlign = "center"; ctx.textBaseline = "middle";
+          ctx.fillText(LABEL[contrib[i].nm], left + wseg / 2, barY + barH / 2);
+        }
+      }
+
+      /* prediction marker */
+      var px = PX(predP);
+      ctx.strokeStyle = C.BRIGHT; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(px, barY - 8); ctx.lineTo(px, barY + barH + 8); ctx.stroke();
+      ctx.fillStyle = C.BRIGHT; ctx.textAlign = "center"; ctx.textBaseline = "top";
+      ctx.fillText("PRED " + (100 * predP).toFixed(0) + "%", px, barY + barH + 11);
+
+      /* signed-contribution legend table below */
+      var ly = barY + barH + 30;
+      ctx.font = C.MONO; ctx.textBaseline = "middle";
+      var colW = plotW / ORDER.length;
+      for (i = 0; i < ORDER.length; i++) {
+        var nm = ORDER[i], cx = padL + i * colW + colW / 2;
+        var p = phi[nm];
+        ctx.fillStyle = Math.abs(p) < 1e-9 ? C.MUT : (p > 0 ? C.MINT : C.RED);
+        ctx.textAlign = "center";
+        ctx.fillText(LABEL[nm], cx, ly);
+        ctx.fillText((p >= 0 ? "+" : "") + p.toFixed(2), cx, ly + 13);
+      }
+
+      /* readouts */
+      baseEl.textContent = (100 * baseP).toFixed(1) + "%";
+      predEl.textContent = (100 * predP).toFixed(1) + "%";
+      var sumPhi = 0; for (i = 0; i < ORDER.length; i++) sumPhi += phi[ORDER[i]];
+      /* efficiency check is exact in LOG-ODDS space (the additive space) */
+      var lhs = sumPhi, rhs = predLogit - baseLogit;
+      var ok = Math.abs(lhs - rhs) < 1e-9;
+      checkEl.textContent = ok ? "YES ✓ (exact)" : "NO";
+      checkEl.style.color = ok ? C.MINT : C.RED;
+    }
+
+    var nm2;
+    for (nm2 in ids) ids[nm2].addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();   /* meaningful initial state with zero interaction */
+  })();
+
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

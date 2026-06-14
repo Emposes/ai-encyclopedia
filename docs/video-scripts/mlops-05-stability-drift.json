@@ -1,0 +1,169 @@
+{
+  "concepts": [
+    {
+      "id": "mlops-05-stability-drift-s1",
+      "chapter": "mlops/05-stability-drift",
+      "section": "s1",
+      "title": "Distribution shift — covariate, label & concept drift",
+      "eyebrow": "MODEL RISK",
+      "beats": [
+        {
+          "text": "Supervised learning assumes production data is drawn from the same distribution the model was trained on.",
+          "visual": { "type": "title", "text": "Distribution shift", "sub": "Covariate, label & concept drift" }
+        },
+        {
+          "text": "Write the joint distribution as the product of the conditional and the marginal, and there are three ways it can move.",
+          "visual": { "type": "equation", "tex": "P(x,y) = P(y \\mid x)\\,P(x)", "note": "Training fits a fixed P, production feeds a different one" }
+        },
+        {
+          "text": "Covariate shift moves the inputs, label shift moves the class balance, concept drift moves the relationship itself.",
+          "visual": { "type": "equation", "tex": "P_{\\text{prod}}(y\\mid x)\\neq P_{\\text{train}}(y\\mid x)", "note": "Concept drift: the learned function is now wrong, not merely under-sampled" }
+        },
+        {
+          "text": "Only the first two are visible from inputs alone, so concept drift can hide in the features and surface as collapsing accuracy.",
+          "visual": { "type": "plot", "ys": [0.92, 0.91, 0.9, 0.88, 0.72, 0.55], "xlabel": "TIME", "ylabel": "ACCURACY", "mark": 4 }
+        },
+        {
+          "text": "Drift also has a shape in time, classed as sudden, gradual, incremental, or recurring by the Gama taxonomy.",
+          "visual": { "type": "bars", "values": [1, 2, 3, 4], "labels": ["Sudden", "Gradual", "Increm.", "Recurring"], "highlight": 3 }
+        },
+        {
+          "text": "Seasonality is the great impostor, looking like drift but needing only a like-for-like reference window.",
+          "visual": { "type": "stat", "value": 0, "label": "Retraining needed for pure seasonality", "unit": "" }
+        }
+      ]
+    },
+    {
+      "id": "mlops-05-stability-drift-s2",
+      "chapter": "mlops/05-stability-drift",
+      "section": "s2",
+      "title": "Population Stability Index (PSI) & CSI",
+      "eyebrow": "MODEL RISK",
+      "beats": [
+        {
+          "text": "Before reacting to drift you have to measure it, and the industry workhorse is the Population Stability Index.",
+          "visual": { "type": "title", "text": "Population Stability Index", "sub": "PSI & CSI" }
+        },
+        {
+          "text": "Bin a feature on a reference period, count the same bins live, and sum the weighted log-ratio across buckets.",
+          "visual": { "type": "equation", "tex": "\\mathrm{PSI} = \\sum_{i=1}^{B}(A_i - E_i)\\,\\ln\\frac{A_i}{E_i}", "note": "Exactly the symmetrized KL, the Jeffreys divergence" }
+        },
+        {
+          "text": "The scalar maps onto a stable rule of thumb: below 0.10 is calm, 0.10 to 0.25 is moderate, above 0.25 acts.",
+          "visual": { "type": "bars", "values": [0.1, 0.25], "labels": ["Investigate >0.10", "Act >0.25"], "highlight": 1 }
+        },
+        {
+          "text": "One bucket whose mass rises from 0.20 to 0.30 contributes 0.10 times the log of 1.5, about 0.0405.",
+          "visual": { "type": "equation", "tex": "(0.30-0.20)\\ln\\frac{0.30}{0.20} = 0.10 \\times 0.405 = 0.0405", "note": "Read the per-bucket breakdown, not just the total" }
+        },
+        {
+          "text": "Four or five buckets of that size already push the total past the 0.25 alarm threshold.",
+          "visual": { "type": "stat", "value": 0.0405, "label": "Single bucket contribution", "unit": "", "decimals": 4 }
+        },
+        {
+          "text": "The same formula on the output score is PSI, on a single input feature it is the Characteristic Stability Index.",
+          "visual": { "type": "plot", "ys": [0.02, 0.06, 0.11, 0.18, 0.27, 0.34], "dot": 4, "xlabel": "MEAN SHIFT", "ylabel": "PSI" }
+        }
+      ]
+    },
+    {
+      "id": "mlops-05-stability-drift-s3",
+      "chapter": "mlops/05-stability-drift",
+      "section": "s3",
+      "title": "Detecting drift in production",
+      "eyebrow": "MODEL RISK",
+      "beats": [
+        {
+          "text": "PSI is a batch statistic over a window, but production also wants streaming detectors that flag a change at once.",
+          "visual": { "type": "title", "text": "Detecting drift in production", "sub": "Label-free inputs vs error monitors" }
+        },
+        {
+          "text": "Labels arrive late, so the first line of defence is two-sample tests on the feature distribution.",
+          "visual": { "type": "bars", "values": [1, 1, 1, 1], "labels": ["KS", "Chi-sq", "PSI", "MMD"], "highlight": 3 }
+        },
+        {
+          "text": "Label-free detection can only ever see covariate shift, staying silent while pure concept drift rots accuracy.",
+          "visual": { "type": "plot", "ys": [0.9, 0.9, 0.88, 0.74, 0.6, 0.5], "xlabel": "TIME", "ylabel": "ACCURACY", "mark": 3 }
+        },
+        {
+          "text": "The classic error monitor is DDM, tracking the running error rate and its standard deviation over time.",
+          "visual": { "type": "equation", "tex": "s_t = \\sqrt{\\frac{p_t(1-p_t)}{t}}", "note": "Remember the best point reached and watch for climbs above it" }
+        },
+        {
+          "text": "DDM warns at two sigma above the best error and declares drift at three, the control-chart logic on a learning curve.",
+          "visual": { "type": "equation", "tex": "p_t + s_t \\ge p_{\\min} + 3\\,s_{\\min}", "note": "Two sigma warns, three sigma declares drift" }
+        },
+        {
+          "text": "A sensitive detector catches drift early but cries wolf, so you tune the operating point to the cost of each error.",
+          "visual": { "type": "stat", "value": 120, "label": "True change point in stream", "unit": "steps" }
+        }
+      ]
+    },
+    {
+      "id": "mlops-05-stability-drift-s4",
+      "chapter": "mlops/05-stability-drift",
+      "section": "s4",
+      "title": "Monitoring & retraining triggers",
+      "eyebrow": "MODEL RISK",
+      "beats": [
+        {
+          "text": "Detection is half the loop; a monitor must turn a signal into a decision to wait, alert, or retrain.",
+          "visual": { "type": "title", "text": "Monitoring & retraining triggers", "sub": "Schedule, performance, or drift" }
+        },
+        {
+          "text": "Three trigger philosophies exist: scheduled cadence, performance thresholds on labels, and label-free drift statistics.",
+          "visual": { "type": "bars", "values": [1, 2, 3], "labels": ["Scheduled", "Performance", "Drift"], "highlight": 1 }
+        },
+        {
+          "text": "Drift triggers are the early warning while labels are in flight; performance triggers are the authoritative one.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "Retrain too often and you waste compute; too rarely and you eat decay, so the optimum balances both terms.",
+          "visual": { "type": "equation", "tex": "\\text{Cost}(T) = \\frac{c_{\\text{retrain}}}{T} + \\tfrac{1}{2}\\,d\\,T", "note": "Amortized retrain falls with T, carried decay rises with T" }
+        },
+        {
+          "text": "Setting the derivative to zero gives a square-root cadence, the same shape as the economic-order-quantity rule.",
+          "visual": { "type": "equation", "tex": "T^\\star = \\sqrt{\\frac{2\\,c_{\\text{retrain}}}{d}}", "note": "Cost 200, decay 1 per day gives 20 days" }
+        },
+        {
+          "text": "With a retrain cost of 200 and decay of one unit per day, the optimal interval is twenty days.",
+          "visual": { "type": "stat", "value": 20, "label": "Cost-optimal retrain interval", "unit": "days" }
+        }
+      ]
+    },
+    {
+      "id": "mlops-05-stability-drift-s5",
+      "chapter": "mlops/05-stability-drift",
+      "section": "s5",
+      "title": "A model decaying in the wild",
+      "eyebrow": "MODEL RISK",
+      "beats": [
+        {
+          "text": "A deployed model performs near its validation score, holds, then bends downward as the world drifts away.",
+          "visual": { "type": "title", "text": "A model decaying in the wild", "sub": "Decay, snap, decay, snap" }
+        },
+        {
+          "text": "Between retrains accuracy falls roughly linearly from its ceiling at rate d, buried in measurement noise.",
+          "visual": { "type": "equation", "tex": "\\mathrm{Acc}(t) = \\mathrm{Acc}_0 - d\\,(t - t_{\\text{last}}) + \\varepsilon_t", "note": "A retrain resets the clock and lifts performance back to the ceiling" }
+        },
+        {
+          "text": "Trace it over many cycles and you get the familiar sawtooth of decay and snap-back recovery.",
+          "visual": { "type": "plot", "ys": [0.9, 0.86, 0.82, 0.9, 0.86, 0.82, 0.9], "xlabel": "PERIODS", "ylabel": "ACCURACY", "mark": 3 }
+        },
+        {
+          "text": "The area between the ceiling and the sawtooth is the value lost to drift, shrunk by retraining more often.",
+          "visual": { "type": "stat", "value": 0.9, "label": "Post-fit accuracy ceiling", "unit": "", "decimals": 2 }
+        },
+        {
+          "text": "In the simulator a thirty-day cadence recovers measurable mean accuracy over a model that never retrains.",
+          "visual": { "type": "bars", "values": [0.78, 0.87], "labels": ["Never retrain", "Retrain @30d"], "highlight": 1 }
+        },
+        {
+          "text": "Drift monitoring tells you that the model changed; the next chapter on explainability tells you why.",
+          "visual": { "type": "equation", "tex": "T^\\star = \\sqrt{\\frac{2c}{d}}", "note": "Faster drift tightens the cadence, costlier retrains loosen it" }
+        }
+      ]
+    }
+  ]
+}

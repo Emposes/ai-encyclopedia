@@ -1,0 +1,809 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Hyperparameter Tuning — AI Encyclopedia</title>
+<meta name="description" content="The model you ship is chosen by a search you design — grid, random, Bayesian optimization, and Hyperband — and random beats grid more often than intuition expects." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+<link rel="canonical" href="https://ai-encyclopedia.com/mlops/02-hyperparameter-tuning" />
+<meta property="og:url" content="https://ai-encyclopedia.com/mlops/02-hyperparameter-tuning" />
+</head>
+<body data-track="mlops" data-level="core">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ MODEL RISK / 02 / TUNING</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../mlops/03-regression-classification-metrics.html">NEXT: 03 METRICS →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">MODEL VALIDATION &amp; RISK · CHAPTER 02 / 07</div>
+    <h1>Hyperparameter Tuning</h1>
+    <p class="lede">Training fits the model parameters. The hyperparameters, such as learning rate, tree depth, and regularization strength, are set by a search over a validation objective that you define. <strong>The shipped model is selected by that search, and random search often outperforms grid search at equal budget.</strong></p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 27 MIN</b></span>
+      <span>BUILDS ON<b>MLOPS 01 · ML 06</b></span>
+      <span>INSTRUMENTS<b>GRID vs RANDOM · BAYES OPT · HALVING</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">2.1</span>The search space &amp; objective</a>
+      <a href="#s2"><span class="n">2.2</span>Grid search</a>
+      <a href="#s3"><span class="n">2.3</span>Random search</a>
+      <a href="#s4"><span class="n">2.4</span>Bayesian optimization</a>
+      <a href="#s5"><span class="n">2.5</span>Hyperband &amp; halving</a>
+      <a href="#s6"><span class="n">2.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 2.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">2.1</span><h2>The search space &amp; the objective</h2></div>
+        <p>A <strong>hyperparameter</strong> is any setting fixed <em>before</em> training that the optimizer is not allowed to touch: the learning rate of gradient descent, the number of trees and their depth in a forest, the \(C\) of an SVM, the dropout rate of a network. Cross-validation (the previous chapter) tells you how to <em>score</em> one configuration honestly. Tuning is the outer question it left open: <em>which configurations should you even try?</em></p>
+
+        <p>Frame it as optimization. Let \(\theta \in \Theta\) be a configuration drawn from a search space \(\Theta\), and let \(f(\theta)\) be the validation objective — typically the cross-validated loss, which we want to <em>minimize</em>:</p>
+
+        <div class="eq"><span class="eq-tag">EQ V2.1 — THE HYPERPARAMETER OPTIMIZATION PROBLEM</span>
+        $$ \theta^{\star} \;=\; \arg\min_{\theta \in \Theta}\; f(\theta), \qquad f(\theta) \;=\; \widehat{\mathrm{CV}}\big(\theta\big) \;=\; \frac{1}{k}\sum_{i=1}^{k} L\big(y,\, \hat{f}_{\theta}^{\,(-i)}(x)\big) $$
+        <div class="eq-note">\(\Theta\) is the Cartesian product of every hyperparameter's allowed range; \(f(\theta)\) is the k-fold CV score (MLOPS · EQ V1.3) of training with configuration \(\theta\). Two properties make this hard and define the whole chapter: \(f\) is a <b>black box</b> — no gradient, no formula, you can only sample it — and each sample is <b>expensive</b>, since one evaluation means training the model \(k\) times. <b>Every method below is a different policy for spending a fixed budget of these expensive black-box queries.</b></div>
+        </div>
+
+        <p>Three properties of the space drive every design choice. First, <strong>scale</strong>: a learning rate ranges over orders of magnitude, so you search it on a <em>log</em> scale (\(10^{-5}\) to \(10^{-1}\)), not a linear one — uniform-in-log, where each decade gets equal attention. Second, <strong>type</strong>: some knobs are continuous (learning rate), some integer (tree depth), some categorical (optimizer ∈ {Adam, SGD}). Third, and most consequential, <strong>effective dimensionality</strong>: of the dozen hyperparameters you nominally tune, usually only two or three actually move the score. That last fact is the hinge on which random search beats grid search.</p>
+
+        <div class="eq"><span class="eq-tag">EQ V2.2 — SIZE OF A GRID</span>
+        $$ |\Theta_{\text{grid}}| \;=\; \prod_{j=1}^{D} n_j \qquad\Longrightarrow\qquad \text{evaluations} \;=\; k \cdot \prod_{j=1}^{D} n_j $$
+        <div class="eq-note">A grid that tries \(n_j\) values of hyperparameter \(j\) across \(D\) hyperparameters has \(\prod_j n_j\) configurations, and each costs \(k\) model fits under k-fold CV. The product is the <b>curse of dimensionality</b> in one line: ten values across six hyperparameters is \(10^6\) configurations — a million fits before you score anything. The objective \(f\) is cheap to <em>state</em> and ruinous to <em>sweep</em>.</div>
+        </div>
+
+        <div class="exercise" data-answer="60" data-tol="0.001" data-unit="configs" data-hint="A full grid is the product of the per-axis counts: 4 × 5 × 3.">
+          <div class="ex-q">You define a grid over three hyperparameters with \(4\), \(5\), and \(3\) candidate values respectively. By EQ V2.2, how many distinct configurations does the full grid contain (\(\prod_j n_j\))?</div>
+          <div class="ex-reveal-src">The grid is the Cartesian product, so its size is the product of the per-axis counts: \(4 \times 5 \times 3 = \) <b>60</b> configurations. Under 5-fold CV that is already \(60 \times 5 = 300\) model fits — and adding a single fourth hyperparameter with just 4 values would quadruple it to 240 configurations.</div>
+        </div>
+
+        <div class="exercise" data-answer="0.001" data-tol="0.05" data-unit="" data-hint="Log-uniform: the midpoint in log space is the geometric mean, sqrt(lo · hi).">
+          <div class="ex-q">You search a learning rate log-uniformly between \(10^{-5}\) and \(10^{-1}\). The geometric center of that range — the value sitting exactly halfway in log space — is \(\sqrt{10^{-5}\cdot 10^{-1}}\). What is it?</div>
+          <div class="ex-reveal-src">In log space the midpoint of \([-5, -1]\) is \(-3\), so the value is \(10^{-3}\). Equivalently the geometric mean: \(\sqrt{10^{-5}\cdot 10^{-1}} = \sqrt{10^{-6}} = 10^{-3} = \) <b>0.001</b>. Searching log-uniformly is why each decade of learning rate gets equal sampling attention.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 2.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">2.2</span><h2>Grid search: exhaustive and quietly wasteful</h2></div>
+        <p><strong>Grid search</strong> is the reflex: pick a finite set of values per hyperparameter, take the Cartesian product, evaluate every point, keep the best. It is trivial to implement, embarrassingly parallel, and reproducible to the last digit. For one or two hyperparameters it is perfectly reasonable. Its problems begin the moment the space has more dimensions or more resolution than your budget can sweep.</p>
+
+        <p>The first problem is the exponential of EQ V2.2: refining a grid from 5 to 10 values per axis multiplies the cost by \(2^D\), so the same compute buys you exponentially coarser resolution as \(D\) grows. The second problem is subtler and more damaging. A grid spends its budget on the Cartesian product even when most axes do not matter. Project a 2D grid onto the one hyperparameter that actually drives the score, and the grid's points <em>collapse onto each other</em> — a \(g \times g\) grid tests only \(g\) distinct values of the hyperparameter that matters, no matter how large \(g\) is.</p>
+
+        <div class="eq"><span class="eq-tag">EQ V2.3 — DISTINCT VALUES TESTED ON THE IMPORTANT AXIS</span>
+        $$ \underbrace{g^{D}}_{\text{grid evaluations}} \quad\text{but only}\quad \underbrace{g}_{\substack{\text{distinct values of} \\ \text{the one axis that matters}}} \;\;\ll\;\; \underbrace{g^{D}}_{\substack{\text{distinct values random} \\ \text{search would test}}} $$
+        <div class="eq-note">A \(g\)-per-axis grid in \(D\) dimensions makes \(g^{D}\) evaluations but, by construction, repeats each value of every single axis \(g^{D-1}\) times. If the objective depends on only one axis, all that repetition is wasted: the grid resolves the important axis at resolution \(g\), while spending \(g^{D}\) queries doing it. <b>Random search spends the identical budget on \(g^{D}\) distinct values of every axis</b> — the observation that motivates §2.3.</div>
+        </div>
+
+        <p class="note">Grid search is not obsolete. When you have exactly one or two hyperparameters, when reproducibility and an auditable, even sweep matter (a regulated model-risk setting), or when each evaluation is cheap, a small grid is clear and defensible. The lesson is narrower than "never grid": <em>do not let a grid's tidiness lull you into spending an exponential budget resolving axes that do not move the metric.</em></p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Grid vs random search on a 2D objective; best-found vs number of evaluations.
+import numpy as np
+rng = np.random.default_rng(0)
+
+# A black-box objective on [0,1]^2 with one DOMINANT axis (x) and a near-flat one (y).
+# Minimum sits near x*=0.30; y barely matters -> the classic random-beats-grid setup.
+def f(x, y):
+    return (x - 0.30)**2 + 0.03*(y - 0.7)**2 + 0.01*np.sin(12*x)
+
+# GRID: g x g points -> g^2 evals, but only g DISTINCT x values are ever tested.
+for g in (4, 6):
+    xs = np.linspace(0, 1, g)
+    grid = [f(x, y) for x in xs for y in xs]
+    print(f"grid {g}x{g} = {g*g:2d} evals | best f = {min(grid):.4f} "
+          f"| distinct x tested = {g}")
+
+# RANDOM: same budgets, but every draw is a fresh x AND y.
+print()
+for n in (16, 36):
+    X = rng.random((n, 2))
+    vals = f(X[:, 0], X[:, 1])
+    print(f"random  {n:2d} evals | best f = {vals.min():.4f} "
+          f"| distinct x tested = {n}")
+
+print("\nEqual budgets: random resolves the x that matters far more finely than grid.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 2.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">2.3</span><h2>Random search: the surprising default</h2></div>
+        <p><strong>Random search</strong> replaces the grid with independent draws: sample each hyperparameter from a distribution (uniform, log-uniform, categorical) for some budget \(n\) of trials, evaluate, keep the best. Bergstra and Bengio's 2012 result — one of the most quietly influential papers in applied ML — showed that for the same budget, random search <em>matches or beats</em> grid search on neural-network tuning, and the reason is exactly EQ V2.3: when only a few of the many hyperparameters matter, random search devotes its full budget to many distinct values of the important ones, while the grid wastes most of its points on combinations of the unimportant ones.</p>
+
+        <p>There is also a clean probabilistic guarantee that needs no assumption about which axes matter. If you call a configuration "good" when it lands in the top \(p\) fraction of the search space, then \(n\) independent random draws miss the good region entirely with probability \((1-p)^n\):</p>
+
+        <div class="eq"><span class="eq-tag">EQ V2.4 — RANDOM SEARCH COVERAGE GUARANTEE</span>
+        $$ \Pr[\text{at least one trial in the top } p] \;=\; 1 - (1-p)^{n} \qquad\Longrightarrow\qquad n \;\geq\; \frac{\ln(1-c)}{\ln(1-p)} $$
+        <div class="eq-note">To hit the top \(p = 5\%\) of configurations with confidence \(c = 0.95\), you need \(n \ge \ln(0.05)/\ln(0.95) \approx 59\) random trials — <b>independent of how many hyperparameters you have</b>. This is the dimension-free property that makes random search scale where grids cannot: the bound depends only on how good "good enough" is, not on \(D\). It does assume the top-\(p\) region has \(p\) probability mass under your sampling distribution, which is why choosing sensible ranges and log-scales still matters.</div>
+        </div>
+
+        <div class="exercise" data-answer="true" data-tol="0" data-unit="" data-hint="Recall EQ V2.3 — what happens to a grid's budget when only a couple of axes move the score?">
+          <div class="ex-q">Random search tends to beat grid search precisely when only a few of the many hyperparameters actually matter, because it spends its budget on more distinct values of those important axes. True or false? (Answer <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">This is the central finding of Bergstra &amp; Bengio (2012) and the meaning of EQ V2.3. A \(g\times g\) grid tests only \(g\) distinct values of the axis that matters and wastes the rest of its \(g^2\) budget on the flat axis; random search at the same budget tests \(g^2\) distinct values of every axis. When the effective dimensionality is low, that is a decisive advantage — so the statement is <b>true</b>.</div>
+        </div>
+
+        <div class="exercise" data-answer="59" data-tol="0.05" data-unit="trials" data-hint="n >= ln(1 - c) / ln(1 - p), with c = 0.95 and p = 0.05; round up.">
+          <div class="ex-q">Using the coverage bound of EQ V2.4, how many random trials \(n\) do you need to land at least one configuration in the top \(p = 5\%\) of the space with confidence \(c = 95\%\)? (Compute \(\lceil \ln(1-c)/\ln(1-p)\rceil\).)</div>
+          <div class="ex-reveal-src">\(\ln(1-c) = \ln(0.05) = -2.996\) and \(\ln(1-p) = \ln(0.95) = -0.0513\). Their ratio is \(-2.996 / -0.0513 = 58.4\), and you round up to a whole trial: \(\lceil 58.4 \rceil = \) <b>59</b> trials. Notably, this number does not depend on the number of hyperparameters at all.</div>
+        </div>
+
+        <div class="widget" id="tune-gr-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT V2.1 — GRID vs RANDOM ON A RESPONSE SURFACE</span><span class="w-sub">EQUAL BUDGET · ONE DOMINANT AXIS · EQ V2.3</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>BUDGET (EVALUATIONS) <output id="tune-gr-budget-out">36</output></label><input type="range" id="tune-gr-budget" min="9" max="64" step="1" value="36"/></div>
+              <div class="ctl"><label>AXIS IMPORTANCE SKEW <output id="tune-gr-skew-out">high</output></label><input type="range" id="tune-gr-skew" min="0" max="3" step="1" value="2"/></div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>&nbsp;</label>
+                <div class="seg-row"><button class="w-btn ghost on" id="tune-gr-reseed">RESEED ▶</button></div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="tune-gr-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">GRID — DISTINCT x TESTED</div><div class="r-value" id="tune-gr-gdist">—</div></div>
+              <div class="readout acc"><div class="r-label">GRID BEST f</div><div class="r-value" id="tune-gr-gbest">—</div></div>
+              <div class="readout acc"><div class="r-label">RANDOM BEST f</div><div class="r-value" id="tune-gr-rbest">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Both panels spend the <em>same</em> budget on the same 2D response surface; brighter background is lower (better) loss, and the minimum is the <span style="color:var(--accent);">mint</span> ring. The grid (left) lays points on a lattice, so its projection onto the important <b>x</b> axis (the strip under each panel) bunches into a few repeated values. Random search (right) scatters, so its x-projection is dense. Crank <b>AXIS IMPORTANCE SKEW</b> up — make the vertical axis nearly irrelevant — and the grid's wasted budget becomes obvious: it keeps re-testing the same handful of x values, while random keeps finding new ones. Press <b>RESEED</b> to redraw the random trials.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 2.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">2.4</span><h2>Bayesian optimization: spend queries where they pay</h2></div>
+        <p>Grid and random search are both <strong>uninformed</strong> — neither looks at the results of past trials when choosing the next one. When evaluations are genuinely expensive (training a large model for hours), that is wasteful: you have data about the objective and you are ignoring it. <strong>Bayesian optimization</strong> closes the loop. It fits a cheap probabilistic <em>surrogate</em> model of \(f\) from the trials seen so far, then uses the surrogate to choose the most promising next query — sequential and sample-efficient by design.</p>
+
+        <p>The classic surrogate is a <strong>Gaussian process</strong>, which returns, at any candidate \(\theta\), a posterior mean \(\mu(\theta)\) (its best guess of the objective) and a standard deviation \(\sigma(\theta)\) (its uncertainty). The genius is the second number: \(\sigma\) is large where you have not looked. An <strong>acquisition function</strong> turns \((\mu, \sigma)\) into a single score that balances <em>exploitation</em> (go where \(\mu\) is good) against <em>exploration</em> (go where \(\sigma\) is high). A common, transparent choice is the upper/lower confidence bound:</p>
+
+        <div class="eq"><span class="eq-tag">EQ V2.5 — CONFIDENCE-BOUND ACQUISITION (minimization)</span>
+        $$ \theta_{\text{next}} \;=\; \arg\min_{\theta}\; \alpha(\theta), \qquad \alpha(\theta) \;=\; \mu(\theta) \;-\; \kappa\,\sigma(\theta), \qquad \kappa \geq 0 $$
+        <div class="eq-note">For minimization we pick the point with the lowest <em>lower</em> confidence bound: \(\mu - \kappa\sigma\) is optimistic in the direction we care about, rewarding both small predicted loss (\(\mu\) low) and high uncertainty (\(\sigma\) large). <b>\(\kappa\) is the explore–exploit dial</b>: \(\kappa = 0\) is pure greedy exploitation; large \(\kappa\) chases the most uncertain region. Expected Improvement (EI) is the other standard acquisition and needs no \(\kappa\), self-balancing via the improvement over the best seen so far. After each real evaluation the surrogate is refit and the loop repeats — typically converging in tens of trials where random search needs hundreds.</div>
+        </div>
+
+        <p>Bayesian optimization is the right tool when evaluations dominate cost and trials are necessarily sequential. Its honest caveats: a Gaussian process surrogate scales poorly past a few thousand trials and a couple dozen dimensions, and it is harder to parallelize than random search (each query depends on the last). For high-dimensional or massively parallel settings, tree-based surrogates (the TPE algorithm behind Optuna and Hyperopt) and the bandit-style methods of §2.5 often win — and in practice modern tuners (Optuna, Ray Tune) combine a Bayesian sampler with an early-stopping scheduler rather than choosing one.</p>
+
+        <div class="exercise" data-answer="1.6" data-tol="0.02" data-unit="" data-hint="Lower confidence bound for minimization is mu - kappa*sigma; plug in mu = 2.0, kappa = 2, sigma = 0.2.">
+          <div class="ex-q">A Gaussian-process surrogate predicts, at a candidate point, mean \(\mu = 2.0\) and standard deviation \(\sigma = 0.2\). Using the confidence-bound acquisition of EQ V2.5 with \(\kappa = 2\), what is its acquisition value \(\mu - \kappa\sigma\) for minimization?</div>
+          <div class="ex-reveal-src">\(\mu - \kappa\sigma = 2.0 - 2 \times 0.2 = 2.0 - 0.4 = \) <b>1.6</b>. A second candidate with the same \(\mu = 2.0\) but larger \(\sigma = 0.5\) would score \(2.0 - 2\times0.5 = 1.0\) — lower, hence preferred, because the optimizer is rewarded for probing where it is uncertain.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Toy Bayesian optimization: maximize a 1D function with a simple RBF surrogate.
+import numpy as np
+rng = np.random.default_rng(0)
+
+def objective(x):                              # the expensive black box (we "don't know" it)
+    return np.sin(3*x) + 0.5*np.sin(7*x) - 0.05*(x-2)**2
+
+grid = np.linspace(0, 5, 400)                  # candidate pool for the acquisition step
+X = np.array([0.5, 4.5]);  Y = objective(X)    # two initial probes
+ls, kappa = 0.4, 2.0                           # RBF length-scale; explore-exploit dial
+
+def kern(a, b):                                # RBF / squared-exponential kernel
+    return np.exp(-0.5*((a[:, None]-b[None, :])/ls)**2)
+
+for step in range(8):                          # 8 sequential, sample-efficient queries
+    K = kern(X, X) + 1e-6*np.eye(len(X))
+    Kinv = np.linalg.inv(K)
+    ks = kern(grid, X)
+    mu = ks @ Kinv @ Y                          # posterior mean over the grid
+    var = 1.0 - np.sum((ks @ Kinv) * ks, axis=1)
+    sd = np.sqrt(np.clip(var, 1e-9, None))      # posterior std (uncertainty)
+    acq = mu + kappa*sd                         # UCB: we are MAXIMIZING here
+    nxt = grid[np.argmax(acq)]                  # next query = argmax acquisition
+    X = np.append(X, nxt);  Y = np.append(Y, objective(nxt))
+
+print(f"true max over grid : {objective(grid).max():.4f} at x = {grid[objective(grid).argmax()]:.3f}")
+print(f"BO best after {len(X)} evals: {Y.max():.4f} at x = {X[np.argmax(Y)]:.3f}")
+plot_xy(grid, mu)                              # final surrogate mean</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="tune-bo-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT V2.2 — BAYESIAN-OPTIMIZATION STEPPER</span><span class="w-sub">GP SURROGATE · μ ± κσ · NEXT QUERY = argmin · EQ V2.5</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>EXPLORE–EXPLOIT κ <output id="tune-bo-kappa-out">2.0</output></label><input type="range" id="tune-bo-kappa" min="0" max="4" step="0.25" value="2"/></div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>&nbsp;</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" id="tune-bo-step">STEP ▶</button>
+                  <button class="w-btn ghost" id="tune-bo-reset">RESET</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="tune-bo-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">EVALUATIONS SO FAR</div><div class="r-value" id="tune-bo-n">—</div></div>
+              <div class="readout acc"><div class="r-label">BEST f FOUND (min)</div><div class="r-value" id="tune-bo-best">—</div></div>
+              <div class="readout acc"><div class="r-label">NEXT QUERY x</div><div class="r-value" id="tune-bo-next">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The hidden objective (faint <span style="color:var(--secondary);">grey</span> line) is a black box; the optimizer only knows the <span style="color:var(--accent);">mint</span> probes it has spent. The blue band is the surrogate's mean \(\mu\) bracketed by its uncertainty \(\pm\sigma\) — wide where nothing has been sampled, pinched to nothing at each probe. The dashed marker is the next query: the <b>argmin of the lower confidence bound</b> \(\mu - \kappa\sigma\). Press <b>STEP</b> to spend one evaluation and watch the band collapse there; the optimizer converges on the true minimum in a handful of steps. Slide \(\kappa\) to 0 for pure greedy (it can get stuck in a local dip) or up to 4 for restless exploration.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 2.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">2.5</span><h2>Hyperband &amp; successive halving</h2></div>
+        <p>Every method so far runs each configuration to completion before judging it. But for iterative learners — neural nets, gradient boosting — a configuration's fate is often visible early: a learning rate that will diverge usually starts diverging in the first few epochs. <strong>Successive halving</strong> exploits this. It is a tournament on <em>budget</em>: start many configurations on a tiny budget (a few epochs, a small data subset), throw away the worst fraction, give the survivors more budget, and repeat. Most of the compute lands on the few configurations that have already proven themselves.</p>
+
+        <div class="eq"><span class="eq-tag">EQ V2.6 — SUCCESSIVE HALVING SCHEDULE</span>
+        $$ n_r \;=\; \Big\lfloor \frac{n_0}{\eta^{\,r}} \Big\rfloor, \qquad b_r \;=\; b_0\,\eta^{\,r}, \qquad r = 0, 1, \ldots, \big\lfloor \log_{\eta} n_0 \big\rfloor $$
+        <div class="eq-note">Round \(r\) keeps \(n_r\) survivors and gives each a per-config budget \(b_r\); \(\eta\) is the cull factor (keep the top \(1/\eta\) each round, usually \(\eta = 3\)). Configurations fall geometrically while budget per survivor rises geometrically, so <b>the total budget spent per round stays roughly constant</b> \((n_r\, b_r \approx n_0\, b_0)\) — the scheme reallocates a fixed pot toward the promising, never enlarging it. With \(\eta = 3\) and \(n_0 = 27\): \(27 \to 9 \to 3 \to 1\) over \(\log_3 27 = 3\) elimination rounds.</div>
+        </div>
+
+        <p>Successive halving has one free parameter that hides a real dilemma: <em>how many configurations \(n_0\) to start with, given a fixed total budget \(B\)?</em> Start with many cheap configs (large \(n_0\), small \(b_0\)) and you explore widely but might cut a slow-starting winner before it blooms. Start with few well-funded configs and you risk never sampling a good one. There is no universally right answer because it depends on how fast the early signal correlates with final performance.</p>
+
+        <p><strong>Hyperband</strong> (Li et al., 2017) resolves this by refusing to choose. It runs successive halving as a subroutine across a spectrum of <em>brackets</em>, each with a different \((n_0, b_0)\) trade-off — from "many configs, tiny budget each" (aggressive early stopping) to "few configs, full budget each" (essentially random search, which never wrongly culls). By hedging across brackets it is robust to how early-stopping-friendly the problem turns out to be, and it provably loses only a small logarithmic factor to the best fixed bracket chosen in hindsight. In 2026 the bracket idea, usually under the ASHA variant (asynchronous successive halving), is the default scheduler in Ray Tune and Optuna — and is routinely paired with a Bayesian sampler choosing <em>which</em> configurations enter the tournament.</p>
+
+        <div class="exercise" data-answer="3" data-tol="0.001" data-unit="rounds" data-hint="Number of elimination rounds is log base eta of n0; here eta = 3, n0 = 27.">
+          <div class="ex-q">Successive halving starts with \(n_0 = 27\) configurations and culls with factor \(\eta = 3\) (keep the top third each round). How many elimination rounds does it take to reach a single survivor (\(\log_{\eta} n_0\))?</div>
+          <div class="ex-reveal-src">Each round divides the survivors by \(\eta = 3\): \(27 \to 9 \to 3 \to 1\). The number of rounds is \(\log_3 27 = \log_3 3^3 = \) <b>3</b>. Because budget per survivor triples each round while their count thirds, the compute spent per round is roughly constant.</div>
+        </div>
+
+        <div class="widget" id="tune-sh-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT V2.3 — SUCCESSIVE-HALVING BRACKET</span><span class="w-sub">CULL THE WORST 1−1/η EACH ROUND · EQ V2.6</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>STARTING CONFIGS n₀ <output id="tune-sh-n0-out">27</output></label><input type="range" id="tune-sh-n0" min="8" max="81" step="1" value="27"/></div>
+              <div class="ctl"><label>CULL FACTOR η <output id="tune-sh-eta-out">3</output></label><input type="range" id="tune-sh-eta" min="2" max="4" step="1" value="3"/></div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>&nbsp;</label>
+                <div class="seg-row"><button class="w-btn ghost on" id="tune-sh-reseed">RESEED ▶</button></div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="tune-sh-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">ELIMINATION ROUNDS</div><div class="r-value" id="tune-sh-rounds">—</div></div>
+              <div class="readout acc"><div class="r-label">SURVIVORS PER ROUND</div><div class="r-value" id="tune-sh-ladder" style="font-size:13px;">—</div></div>
+              <div class="readout acc"><div class="r-label">TOTAL BUDGET vs RUN-ALL</div><div class="r-value" id="tune-sh-savings">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Each column is one configuration; each row is a round, time flowing downward. A <span style="color:var(--accent);">mint</span> cell is a survivor still being trained; a faded grey cell was culled. Bar <em>height</em> within a survivor cell encodes the budget it now receives — short at the top (cheap early peeks), tall at the bottom (the finalists get full training). Notice the shape: a wide cheap top narrowing to a single well-funded survivor. The right-hand readout compares the total budget spent against naively running every configuration to completion — the savings that make early stopping worth its one risk, culling a late bloomer. Raise \(\eta\) to cull more aggressively (fewer rounds, bigger savings, higher risk).</div>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>Tuning optimizes a number; the next chapter asks whether you chose the right number.</strong> Every method here minimized a validation metric — but accuracy, AUC, F1, RMSE, and log loss can rank the same models in opposite orders, and the "best" configuration is only as honest as the metric it was scored on. Chapter 03: the regression and classification metrics, what each one rewards and quietly punishes, and how to pick the objective your search should have been optimizing all along.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 2.R — References ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">2.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://jmlr.org/papers/v13/bergstra12a.html" target="_blank" rel="noopener">Bergstra, J. &amp; Bengio, Y. (2012). <span class="ref-venue">Random Search for Hyper-Parameter Optimization</span>.</a> <span class="ref-meta">JMLR 13 — the result that random search matches or beats grid search under low effective dimensionality (§2.3).</span></li>
+          <li><a href="https://arxiv.org/abs/1206.2944" target="_blank" rel="noopener">Snoek, J., Larochelle, H. &amp; Adams, R. P. (2012). <span class="ref-venue">Practical Bayesian Optimization of Machine Learning Algorithms</span>.</a> <span class="ref-meta">NeurIPS 2012 — Gaussian-process surrogates and acquisition functions for tuning (§2.4).</span></li>
+          <li><a href="https://jmlr.org/papers/v18/16-558.html" target="_blank" rel="noopener">Li, L., Jamieson, K., DeSalvo, G., Rostamizadeh, A. &amp; Talwalkar, A. (2017). <span class="ref-venue">Hyperband: A Novel Bandit-Based Approach to Hyperparameter Optimization</span>.</a> <span class="ref-meta">JMLR 18 — successive halving across brackets, the bandit view of early stopping (§2.5).</span></li>
+          <li><a href="https://arxiv.org/abs/1502.07943" target="_blank" rel="noopener">Jamieson, K. &amp; Talwalkar, A. (2016). <span class="ref-venue">Non-stochastic Best Arm Identification and Hyperparameter Optimization</span>.</a> <span class="ref-meta">AISTATS 2016 — the successive-halving subroutine behind EQ V2.6.</span></li>
+          <li><a href="https://arxiv.org/abs/1810.05934" target="_blank" rel="noopener">Li, L. et al. (2020). <span class="ref-venue">A System for Massively Parallel Hyperparameter Tuning</span>.</a> <span class="ref-meta">MLSys 2020 — ASHA, the asynchronous successive halving used in production tuners.</span></li>
+          <li><a href="https://arxiv.org/abs/1907.10902" target="_blank" rel="noopener">Akiba, T., Sano, S., Yanase, T., Ohta, T. &amp; Koyama, M. (2019). <span class="ref-venue">Optuna: A Next-generation Hyperparameter Optimization Framework</span>.</a> <span class="ref-meta">KDD 2019 — the TPE sampler plus pruning combination that is the practical default in 2026.</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../mlops/01-resampling-cv.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">01</span> Cross-Validation</div></a>
+        <a class="next" href="../mlops/03-regression-classification-metrics.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">03</span> Metrics</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — MODEL VALIDATION &amp; RISK · CH 02</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* ============================================================
+   Hyperparameter Tuning — chapter instruments
+   Single IIFE, no globals. Deterministic mulberry32 RNG keeps
+   every render reproducible; setTimeout (never rAF) drives the
+   resize re-renders so background tabs stay quiet. Every widget
+   is guarded by element existence and renders a meaningful
+   initial state with zero interaction.
+   ============================================================ */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
+
+  /* ========================================================
+     INSTRUMENT V2.1 — Grid vs random on a response surface
+     A fixed 2D objective on [0,1]^2 with a tunable importance
+     skew on the y axis. Both estimators spend the SAME budget;
+     the projection strips under each panel show how the grid
+     repeats values of the important x axis while random does not.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("tune-gr-demo");
+    if (!root) return;
+    var canvas = document.getElementById("tune-gr-canvas");
+    var bEl = document.getElementById("tune-gr-budget");
+    var sEl = document.getElementById("tune-gr-skew");
+    var bOut = document.getElementById("tune-gr-budget-out");
+    var sOut = document.getElementById("tune-gr-skew-out");
+    var reseed = document.getElementById("tune-gr-reseed");
+    var gdistEl = document.getElementById("tune-gr-gdist");
+    var gbestEl = document.getElementById("tune-gr-gbest");
+    var rbestEl = document.getElementById("tune-gr-rbest");
+
+    var seed = 20260202;
+    var SKEW_LABELS = ["off", "low", "high", "extreme"];
+    /* y-importance weight per skew level: 0 = y matters as much as x */
+    var SKEW_W = [0.9, 0.35, 0.10, 0.0];
+    var XSTAR = 0.30, YSTAR = 0.70;       /* objective minimum location */
+
+    /* objective on [0,1]^2: small near (XSTAR, YSTAR); y weighted by skew */
+    function f(x, y, wy) {
+      return (x - XSTAR) * (x - XSTAR)
+           + wy * (y - YSTAR) * (y - YSTAR)
+           + 0.012 * Math.sin(12 * x);
+    }
+
+    function render() {
+      var budget = +bEl.value;
+      var skew = +sEl.value;
+      var wy = SKEW_W[skew];
+      bOut.textContent = budget;
+      sOut.textContent = SKEW_LABELS[skew];
+
+      var c = FM.setupCanvas(canvas, 320);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      ctx.clearRect(0, 0, w, h);
+
+      var padO = 12, gap = 16;
+      var panelW = (w - 2 * padO - gap) / 2;
+      var titleH = 16, stripH = 20, stripGap = 8;
+      var fieldTop = padO + titleH;
+      var fieldH = h - fieldTop - stripH - stripGap - 16;
+
+      /* normalize objective for shading: find min/max on a coarse grid */
+      var fmin = Infinity, fmax = -Infinity, gx, gy, v;
+      for (gx = 0; gx <= 20; gx++) for (gy = 0; gy <= 20; gy++) {
+        v = f(gx / 20, gy / 20, wy);
+        if (v < fmin) fmin = v; if (v > fmax) fmax = v;
+      }
+      var span = (fmax - fmin) || 1;
+
+      /* draw one panel: heat field + sampled points + x-projection strip */
+      function panel(px, points, isGrid) {
+        /* heat field (lower loss = brighter mint tint) */
+        var NB = 26, bw = panelW / NB, bh = fieldH / NB, ix, iy;
+        for (ix = 0; ix < NB; ix++) for (iy = 0; iy < NB; iy++) {
+          var xx = (ix + 0.5) / NB, yy = (iy + 0.5) / NB;
+          var t = 1 - (f(xx, yy, wy) - fmin) / span;   /* 1 = best */
+          var a = 0.06 + 0.34 * t * t;
+          ctx.fillStyle = "rgba(166,242,204," + a.toFixed(3) + ")";
+          ctx.fillRect(px + ix * bw, fieldTop + (NB - 1 - iy) * bh, bw + 0.5, bh + 0.5);
+        }
+        /* frame */
+        ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+        ctx.strokeRect(px + 0.5, fieldTop + 0.5, panelW - 1, fieldH - 1);
+
+        /* objective minimum ring */
+        var mx = px + XSTAR * panelW, my = fieldTop + (1 - YSTAR) * fieldH;
+        ctx.strokeStyle = C.MINT; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(mx, my, 6, 0, Math.PI * 2); ctx.stroke();
+
+        /* points */
+        var i, best = Infinity;
+        ctx.fillStyle = isGrid ? "rgba(78,138,247,.9)" : "rgba(255,255,255,.85)";
+        for (i = 0; i < points.length; i++) {
+          var p = points[i];
+          var cx = px + p[0] * panelW, cy = fieldTop + (1 - p[1]) * fieldH;
+          ctx.beginPath(); ctx.arc(cx, cy, 2.4, 0, Math.PI * 2); ctx.fill();
+          var fv = f(p[0], p[1], wy);
+          if (fv < best) best = fv;
+        }
+
+        /* x-projection strip: tick per distinct x value tested */
+        var sy = fieldTop + fieldH + stripGap;
+        ctx.fillStyle = "rgba(47,50,52,.45)";
+        ctx.fillRect(px, sy, panelW, stripH);
+        ctx.strokeStyle = isGrid ? "rgba(78,138,247,.85)" : "rgba(255,255,255,.8)";
+        ctx.lineWidth = 1;
+        for (i = 0; i < points.length; i++) {
+          var sx = px + points[i][0] * panelW;
+          ctx.beginPath(); ctx.moveTo(sx, sy + 2); ctx.lineTo(sx, sy + stripH - 2); ctx.stroke();
+        }
+
+        /* panel title */
+        ctx.font = C.MONO; ctx.textBaseline = "alphabetic"; ctx.textAlign = "left";
+        ctx.fillStyle = isGrid ? C.BLUE : C.BRIGHT;
+        ctx.fillText(isGrid ? "GRID" : "RANDOM", px, padO + 10);
+        ctx.fillStyle = C.MUT; ctx.textAlign = "right";
+        ctx.fillText("x-PROJECTION", px + panelW, sy + stripH + 11);
+
+        return best;
+      }
+
+      /* GRID points: g x g where g^2 <= budget (largest such g) */
+      var g = Math.max(2, Math.floor(Math.sqrt(budget)));
+      var gridPts = [], gi, gj;
+      for (gi = 0; gi < g; gi++) for (gj = 0; gj < g; gj++) {
+        gridPts.push([(gi + 0.5) / g, (gj + 0.5) / g]);
+      }
+      /* RANDOM points: exactly `budget` independent draws (deterministic per seed) */
+      var rng = FM.mulberry32(seed);
+      var randPts = [], ri;
+      for (ri = 0; ri < budget; ri++) randPts.push([rng(), rng()]);
+
+      var gBest = panel(padO, gridPts, true);
+      var rBest = panel(padO + panelW + gap, randPts, false);
+
+      /* readouts */
+      var gxs = {}, k; for (k = 0; k < gridPts.length; k++) gxs[gridPts[k][0].toFixed(4)] = 1;
+      gdistEl.textContent = Object.keys(gxs).length + " of " + gridPts.length;
+      gbestEl.textContent = gBest.toFixed(4);
+      rbestEl.textContent = rBest.toFixed(4);
+      rbestEl.style.color = rBest < gBest ? C.MINT : C.SEC;
+    }
+
+    bEl.addEventListener("input", render);
+    sEl.addEventListener("input", render);
+    reseed.addEventListener("click", function () { seed = (seed + 0x9E3779B1) | 0; render(); });
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();   /* meaningful initial state with zero interaction */
+  })();
+
+  /* ========================================================
+     INSTRUMENT V2.2 — Bayesian-optimization stepper
+     1D GP regression (RBF kernel) over a fixed hidden objective.
+     Each STEP queries the argmin of the LCB acquisition mu-kappa*sigma,
+     adds the real observation, and refits. Band = mu +/- sigma.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("tune-bo-demo");
+    if (!root) return;
+    var canvas = document.getElementById("tune-bo-canvas");
+    var kEl = document.getElementById("tune-bo-kappa");
+    var kOut = document.getElementById("tune-bo-kappa-out");
+    var bStep = document.getElementById("tune-bo-step");
+    var bReset = document.getElementById("tune-bo-reset");
+    var nEl = document.getElementById("tune-bo-n");
+    var bestEl = document.getElementById("tune-bo-best");
+    var nextEl = document.getElementById("tune-bo-next");
+
+    var X0 = 0, X1 = 5, LS = 0.45, NOISE = 1e-6, GN = 220;
+    var grid = [], gi;
+    for (gi = 0; gi < GN; gi++) grid.push(X0 + (X1 - X0) * gi / (GN - 1));
+
+    /* hidden objective we are MINIMIZING; global min near x ~ 3.0 */
+    function obj(x) {
+      return -Math.sin(3 * x) - 0.5 * Math.sin(7 * x) + 0.06 * (x - 3) * (x - 3);
+    }
+    function kern(a, b) { var d = (a - b) / LS; return Math.exp(-0.5 * d * d); }
+
+    var Xs, Ys, nextX;
+
+    function reset() {
+      Xs = [0.6, 4.4]; Ys = [obj(0.6), obj(4.4)];
+      nextX = null;
+      compute();
+    }
+
+    /* GP posterior over `grid` from current (Xs, Ys); returns {mu[], sd[]} */
+    function posterior() {
+      var n = Xs.length, i, j;
+      /* K = kernel(Xs, Xs) + noise I ; invert via Gauss-Jordan (n is tiny) */
+      var K = [];
+      for (i = 0; i < n; i++) {
+        K.push([]);
+        for (j = 0; j < n; j++) K[i].push(kern(Xs[i], Xs[j]) + (i === j ? NOISE : 0));
+      }
+      var Kinv = invert(K, n);
+      /* alpha = Kinv * Ys */
+      var alpha = [];
+      for (i = 0; i < n; i++) { var s = 0; for (j = 0; j < n; j++) s += Kinv[i][j] * Ys[j]; alpha.push(s); }
+      var mu = [], sd = [], g;
+      for (g = 0; g < GN; g++) {
+        var ks = [];
+        for (i = 0; i < n; i++) ks.push(kern(grid[g], Xs[i]));
+        var m = 0; for (i = 0; i < n; i++) m += ks[i] * alpha[i];
+        /* var = k(x,x) - ks^T Kinv ks */
+        var q = 0;
+        for (i = 0; i < n; i++) { var t = 0; for (j = 0; j < n; j++) t += Kinv[i][j] * ks[j]; q += ks[i] * t; }
+        var vv = 1 - q; if (vv < 1e-9) vv = 1e-9;
+        mu.push(m); sd.push(Math.sqrt(vv));
+      }
+      return { mu: mu, sd: sd };
+    }
+
+    /* small dense matrix inverse via Gauss-Jordan (n <= ~14 here) */
+    function invert(A, n) {
+      var M = [], i, j, k;
+      for (i = 0; i < n; i++) { M.push([]); for (j = 0; j < n; j++) M[i].push(A[i][j]); for (j = 0; j < n; j++) M[i].push(i === j ? 1 : 0); }
+      for (i = 0; i < n; i++) {
+        var piv = M[i][i]; if (Math.abs(piv) < 1e-12) piv = 1e-12;
+        for (j = 0; j < 2 * n; j++) M[i][j] /= piv;
+        for (k = 0; k < n; k++) if (k !== i) {
+          var fct = M[k][i];
+          for (j = 0; j < 2 * n; j++) M[k][j] -= fct * M[i][j];
+        }
+      }
+      var inv = [];
+      for (i = 0; i < n; i++) { inv.push([]); for (j = 0; j < n; j++) inv[i].push(M[i][n + j]); }
+      return inv;
+    }
+
+    var post = null;
+
+    function compute() {
+      var kappa = +kEl.value;
+      post = posterior();
+      /* next query = argmin of LCB = mu - kappa*sd (minimization) */
+      var bi = 0, bv = Infinity, g;
+      for (g = 0; g < GN; g++) {
+        var lcb = post.mu[g] - kappa * post.sd[g];
+        if (lcb < bv) { bv = lcb; bi = g; }
+      }
+      nextX = grid[bi];
+      render();
+    }
+
+    function step() {
+      if (Xs.length >= 14) return;       /* keep the toy small and fast */
+      Xs.push(nextX); Ys.push(obj(nextX));
+      compute();
+    }
+
+    function render() {
+      var kappa = +kEl.value;
+      kOut.textContent = kappa.toFixed(2);
+
+      var c = FM.setupCanvas(canvas, 320);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      ctx.clearRect(0, 0, w, h);
+
+      var padL = 36, padR = 14, padT = 16, padB = 26;
+      var plotW = w - padL - padR, plotH = h - padT - padB;
+
+      /* y-range from the true objective plus the surrogate band */
+      var lo = Infinity, hi = -Infinity, g, i;
+      for (g = 0; g < GN; g++) {
+        var ot = obj(grid[g]);
+        if (ot < lo) lo = ot; if (ot > hi) hi = ot;
+        var u = post.mu[g] + 2 * post.sd[g], d = post.mu[g] - 2 * post.sd[g];
+        if (u > hi) hi = u; if (d < lo) lo = d;
+      }
+      var pad = (hi - lo) * 0.08 || 1; lo -= pad; hi += pad;
+      function X(x) { return padL + (x - X0) / (X1 - X0) * plotW; }
+      function Y(y) { return padT + (1 - (y - lo) / (hi - lo)) * plotH; }
+
+      /* axes */
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(padL + 0.5, padT + 0.5, plotW - 1, plotH - 1);
+
+      /* uncertainty band mu +/- sigma */
+      ctx.beginPath();
+      for (g = 0; g < GN; g++) { var px = X(grid[g]), py = Y(post.mu[g] + post.sd[g]); if (g === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py); }
+      for (g = GN - 1; g >= 0; g--) { ctx.lineTo(X(grid[g]), Y(post.mu[g] - post.sd[g])); }
+      ctx.closePath();
+      ctx.fillStyle = "rgba(78,138,247,.18)"; ctx.fill();
+
+      /* hidden true objective (faint grey) */
+      ctx.strokeStyle = "rgba(155,155,155,.55)"; ctx.lineWidth = 1.25;
+      ctx.beginPath();
+      for (g = 0; g < GN; g++) { var qx = X(grid[g]), qy = Y(obj(grid[g])); if (g === 0) ctx.moveTo(qx, qy); else ctx.lineTo(qx, qy); }
+      ctx.stroke();
+
+      /* surrogate mean (blue) */
+      ctx.strokeStyle = C.BLUE; ctx.lineWidth = 1.75;
+      ctx.beginPath();
+      for (g = 0; g < GN; g++) { var rx = X(grid[g]), ry = Y(post.mu[g]); if (g === 0) ctx.moveTo(rx, ry); else ctx.lineTo(rx, ry); }
+      ctx.stroke();
+
+      /* observed probes (mint) */
+      var best = Infinity, bestX = Xs[0];
+      ctx.fillStyle = C.MINT;
+      for (i = 0; i < Xs.length; i++) {
+        ctx.beginPath(); ctx.arc(X(Xs[i]), Y(Ys[i]), 3.2, 0, Math.PI * 2); ctx.fill();
+        if (Ys[i] < best) { best = Ys[i]; bestX = Xs[i]; }
+      }
+
+      /* next-query marker (dashed vertical) */
+      if (nextX != null) {
+        ctx.strokeStyle = "rgba(255,255,255,.7)"; ctx.setLineDash([4, 4]); ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(X(nextX), padT); ctx.lineTo(X(nextX), padT + plotH); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = C.BRIGHT; ctx.font = C.MONO; ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+        ctx.fillText("NEXT", X(nextX), padT - 4);
+      }
+
+      /* legend */
+      ctx.font = C.MONO; ctx.textBaseline = "middle"; ctx.textAlign = "left";
+      var ly = padT + plotH + 14;
+      ctx.strokeStyle = "rgba(155,155,155,.55)"; ctx.beginPath(); ctx.moveTo(padL, ly); ctx.lineTo(padL + 14, ly); ctx.stroke();
+      ctx.fillStyle = C.SEC; ctx.fillText("HIDDEN f", padL + 18, ly);
+      ctx.strokeStyle = C.BLUE; ctx.beginPath(); ctx.moveTo(padL + 90, ly); ctx.lineTo(padL + 104, ly); ctx.stroke();
+      ctx.fillStyle = C.SEC; ctx.fillText("SURROGATE μ ± σ", padL + 108, ly);
+
+      /* readouts */
+      nEl.textContent = Xs.length + " / 14";
+      bestEl.textContent = best.toFixed(3) + " @ x=" + bestX.toFixed(2);
+      nextEl.textContent = nextX != null ? nextX.toFixed(3) : "—";
+    }
+
+    kEl.addEventListener("input", compute);
+    bStep.addEventListener("click", step);
+    bReset.addEventListener("click", reset);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    reset();   /* meaningful initial state: two probes already placed */
+  })();
+
+  /* ========================================================
+     INSTRUMENT V2.3 — Successive-halving bracket
+     n0 configs each given a deterministic "true quality"; rounds
+     keep the top 1/eta, tripling per-survivor budget each round.
+     Visual: columns = configs, rows = rounds; mint = survivor
+     (bar height = budget), faded = culled. Readouts compare the
+     total budget to running every config to completion.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("tune-sh-demo");
+    if (!root) return;
+    var canvas = document.getElementById("tune-sh-canvas");
+    var n0El = document.getElementById("tune-sh-n0");
+    var etaEl = document.getElementById("tune-sh-eta");
+    var n0Out = document.getElementById("tune-sh-n0-out");
+    var etaOut = document.getElementById("tune-sh-eta-out");
+    var reseed = document.getElementById("tune-sh-reseed");
+    var roundsEl = document.getElementById("tune-sh-rounds");
+    var ladderEl = document.getElementById("tune-sh-ladder");
+    var saveEl = document.getElementById("tune-sh-savings");
+
+    var seed = 424242;
+    var B0 = 1;   /* base per-config budget unit */
+
+    /* build the bracket: returns rounds[], each {survivors:[idx], budget} */
+    function buildBracket(n0, eta, quality) {
+      var rounds = [], n = n0, b = B0;
+      var alive = [];
+      var i; for (i = 0; i < n0; i++) alive.push(i);
+      while (true) {
+        rounds.push({ survivors: alive.slice(), budget: b });
+        if (alive.length <= 1) break;
+        /* keep top 1/eta by quality (higher quality = better) */
+        var keep = Math.max(1, Math.floor(alive.length / eta));
+        alive = alive.slice().sort(function (a, c) { return quality[c] - quality[a]; }).slice(0, keep);
+        b = b * eta;
+      }
+      return rounds;
+    }
+
+    function render() {
+      var n0 = +n0El.value, eta = +etaEl.value;
+      n0Out.textContent = n0; etaOut.textContent = eta;
+
+      /* deterministic per-config "true final quality" in [0,1] */
+      var rng = FM.mulberry32(seed);
+      var quality = [], i;
+      for (i = 0; i < n0; i++) quality.push(rng());
+
+      var rounds = buildBracket(n0, eta, quality);
+
+      var c = FM.setupCanvas(canvas, 320);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      ctx.clearRect(0, 0, w, h);
+
+      var padL = 14, padR = 14, padT = 18, padB = 30;
+      var labelW = 52;
+      var gridX = padL + labelW;
+      var gridW = w - padR - gridX;
+      var colW = gridW / n0;
+      var top = padT, bot = h - padB;
+      var R = rounds.length;
+      var rowH = (bot - top) / R;
+      var cellH = Math.min(rowH - 4, 30);
+
+      ctx.font = C.MONO; ctx.textBaseline = "middle";
+
+      /* track survivor membership per round for fast lookup */
+      var r, member, j;
+      var maxBudget = rounds[R - 1].budget;
+
+      for (r = 0; r < R; r++) {
+        member = {};
+        for (j = 0; j < rounds[r].survivors.length; j++) member[rounds[r].survivors[j]] = true;
+        var y = top + r * rowH + (rowH - cellH) / 2;
+
+        ctx.fillStyle = C.MUT; ctx.textAlign = "left";
+        ctx.fillText("R" + r + " · b=" + rounds[r].budget, padL, y + cellH / 2);
+
+        /* budget fraction -> bar height inside survivor cells */
+        var hFrac = rounds[r].budget / maxBudget;
+
+        for (i = 0; i < n0; i++) {
+          var x = gridX + i * colW;
+          if (member[i]) {
+            /* survivor: mint bar, height encodes budget this round */
+            var bh = Math.max(3, cellH * hFrac);
+            ctx.fillStyle = "rgba(166,242,204,.14)";
+            ctx.fillRect(x + 0.5, y, colW - 1, cellH);            /* faint cell base */
+            ctx.fillStyle = C.MINT;
+            ctx.fillRect(x + 0.5, y + (cellH - bh), colW - 1, bh); /* budget bar */
+          } else {
+            /* culled before this round: faded grey */
+            ctx.fillStyle = "rgba(99,99,99,.18)";
+            ctx.fillRect(x + 0.5, y, colW - 1, cellH);
+          }
+        }
+      }
+
+      /* axis labels */
+      ctx.fillStyle = C.MUT; ctx.textAlign = "left";
+      ctx.fillText(n0 + " CONFIGS →", gridX, padT - 7);
+      ctx.textAlign = "right";
+      ctx.fillText("BAR HEIGHT = BUDGET / SURVIVOR", w - padR, padT - 7);
+
+      /* legend */
+      var ly = bot + 14;
+      ctx.textAlign = "left"; ctx.textBaseline = "middle";
+      ctx.fillStyle = C.MINT; ctx.fillRect(gridX, ly - 4, 9, 9);
+      ctx.fillStyle = C.SEC; ctx.fillText("SURVIVOR (TRAINING)", gridX + 14, ly);
+      ctx.fillStyle = "rgba(99,99,99,.5)"; ctx.fillRect(gridX + 150, ly - 4, 9, 9);
+      ctx.fillStyle = C.SEC; ctx.fillText("CULLED", gridX + 164, ly);
+
+      /* readouts */
+      var elimRounds = R - 1;
+      roundsEl.textContent = elimRounds;
+      var ladder = []; for (r = 0; r < R; r++) ladder.push(rounds[r].survivors.length);
+      ladderEl.textContent = ladder.join(" → ");
+
+      /* total SH budget = sum over rounds of (#survivors * budget) */
+      var shBudget = 0; for (r = 0; r < R; r++) shBudget += rounds[r].survivors.length * rounds[r].budget;
+      /* run-all-to-completion = every config gets the final (max) budget */
+      var runAll = n0 * maxBudget;
+      var savePct = 100 * (1 - shBudget / runAll);
+      saveEl.textContent = shBudget + " vs " + runAll + " (−" + savePct.toFixed(0) + "%)";
+      saveEl.style.color = C.MINT;
+    }
+
+    n0El.addEventListener("input", render);
+    etaEl.addEventListener("input", render);
+    reseed.addEventListener("click", function () { seed = (seed + 0x85EBCA77) | 0; render(); });
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();   /* meaningful initial state with zero interaction */
+  })();
+
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

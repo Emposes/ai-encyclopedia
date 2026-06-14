@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Speech &amp; Audio Models — AI Encyclopedia</title>
+<meta name="description" content="Speech became a sequence-modeling problem — the same transformers that write now listen and speak. Waveforms, spectrograms, neural codecs, Whisper, neural TTS, audio language models, and streaming." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+<link rel="canonical" href="https://ai-encyclopedia.com/multimodal/04-speech-audio" />
+<meta property="og:url" content="https://ai-encyclopedia.com/multimodal/04-speech-audio" />
+</head>
+<body data-track="multimodal" data-level="core">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ MULTIMODAL / 04 / SPEECH &amp; AUDIO</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../multimodal/05-world-models.html">NEXT: WORLD MODELS →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">MULTIMODAL &amp; WORLD MODELS · CHAPTER 04 / 06</div>
+    <h1>Speech &amp; Audio Models</h1>
+    <p class="lede">Speech systems were once pipelines of hand-engineered parts: acoustic models, pronunciation lexicons, language models, and vocoders. <strong>Speech is now treated as a sequence-modeling problem, handled by the same transformers used for text.</strong> This chapter starts from the raw representation, covering waveforms, spectrograms, and the neural codecs that turn sound into discrete tokens, then the recognition, synthesis, and end-to-end audio language models built on top.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 24 MIN</b></span>
+      <span>BUILDS ON<b>MULTIMODAL 01–02</b></span>
+      <span>INSTRUMENTS<b>SPECTROGRAM · MEL EXPLORER · TTS PIPELINE</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">4.1</span>Representing audio</a>
+      <a href="#s2"><span class="n">4.2</span>Speech recognition — Whisper</a>
+      <a href="#s3"><span class="n">4.3</span>Text-to-speech</a>
+      <a href="#s4"><span class="n">4.4</span>Audio language models</a>
+      <a href="#s5"><span class="n">4.5</span>Real-time &amp; streaming</a>
+      <a href="#s6"><span class="n">§</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 4.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">4.1</span><h2>Representing audio: waveforms, spectrograms, codecs</h2></div>
+        <p>Sound is a one-dimensional pressure signal. A microphone samples it at a fixed rate \(f_s\) (16&nbsp;kHz for speech, 44.1/48&nbsp;kHz for music) into a stream of amplitudes — the <strong>waveform</strong>. One second of 16&nbsp;kHz mono audio is 16,000 numbers; one minute is nearly a million. Raw waveforms are faithful but punishingly long and locally meaningless: a single sample tells you almost nothing. The first job of any audio model is to find a representation that is shorter and where structure is visible.</p>
+
+        <p>The classical answer is the <strong>Short-Time Fourier Transform (STFT)</strong>. Slide a window of \(N\) samples across the waveform, hop by \(H\) samples each step, and take the Fourier transform of each windowed frame. The magnitude of the result is the <strong>spectrogram</strong> — a 2-D image with time on one axis and frequency on the other, brightness encoding energy.</p>
+
+        <div class="eq"><span class="eq-tag">EQ MM4.1 — SHORT-TIME FOURIER TRANSFORM</span>
+        $$ X[m, k] \;=\; \sum_{n=0}^{N-1} x[mH + n]\, w[n]\, e^{-\,i\, 2\pi k n / N}, \qquad \text{spectrogram } S[m,k] = \big| X[m,k] \big|^2 $$
+        <div class="eq-note">\(m\) indexes the time frame, \(k\) the frequency bin, \(w[n]\) a tapering window (Hann is standard) that suppresses edge artifacts. The window length \(N\) sets the <b>frequency resolution</b> \(\Delta f = f_s/N\); the hop \(H\) sets how many frames per second. Phase is usually discarded — most audio models work on magnitude alone and reconstruct phase later.</div>
+        </div>
+
+        <p><strong>The uncertainty tradeoff.</strong> A short window localizes <em>when</em> a sound happened but smears <em>which</em> frequency it was; a long window resolves frequency finely but blurs timing. The two resolutions are reciprocal — \(\Delta t \cdot \Delta f \approx 1\) — so you cannot have both at once. This is not an engineering limitation but the audio form of the Heisenberg–Gabor limit; speech pipelines settle near a 25&nbsp;ms window with a 10&nbsp;ms hop as a pragmatic compromise.</p>
+
+        <div class="eq"><span class="eq-tag">EQ MM4.2 — TIME–FREQUENCY RESOLUTION</span>
+        $$ \Delta f = \frac{f_s}{N}, \qquad \Delta t = \frac{N}{f_s}, \qquad \Delta t \cdot \Delta f = 1 $$
+        <div class="eq-note">At \(f_s = 16{,}000\) Hz with \(N = 400\) samples (a 25&nbsp;ms window): \(\Delta f = 40\) Hz and \(\Delta t = 25\) ms. Double the window to 800 samples and frequency resolution halves to 20&nbsp;Hz — but each frame now blurs 50&nbsp;ms of time. <b>You trade one axis for the other; their product is fixed.</b></div>
+        </div>
+
+        <div class="exercise" data-answer="true" data-hint="A short window resolves time well but frequency poorly, and vice versa — the product Δt·Δf is fixed.">
+          <div class="ex-q">True or false: a spectrogram trades time resolution against frequency resolution — making the analysis window longer improves \(\Delta f\) but worsens \(\Delta t\). (Answer <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">From EQ MM4.2, \(\Delta f = f_s/N\) shrinks as the window \(N\) grows (finer frequency), while \(\Delta t = N/f_s\) grows (coarser time). Their product \(\Delta t\cdot\Delta f = 1\) is constant, so improving one axis necessarily degrades the other. The statement is <b>true</b>.</div>
+        </div>
+
+        <p><strong>The mel scale.</strong> Human hearing is roughly logarithmic in frequency — we distinguish 200&nbsp;Hz from 300&nbsp;Hz easily but barely separate 8,000&nbsp;Hz from 8,100&nbsp;Hz. So spectrograms for speech are warped onto the perceptual <strong>mel scale</strong>, pooling the linear bins into ~80 mel bands that are dense at low frequencies and sparse at high ones. The result — the <strong>log-mel spectrogram</strong> — is the input that almost every modern speech model actually consumes.</p>
+
+        <div class="eq"><span class="eq-tag">EQ MM4.3 — HERTZ TO MEL</span>
+        $$ m(f) \;=\; 2595 \,\log_{10}\!\left( 1 + \frac{f}{700} \right) $$
+        <div class="eq-note">The 700 Hz break and 2595 constant are calibrated so that 1,000&nbsp;Hz maps to ~1,000&nbsp;mel. Below the break the mapping is near-linear; above it, near-logarithmic. Mel filterbank bins are spaced <b>uniformly in mel</b>, which means they widen geometrically in Hz — exactly matching the ear's declining pitch resolution.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># EQ MM4.1: a spectrogram (STFT magnitude) of a synthetic two-tone signal
+import numpy as np
+fs = 16000                                  # sample rate (Hz)
+t  = np.arange(0, 0.5, 1/fs)                # half a second
+x  = np.sin(2*np.pi*440*t) + 0.5*np.sin(2*np.pi*2000*t)   # 440 Hz + 2 kHz
+
+N, H = 400, 160                             # 25 ms window, 10 ms hop
+win  = np.hanning(N)
+frames = []
+for m in range(0, len(x) - N, H):
+    seg  = x[m:m+N] * win
+    spec = np.abs(np.fft.rfft(seg))         # magnitude spectrum of this frame
+    frames.append(spec)
+S = np.array(frames)                        # shape: (time frames, freq bins)
+
+freqs = np.fft.rfftfreq(N, 1/fs)            # Hz of each bin
+mid   = S[S.shape[0]//2]                    # one frame from the middle
+# local maxima (a bin taller than both neighbours) = the spectral ridges
+loc   = (mid[1:-1] > mid[:-2]) & (mid[1:-1] > mid[2:])
+peakf = freqs[1:-1][loc]
+peaks = peakf[np.argsort(mid[1:-1][loc])[-2:]]   # two strongest distinct ridges
+print(f"spectrogram shape (frames x bins): {S.shape}")
+print(f"frequency resolution df = fs/N    : {fs/N:.0f} Hz")
+print(f"two dominant tones recovered      : {np.sort(peaks).round(0)} Hz")
+plot_xy(freqs, mid)                         # the spectrum of one frame</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="audio-spec-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT MM4.1 — WAVEFORM → SPECTROGRAM</span><span class="w-sub">STFT MAGNITUDE · EQ MM4.1</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>TONE A FREQUENCY <output id="audio-spec-f1-out">440 Hz</output></label><input type="range" id="audio-spec-f1" min="100" max="3000" step="20" value="440"/></div>
+              <div class="ctl"><label>TONE B FREQUENCY <output id="audio-spec-f2-out">2000 Hz</output></label><input type="range" id="audio-spec-f2" min="100" max="3000" step="20" value="2000"/></div>
+            </div>
+            <div class="ctl-row">
+              <div class="ctl"><label>WINDOW N (samples) <output id="audio-spec-n-out">400</output></label><input type="range" id="audio-spec-n" min="128" max="1024" step="32" value="400"/></div>
+            </div>
+            <div style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.16em;color:#636363;margin:6px 0 4px;">WAVEFORM (TIME DOMAIN)</div>
+            <canvas class="w-canvas" id="audio-spec-wave" height="90"></canvas>
+            <div style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.16em;color:#636363;margin:10px 0 4px;">SPECTROGRAM (TIME × FREQUENCY, BRIGHTER = MORE ENERGY)</div>
+            <canvas class="w-canvas" id="audio-spec-canvas" height="190"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">SAMPLE RATE</div><div class="r-value" id="audio-spec-fs">16 kHz</div></div>
+              <div class="readout acc"><div class="r-label">FREQ RESOLUTION Δf</div><div class="r-value" id="audio-spec-df">—</div></div>
+              <div class="readout acc"><div class="r-label">WINDOW Δt</div><div class="r-value" id="audio-spec-dt">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Two pure tones produce two bright horizontal ridges. Widen the window N and watch the ridges sharpen vertically (finer Δf) while each frame covers more time (coarser Δt) — EQ MM4.2 made visible. Move the tones close together: only a long window resolves them as two lines.</div>
+        </div>
+
+        <p><strong>From continuous spectra to discrete tokens — neural codecs.</strong> Transformers want discrete tokens, not floating-point spectrograms. A <strong>neural audio codec</strong> closes that gap. Models such as SoundStream and Meta's <strong>EnCodec</strong> are convolutional autoencoders trained with <em>residual vector quantization</em> (RVQ): the encoder compresses the waveform to a low-rate latent, a stack of codebooks quantizes it into integer codes — each codebook correcting the residual of the previous one — and the decoder reconstructs high-fidelity audio. The output is a grid of discrete tokens, perhaps 75 frames per second across 8 codebooks, that a language model can predict exactly like text.</p>
+
+        <div class="eq"><span class="eq-tag">EQ MM4.4 — RESIDUAL VECTOR QUANTIZATION</span>
+        $$ \hat{z} \;=\; \sum_{q=1}^{Q} e_q\big(c_q\big), \qquad c_q = \arg\min_{j} \big\| r_{q-1} - e_q(j) \big\|^2, \quad r_q = r_{q-1} - e_q(c_q),\ \ r_0 = z $$
+        <div class="eq-note">Latent \(z\) is encoded by \(Q\) codebooks in sequence. Codebook 1 picks its nearest entry \(e_1(c_1)\); codebook 2 quantizes the leftover residual \(r_1\), and so on. Stacking \(Q\) codebooks of \(K\) entries each gives \(K^Q\) effective combinations at only \(Q\log_2 K\) bits — the trick that lets RVQ hit telephone-to-hi-fi rates with tiny codebooks. <b>Audio is now a token stream.</b></div>
+        </div>
+      </section>
+
+      <!-- ====================== 4.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">4.2</span><h2>Speech recognition: Whisper</h2></div>
+        <p>Automatic speech recognition (ASR) turns audio into text. The classical stack chained a hidden Markov model acoustic model, a pronunciation dictionary, and an n-gram language model — three separately trained components glued by hand. The connectionist temporal classification (CTC) loss and attention-based sequence-to-sequence models collapsed this into single neural networks. <strong>Whisper</strong> (OpenAI, 2022) is the canonical modern endpoint: a plain encoder–decoder transformer trained on 680,000 hours of weakly labelled, multilingual audio scraped from the web.</p>
+
+        <p>The architecture is deliberately ordinary. Audio is resampled to 16&nbsp;kHz, converted to an 80-bin log-mel spectrogram over 30-second chunks, and fed to a transformer <strong>encoder</strong>. A transformer <strong>decoder</strong> then autoregressively predicts text tokens, attending to the encoder output — exactly the machine-translation recipe of Vol&nbsp;II, with mel frames in place of source words. Special tokens in the decoder prompt steer the task: transcribe vs. translate, language id, with-or-without timestamps. One model, one objective, many jobs.</p>
+
+        <div class="eq"><span class="eq-tag">EQ MM4.5 — WHISPER'S AUTOREGRESSIVE OBJECTIVE</span>
+        $$ p(\,y \mid \text{audio}\,) \;=\; \prod_{t=1}^{T} p\big(y_t \mid y_{&lt;t},\, \mathrm{Encoder}(\text{log-mel})\big) $$
+        <div class="eq-note">The decoder factorizes the transcript \(y\) left-to-right, conditioning each token on the audio encoding and the text emitted so far — identical to a text language model except that the conditioning is a spectrogram. Because the special-token prompt selects the task, the <em>same</em> weights transcribe English, translate Japanese-to-English, or emit word-level timestamps. <b>The model is a translator whose source language is sound.</b></div>
+        </div>
+
+        <p>Whisper's robustness came not from architecture but from <strong>scale and weak supervision</strong>: enormous, noisy, diverse data taught it to handle accents, background noise, and code-switching far better than systems trained on clean curated corpora. The cost is occasional <em>hallucination</em> — when the audio is silent or unintelligible, an autoregressive decoder will confidently invent fluent text, because nothing in the objective penalizes a plausible-sounding guess. This is the honest caveat: Whisper trades the brittleness of old pipelines for the failure mode of all generative decoders.</p>
+
+        <div class="exercise" data-answer="true" data-hint="Whisper feeds a log-mel spectrogram to a transformer encoder and autoregressively decodes text — the seq2seq translation recipe.">
+          <div class="ex-q">True or false: Whisper is an encoder–decoder transformer for speech recognition — the encoder ingests a log-mel spectrogram and the decoder autoregressively predicts text tokens. (Answer <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">Whisper resamples audio to 16&nbsp;kHz, computes an 80-bin log-mel spectrogram, encodes it with a transformer encoder, and decodes text with a transformer decoder following EQ MM4.5 — the standard sequence-to-sequence transformer, with audio as the source. The statement is <b>true</b>.</div>
+        </div>
+
+        <p class="note"><strong>The discriminative alternative.</strong> Not all ASR is generative. <em>CTC</em>-based and self-supervised encoders such as wav2vec&nbsp;2.0 learn audio representations from unlabelled speech, then attach a thin output head; they align frames to characters without a decoder and so cannot hallucinate sentences, but they need an external language model for top accuracy. Encoder–decoder models like Whisper fold the language model inside — convenient, at the price of the failure mode above.</p>
+      </section>
+
+      <!-- ====================== 4.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">4.3</span><h2>Text-to-speech: Tacotron to neural TTS</h2></div>
+        <p>Text-to-speech (TTS) runs recognition in reverse: text in, waveform out. Like ASR it was once a pipeline — text normalization, a pronunciation model, a duration model, and a <em>vocoder</em> that built sound from parameters, every stage hand-tuned and audibly robotic. Neural TTS rebuilt it as two learned stages connected by the spectrogram.</p>
+
+        <p><strong>Stage 1 — text to spectrogram (the acoustic model).</strong> <em>Tacotron 2</em> (2017) is the archetype: a sequence-to-sequence model with attention that reads characters and emits a log-mel spectrogram frame by frame, learning prosody, rhythm, and emphasis directly from data. Its weakness was the autoregressive attention itself — it could skip or repeat words when alignment slipped. Non-autoregressive successors such as <em>FastSpeech&nbsp;2</em> fixed this by predicting an explicit <strong>duration</strong> for each input token and expanding the sequence in one shot, trading a little naturalness for speed and rock-solid alignment.</p>
+
+        <div class="eq"><span class="eq-tag">EQ MM4.6 — TWO-STAGE NEURAL TTS</span>
+        $$ \text{text} \;\xrightarrow{\ \text{acoustic model}\ }\; \text{log-mel } S \;\xrightarrow{\ \text{vocoder}\ }\; \text{waveform } x $$
+        <div class="eq-note">The acoustic model (Tacotron&nbsp;2, FastSpeech&nbsp;2) maps text to a mel spectrogram — the <em>what to say and how</em>. The vocoder maps that spectrogram to samples — the <em>how it sounds</em>. The spectrogram is a deliberate bottleneck: a perceptually meaningful, low-rate intermediate that lets the two halves be trained, swapped, and debugged independently. <b>Modern systems collapse both stages end-to-end, but the spectrogram remains the conceptual seam.</b></div>
+        </div>
+
+        <p><strong>Stage 2 — spectrogram to waveform (the vocoder).</strong> The spectrogram threw away phase, so the vocoder must synthesize plausible samples. <em>WaveNet</em> (2016) was the breakthrough: an autoregressive convolutional network using <strong>dilated causal convolutions</strong> to model raw audio one sample at a time, conditioned on the spectrogram. Quality was a leap; speed was a disaster — generating 24,000 samples per second one-at-a-time. The field's history since is the race to keep WaveNet's fidelity without its latency: parallel flows (Parallel WaveNet), and the now-dominant <em>GAN vocoders</em> (HiFi-GAN) that generate an entire waveform in a single non-autoregressive forward pass.</p>
+
+        <div class="eq"><span class="eq-tag">EQ MM4.7 — WAVENET: AUTOREGRESSIVE SAMPLES</span>
+        $$ p(x) \;=\; \prod_{n=1}^{T} p\big(x_n \mid x_{n-1}, x_{n-2}, \ldots, x_1\big), \qquad \text{receptive field } = 2^{L}\ \text{with } L\ \text{dilated layers} $$
+        <div class="eq-note">Each sample is conditioned on all previous samples; dilated convolutions (dilation \(1,2,4,\ldots,2^{L-1}\)) make the receptive field grow <b>exponentially</b> with depth, so a few dozen layers cover thousands of samples cheaply. This is the same autoregressive factorization as a text LLM (Vol&nbsp;II) — applied to 16-bit audio. Its serial nature is exactly why GAN vocoders, which emit all samples at once, replaced it in production.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># EQ MM4.3: warp linear FFT frequencies onto the perceptual mel scale
+import numpy as np
+fs, N = 16000, 400
+freqs = np.fft.rfftfreq(N, 1/fs)            # linear Hz of each FFT bin
+
+def hz_to_mel(f): return 2595*np.log10(1 + f/700)
+def mel_to_hz(m): return 700*(10**(m/2595) - 1)
+
+n_mels = 8                                   # tiny filterbank for display
+mel_max = hz_to_mel(fs/2)                     # Nyquist in mels
+edges_mel = np.linspace(0, mel_max, n_mels+1) # equal spacing in MEL...
+edges_hz  = mel_to_hz(edges_mel)              # ...is geometric spacing in HZ
+
+print(f"Nyquist  : {fs/2:.0f} Hz  =  {mel_max:.0f} mel")
+print(f"mel(1000): {hz_to_mel(1000):.1f}   (calibrated so 1 kHz ~ 1000 mel)")
+print("mel-band edges in Hz (note they widen as frequency rises):")
+print(np.round(edges_hz, 0))
+widths = np.diff(edges_hz)
+print("band widths (Hz)        :", np.round(widths, 0))
+plot_xy(freqs, hz_to_mel(freqs))             # the warping curve itself</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="exercise" data-answer="2146" data-tol="0.01" data-unit="mel" data-hint="m = 2595 · log10(1 + f/700) with f = 4000.">
+          <div class="ex-q">Using EQ MM4.3, what is the mel value of \(f = 4000\) Hz? Use \(m(f) = 2595\,\log_{10}(1 + f/700)\). (Round to the nearest mel.)</div>
+          <div class="ex-reveal-src">\(1 + 4000/700 = 6.7143\); \(\log_{10}(6.7143) = 0.82712\); \(2595 \times 0.82712 = 2146.4\). Rounded, the mel value is <b>2146</b> mel. Note that doubling Hz from 2&nbsp;kHz to 4&nbsp;kHz adds far fewer than 2× the mels — the scale is compressing the highs, just as the ear does.</div>
+        </div>
+
+        <div class="widget" id="audio-mel-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT MM4.2 — SAMPLE-RATE / MEL-BIN EXPLORER</span><span class="w-sub">NYQUIST &amp; FILTERBANK · EQ MM4.3</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>SAMPLE RATE f_s <output id="audio-mel-fs-out">16 kHz</output></label><input type="range" id="audio-mel-fs" min="8000" max="48000" step="1000" value="16000"/></div>
+              <div class="ctl"><label>MEL BINS <output id="audio-mel-bins-out">8</output></label><input type="range" id="audio-mel-bins" min="4" max="24" step="1" value="8"/></div>
+            </div>
+            <div style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.16em;color:#636363;margin:6px 0 4px;">MEL FILTERBANK EDGES (UNIFORM IN MEL → WIDENING IN HZ)</div>
+            <canvas class="w-canvas" id="audio-mel-canvas" height="170"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">NYQUIST (MAX FREQ)</div><div class="r-value" id="audio-mel-nyq">8.0 kHz</div></div>
+              <div class="readout"><div class="r-label">LOWEST BAND WIDTH</div><div class="r-value" id="audio-mel-low">—</div></div>
+              <div class="readout"><div class="r-label">HIGHEST BAND WIDTH</div><div class="r-value" id="audio-mel-high">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Nyquist says the highest representable frequency is \(f_s/2\): halve the sample rate and the spectrum's ceiling drops with it. The mel bins are spaced evenly in mels but the bars show them widening toward the right — that geometric stretch in Hz is exactly the ear's declining pitch resolution. Add bins and each band narrows.</div>
+        </div>
+
+        <div class="widget" id="audio-tts-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT MM4.3 — TTS PIPELINE ANATOMY</span><span class="w-sub">TEXT → MEL → WAVEFORM · EQ MM4.6</span></div>
+          <div class="w-body">
+            <div class="ctl-row" style="margin-bottom:6px;">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>ARCHITECTURE</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-tts-mode="twostage">TWO-STAGE</button>
+                  <button class="w-btn ghost" data-tts-mode="endtoend">END-TO-END</button>
+                </div>
+              </div>
+            </div>
+            <div id="audio-tts-stages" style="display:flex;flex-wrap:wrap;gap:6px;align-items:stretch;">
+              <div data-tts-stage style="flex:1;min-width:84px;border:1px solid var(--hairline);border-radius:4px;padding:10px 8px;cursor:pointer;transition:all .2s;font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.12em;text-align:center;">TEXT</div>
+              <div data-tts-stage style="flex:1;min-width:84px;border:1px solid var(--hairline);border-radius:4px;padding:10px 8px;cursor:pointer;transition:all .2s;font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.12em;text-align:center;">ACOUSTIC MODEL</div>
+              <div data-tts-stage style="flex:1;min-width:84px;border:1px solid var(--hairline);border-radius:4px;padding:10px 8px;cursor:pointer;transition:all .2s;font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.12em;text-align:center;">LOG-MEL</div>
+              <div data-tts-stage style="flex:1;min-width:84px;border:1px solid var(--hairline);border-radius:4px;padding:10px 8px;cursor:pointer;transition:all .2s;font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.12em;text-align:center;">VOCODER</div>
+              <div data-tts-stage style="flex:1;min-width:84px;border:1px solid var(--hairline);border-radius:4px;padding:10px 8px;cursor:pointer;transition:all .2s;font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.12em;text-align:center;">WAVEFORM</div>
+            </div>
+            <div id="audio-tts-desc" style="margin-top:10px;font-size:12.5px;line-height:1.55;color:var(--secondary);min-height:46px;">—</div>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">ARCHITECTURE NOTE</div><div class="r-value" id="audio-tts-mode-note" style="font-size:11px;line-height:1.5;">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Click any stage to inspect it, or STEP through the pipeline. The mel spectrogram sits at the center as a deliberate bottleneck (EQ MM4.6). Flip to END-TO-END to see how modern systems fuse the acoustic model and vocoder while keeping the mel as an internal seam. <button class="w-btn" id="audio-tts-step" style="margin-top:8px;">STEP ▶</button></div>
+        </div>
+      </section>
+
+      <!-- ====================== 4.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">4.4</span><h2>Audio language models</h2></div>
+        <p>Once a neural codec (§4.1) turns audio into discrete tokens, the boundary between speech and language dissolves. An <strong>audio language model</strong> is a transformer trained to predict the next audio token exactly as a text LLM predicts the next word. Google's <em>AudioLM</em> (2022) demonstrated the idea: prompt it with a few seconds of speech or piano and it continues them coherently — preserving speaker identity, prosody, even recording-room acoustics — with no transcript and no explicit acoustic model, purely from the token statistics.</p>
+
+        <div class="eq"><span class="eq-tag">EQ MM4.8 — NEXT-AUDIO-TOKEN PREDICTION</span>
+        $$ p(\mathbf{a}) \;=\; \prod_{t=1}^{T} p\big(a_t \mid a_{&lt;t}\big), \qquad a_t \in \{1, \ldots, K\}\ \text{(codec tokens, EQ MM4.4)} $$
+        <div class="eq-note">Identical in form to the text objective of Vol&nbsp;II and to WaveNet (EQ MM4.7) — only the vocabulary changed, from words to RVQ codes. The subtlety is the codec's <em>hierarchy</em>: AudioLM splits tokens into coarse "semantic" tokens (content, long-range structure) and fine "acoustic" tokens (timbre, detail), modelling them in stages so the transformer captures meaning before texture. <b>Speech generation became language modelling over a sound vocabulary.</b></div>
+        </div>
+
+        <p>This unification is why a single model can now <strong>transcribe, translate, answer, and speak</strong>. Text-conditioned variants — Meta's <em>MusicGen</em> for music, <em>VALL-E</em> for zero-shot voice cloning from a three-second sample — prepend text or a reference clip and let the same next-token machinery do the rest. The frontier "omni" assistants (GPT-4o, Gemini) push it further: one transformer ingests interleaved text, audio, and image tokens and emits audio tokens directly, with no separate ASR or TTS stage in the loop. The pipeline of §4.2 and §4.3 has folded into a single sequence model.</p>
+
+        <p class="note"><strong>Honest limits.</strong> Audio tokens are dense — tens of codebook tokens per second across multiple streams — so context windows fill fast, and long-form coherence (a five-minute song that develops, a ten-turn spoken dialogue that remembers) remains hard. Zero-shot voice cloning from seconds of audio is also a live misuse and consent concern; watermarking and detection are active, unsettled research, not solved problems.</p>
+      </section>
+
+      <!-- ====================== 4.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">4.5</span><h2>Real-time &amp; streaming</h2></div>
+        <p>A spoken-conversation assistant lives or dies on <strong>latency</strong>. Humans tolerate roughly 200–300&nbsp;ms of silence before a reply feels unnatural; the cascade of ASR → LLM → TTS, each waiting for the previous to finish, easily blows past a full second. Real-time audio is therefore an engineering discipline about cutting the time-to-first-sound, not just model quality.</p>
+
+        <p><strong>Streaming, not chunking.</strong> Whisper's 30-second window is fine for files but fatal for conversation. Streaming ASR processes audio in small overlapping chunks and emits partial transcripts as words arrive, using causal or limited-lookahead attention so it never waits for the end of the utterance. On the output side, streaming TTS begins vocoding the first words while the acoustic model is still producing later frames — a software pipeline rather than a sequence of blocking stages.</p>
+
+        <div class="eq"><span class="eq-tag">EQ MM4.9 — END-TO-END SPOKEN LATENCY</span>
+        $$ L_{\text{total}} \;=\; L_{\text{ASR}} + L_{\text{LLM}} + L_{\text{TTS}} \;\xrightarrow{\ \text{streaming}\ }\; \max\big(L_{\text{ASR}}^{\text{first}},\, L_{\text{TTS}}^{\text{first}}\big) + L_{\text{LLM}}^{\text{first-token}} $$
+        <div class="eq-note">A blocking cascade <b>adds</b> the latency of every stage. Streaming overlaps them, so what the user perceives is dominated by the <em>time to the first</em> transcript token, first LLM token, and first audio sample — not the totals. Native audio-in/audio-out models (§4.4) shortcut the chain entirely: no ASR or TTS hop, so \(L_{\text{ASR}}\) and \(L_{\text{TTS}}\) vanish from the budget. <b>The goal is overlap, then elimination.</b></div>
+        </div>
+
+        <p><strong>Full-duplex and the future.</strong> The hardest problems are conversational, not acoustic: detecting end-of-turn quickly without cutting the speaker off, handling barge-in (the user interrupting mid-reply), and modelling backchannels ("mm-hmm"). Systems such as Kyutai's <em>Moshi</em> attack this with a full-duplex architecture that listens and speaks simultaneously over parallel token streams, dropping perceived latency toward 200&nbsp;ms. End-to-end audio language models point the same way: the lower the latency budget, the more pressure to collapse the pipeline into one model — which is exactly the arc this chapter traced.</p>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>Sound was the first non-text modality to fully become a token stream; the next frontier is a model of the world itself.</strong> Chapter 05: world models — systems that learn the dynamics of an environment from observation, predict the future of a scene, and let agents plan and act inside a learned simulation.</p>
+        </div>
+      </section>
+
+      <!-- ====================== References ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">4.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://arxiv.org/abs/2212.04356" target="_blank" rel="noopener">Radford, A., Kim, J. W., Xu, T., Brockman, G., McLeavey, C. &amp; Sutskever, I. (2022). <span class="ref-venue">Robust Speech Recognition via Large-Scale Weak Supervision</span>.</a> <span class="ref-meta">OpenAI — Whisper; an encoder–decoder transformer trained on 680k hours, the model behind §4.2.</span></li>
+          <li><a href="https://arxiv.org/abs/1609.03499" target="_blank" rel="noopener">van den Oord, A. et al. (2016). <span class="ref-venue">WaveNet: A Generative Model for Raw Audio</span>.</a> <span class="ref-meta">DeepMind — dilated causal convolutions for autoregressive audio (EQ MM4.7); the vocoder breakthrough.</span></li>
+          <li><a href="https://arxiv.org/abs/2210.13438" target="_blank" rel="noopener">Défossez, A., Copet, J., Synnaeve, G. &amp; Adi, Y. (2022). <span class="ref-venue">High Fidelity Neural Audio Compression</span>.</a> <span class="ref-meta">Meta — EnCodec; residual-vector-quantized neural codec (EQ MM4.4) that turns audio into discrete tokens.</span></li>
+          <li><a href="https://arxiv.org/abs/1712.05884" target="_blank" rel="noopener">Shen, J. et al. (2018). <span class="ref-venue">Natural TTS Synthesis by Conditioning WaveNet on Mel Spectrogram Predictions</span>.</a> <span class="ref-meta">Google — Tacotron&nbsp;2; the two-stage acoustic-model + vocoder template of §4.3 (EQ MM4.6).</span></li>
+          <li><a href="https://arxiv.org/abs/2006.04558" target="_blank" rel="noopener">Ren, Y. et al. (2021). <span class="ref-venue">FastSpeech 2: Fast and High-Quality End-to-End Text to Speech</span>.</a> <span class="ref-meta">ICLR 2021 — non-autoregressive TTS with explicit duration prediction; the alignment fix for Tacotron.</span></li>
+          <li><a href="https://arxiv.org/abs/2006.11477" target="_blank" rel="noopener">Baevski, A., Zhou, H., Mohamed, A. &amp; Auli, M. (2020). <span class="ref-venue">wav2vec 2.0: A Framework for Self-Supervised Learning of Speech Representations</span>.</a> <span class="ref-meta">Meta — self-supervised audio encoder; the discriminative alternative to generative ASR.</span></li>
+          <li><a href="https://arxiv.org/abs/2209.03143" target="_blank" rel="noopener">Borsos, Z. et al. (2022). <span class="ref-venue">AudioLM: A Language Modeling Approach to Audio Generation</span>.</a> <span class="ref-meta">Google — next-audio-token prediction over codec tokens (EQ MM4.8); the audio-LM of §4.4.</span></li>
+          <li><a href="https://arxiv.org/abs/2410.00037" target="_blank" rel="noopener">Défossez, A. et al. (2024). <span class="ref-venue">Moshi: A Speech-Text Foundation Model for Real-Time Dialogue</span>.</a> <span class="ref-meta">Kyutai — full-duplex spoken dialogue; the streaming / low-latency direction of §4.5.</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../multimodal/03-image-generation.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">03</span> Image &amp; Video Gen</div></a>
+        <a class="next" href="../multimodal/05-world-models.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">05</span> World Models</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — MULTIMODAL · CH 04</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* chapter instruments — single IIFE, no globals */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  var C = FM.C;
+
+  /* ---------------------------------------------------------------
+     INSTRUMENT MM4.1 — WAVEFORM → SPECTROGRAM
+     A tiny DFT-magnitude spectrogram of a two-tone synthetic signal.
+  --------------------------------------------------------------- */
+  (function spectrogram() {
+    var root = document.getElementById("audio-spec-demo");
+    if (!root) return;
+    var fs = 16000;
+    var f1 = document.getElementById("audio-spec-f1");
+    var f2 = document.getElementById("audio-spec-f2");
+    var nEl = document.getElementById("audio-spec-n");
+    var f1Out = document.getElementById("audio-spec-f1-out");
+    var f2Out = document.getElementById("audio-spec-f2-out");
+    var nOut = document.getElementById("audio-spec-n-out");
+    var dfOut = document.getElementById("audio-spec-df");
+    var dtOut = document.getElementById("audio-spec-dt");
+    var waveC = document.getElementById("audio-spec-wave");
+    var specC = document.getElementById("audio-spec-canvas");
+
+    // magnitude DFT of a single windowed frame, only over the low-freq half.
+    function dftMag(seg, bins) {
+      var N = seg.length, out = new Array(bins), k, n;
+      for (k = 0; k < bins; k++) {
+        var re = 0, im = 0, ang = -2 * Math.PI * k / N;
+        for (n = 0; n < N; n++) { var a = ang * n; re += seg[n] * Math.cos(a); im += seg[n] * Math.sin(a); }
+        out[k] = Math.sqrt(re * re + im * im);
+      }
+      return out;
+    }
+
+    function render() {
+      var a = parseInt(f1.value, 10), b = parseInt(f2.value, 10);
+      var N = parseInt(nEl.value, 10);
+      f1Out.textContent = a + " Hz";
+      f2Out.textContent = b + " Hz";
+      nOut.textContent = N;
+      dfOut.textContent = (fs / N).toFixed(0) + " Hz";
+      dtOut.textContent = (1000 * N / fs).toFixed(1) + " ms";
+
+      // build the signal (0.25 s) -> a couple thousand samples
+      var dur = 0.25, total = Math.floor(dur * fs), i;
+      var x = new Float64Array(total);
+      for (i = 0; i < total; i++) {
+        var t = i / fs;
+        x[i] = Math.sin(2 * Math.PI * a * t) + 0.5 * Math.sin(2 * Math.PI * b * t);
+      }
+
+      // --- waveform (zoom to first ~12 ms so cycles are visible) ---
+      var wv = FM.setupCanvas(waveC, 90), wc = wv.ctx;
+      wc.clearRect(0, 0, wv.w, wv.h);
+      var span = Math.min(total, Math.floor(0.012 * fs));
+      wc.strokeStyle = C.MINT; wc.lineWidth = 1.4; wc.beginPath();
+      for (i = 0; i < span; i++) {
+        var px = (i / (span - 1)) * wv.w;
+        var py = wv.h / 2 - (x[i] / 1.6) * (wv.h / 2 - 4);
+        if (i === 0) wc.moveTo(px, py); else wc.lineTo(px, py);
+      }
+      wc.stroke();
+      wc.strokeStyle = "rgba(99,99,99,.35)"; wc.lineWidth = 1; wc.beginPath();
+      wc.moveTo(0, wv.h / 2); wc.lineTo(wv.w, wv.h / 2); wc.stroke();
+
+      // --- spectrogram: STFT over frames, low half of spectrum ---
+      var H = Math.max(32, Math.floor(N / 2));
+      var bins = Math.floor(N / 2);
+      var win = new Float64Array(N);
+      for (i = 0; i < N; i++) win[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (N - 1)); // Hann
+      var frames = [], maxMag = 1e-9, m;
+      for (m = 0; m + N <= total; m += H) {
+        var seg = new Float64Array(N);
+        for (i = 0; i < N; i++) seg[i] = x[m + i] * win[i];
+        var mag = dftMag(seg, bins);
+        for (i = 0; i < bins; i++) if (mag[i] > maxMag) maxMag = mag[i];
+        frames.push(mag);
+      }
+      var sp = FM.setupCanvas(specC, 190), sc = sp.ctx;
+      sc.clearRect(0, 0, sp.w, sp.h);
+      if (frames.length) {
+        var cw = sp.w / frames.length;
+        for (var fi = 0; fi < frames.length; fi++) {
+          var col = frames[fi];
+          for (var ki = 0; ki < bins; ki++) {
+            var v = Math.pow(col[ki] / maxMag, 0.55); // gamma for visibility
+            if (v < 0.04) continue;
+            // map low bin -> bottom of canvas (low freq at bottom)
+            var yTop = sp.h - ((ki + 1) / bins) * sp.h;
+            var hgt = sp.h / bins + 0.6;
+            // mint glow scaled by energy
+            sc.fillStyle = "rgba(166,242,204," + v.toFixed(3) + ")";
+            sc.fillRect(fi * cw, yTop, cw + 0.6, hgt);
+          }
+        }
+      }
+      // frequency axis ticks (0, fs/4 implied at top of shown half)
+      sc.fillStyle = C.MUT; sc.font = C.MONO;
+      var nyqShown = fs / 2; // bins cover 0..fs/2
+      sc.fillText("0 Hz", 4, sp.h - 4);
+      sc.fillText((nyqShown / 1000).toFixed(0) + " kHz", 4, 12);
+    }
+
+    [f1, f2, nEl].forEach(function (el) { el.addEventListener("input", render); });
+    window.addEventListener("resize", render);
+    render();
+  })();
+
+  /* ---------------------------------------------------------------
+     INSTRUMENT MM4.2 — SAMPLE-RATE / MEL-BIN EXPLORER
+     Nyquist ceiling + mel filterbank edges (uniform in mel -> widening in Hz).
+  --------------------------------------------------------------- */
+  (function melExplorer() {
+    var root = document.getElementById("audio-mel-demo");
+    if (!root) return;
+    var fsEl = document.getElementById("audio-mel-fs");
+    var binsEl = document.getElementById("audio-mel-bins");
+    var fsOut = document.getElementById("audio-mel-fs-out");
+    var binsOut = document.getElementById("audio-mel-bins-out");
+    var nyqOut = document.getElementById("audio-mel-nyq");
+    var lowOut = document.getElementById("audio-mel-low");
+    var highOut = document.getElementById("audio-mel-high");
+    var canvas = document.getElementById("audio-mel-canvas");
+
+    function hzToMel(f) { return 2595 * Math.log10(1 + f / 700); }
+    function melToHz(mm) { return 700 * (Math.pow(10, mm / 2595) - 1); }
+
+    function render() {
+      var fs = parseInt(fsEl.value, 10);
+      var nb = parseInt(binsEl.value, 10);
+      var nyq = fs / 2;
+      fsOut.textContent = (fs / 1000).toFixed(0) + " kHz";
+      binsOut.textContent = nb;
+      nyqOut.textContent = (nyq / 1000).toFixed(1) + " kHz";
+
+      // equal spacing in mel -> edges in Hz
+      var melMax = hzToMel(nyq), i;
+      var edgesHz = [];
+      for (i = 0; i <= nb; i++) edgesHz.push(melToHz((i / nb) * melMax));
+      var widths = [];
+      for (i = 0; i < nb; i++) widths.push(edgesHz[i + 1] - edgesHz[i]);
+      lowOut.textContent = widths[0].toFixed(0) + " Hz";
+      highOut.textContent = widths[nb - 1].toFixed(0) + " Hz";
+
+      var cv = FM.setupCanvas(canvas, 170), ctx = cv.ctx;
+      ctx.clearRect(0, 0, cv.w, cv.h);
+      var padL = 6, padR = 6, padB = 22, padT = 8;
+      var plotW = cv.w - padL - padR, plotH = cv.h - padB - padT;
+      // x maps Hz [0, nyq] linearly so the geometric widening is visible
+      function xOf(hz) { return padL + (hz / nyq) * plotW; }
+
+      // draw each mel band as a triangular filter (peak at center)
+      for (i = 0; i < nb; i++) {
+        var lo = edgesHz[i], hi = edgesHz[i + 1], mid = (lo + hi) / 2;
+        var xl = xOf(lo), xm = xOf(mid), xh = xOf(hi);
+        var baseY = padT + plotH, topY = padT;
+        var hue = i % 2 === 0 ? "rgba(166,242,204,0.85)" : "rgba(78,138,247,0.80)";
+        ctx.strokeStyle = hue; ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.moveTo(xl, baseY); ctx.lineTo(xm, topY); ctx.lineTo(xh, baseY);
+        ctx.stroke();
+        // faint fill
+        ctx.fillStyle = i % 2 === 0 ? "rgba(166,242,204,0.10)" : "rgba(78,138,247,0.10)";
+        ctx.beginPath();
+        ctx.moveTo(xl, baseY); ctx.lineTo(xm, topY); ctx.lineTo(xh, baseY); ctx.closePath();
+        ctx.fill();
+      }
+      // baseline + a few Hz ticks
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1; ctx.beginPath();
+      ctx.moveTo(padL, padT + plotH); ctx.lineTo(padL + plotW, padT + plotH); ctx.stroke();
+      ctx.fillStyle = C.MUT; ctx.font = C.MONO;
+      var ticks = [0, 0.25, 0.5, 0.75, 1];
+      for (i = 0; i < ticks.length; i++) {
+        var hz = ticks[i] * nyq, xx = xOf(hz);
+        ctx.fillRect(xx, padT + plotH, 1, 4);
+        var lbl = hz >= 1000 ? (hz / 1000).toFixed(1) + "k" : hz.toFixed(0);
+        ctx.fillText(lbl, Math.min(xx, cv.w - 22), padT + plotH + 16);
+      }
+    }
+
+    [fsEl, binsEl].forEach(function (el) { el.addEventListener("input", render); });
+    window.addEventListener("resize", render);
+    render();
+  })();
+
+  /* ---------------------------------------------------------------
+     INSTRUMENT MM4.3 — TTS PIPELINE ANATOMY
+     Animated walk through text -> acoustic model -> mel -> vocoder -> wave.
+     setTimeout-driven (background-tab safe), with a meaningful initial state.
+  --------------------------------------------------------------- */
+  (function ttsPipeline() {
+    var root = document.getElementById("audio-tts-demo");
+    if (!root) return;
+    var stageEls = root.querySelectorAll("[data-tts-stage]");
+    var descEl = document.getElementById("audio-tts-desc");
+    var btn = document.getElementById("audio-tts-step");
+    var modeEls = root.querySelectorAll("[data-tts-mode]");
+
+    var stages = [
+      { k: "text", t: "TEXT", d: "Input characters/phonemes. Normalize numbers, dates, symbols — “$5” → “five dollars” before anything is spoken." },
+      { k: "acoustic", t: "ACOUSTIC MODEL", d: "Tacotron 2 / FastSpeech 2 maps text → log-mel spectrogram. Learns prosody, rhythm and emphasis. (EQ MM4.6, stage 1.)" },
+      { k: "mel", t: "LOG-MEL SPECTROGRAM", d: "The perceptual bottleneck: ~80 mel bands × frames. The ‘what to say and how’, with phase discarded." },
+      { k: "vocoder", t: "VOCODER", d: "WaveNet (autoregressive) or HiFi-GAN (one-shot) reconstructs samples from the mel, re-inventing phase. (EQ MM4.6, stage 2.)" },
+      { k: "wave", t: "WAVEFORM", d: "16-bit samples at f_s — the audible signal, streamed out as it is produced." }
+    ];
+    var modes = {
+      twostage: "TWO-STAGE: train, swap and debug the acoustic model and vocoder independently. The mel spectrogram is the seam between them.",
+      endtoend: "END-TO-END: modern systems fuse both stages and optimize text → waveform jointly. The mel survives only as an internal representation."
+    };
+
+    var active = 1; // start with the acoustic model highlighted: meaningful initial state
+    var mode = "twostage";
+
+    function paint() {
+      for (var i = 0; i < stageEls.length; i++) {
+        var on = i === active;
+        stageEls[i].style.borderColor = on ? C.MINT : C.HAIR;
+        stageEls[i].style.color = on ? C.BRIGHT : C.SEC;
+        stageEls[i].style.background = on ? "rgba(166,242,204,0.08)" : "transparent";
+      }
+      descEl.innerHTML = "<b>" + stages[active].t + "</b> — " + stages[active].d;
+    }
+    function setMode(mname) {
+      mode = mname;
+      for (var i = 0; i < modeEls.length; i++) {
+        var on = modeEls[i].getAttribute("data-tts-mode") === mname;
+        modeEls[i].classList.toggle("on", on);
+      }
+      var note = document.getElementById("audio-tts-mode-note");
+      if (note) note.textContent = modes[mname];
+    }
+
+    if (btn) btn.addEventListener("click", function () {
+      active = (active + 1) % stages.length; paint();
+    });
+    for (var j = 0; j < stageEls.length; j++) {
+      (function (idx) {
+        stageEls[idx].addEventListener("click", function () { active = idx; paint(); });
+      })(j);
+    }
+    for (var k = 0; k < modeEls.length; k++) {
+      (function (el) {
+        el.addEventListener("click", function () { setMode(el.getAttribute("data-tts-mode")); });
+      })(modeEls[k]);
+    }
+
+    setMode("twostage");
+    paint();
+
+    // gentle auto-advance so the pipeline reads even without interaction;
+    // setTimeout chain (not rAF) so background tabs stay safe.
+    var auto = true;
+    root.addEventListener("click", function () { auto = false; });
+    function tick() {
+      if (auto) { active = (active + 1) % stages.length; paint(); }
+      setTimeout(tick, 2200);
+    }
+    setTimeout(tick, 2200);
+  })();
+
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

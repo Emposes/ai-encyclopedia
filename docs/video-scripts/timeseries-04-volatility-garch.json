@@ -1,0 +1,169 @@
+{
+  "concepts": [
+    {
+      "id": "timeseries-04-volatility-garch-s1",
+      "chapter": "timeseries/04-volatility-garch",
+      "section": "s1",
+      "title": "Volatility clustering — the stylized fact",
+      "eyebrow": "TIME SERIES",
+      "beats": [
+        {
+          "text": "Plot any liquid asset's daily returns and the wild days arrive in bunches, separated by long stretches of calm.",
+          "visual": { "type": "title", "text": "Volatility clustering", "sub": "Large moves follow large moves" }
+        },
+        {
+          "text": "Mandelbrot noted it in 1963: large changes tend to be followed by large changes, and small changes by small ones.",
+          "visual": { "type": "plot", "ys": [1, 1.2, 0.9, 5, 6, 4.5, 1.1, 0.8, 1, 0.9], "xlabel": "day", "ylabel": "|return|", "mark": "cluster" }
+        },
+        {
+          "text": "Classical models assume homoscedasticity, a constant noise variance, which treats a calm Tuesday and a panicked Thursday alike.",
+          "visual": { "type": "bars", "values": [1, 1, 1, 1, 1], "labels": ["t1", "t2", "t3", "t4", "t5"], "highlight": 3 }
+        },
+        {
+          "text": "Raw returns are serially uncorrelated, yet squared returns are strongly positively autocorrelated across many lags.",
+          "visual": { "type": "equation", "tex": "\\mathrm{Corr}(r_t, r_{t-k}) \\approx 0 \\quad\\text{but}\\quad \\mathrm{Corr}(r_t^2, r_{t-k}^2) > 0", "note": "The level is noise; the magnitude has memory" }
+        },
+        {
+          "text": "Returns are also fat-tailed, with far more four and five sigma days than a Gaussian distribution would allow.",
+          "visual": { "type": "stat", "value": 5, "label": "sigma days a Gaussian rules out but markets show", "unit": "sigma" }
+        },
+        {
+          "text": "GARCH does not predict returns; it predicts the scale of returns, the width of tomorrow's distribution.",
+          "visual": { "type": "title", "text": "Predict the scale", "sub": "Not the center of the distribution" }
+        }
+      ]
+    },
+    {
+      "id": "timeseries-04-volatility-garch-s2",
+      "chapter": "timeseries/04-volatility-garch",
+      "section": "s2",
+      "title": "ARCH — conditional variance",
+      "eyebrow": "TIME SERIES",
+      "beats": [
+        {
+          "text": "Robert Engle's 1982 insight, which won the 2003 Nobel, let the variance of the current shock depend on recent shock magnitudes.",
+          "visual": { "type": "title", "text": "ARCH", "sub": "Engle, 1982 — conditional variance" }
+        },
+        {
+          "text": "Write the return as a standardized innovation scaled by a time-varying volatility built from past squared shocks.",
+          "visual": { "type": "equation", "tex": "\\varepsilon_t = \\sigma_t z_t, \\quad \\sigma_t^2 = \\omega + \\sum_{i=1}^{q} \\alpha_i \\varepsilon_{t-i}^2", "note": "All structure lives in the conditional variance" }
+        },
+        {
+          "text": "A large move yesterday mechanically inflates today's variance, then feeds forward, which is clustering written as a recursion.",
+          "visual": { "type": "plot", "ys": [1, 1, 1, 4, 3, 2.2, 1.7, 1.4, 1.2, 1.1], "dot": 3, "xlabel": "day", "ylabel": "sigma^2" }
+        },
+        {
+          "text": "For positive, stationary variance the constraints are omega above zero, the alphas non-negative, and their sum below one.",
+          "visual": { "type": "equation", "tex": "\\omega > 0, \\quad \\alpha_i \\ge 0, \\quad \\sum_i \\alpha_i < 1", "note": "Positivity and stationarity conditions" }
+        },
+        {
+          "text": "ARCH is clumsy: persistence over weeks forces a large q of five to ten lags and a long parameter vector prone to overfitting.",
+          "visual": { "type": "bars", "values": [10, 7, 5, 3], "labels": ["q=10", "q=7", "q=5", "GARCH(1,1)=3"], "highlight": 3 }
+        },
+        {
+          "text": "Parameters are fit by maximum likelihood, rewarding a variance that is large on violent days and small on calm ones.",
+          "visual": { "type": "equation", "tex": "\\ell(\\theta) = -\\frac{1}{2}\\sum_{t=1}^{T}\\left[\\log(2\\pi) + \\log \\sigma_t^2 + \\frac{\\varepsilon_t^2}{\\sigma_t^2}\\right]", "note": "The Gaussian log-likelihood MLE maximizes" }
+        }
+      ]
+    },
+    {
+      "id": "timeseries-04-volatility-garch-s3",
+      "chapter": "timeseries/04-volatility-garch",
+      "section": "s3",
+      "title": "GARCH(1,1) — the workhorse",
+      "eyebrow": "TIME SERIES",
+      "beats": [
+        {
+          "text": "The Generalized ARCH model adds one term, yesterday's variance, and that single addition has made it the default for forty years.",
+          "visual": { "type": "title", "text": "GARCH(1,1)", "sub": "Bollerslev, 1986 — the workhorse" }
+        },
+        {
+          "text": "Three forces set tomorrow's variance: a constant floor, the reaction to yesterday's shock, and carried-over memory.",
+          "visual": { "type": "equation", "tex": "\\sigma_t^2 = \\omega + \\alpha \\varepsilon_{t-1}^2 + \\beta \\sigma_{t-1}^2, \\quad \\alpha + \\beta < 1", "note": "Floor, news, memory in three parameters" }
+        },
+        {
+          "text": "Persistence is the sum alpha plus beta, and for daily equity indices it sits famously close to one, typically 0.95 to 0.99.",
+          "visual": { "type": "stat", "value": 0.95, "label": "typical equity persistence alpha + beta", "decimals": 2 }
+        },
+        {
+          "text": "Variance always pulls back toward its long-run level, the recursion's mean, given by omega over one minus persistence.",
+          "visual": { "type": "equation", "tex": "\\bar{\\sigma}^2 = \\frac{\\omega}{1 - \\alpha - \\beta}", "note": "Mean reversion toward the long-run variance" }
+        },
+        {
+          "text": "Worked example: omega 0.00001, alpha 0.1 times shock 0.0009, plus beta 0.85 times variance 0.0004, gives 0.00044.",
+          "visual": { "type": "bars", "values": [0.00001, 0.00009, 0.00034], "labels": ["omega", "alpha*eps^2", "beta*sigma^2"], "highlight": 2 }
+        },
+        {
+          "text": "That variance maps to a daily volatility near 2.1 percent, and the closer persistence is to one, the slower the decay.",
+          "visual": { "type": "plot", "ys": [3.5, 3.1, 2.8, 2.5, 2.3, 2.1, 2.0, 1.9, 1.8, 1.75], "xlabel": "horizon", "ylabel": "daily vol %", "mark": "decay" }
+        }
+      ]
+    },
+    {
+      "id": "timeseries-04-volatility-garch-s4",
+      "chapter": "timeseries/04-volatility-garch",
+      "section": "s4",
+      "title": "Asymmetry — EGARCH & GJR-GARCH",
+      "eyebrow": "TIME SERIES",
+      "beats": [
+        {
+          "text": "Plain GARCH reacts to the squared shock, so squaring throws away the sign and a minus four and plus four percent day look identical.",
+          "visual": { "type": "title", "text": "Asymmetry", "sub": "Bad news raises volatility more than good" }
+        },
+        {
+          "text": "The leverage effect means a falling stock raises its debt-to-equity ratio and triggers forced selling, mechanically raising risk.",
+          "visual": { "type": "bars", "values": [1.0, 2.3], "labels": ["after +3% day", "after -3% day"], "highlight": 1 }
+        },
+        {
+          "text": "GJR-GARCH is the minimal fix: add one term that switches on only after a negative shock, with a positive gamma.",
+          "visual": { "type": "equation", "tex": "\\sigma_t^2 = \\omega + \\alpha \\varepsilon_{t-1}^2 + \\gamma \\mathbb{1}_{\\{\\varepsilon_{t-1}<0\\}} \\varepsilon_{t-1}^2 + \\beta \\sigma_{t-1}^2", "note": "Gamma is the leverage effect as a parameter" }
+        },
+        {
+          "text": "EGARCH models the log of variance, guaranteeing positivity without sign constraints and letting the sign of the shock matter.",
+          "visual": { "type": "equation", "tex": "\\log \\sigma_t^2 = \\omega + \\beta \\log \\sigma_{t-1}^2 + \\alpha(|z_{t-1}| - \\mathbb{E}|z_{t-1}|) + \\theta z_{t-1}", "note": "Theta below zero encodes the leverage tilt" }
+        },
+        {
+          "text": "The news-impact curve makes it visible: GARCH is a symmetric parabola, while GJR and EGARCH steepen the bad-news arm.",
+          "visual": { "type": "plot", "ys": [9, 5, 2.5, 1, 0.5, 1, 1.5, 2, 2.5, 3], "xlabel": "shock", "ylabel": "next sigma^2", "mark": "asymmetric" }
+        },
+        {
+          "text": "Hansen and Lunde's 2005 horse race found nothing reliably beat a plain GARCH(1,1) for daily equity forecasting.",
+          "visual": { "type": "stat", "value": 2005, "label": "horse race: GARCH(1,1) hard to beat", "decimals": 0 }
+        }
+      ]
+    },
+    {
+      "id": "timeseries-04-volatility-garch-s5",
+      "chapter": "timeseries/04-volatility-garch",
+      "section": "s5",
+      "title": "Forecasting volatility & the VaR link",
+      "eyebrow": "TIME SERIES",
+      "beats": [
+        {
+          "text": "The payoff of a fitted GARCH model is a forecast of future variance, and the recursion makes multi-step forecasts almost free.",
+          "visual": { "type": "title", "text": "Forecasting & VaR", "sub": "From conditional variance to risk numbers" }
+        },
+        {
+          "text": "Beyond one step the unknown future shock is replaced by its expectation, collapsing to clean geometric mean reversion.",
+          "visual": { "type": "equation", "tex": "\\mathbb{E}_t[\\sigma_{t+h}^2] = \\bar{\\sigma}^2 + (\\alpha+\\beta)^{h-1}(\\sigma_{t+1}^2 - \\bar{\\sigma}^2)", "note": "The term structure of volatility" }
+        },
+        {
+          "text": "From a panic the forecast decays toward the long-run level; from a calm start it climbs toward it.",
+          "visual": { "type": "plot", "ys": [3.5, 3.0, 2.6, 2.3, 2.1, 1.95, 1.85, 1.75, 1.68, 1.6], "dot": 0, "xlabel": "horizon h", "ylabel": "forecast vol %", "mark": "revert" }
+        },
+        {
+          "text": "Value-at-Risk plugs the conditional volatility into the quantile of the innovation distribution to bound the loss.",
+          "visual": { "type": "equation", "tex": "\\mathrm{VaR}_t^{p} = -(\\mu + z_p \\sigma_t), \\quad z_p = \\Phi^{-1}(p)", "note": "z = -2.326 for a Gaussian 1% VaR" }
+        },
+        {
+          "text": "Because sigma is conditional, the VaR breathes with the market, widening in turbulence and tightening in calm.",
+          "visual": { "type": "stat", "value": 2.326, "label": "Gaussian quantile for 99% VaR", "decimals": 3 }
+        },
+        {
+          "text": "GARCH is not the last word; realized-volatility, stochastic-volatility, and implied-volatility models all challenge it.",
+          "visual": { "type": "bars", "values": [1, 1, 1, 1], "labels": ["GARCH", "HAR-RV", "stoch-vol", "implied"], "highlight": 0 }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>MLOps &amp; Model Governance — AI Encyclopedia</title>
+<meta name="description" content="A model in a notebook is a science project; a model in production with monitoring, lineage, and sign-off is an asset — the pipelines, registries, retraining triggers, and model-risk governance that turn one into the other." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+<link rel="canonical" href="https://ai-encyclopedia.com/mlops/07-mlops-governance" />
+<meta property="og:url" content="https://ai-encyclopedia.com/mlops/07-mlops-governance" />
+</head>
+<body data-track="mlops" data-level="advanced">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ MODEL RISK / 07 / MLOPS &amp; GOVERNANCE</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../chapters/01-foundations.html">NEXT: LLM FIELD MANUAL · 01 →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">MODEL VALIDATION &amp; RISK · CHAPTER 07 / 07</div>
+    <h1>MLOps &amp; Model Governance</h1>
+    <p class="lede">Training a model is the easy part. Keeping it trustworthy after the notebook closes requires a reproducible pipeline, a registry that records which artifact is live, monitoring that catches drift, and an audit trail an examiner will accept. <strong>MLOps is the set of practices that turns a one-off model into a maintained production asset with monitoring, lineage, and sign-off.</strong></p>
+    <div class="ch-meta">
+      <span>LEVEL<b>ADVANCED</b></span>
+      <span>READING TIME<b>≈ 28 MIN</b></span>
+      <span>BUILDS ON<b>MLOPS 01–06 · ML 06</b></span>
+      <span>INSTRUMENTS<b>MATURITY · PIPELINE DAG · RETRAIN TRIGGER</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">7.1</span>Notebook → production</a>
+      <a href="#s2"><span class="n">7.2</span>Tracking &amp; registries</a>
+      <a href="#s3"><span class="n">7.3</span>CI/CD &amp; retraining</a>
+      <a href="#s4"><span class="n">7.4</span>Monitoring &amp; lineage</a>
+      <a href="#s5"><span class="n">7.5</span>Model risk &amp; governance</a>
+      <a href="#s6"><span class="n">7.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 7.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">7.1</span><h2>From notebook to production pipeline</h2></div>
+        <p>Almost every real ML failure happens <em>outside</em> the model. The famous diagram from Sculley et al. makes the point: the box labelled "ML code" is a small square surrounded by configuration, data collection, feature extraction, serving infrastructure, monitoring, and process management — the model is a few percent of the system. A notebook captures only that small square, and it captures it badly: hidden cell-execution order, an un-pinned environment, a CSV that was edited by hand, a random seed nobody set. None of that survives a redeploy.</p>
+
+        <p>The discipline that fixes this is to treat the path from raw data to served prediction as a single, versioned, re-runnable <strong>pipeline</strong> — a directed acyclic graph (DAG) of typed stages. Every edge is an artifact (a dataset, a feature table, a model file, an eval report); every node is a deterministic transform pinned to a code commit and a config. The asset you ship is not the weights file — it is the <em>recipe that regenerates the weights file</em>.</p>
+
+        <div class="eq"><span class="eq-tag">EQ V7.1 — REPRODUCIBILITY AS A FUNCTION OF INPUTS</span>
+        $$ \text{artifact} \;=\; f\big(\,\text{data}_{\,v},\ \text{code}_{\,c},\ \text{config}_{\,h},\ \text{env}_{\,e},\ \text{seed}_{\,s}\,\big) $$
+        <div class="eq-note">A run is reproducible iff fixing all five inputs fixes the output. \(v\) is a content hash of the data snapshot, \(c\) a git commit, \(h\) the hyperparameter config, \(e\) the pinned environment (container digest + library versions), \(s\) the RNG seed. <b>Drop any one and you have a story, not a result.</b> The single most common reproducibility failure is an un-versioned \(\text{data}_v\): the same code on "today's table" silently trains a different model tomorrow. Pipelines exist to make all five explicit and to cache stages whose inputs have not changed.</div>
+        </div>
+
+        <p>The payoff is concrete. If stage inputs are content-addressed, a pipeline can <strong>skip</strong> any stage whose inputs are unchanged and rerun only what is downstream of an edit — the same idea as a build system, applied to data and models. Change one feature definition and the framework knows exactly which models must be retrained and which evals must be rerun; change nothing and the whole pipeline is a cache hit.</p>
+
+        <div class="spec-grid">
+          <div class="spec-cell"><div class="s-label">NOTEBOOK</div><div class="s-value"><em>1</em> machine</div><div class="s-sub">Hidden state, manual order, un-pinned env. Reproducible by luck.</div></div>
+          <div class="spec-cell"><div class="s-label">SCRIPT + CONFIG</div><div class="s-value"><em>N</em> runs</div><div class="s-sub">Deterministic given inputs, but no lineage and no caching.</div></div>
+          <div class="spec-cell"><div class="s-label">VERSIONED PIPELINE</div><div class="s-value"><em>DAG</em></div><div class="s-sub">Typed stages, content-addressed artifacts, partial reruns, full lineage.</div></div>
+        </div>
+
+        <p class="note">There is an honest tension here. Notebooks are unmatched for exploration — the friction of a full pipeline would kill the iteration speed that finds the model in the first place. The mature workflow is therefore not "no notebooks" but a clear <strong>promotion boundary</strong>: explore freely in a notebook, then <em>graduate</em> the winning recipe into pipeline stages before anything touches production. The maturity instrument below is exactly a tour of that boundary.</p>
+
+        <div class="widget" id="gov-maturity" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT V7.1 — MLOPS MATURITY SELF-ASSESSMENT</span><span class="w-sub">DECISION-TREE WALKTHROUGH · LEVELS 0–4</span></div>
+          <div class="w-body">
+            <div id="gov-mat-q" style="border:1px solid var(--hairline);border-radius:4px;padding:16px;margin-bottom:10px;">
+              <div style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.16em;color:#636363;margin-bottom:8px;" id="gov-mat-step">QUESTION 1 / 4</div>
+              <div id="gov-mat-prompt" style="font-size:15px;color:var(--text-bright);line-height:1.45;margin-bottom:14px;">—</div>
+              <div class="seg-row" id="gov-mat-choices"></div>
+            </div>
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <div class="seg-row"><button class="w-btn ghost on" id="gov-mat-reset">↺ RESTART</button></div>
+              </div>
+            </div>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">MATURITY LEVEL</div><div class="r-value" id="gov-mat-level">—</div></div>
+              <div class="readout"><div class="r-label">STAGE</div><div class="r-value" id="gov-mat-name" style="font-size:13px;">—</div></div>
+              <div class="readout"><div class="r-label">NEXT MOVE</div><div class="r-value" id="gov-mat-next" style="font-size:12px;line-height:1.45;">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Answer four yes/no questions about your own team. The path walks the standard MLOps maturity ladder — Level&nbsp;0 (manual notebook) → 1 (automated pipeline) → 2 (CI/CD for the pipeline) → 3 (automated retraining) → 4 (full governance with continuous monitoring and sign-off). The "next move" is the single highest-leverage thing to build next. The lesson: maturity is a ladder, and you do not get to skip rungs — automated retraining (Level&nbsp;3) is dangerous without the monitoring and registry of the levels below it.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 7.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">7.2</span><h2>Experiment tracking &amp; model registries</h2></div>
+        <p>Two systems sit at the heart of any serious ML platform, and they answer two different questions.</p>
+
+        <p>An <strong>experiment tracker</strong> answers <em>"what did we try, and what happened?"</em> Every run logs its parameters, its metrics, the data snapshot hash, the git commit, and the produced artifacts. Months later you can ask "which run produced this checkpoint, on what data, with what learning rate, and what was its held-out AUC?" and get an exact answer instead of an archaeology project. The tracker is the lab notebook the literal notebook never was — searchable, comparable, immutable.</p>
+
+        <p>A <strong>model registry</strong> answers a sharper, scarier question: <em>"which artifact is live right now, who approved it, and what do I roll back to?"</em> The registry is not storage — it is a state machine over model versions, with explicit stages and gated transitions:</p>
+
+        <div class="eq"><span class="eq-tag">EQ V7.2 — THE REGISTRY STATE MACHINE</span>
+        $$ \texttt{None} \;\xrightarrow{\text{register}}\; \texttt{Staging} \;\xrightarrow{\;\text{eval + sign-off}\;}\; \texttt{Production} \;\xrightarrow{\;\text{superseded}\;}\; \texttt{Archived} $$
+        <div class="eq-note">Each arrow is a <em>guarded transition</em>: a model may only enter <code>Production</code> when it passes the gate (offline evals clear thresholds, a human with the right role approves, the deployment config is pinned). The registry records who pulled the lever and when. <b>The one invariant that matters: at most one version is <code>Production</code> per deployment slot, and you can name it in one query.</b> A team that cannot answer "what is live?" in seconds does not have a registry — it has a folder.</div>
+        </div>
+
+        <p>The registry is what makes a <strong>rollback</strong> a one-line operation instead of a 2&nbsp;a.m. incident. Because every version's full lineage (EQ&nbsp;V7.1) is attached, reverting to the previous Production model is just re-pointing the serving slot at an immutable, already-validated artifact — no rebuild, no retrain, no guessing. The same machinery powers <strong>champion/challenger</strong> rollouts (§7.3) and multi-tenant serving where many model versions coexist behind one gateway.</p>
+
+        <table class="data">
+          <thead><tr><th>System</th><th>Answers</th><th>Keyed on</th><th>Failure if absent</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Experiment tracker</strong></td><td>What did we try &amp; what happened?</td><td class="m">run id</td><td>Can't reproduce or compare past results</td></tr>
+            <tr><td><strong>Model registry</strong></td><td>What is live, who approved, roll back to what?</td><td class="m">model version</td><td>No fast rollback; "what's in prod?" is unanswerable</td></tr>
+            <tr><td><strong>Artifact / data store</strong></td><td>Where are the bytes, by content hash?</td><td class="m">content digest</td><td>Lineage breaks; artifacts mutate under you</td></tr>
+          </tbody>
+        </table>
+
+        <p class="note">A pragmatic caveat: in 2026 the tracker and registry are often the <em>same</em> platform (MLflow, Weights&nbsp;&amp;&nbsp;Biases, Vertex, SageMaker, and others bundle both), and for LLM/agent systems a "model version" increasingly means a tuple of base-model id, adapter or system-prompt version, and tool schema. The abstractions are unchanged; only the artifact got more interesting.</p>
+
+        <div class="exercise" data-answer="1" data-tol="0.001" data-unit="" data-hint="The core registry invariant: how many versions may occupy a single Production deployment slot at once?">
+          <div class="ex-q">By the registry invariant in EQ&nbsp;V7.2, how many model versions may be in the <code>Production</code> stage for a <b>single deployment slot</b> at one time?</div>
+          <div class="ex-reveal-src">The registry is a state machine whose key invariant is that each deployment slot has at most one live version — that is precisely what lets you answer "what is in prod?" in one query and roll back deterministically. So the answer is <b>1</b>. (Several versions may sit in <code>Staging</code> or <code>Archived</code>; only one is <code>Production</code> per slot.)</div>
+        </div>
+      </section>
+
+      <!-- ====================== 7.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">7.3</span><h2>CI/CD &amp; automated retraining</h2></div>
+        <p>Software CI/CD tests <em>code</em>. ML CI/CD must also test <em>data</em> and <em>models</em> — three things change independently, and any one can break production. The mature pipeline therefore runs three layers of gates, often summarized as the <strong>ML Test Score</strong> (Breck et al.): tests for the data (schema, distributions, expected-value constraints), tests for the model (does training converge, does it beat a baseline, is it robust to perturbations), and tests for the infrastructure (can it be served, rolled back, reproduced).</p>
+
+        <p>A model never goes live just because it trained. It goes live only if it clears an <strong>offline gate</strong> against the current Production model on a frozen holdout, and — for high-stakes systems — survives an <strong>online gate</strong> (a canary or A/B test on real traffic). The offline decision is the <strong>champion/challenger</strong> rule: the newly trained <em>challenger</em> replaces the live <em>champion</em> only if it is decisively better.</p>
+
+        <div class="eq"><span class="eq-tag">EQ V7.3 — CHAMPION / CHALLENGER PROMOTION RULE</span>
+        $$ \text{promote} \;\iff\; \big(M_{\text{chal}} - M_{\text{champ}} \;>\; \delta\big)\ \ \wedge\ \ \big(G_{\text{chal}} \;\ge\; G_{\min}\big) $$
+        <div class="eq-note">\(M\) is the primary holdout metric (AUC, F1, revenue-per-session…), measured for both models on the <em>same</em> frozen evaluation set. \(\delta &gt; 0\) is a margin that must exceed the metric's noise (recall the holdout standard error of MLOPS&nbsp;·&nbsp;EQ&nbsp;V1.2) so you are not promoting on a coin flip. \(G\) are guardrail metrics — latency, fairness gaps, calibration, a forbidden-behavior rate — that must each clear a floor \(G_{\min}\). <b>The challenger is presumed guilty: it must <em>beat</em> the champion by a real margin and break no guardrail, or the champion stays.</b> A challenger that wins on the headline metric while quietly regressing latency or a subgroup's error rate must not ship.</div>
+        </div>
+
+        <p>The same logic, applied to a stream of automatically retrained models, gives <strong>continuous training (CT)</strong>: on a schedule or a trigger (§7.4), the pipeline retrains on fresh data, runs the full test suite, and proposes a challenger to the gate. Crucially, automated retraining does <em>not</em> mean automated deployment — the gate (and, for regulated models, a human sign-off) stays in the loop. Fully closed-loop retraining without a gate is how a feedback bug or a poisoned data window silently degrades a model over weeks.</p>
+
+        <div class="exercise" data-answer="true" data-tol="0" data-unit="" data-hint="Read EQ V7.3: under champion/challenger, what must the challenger do to the champion on the holdout before it can ship?">
+          <div class="ex-q">In a champion/challenger setup, the challenger is promoted to production <b>only if</b> it beats the current champion on the holdout metric (by a margin, and without breaking guardrails). True or false? (Answer <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">This is exactly the promotion rule of EQ&nbsp;V7.3: \(M_{\text{chal}} - M_{\text{champ}} &gt; \delta\) <em>and</em> the guardrails hold. The incumbent is the default; a challenger must earn its place by a real margin. So the statement is <b>true</b>.</div>
+        </div>
+
+        <div class="exercise" data-answer="0.013" data-tol="0.03" data-unit="" data-hint="The promotion margin must beat metric noise: take 1.96 × the holdout standard error from EQ V1.2, with p = 0.90, m = 2000.">
+          <div class="ex-q">A challenger is scored on a frozen holdout of \( m = 2000 \) rows where the champion's accuracy is \( p = 0.90 \). To promote only on real signal, set the margin to the 95% half-width of the holdout estimate, \( \delta = 1.96\sqrt{p(1-p)/m} \). What is \( \delta \), to three decimals?</div>
+          <div class="ex-reveal-src">\( p(1-p) = 0.90 \times 0.10 = 0.09 \); divide by \( m = 2000 \) → \( 4.5\times10^{-5} \); square root → \( 0.006708 \) (the standard error). Multiply by \( 1.96 \): \( 1.96 \times 0.006708 = 0.01315 \approx \) <b>0.013</b>. A challenger must beat the champion by at least ~1.3 accuracy points here, or the gap is indistinguishable from sampling noise — the same \(1/\sqrt{m}\) law from EQ&nbsp;V1.2.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Champion/challenger promotion from holdout metrics (EQ V7.3).
+import numpy as np
+
+def promote(M_champ, M_chal, delta, guardrails):
+    # guardrails: list of (name, value, floor, higher_is_better)
+    metric_ok = (M_chal - M_champ) > delta
+    breaches  = []
+    for name, val, floor, higher in guardrails:
+        ok = (val >= floor) if higher else (val <= floor)
+        if not ok: breaches.append(name)
+    decision = metric_ok and not breaches
+    return decision, metric_ok, breaches
+
+# Frozen-holdout AUC for both models; margin must beat metric noise.
+M_champ, M_chal, delta = 0.842, 0.857, 0.005
+guardrails = [                       # (name, challenger value, floor, higher_is_better)
+    ("p99_latency_ms", 180.0, 200.0, False),   # must be <= 200ms  -> OK
+    ("fairness_gap",   0.030, 0.050, False),   # must be <= 0.05   -> OK
+    ("calibration_ece",0.021, 0.040, False),   # must be <= 0.04   -> OK
+]
+
+dec, mok, breaches = promote(M_champ, M_chal, delta, guardrails)
+print(f"champion AUC   : {M_champ:.3f}")
+print(f"challenger AUC : {M_chal:.3f}   ({M_chal-M_champ:+.3f}, margin needed {delta})")
+print(f"beats margin?  : {mok}")
+print(f"guardrail breaches: {breaches if breaches else 'none'}")
+print(f"\nDECISION: {'PROMOTE challenger' if dec else 'KEEP champion'}")
+
+# Counterfactual: same AUC win, but latency now blows the guardrail.
+g2 = guardrails[:]; g2[0] = ("p99_latency_ms", 240.0, 200.0, False)
+print("if p99 latency were 240ms ->",
+      "PROMOTE" if promote(M_champ, M_chal, delta, g2)[0] else "KEEP champion (guardrail)")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="gov-dag" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT V7.2 — PIPELINE-DAG ANATOMY</span><span class="w-sub">TYPED STAGES · ARTIFACTS · GATES</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>EDIT A STAGE (DIRTIES DOWNSTREAM)</label>
+                <div class="seg-row" id="gov-dag-edit"></div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="gov-dag-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">STAGES TO RERUN</div><div class="r-value" id="gov-dag-rerun">—</div></div>
+              <div class="readout"><div class="r-label">CACHE HITS (SKIPPED)</div><div class="r-value" id="gov-dag-cache">—</div></div>
+              <div class="readout"><div class="r-label">SELECTED STAGE</div><div class="r-value" id="gov-dag-sel" style="font-size:12px;">none</div></div>
+            </div>
+          </div>
+          <div class="w-note">Click any stage to mark it edited. The DAG is a real ML pipeline: <span style="color:var(--secondary);">ingest → validate → features → train → evaluate → register → serve</span>, with <span style="color:var(--blue);">evaluate</span> as the champion/challenger gate before <span style="color:var(--accent);">register</span>. Editing a stage dirties it and <em>everything downstream</em> (mint) while upstream stages stay cached (grey). Click <b>features</b> and watch train/evaluate/register/serve all light up; click <b>serve</b> and nothing upstream reruns. This is why content-addressed pipelines are cheap to iterate: you only pay for what actually changed.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 7.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">7.4</span><h2>Monitoring, lineage &amp; reproducibility</h2></div>
+        <p>A deployed model decays even though its weights never change, because the world the weights describe keeps moving. Two distinct decays matter, and confusing them is a classic mistake:</p>
+        <ul>
+          <li><strong>Data drift (covariate shift).</strong> The input distribution \(P(x)\) moves — a new traffic source, a seasonal effect, an upstream feature that started arriving null. The model is still "correct," but it is now answering questions about a population it was not trained on.</li>
+          <li><strong>Concept drift.</strong> The relationship \(P(y \mid x)\) itself changes — fraud tactics evolve, user tastes shift, a competitor changes the market. Even on identical inputs, the right answer is now different. Only concept drift necessarily degrades accuracy; data drift may or may not.</li>
+        </ul>
+
+        <p>Labels arrive late or never, so you cannot always watch accuracy directly. The first line of defence is therefore an <em>unsupervised</em> drift signal on the inputs and the predictions. The workhorse is the <strong>Population Stability Index (PSI)</strong>, which compares a baseline (training) distribution against a recent production window, bucketed:</p>
+
+        <div class="eq"><span class="eq-tag">EQ V7.4 — POPULATION STABILITY INDEX</span>
+        $$ \mathrm{PSI} \;=\; \sum_{i=1}^{B} \big(a_i - e_i\big)\,\ln\!\frac{a_i}{e_i} $$
+        <div class="eq-note">For each of \(B\) buckets, \(e_i\) is the expected (baseline) fraction of mass and \(a_i\) the actual (recent) fraction; the sum is a symmetrized relative-entropy distance. Industry rule of thumb: <b>PSI &lt; 0.1 = stable, 0.1–0.25 = moderate shift (investigate), &gt; 0.25 = significant shift (act)</b>. PSI is a <em>symmetrized</em> cousin of the KL divergence (INFO&nbsp;THEORY&nbsp;·&nbsp;EQ&nbsp;S2.3): each term is \((a_i-e_i)\ln(a_i/e_i)\) rather than \(a_i\ln(a_i/e_i)\), so it is always non-negative and order-insensitive. Its blind spot, which experts insist on: PSI detects <em>marginal</em> drift only — a change in the joint distribution that leaves every marginal unchanged is invisible to it.</div>
+        </div>
+
+        <p>Drift on its own is only a warning. The decisive signal, when labels eventually land, is a <strong>service-level objective (SLO)</strong> on the live metric, with an alert that fires on a sustained breach rather than a single bad point — one noisy day is not an incident, a week below the floor is.</p>
+
+        <div class="exercise" data-answer="0.04" data-tol="0.05" data-unit="" data-hint="PSI bucket term = (a − e)·ln(a/e). Use a = 0.30, e = 0.20.">
+          <div class="ex-q">In a PSI computation (EQ&nbsp;V7.4), one bucket had expected mass \( e = 0.20 \) at baseline but actual mass \( a = 0.30 \) in the recent window. What is that single bucket's contribution \( (a-e)\ln(a/e) \)? (Use \( \ln 1.5 = 0.405 \).)</div>
+          <div class="ex-reveal-src">\( a - e = 0.30 - 0.20 = 0.10 \); \( a/e = 1.5 \), so \( \ln(a/e) = 0.405 \). The contribution is \( 0.10 \times 0.405 = \) <b>0.04</b>. A handful of buckets shifting like this can push total PSI past the 0.1 "investigate" line — the trigger the retraining-policy instrument below explores.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Model-monitoring SLA-breach flag from a daily metric stream.
+import numpy as np
+rng = np.random.default_rng(11)
+
+# 30 days of live accuracy: stable, then a drift-driven slide after day 18.
+days = np.arange(30)
+base = np.where(days < 18, 0.91, 0.91 - 0.006 * (days - 18))   # slow decay
+acc  = np.clip(base + rng.normal(0, 0.012, 30), 0, 1)          # daily noise
+
+SLO       = 0.88     # contractual floor on accuracy
+WINDOW    = 5        # smooth over a rolling window (ignore one-day noise)
+N_BREACH  = 3        # alert only after this many consecutive sub-SLO smoothed days
+
+roll = np.convolve(acc, np.ones(WINDOW)/WINDOW, mode="valid")  # len 30-WINDOW+1
+below = roll < SLO
+# longest run of consecutive sub-SLO days, and the day the alert would fire
+run = fire = 0
+fire_day = None
+for i, b in enumerate(below):
+    run = run + 1 if b else 0
+    if run >= N_BREACH and fire_day is None:
+        fire_day = i + WINDOW - 1          # map rolling index back to a calendar day
+    fire = max(fire, run)
+
+print(f"SLO floor          : {SLO:.2f}   rolling window: {WINDOW}d")
+print(f"min rolling acc    : {roll.min():.3f}  (raw min {acc.min():.3f})")
+print(f"longest breach run : {fire} day(s)   threshold: {N_BREACH}")
+print(f"BREACH ALERT       : {'FIRE on day '+str(fire_day) if fire_day is not None else 'none'}")
+plot_xy(np.arange(WINDOW-1, 30), roll)     # the smoothed curve crossing the SLO floor</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <p>Behind every alert sits <strong>lineage</strong>: the graph that connects a live prediction back through the model version, the training run, the data snapshot, and the feature code that produced it (EQ&nbsp;V7.1). When an incident hits, lineage answers the only questions that matter at 2&nbsp;a.m. — <em>which model is responsible, what was it trained on, what changed since it was clean, and what do we roll back to?</em> A monitor without lineage tells you the patient has a fever; lineage tells you why.</p>
+      </section>
+
+      <!-- ====================== 7.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">7.5</span><h2>Model risk management &amp; governance</h2></div>
+        <p>Everything so far is engineering. <strong>Governance</strong> is the layer that makes those engineering controls <em>accountable</em> — who is allowed to deploy, who signed off, what evidence exists, and what happens when the model causes harm. In regulated industries this is not optional. The canonical reference is the US Federal Reserve / OCC supervisory letter <strong>SR&nbsp;11-7 (2011), "Guidance on Model Risk Management"</strong>, which defines <em>model risk</em> as the potential for adverse consequences from decisions based on incorrect or misused models, and prescribes three controls that map almost one-to-one onto good MLOps.</p>
+
+        <div class="eq"><span class="eq-tag">EQ V7.5 — MODEL RISK (SR 11-7 FRAMING)</span>
+        $$ \text{Model risk} \;=\; \underbrace{P(\text{model is wrong})}_{\text{fundamental error}} \;+\; \underbrace{P(\text{model is misused})}_{\text{wrong context / inputs}} $$
+        <div class="eq-note">SR&nbsp;11-7's central insight is that risk has <em>two</em> sources, not one: a model can be wrong (bad data, bad assumptions, overfitting), <em>and</em> a perfectly good model can be misused (applied outside its validated domain, fed inputs it never saw, trusted beyond its accuracy). Both must be managed. The guidance's three pillars are: <b>(1) robust development &amp; documentation</b> — the pipeline, lineage, and reproducibility of §§7.1–7.4; <b>(2) independent validation</b> — a second team, not the builders, challenges the model before and after deployment; <b>(3) governance, policies &amp; controls</b> — an inventory of every model, defined ownership, sign-off, and ongoing monitoring. "Effective challenge" — critical review by people with the authority and incentive to push back — is the phrase the document hangs everything on.</div>
+        </div>
+
+        <p>This regulatory framing has since been generalized far beyond banking. The EU AI Act (in force from 2024, with high-risk obligations phasing in through 2026–2027) imposes risk-tiered duties — risk management systems, data governance, logging, human oversight, and post-market monitoring — that are recognisably the same controls. The NIST AI Risk Management Framework (2023) and ISO/IEC 42001 (2023, the first AI management-system standard) give voluntary but increasingly expected scaffolding. The through-line across all of them is a small set of governance artifacts every mature ML organisation now maintains:</p>
+
+        <table class="data">
+          <thead><tr><th>Artifact</th><th>Question it answers</th><th>Lineage to MLOps</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Model inventory</strong></td><td>Which models exist, who owns each, what is their risk tier?</td><td class="m">registry (§7.2)</td></tr>
+            <tr><td><strong>Model card / documentation</strong></td><td>Intended use, training data, metrics, limitations, fairness</td><td class="m">tracker + lineage</td></tr>
+            <tr><td><strong>Validation report</strong></td><td>Independent challenge: does it work, where does it fail?</td><td class="m">eval gate (§7.3)</td></tr>
+            <tr><td><strong>Sign-off / approval record</strong></td><td>Who authorized production, on what evidence, when?</td><td class="m">registry transition</td></tr>
+            <tr><td><strong>Monitoring &amp; incident log</strong></td><td>How is it behaving live; what went wrong and when?</td><td class="m">monitors (§7.4)</td></tr>
+          </tbody>
+        </table>
+
+        <div class="callout warn">
+          <span class="co-icon">CONTESTED</span>
+          <p><strong>Governance can calcify into theatre.</strong> The honest tension in 2026: heavyweight model-risk processes designed for slow-moving credit models fit awkwardly onto fast-iterating ML and especially onto LLM/agent systems, where the "model" is a prompt-plus-tools assembly that changes weekly and whose failure modes (hallucination, prompt injection, jailbreaks) are not what SR&nbsp;11-7 imagined. Two failure modes bracket the debate: <em>too little</em> governance ships unvalidated models into high-stakes decisions; <em>too much</em> produces a compliance pantomime where teams generate documents nobody reads to satisfy a checklist, while real risk goes unmonitored. The defensible middle is <strong>risk-tiered governance</strong>: match the weight of the controls to the stakes of the decision, automate the evidence-gathering so documentation is a by-product of the pipeline rather than a separate chore, and keep "effective challenge" genuinely effective.</p>
+        </div>
+
+        <div class="exercise" data-answer="true" data-tol="0" data-unit="" data-hint="SR 11-7 is the Federal Reserve / OCC supervisory letter that defines model risk and its three pillars.">
+          <div class="ex-q">US <b>SR&nbsp;11-7</b> is regulatory supervisory guidance on model risk management (development &amp; documentation, independent validation, and governance/controls). True or false? (Answer <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">SR&nbsp;11-7 is the 2011 supervisory letter issued by the US Federal Reserve and the OCC, "Guidance on Model Risk Management." It defines model risk and lays out the three pillars in EQ&nbsp;V7.5. So the statement is <b>true</b> — and it is the document most ML governance programs still trace their lineage to.</div>
+        </div>
+
+        <div class="widget" id="gov-trigger" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT V7.3 — RETRAINING-TRIGGER POLICY EXPLORER</span><span class="w-sub">PSI · METRIC SLO · SCHEDULE · EQ V7.4</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>INPUT DRIFT — PSI <output id="gov-tg-psi-out">0.12</output></label><input type="range" id="gov-tg-psi" min="0" max="0.40" step="0.01" value="0.12"/></div>
+              <div class="ctl"><label>LIVE ACCURACY <output id="gov-tg-acc-out">0.90</output></label><input type="range" id="gov-tg-acc" min="0.78" max="0.95" step="0.005" value="0.90"/></div>
+              <div class="ctl"><label>DAYS SINCE LAST RETRAIN <output id="gov-tg-days-out">14</output></label><input type="range" id="gov-tg-days" min="0" max="60" step="1" value="14"/></div>
+            </div>
+            <canvas class="w-canvas" id="gov-tg-canvas" height="210"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">POLICY DECISION</div><div class="r-value" id="gov-tg-decision" style="font-size:14px;">—</div></div>
+              <div class="readout"><div class="r-label">FIRED TRIGGER(S)</div><div class="r-value" id="gov-tg-why" style="font-size:12px;line-height:1.45;">—</div></div>
+              <div class="readout"><div class="r-label">ACTION</div><div class="r-value" id="gov-tg-action" style="font-size:12px;line-height:1.45;">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Three independent triggers can each demand a retrain: <span style="color:var(--blue);">input drift</span> (PSI past the 0.25 act-line, or 0.1 watch-line), a <span style="color:var(--danger);">performance SLO breach</span> (live accuracy below the 0.88 floor), or a <span style="color:var(--secondary);">staleness</span> deadline (a max-age schedule). Slide each control and watch which bars cross their threshold. The lesson is policy design: a good retraining policy is the <em>OR</em> of a few cheap, observable signals — and even when a trigger fires, the action is "retrain &amp; propose a challenger to the gate," never "auto-deploy." Drift alone never ships a model; the gate of §7.3 still has to say yes.</div>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>You now have the operational backbone — pipelines, registries, monitoring, and the governance that makes a model an accountable asset.</strong> That closes the Model Validation &amp; Risk track. From here the manual turns to the model itself: the LLM Field Manual opens with foundations — tokens, embeddings, and the next-token objective that everything in production is ultimately serving.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 7.R — References ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">7.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://papers.nips.cc/paper/5656-hidden-technical-debt-in-machine-learning-systems" target="_blank" rel="noopener">Sculley, D. et al. (2015). <span class="ref-venue">Hidden Technical Debt in Machine Learning Systems</span>.</a> <span class="ref-meta">NeurIPS 2015 — the "ML code is a small box" argument behind §7.1.</span></li>
+          <li><a href="https://www.federalreserve.gov/supervisionreg/srletters/sr1107.htm" target="_blank" rel="noopener">Board of Governors of the Federal Reserve System &amp; OCC (2011). <span class="ref-venue">SR 11-7: Guidance on Model Risk Management</span>.</a> <span class="ref-meta">Supervisory letter — the model-risk framework and three pillars of §7.5 (EQ V7.5).</span></li>
+          <li><a href="https://research.google/pubs/pub46555/" target="_blank" rel="noopener">Breck, E., Cai, S., Nielsen, E., Salib, M. &amp; Sculley, D. (2017). <span class="ref-venue">The ML Test Score: A Rubric for ML Production Readiness and Technical Debt Reduction</span>.</a> <span class="ref-meta">IEEE Big Data 2017 — the data/model/infra test layers of §7.3.</span></li>
+          <li><a href="https://arxiv.org/abs/2205.02302" target="_blank" rel="noopener">Kreuzberger, D., Kühl, N. &amp; Hirschl, S. (2022). <span class="ref-venue">Machine Learning Operations (MLOps): Overview, Definition, and Architecture</span>.</a> <span class="ref-meta">arXiv:2205.02302 — a current reference architecture for pipelines, CI/CD, and CT.</span></li>
+          <li><a href="https://doi.org/10.6028/NIST.AI.100-1" target="_blank" rel="noopener">National Institute of Standards and Technology (2023). <span class="ref-venue">AI Risk Management Framework (AI RMF 1.0)</span>.</a> <span class="ref-meta">NIST AI 100-1 — the Govern/Map/Measure/Manage scaffolding generalizing §7.5.</span></li>
+          <li><a href="https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=OJ:L_202401689" target="_blank" rel="noopener">European Union (2024). <span class="ref-venue">Regulation (EU) 2024/1689 — the Artificial Intelligence Act</span>.</a> <span class="ref-meta">Official Journal — risk-tiered obligations (risk management, data governance, logging, human oversight) phasing in through 2026–2027.</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../mlops/06-explainability.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">06</span> Explainability</div></a>
+        <a class="next" href="../chapters/01-foundations.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">01</span> LLM Field Manual · Foundations</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — MODEL VALIDATION &amp; RISK · CH 07</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* ============================================================
+   MLOps & Model Governance — chapter instruments
+   Single IIFE, no globals. Deterministic, setTimeout-only resize
+   re-renders (never rAF). Every widget guarded by element existence
+   and renders a meaningful initial state with zero interaction.
+   ============================================================ */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  /* ========================================================
+     INSTRUMENT V7.1 — MLOps maturity self-assessment
+     A 4-question decision walk down the standard maturity ladder.
+     Each "yes" advances a level; the first "no" pins your level
+     and names the single highest-leverage next move.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("gov-maturity");
+    if (!root) return;
+    var stepEl = document.getElementById("gov-mat-step");
+    var promptEl = document.getElementById("gov-mat-prompt");
+    var choicesEl = document.getElementById("gov-mat-choices");
+    var resetEl = document.getElementById("gov-mat-reset");
+    var levelEl = document.getElementById("gov-mat-level");
+    var nameEl = document.getElementById("gov-mat-name");
+    var nextEl = document.getElementById("gov-mat-next");
+
+    /* questions[i] gates the transition from level i to level i+1 */
+    var QS = [
+      "Is your full path from raw data to trained model a single re-runnable pipeline (not a notebook run by hand)?",
+      "Does that pipeline run under CI/CD — code, data, and model tests gating every change?",
+      "Does the pipeline retrain automatically on a schedule or trigger when fresh data or drift appears?",
+      "Is there continuous production monitoring plus a registry with human sign-off before anything goes live?"
+    ];
+    var LEVELS = [
+      { n: 0, name: "MANUAL / NOTEBOOK", next: "Turn the winning notebook into a versioned, re-runnable pipeline (§7.1)." },
+      { n: 1, name: "AUTOMATED PIPELINE", next: "Put the pipeline under CI/CD: schema, model, and infra tests on every change (§7.3)." },
+      { n: 2, name: "PIPELINE CI/CD", next: "Add continuous training: retrain on a trigger, propose a challenger to the gate (§7.3)." },
+      { n: 3, name: "AUTOMATED RETRAINING", next: "Close the loop with monitoring + a registry + sign-off — the governance layer (§7.4–7.5)." },
+      { n: 4, name: "GOVERNED & MONITORED", next: "You are at the top rung. Now tune risk-tiering so controls match stakes (§7.5)." }
+    ];
+
+    var idx = 0;       /* current question index 0..4; 4 = finished at top */
+    var level = 0;     /* achieved level so far */
+    var done = false;
+
+    function paintResult() {
+      var L = LEVELS[level];
+      levelEl.textContent = "LEVEL " + L.n + " / 4";
+      nameEl.textContent = L.name;
+      nextEl.textContent = L.next;
+    }
+
+    function render() {
+      paintResult();
+      choicesEl.innerHTML = "";
+      if (done || idx >= QS.length) {
+        stepEl.textContent = idx >= QS.length ? "ALL CLEARED · LEVEL 4" : "STOPPED · LEVEL " + level;
+        promptEl.textContent = idx >= QS.length
+          ? "Every rung cleared — you have a governed, monitored, fully automated ML platform."
+          : "Stopped here. The readout names the one move that gets you to the next rung.";
+        var b = document.createElement("button");
+        b.className = "w-btn ghost on";
+        b.textContent = "↺ START OVER";
+        b.addEventListener("click", restart);
+        choicesEl.appendChild(b);
+        return;
+      }
+      stepEl.textContent = "QUESTION " + (idx + 1) + " / " + QS.length;
+      promptEl.textContent = QS[idx];
+      var yes = document.createElement("button");
+      yes.className = "w-btn ghost on";
+      yes.textContent = "YES ▸";
+      yes.addEventListener("click", function () {
+        level = idx + 1; idx += 1;
+        if (idx >= QS.length) done = true;
+        render();
+      });
+      var no = document.createElement("button");
+      no.className = "w-btn ghost";
+      no.textContent = "NO";
+      no.addEventListener("click", function () { done = true; render(); });
+      choicesEl.appendChild(yes);
+      choicesEl.appendChild(no);
+    }
+
+    function restart() { idx = 0; level = 0; done = false; render(); }
+    resetEl.addEventListener("click", restart);
+
+    render();   /* meaningful initial state: Question 1, Level 0 */
+  })();
+
+  /* ========================================================
+     INSTRUMENT V7.2 — Pipeline-DAG anatomy
+     A linear ML pipeline drawn as typed stages with the eval gate.
+     Click a stage to "edit" it; it + all downstream stages must
+     rerun (mint), upstream stages stay cached (grey).
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("gov-dag");
+    if (!root) return;
+    var canvas = document.getElementById("gov-dag-canvas");
+    var editEl = document.getElementById("gov-dag-edit");
+    var rerunEl = document.getElementById("gov-dag-rerun");
+    var cacheEl = document.getElementById("gov-dag-cache");
+    var selEl = document.getElementById("gov-dag-sel");
+
+    var STAGES = [
+      { id: "ingest",   label: "INGEST",   note: "raw data" },
+      { id: "validate", label: "VALIDATE", note: "schema/dist" },
+      { id: "features", label: "FEATURES", note: "feature table" },
+      { id: "train",    label: "TRAIN",    note: "model.bin" },
+      { id: "evaluate", label: "EVALUATE", note: "champ/chall gate", gate: true },
+      { id: "register", label: "REGISTER", note: "model version", reg: true },
+      { id: "serve",    label: "SERVE",    note: "endpoint" }
+    ];
+    var edited = 2;   /* default: FEATURES edited, so train..serve are dirty */
+
+    /* build the seg-row of editable stage buttons */
+    STAGES.forEach(function (s, i) {
+      var b = document.createElement("button");
+      b.className = "w-btn ghost";
+      b.textContent = s.label;
+      b.setAttribute("data-i", i);
+      b.addEventListener("click", function () { edited = i; render(); });
+      editEl.appendChild(b);
+    });
+
+    function render() {
+      var c = FM.setupCanvas(canvas, 300);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      ctx.clearRect(0, 0, w, h);
+
+      var n = STAGES.length;
+      var padL = 16, padR = 16;
+      var gap = 14;
+      var avail = w - padL - padR - gap * (n - 1);
+      var bw = avail / n;
+      var bh = 60;
+      var cy = h / 2 - 6;
+
+      ctx.font = "11px ui-monospace, Menlo, monospace";
+      ctx.textBaseline = "middle";
+
+      var rerun = 0, cache = 0, i;
+      /* connectors first */
+      for (i = 0; i < n - 1; i++) {
+        var x1 = padL + i * (bw + gap) + bw;
+        var x2 = padL + (i + 1) * (bw + gap);
+        var downstream = (i + 1) >= edited;
+        ctx.strokeStyle = downstream ? "rgba(166,242,204,.55)" : "rgba(99,99,99,.5)";
+        ctx.lineWidth = downstream ? 2 : 1;
+        ctx.beginPath();
+        ctx.moveTo(x1, cy + bh / 2); ctx.lineTo(x2, cy + bh / 2); ctx.stroke();
+        /* arrowhead */
+        ctx.fillStyle = downstream ? "rgba(166,242,204,.7)" : "rgba(99,99,99,.6)";
+        ctx.beginPath();
+        ctx.moveTo(x2, cy + bh / 2); ctx.lineTo(x2 - 5, cy + bh / 2 - 3.5);
+        ctx.lineTo(x2 - 5, cy + bh / 2 + 3.5); ctx.closePath(); ctx.fill();
+      }
+      /* boxes */
+      for (i = 0; i < n; i++) {
+        var s = STAGES[i];
+        var x = padL + i * (bw + gap);
+        var dirty = i >= edited;       /* edited stage + everything downstream reruns */
+        if (dirty) rerun++; else cache++;
+        var fill = dirty ? "rgba(166,242,204,.14)" : "rgba(99,99,99,.12)";
+        var stroke = dirty ? C.MINT : "rgba(99,99,99,.55)";
+        if (s.gate) stroke = dirty ? C.MINT : C.BLUE;        /* eval gate accent */
+        ctx.fillStyle = fill;
+        ctx.strokeStyle = stroke;
+        ctx.lineWidth = (i === edited) ? 2 : 1.2;
+        ctx.beginPath();
+        if (ctx.roundRect) ctx.roundRect(x, cy, bw, bh, 4);
+        else ctx.rect(x, cy, bw, bh);
+        ctx.fill(); ctx.stroke();
+
+        ctx.fillStyle = dirty ? C.MINT : C.SEC;
+        ctx.textAlign = "center";
+        ctx.fillText(s.label, x + bw / 2, cy + 18);
+        ctx.fillStyle = C.MUT;
+        ctx.font = "9px ui-monospace, Menlo, monospace";
+        ctx.fillText(s.note, x + bw / 2, cy + 36);
+        if (s.gate) { ctx.fillStyle = dirty ? C.MINT : C.BLUE; ctx.fillText("◆ GATE", x + bw / 2, cy + 50); }
+        if (s.reg)  { ctx.fillStyle = dirty ? C.MINT : C.SEC;  ctx.fillText("⬢ REG", x + bw / 2, cy + 50); }
+        ctx.font = "11px ui-monospace, Menlo, monospace";
+      }
+
+      /* header note */
+      ctx.fillStyle = C.MUT; ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+      ctx.font = "9.5px ui-monospace, Menlo, monospace";
+      ctx.fillText("DATA → FEATURES → MODEL → GATE → REGISTRY → ENDPOINT   (edit a stage to dirty downstream)", padL, 22);
+
+      /* sync the seg-row 'on' state to the edited stage */
+      var btns = editEl.querySelectorAll("button");
+      for (i = 0; i < btns.length; i++) btns[i].classList.toggle("on", i === edited);
+
+      rerunEl.textContent = rerun + " / " + n;
+      cacheEl.textContent = cache + " / " + n;
+      selEl.textContent = STAGES[edited].label + " edited";
+    }
+
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();   /* meaningful initial state: FEATURES edited */
+  })();
+
+  /* ========================================================
+     INSTRUMENT V7.3 — Retraining-trigger policy explorer
+     Three OR'd triggers: PSI drift, accuracy SLO breach, staleness.
+     Each drawn as a bar against its threshold; the policy fires if
+     ANY trigger crosses. Action is always "propose challenger to gate".
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("gov-trigger");
+    if (!root) return;
+    var canvas = document.getElementById("gov-tg-canvas");
+    var psiEl = document.getElementById("gov-tg-psi");
+    var accEl = document.getElementById("gov-tg-acc");
+    var daysEl = document.getElementById("gov-tg-days");
+    var psiOut = document.getElementById("gov-tg-psi-out");
+    var accOut = document.getElementById("gov-tg-acc-out");
+    var daysOut = document.getElementById("gov-tg-days-out");
+    var decEl = document.getElementById("gov-tg-decision");
+    var whyEl = document.getElementById("gov-tg-why");
+    var actEl = document.getElementById("gov-tg-action");
+
+    var PSI_ACT = 0.25, PSI_WATCH = 0.10;   /* EQ V7.4 rules of thumb */
+    var ACC_FLOOR = 0.88;                    /* performance SLO */
+    var MAX_AGE = 30;                        /* staleness deadline (days) */
+
+    function render() {
+      var psi = +psiEl.value, acc = +accEl.value, days = +daysEl.value;
+      psiOut.textContent = psi.toFixed(2);
+      accOut.textContent = acc.toFixed(3);
+      daysOut.textContent = days;
+
+      var driftFire = psi > PSI_ACT;
+      var driftWatch = psi > PSI_WATCH && !driftFire;
+      var sloFire = acc < ACC_FLOOR;
+      var staleFire = days > MAX_AGE;
+      var fire = driftFire || sloFire || staleFire;
+
+      var c = FM.setupCanvas(canvas, 210);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      ctx.clearRect(0, 0, w, h);
+
+      var padL = 16, padR = 16, top = 18, rowH = 52, barH = 16, labelW = 132;
+      var trackX = padL + labelW;
+      var trackW = w - padR - trackX;
+
+      ctx.font = "9.5px ui-monospace, Menlo, monospace";
+      ctx.textBaseline = "middle";
+
+      function bar(rowI, label, frac, threshFrac, active, col, valStr) {
+        var y = top + rowI * rowH + barH / 2;
+        ctx.fillStyle = active ? col : C.SEC; ctx.textAlign = "left";
+        ctx.fillText(label, padL, y);
+        /* track */
+        ctx.fillStyle = "rgba(47,50,52,.5)";
+        ctx.fillRect(trackX, y - barH / 2, trackW, barH);
+        /* fill */
+        var fw = Math.max(0, Math.min(1, frac)) * trackW;
+        ctx.fillStyle = active ? col : "rgba(99,99,99,.5)";
+        ctx.fillRect(trackX, y - barH / 2, fw, barH);
+        /* threshold marker */
+        var tx = trackX + Math.max(0, Math.min(1, threshFrac)) * trackW;
+        ctx.strokeStyle = C.BRIGHT; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(tx, y - barH / 2 - 3); ctx.lineTo(tx, y + barH / 2 + 3); ctx.stroke();
+        /* value */
+        ctx.fillStyle = active ? col : C.MUT; ctx.textAlign = "right";
+        ctx.fillText(valStr, w - padR, y - barH / 2 - 6);
+      }
+
+      /* row 0: PSI drift (frac vs 0.40 scale, threshold = act-line 0.25) */
+      bar(0, "INPUT DRIFT (PSI)", psi / 0.40, PSI_ACT / 0.40,
+          driftFire, driftWatch ? "rgba(78,138,247,.7)" : C.BLUE,
+          driftFire ? "FIRE > .25" : driftWatch ? "WATCH > .10" : "stable");
+
+      /* row 1: accuracy SLO. Bar shows the *shortfall* below floor so a breach grows right. */
+      var accFracBelow = Math.max(0, (ACC_FLOOR - acc)) / (ACC_FLOOR - 0.78);
+      bar(1, "PERF SLO (ACC)", sloFire ? accFracBelow : 0.02, 0.02,
+          sloFire, C.RED, sloFire ? "BREACH < .88" : "acc " + acc.toFixed(2) + " OK");
+
+      /* row 2: staleness (days vs 60 scale, threshold = MAX_AGE 30) */
+      bar(2, "STALENESS (DAYS)", days / 60, MAX_AGE / 60,
+          staleFire, C.SEC, staleFire ? "OVERDUE > 30d" : days + "d of 30");
+
+      /* readouts */
+      decEl.textContent = fire ? "RETRAIN TRIGGERED" : "NO ACTION — HOLD";
+      decEl.style.color = fire ? C.MINT : C.SEC;
+      var reasons = [];
+      if (driftFire) reasons.push("PSI drift");
+      if (sloFire) reasons.push("SLO breach");
+      if (staleFire) reasons.push("staleness");
+      if (driftWatch && !fire) reasons.push("PSI watch (no fire)");
+      whyEl.textContent = reasons.length ? reasons.join(" · ") : "none crossed";
+      actEl.textContent = fire
+        ? "Retrain → run tests → propose CHALLENGER to the §7.3 gate (never auto-deploy)."
+        : "Keep monitoring. No trigger crossed its threshold.";
+    }
+
+    psiEl.addEventListener("input", render);
+    accEl.addEventListener("input", render);
+    daysEl.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();   /* meaningful initial state: PSI .12 (watch), acc .90 OK, 14d */
+  })();
+
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

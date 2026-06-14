@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>The 2026 Frontier — State-Space Models &amp; Extreme Quantization — AI Encyclopedia</title>
+<meta name="description" content="The Transformer's monopoly is finally contested: state-space models (Mamba-2, SSD) match attention at linear cost, hybrids blend the two, and post-training quantization pushes useful models below four bits per weight." />
+<link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
+<meta name="theme-color" content="#000000" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+<link rel="canonical" href="https://ai-encyclopedia.com/chapters/11-frontier-2026" />
+<meta property="og:url" content="https://ai-encyclopedia.com/chapters/11-frontier-2026" />
+</head>
+<body data-track="chapters" data-level="advanced">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ VOL II / 11 / FRONTIER 2026</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../chapters/capstone.html">NEXT: CAPSTONE →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">THE LLM FIELD MANUAL · CHAPTER 11</div>
+    <h1>The 2026 Frontier — State-Space Models &amp; Extreme Quantization</h1>
+    <p class="lede">For eight years the Transformer had no serious rival. That changed. <strong>State-space models now match attention's quality at linear cost, and post-training quantization is pushing useful models below four bits per weight.</strong> This chapter maps the two pressures squeezing the Transformer from opposite ends, a cheaper way to mix tokens and a cheaper way to store them, and is candid about where the contest is settled versus merely promising.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>ADVANCED</b></span>
+      <span>READING TIME<b>≈ 28 MIN</b></span>
+      <span>BUILDS ON<b>CH 03 · CH 07 · CH 09</b></span>
+      <span>INSTRUMENTS<b>SCALING · BIT-WIDTH · ARCH MATRIX</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">11.1</span>The post-Transformer landscape</a>
+      <a href="#s2"><span class="n">11.2</span>State-space models &amp; SSD</a>
+      <a href="#s3"><span class="n">11.3</span>Linear &amp; hybrid attention</a>
+      <a href="#s4"><span class="n">11.4</span>Extreme quantization</a>
+      <a href="#s5"><span class="n">11.5</span>What's racing the Transformer</a>
+      <a href="#s6"><span class="n">11.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 11.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">11.1</span><h2>The post-Transformer landscape (2026)</h2></div>
+        <p>The Transformer (Chapter 02) won because attention is parallel in training and expressive at any range. Its one structural flaw never went away: self-attention compares every token to every other token, so compute and the score matrix both grow as \(O(n^2)\) in sequence length \(n\). The KV cache (Chapter 03) then turns inference memory linear in \(n\) and unbounded over a conversation. Every long-context technique of the last few years — FlashAttention, GQA, sliding windows, MLA — is a tax cut on a fundamentally quadratic object, not a repeal of it.</p>
+
+        <p>By 2026 two distinct lines of attack have matured enough to ship in frontier-scale models:</p>
+        <ul>
+          <li><strong>Sub-quadratic sequence mixers.</strong> Replace softmax attention with an operator that costs \(O(n)\): selective <strong>state-space models</strong> (Mamba, Mamba-2) and modern <strong>linear attention</strong>. These carry a fixed-size recurrent state instead of a growing cache, so memory at decode time is \(O(1)\) per layer regardless of context length.</li>
+          <li><strong>Extreme weight compression.</strong> Push the bits-per-weight of a frozen model down past the 4-bit floor that Chapter 07 treated as practical — to 3, 2.x, even ~1.58 effective bits — with rotation/incoherence preprocessing and learned codebooks that keep quality close to the 16-bit original.</li>
+        </ul>
+
+        <p>These are orthogonal: the first attacks <em>how tokens talk to each other</em>, the second attacks <em>how a weight is stored</em>. The 2026 stack increasingly uses both — a quantized hybrid model is now an ordinary deployment. The honest caveat up front: the Transformer is contested, not dethroned. Pure-attention models still hold the top of most reasoning and recall leaderboards; SSMs win decisively on long-context throughput and memory, and the strongest shipping designs are <em>hybrids</em> that keep a few attention layers for the tasks attention is uniquely good at.</p>
+
+        <div class="eq"><span class="eq-tag">EQ 11.1 — THE QUADRATIC THAT STARTED IT</span>
+        $$ \underbrace{C_{\text{attn}}(n) = \Theta(n^2 d)}_{\text{compute}}, \qquad \underbrace{M_{\text{attn}}(n) = \Theta(n)\;\text{(KV cache)}}_{\text{decode memory}} \quad\text{vs.}\quad \underbrace{C_{\text{ssm}}(n) = \Theta(n\, d\, N)}_{\text{compute}}, \quad \underbrace{M_{\text{ssm}}(n) = \Theta(1)}_{\text{decode memory}} $$
+        <div class="eq-note">\(d\) is model width, \(N\) the SSM state size (typically 16–128, a constant). Attention's compute is quadratic in \(n\); an SSM's is linear. At decode time attention's per-step cost grows with the cache it must re-read, while an SSM <b>folds the entire past into a fixed-size state</b> and pays the same per token forever. The whole chapter lives in the gap between \(n^2\) and \(n\).</div>
+        </div>
+
+        <div class="exercise" data-answer="4" data-tol="0.001" data-hint="O(n²): double n, cost goes up by 2² = 4.">
+          <div class="ex-q">A pure-attention layer costs \( \Theta(n^2 d) \). If you <b>double</b> the sequence length \(n\) (keeping \(d\) fixed), by what factor does its compute grow?</div>
+          <div class="ex-reveal-src">Compute scales as \(n^2\). Doubling \(n\) multiplies cost by \(2^2 = \) <b>4</b>×. A linear-time SSM, by contrast, would only get \(2^1 = 2\)× more expensive — that growing gap is the entire motivation for sub-quadratic mixers.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 11.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">11.2</span><h2>State-space models &amp; SSD (Mamba-2)</h2></div>
+        <p>A <strong>state-space model</strong> is a linear recurrence borrowed from control theory. It carries a hidden state \(h_t \in \mathbb{R}^{N}\) that summarizes everything seen so far, updates it from the current input \(x_t\), and reads an output \(y_t\) off it:</p>
+
+        <div class="eq"><span class="eq-tag">EQ 11.2 — DISCRETE STATE-SPACE RECURRENCE</span>
+        $$ h_t = \bar{A}\, h_{t-1} + \bar{B}\, x_t, \qquad y_t = C\, h_t $$
+        <div class="eq-note">\(\bar{A} \in \mathbb{R}^{N\times N}\) is the state-transition matrix (how the past decays and rotates), \(\bar{B}\) writes the new input into state, \(C\) reads the output. The bar denotes <b>discretization</b>: a step size \(\Delta\) turns a continuous-time system into this per-token update, e.g. \(\bar{A} = \exp(\Delta A)\). Because the recurrence is linear, the state never grows — it is a fixed \(N\)-dimensional running summary, so decode memory is \(O(1)\) (EQ 11.1). The cost: a classical SSM uses the <em>same</em> \(\bar{A},\bar{B},C\) for every token, so it cannot choose what to remember.</div>
+        </div>
+
+        <p>That last sentence is the whole reason early SSMs (S4) lost to Transformers on language. Attention is <em>content-aware</em> — it routes based on what the tokens actually say — while a fixed recurrence treats every token identically. <strong>Mamba's</strong> contribution was to make the SSM <strong>selective</strong>: let \(\bar{B}\), \(C\), and the step \(\Delta\) be <em>functions of the input</em>. Now the model can decide, per token, how much to write, how much to read, and how fast to forget — a learnable gate that lets it ignore filler and latch onto salient tokens, recovering much of attention's selectivity at linear cost.</p>
+
+        <div class="eq"><span class="eq-tag">EQ 11.3 — SELECTION: INPUT-DEPENDENT PARAMETERS</span>
+        $$ \bar{B}_t = s_B(x_t), \quad C_t = s_C(x_t), \quad \Delta_t = \mathrm{softplus}\big(s_\Delta(x_t)\big) \;\Longrightarrow\; h_t = \bar{A}_t\, h_{t-1} + \bar{B}_t\, x_t $$
+        <div class="eq-note">The projections \(s_B, s_C, s_\Delta\) are small learned linear maps of the current token. A large \(\Delta_t\) means "this token matters — overwrite state and reset the clock"; a small \(\Delta_t\) means "skip it, let the state coast". This input-dependence breaks the convolutional shortcut older SSMs relied on, so Mamba uses a <b>hardware-aware parallel scan</b> (a prefix-sum over the sequence) to stay fast on GPUs without ever materializing an \(n\times n\) matrix.</div>
+        </div>
+
+        <p><strong>Mamba-2</strong> reframed all of this with one structural result: <strong>state-space duality (SSD)</strong>. A selective SSM with a scalar-times-identity \(\bar{A}\) is mathematically equivalent to a particular <em>structured masked attention</em> — a 1-semiseparable matrix transform. The recurrence and an attention-like matmul compute the same function by two different routes, with two different costs:</p>
+
+        <div class="eq"><span class="eq-tag">EQ 11.4 — SSD: TWO DUAL FORMS OF ONE OPERATOR</span>
+        $$ y = \underbrace{\big(L \circ (C B^{\top})\big)\, x}_{\text{quadratic / "attention" form: } O(n^2)} \;=\; \underbrace{\textstyle\sum \text{(linear scan over states)}}_{\text{linear / "recurrent" form: } O(n N)} $$
+        <div class="eq-note">\(L\) is a lower-triangular causal mask whose entries are the cumulative products of the per-step decays. The <b>quadratic form</b> is great for training — it's a big matmul that saturates tensor cores. The <b>linear form</b> is great for inference — \(O(1)\) state per step. Mamba-2 trains in the quadratic form and decodes in the linear one, getting both. The duality is also why "Transformers <em>are</em> SSMs": attention is a special, more expensive point on the same spectrum.</div>
+        </div>
+
+        <p>Practically: Mamba-2 matches or beats a same-size Transformer on language modeling perplexity and on many downstream tasks, trains efficiently because of the matmul-friendly dual form, and decodes with constant memory. Where it still loses is precise, long-range <em>recall</em> — copying an exact phrase or table value from far back, or in-context retrieval of a specific token — because a fixed \(N\)-dimensional state is a lossy summary of an arbitrarily long past, whereas a KV cache keeps every key verbatim. That asymmetry is exactly what motivates §11.3's hybrids.</p>
+
+        <div class="exercise" data-answer="true|t|yes" data-hint="Read EQ 11.1 and the linear form of EQ 11.4: cost is Θ(n·d·N) with N constant.">
+          <div class="ex-q">True or false: a selective (linear-time) state-space model's compute scales with sequence length \(n\) as \(O(n)\) — linear — rather than the \(O(n^2)\) of softmax attention. (Enter <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">The recurrence in EQ 11.2 processes each of the \(n\) tokens once, doing \(O(dN)\) work per token with \(N\) a fixed constant — total \(O(n\,d\,N)\), which is linear in \(n\). The SSD linear form (EQ 11.4) confirms it. Softmax attention's all-pairs score matrix is \(O(n^2)\). So the statement is <b>true</b>.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># O(n^2) attention vs O(n) SSM: cost as context grows (EQ 11.1 / 11.4)
+import numpy as np
+d, N = 4096, 16                          # model width, SSM state size
+ns = np.array([512, 2048, 8192, 32768, 131072, 1048576])
+
+attn = ns.astype(float)**2 * d           # all-pairs scores ~ n^2 d
+ssm  = ns.astype(float) * d * N          # linear scan        ~ n d N
+ratio = attn / ssm                       # how many x more work attention does
+
+print(f"{'context n':>10} {'attn FLOPs':>12} {'ssm FLOPs':>12} {'attn/ssm':>10}")
+for n, a, s, r in zip(ns, attn, ssm, ratio):
+    print(f"{n:>10,} {a:>12.2e} {s:>12.2e} {r:>10,.0f}x")
+
+print("\ndoubling n quadruples attention but only doubles the SSM;")
+print(f"at 1M tokens attention does {ratio[-1]:,.0f}x the work of the scan.")
+plot_xy(np.log2(ns), np.log2(ratio))     # log-log: the gap is a rising line</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="fr26-scale" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT 11.1 — SCALING EXPLORER: O(n²) vs O(n)</span><span class="w-sub">COMPUTE &amp; DECODE MEMORY · EQ 11.1</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>CONTEXT n <output id="fr26-scale-n-out">8K</output></label><input type="range" id="fr26-scale-n" min="9" max="22" step="1" value="13"/></div>
+              <div class="ctl"><label>MODEL WIDTH d <output id="fr26-scale-d-out">4,096</output></label><input type="range" id="fr26-scale-d" min="9" max="14" step="1" value="12"/></div>
+              <div class="ctl"><label>SSM STATE N <output id="fr26-scale-N-out">16</output></label><input type="range" id="fr26-scale-N" min="3" max="7" step="1" value="4"/></div>
+            </div>
+            <canvas class="w-canvas" id="fr26-scale-canvas" height="220"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">ATTENTION COMPUTE (n²d)</div><div class="r-value" id="fr26-scale-attn">—</div></div>
+              <div class="readout acc"><div class="r-label">SSM COMPUTE (n·d·N)</div><div class="r-value" id="fr26-scale-ssm">—</div></div>
+              <div class="readout acc"><div class="r-label">ATTN / SSM WORK</div><div class="r-value" id="fr26-scale-ratio">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Both axes are log-scaled. Drag context right: the attention curve climbs twice as steeply as the SSM curve because of the extra factor of \(n\). At 1M tokens the SSM does thousands of times less work, and — unlike attention — its decode-time state stays fixed at \(N\) numbers no matter how long the context grows.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 11.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">11.3</span><h2>Linear &amp; hybrid attention at scale</h2></div>
+        <p>SSMs are one route to \(O(n)\); <strong>linear attention</strong> is the other, and SSD (EQ 11.4) shows they are close cousins. Standard attention computes \(\mathrm{softmax}(QK^\top)V\), and the softmax is what forces you to build the \(n\times n\) matrix first. Replace the softmax with a feature map \(\phi(\cdot)\) so the similarity factorizes, and associativity lets you reorder the matmuls:</p>
+
+        <div class="eq"><span class="eq-tag">EQ 11.5 — LINEAR ATTENTION BY REASSOCIATION</span>
+        $$ \mathrm{Attn}(Q,K,V)_i = \frac{\phi(q_i)^{\top} \sum_{j\le i} \phi(k_j)\, v_j^{\top}}{\phi(q_i)^{\top} \sum_{j\le i} \phi(k_j)} \;=\; \frac{\phi(q_i)^{\top} S_i}{\phi(q_i)^{\top} z_i} $$
+        <div class="eq-note">Instead of \((QK^\top)V\) — an \(n\times n\) matrix — compute \(Q(K^\top V)\): a \(d\times d\) running sum. \(S_i = \sum_{j\le i}\phi(k_j)v_j^\top\) and \(z_i = \sum_{j\le i}\phi(k_j)\) are a fixed-size state updated token by token, exactly like an SSM's \(h_t\). This is \(O(n d^2)\) — linear in \(n\). The price: dropping the softmax removes its sharp, content-addressable selectivity, so naive linear attention historically <b>underperforms</b> at fine-grained recall. Modern variants (gated linear attention, DeltaNet, RWKV-7, RetNet's decay) add forgetting gates and delta-rule updates to claw most of it back.</div>
+        </div>
+
+        <p>The decisive engineering insight of 2024–2026 is that you do not have to choose. The single missing capability of every linear mixer — exact long-range lookup — is precisely what attention is best at and cheapest to use sparingly. So the strongest sub-quadratic models are <strong>hybrids</strong>: mostly Mamba/linear layers for the bulk of token mixing, with a thin interleaving of full-attention layers (often combined with sliding-window attention) to handle copying and retrieval.</p>
+
+        <ul>
+          <li><strong>Jamba</strong> (AI21, 2024) interleaves Mamba and Transformer blocks with a mixture-of-experts MLP, shipping a 256K-context production model whose KV cache is a fraction of a same-size pure Transformer's.</li>
+          <li><strong>Zamba / Samba / Griffin-style</strong> designs mix gated linear recurrences with local attention; Griffin's recurrence (RG-LRU) is a close relative of the selective SSM.</li>
+          <li><strong>Ratio of attention layers</strong> matters: empirically a small fraction — often roughly 1 attention layer per 5–7 SSM layers — recovers nearly all of a full Transformer's recall while keeping most of the linear-cost savings. The exact ratio is an open, model-specific tuning question, not a solved constant.</li>
+        </ul>
+
+        <p class="note"><strong>Honest status.</strong> Hybrids are the current sweet spot, but "how few attention layers can you get away with" is genuinely contested and depends on the task mix; recall-heavy and tool-use workloads want more attention, long-document summarization wants less. No published hybrid has yet displaced the best pure Transformers at the very top of frontier reasoning evals — the win is on cost and context length, not (yet) on peak capability.</p>
+
+        <div class="widget" id="fr26-arch" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT 11.2 — ARCHITECTURE COMPARISON MATRIX</span><span class="w-sub">TRANSFORMER · MAMBA · HYBRID</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>SELECT ARCHITECTURE</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-fr26-arch="transformer">TRANSFORMER</button>
+                  <button class="w-btn ghost" data-fr26-arch="mamba">MAMBA-2</button>
+                  <button class="w-btn ghost" data-fr26-arch="hybrid">HYBRID</button>
+                </div>
+              </div>
+            </div>
+            <div id="fr26-arch-grid" style="display:grid;grid-template-columns:1fr;gap:1px;background:var(--hairline);border:1px solid var(--hairline);border-radius:4px;overflow:hidden;"></div>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">TOKEN-MIX COST</div><div class="r-value" id="fr26-arch-cost">—</div></div>
+              <div class="readout acc"><div class="r-label">DECODE MEMORY</div><div class="r-value" id="fr26-arch-mem">—</div></div>
+              <div class="readout acc"><div class="r-label">EXACT RECALL</div><div class="r-value" id="fr26-arch-recall">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Toggle the three families and read the trade-off across rows. The Transformer pays \(O(n^2)\) compute and a growing KV cache for perfect recall; Mamba-2 buys \(O(n)\) compute and \(O(1)\) memory at the cost of lossy recall; the hybrid keeps a few attention layers to recover recall while staying mostly linear. There is no free lunch — pick which axis you can least afford to lose.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 11.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">11.4</span><h2>Extreme quantization — TurboQuant &amp; sub-4-bit</h2></div>
+        <p>The second pressure is storage. Chapter 07 established quantization as the deployment unit — bits per weight — and treated 4-bit (GPTQ, AWQ, NF4) as the practical floor. By 2026 that floor has moved. The reason it can move is the same statistical fact NF4 exploited: trained weights are roughly Gaussian and highly compressible, so the bits you spend should match where the information actually is.</p>
+
+        <p>The model that explains the trade-off is simple. A \(b\)-bit quantizer has \(2^b\) levels. Spread them over a value range and the spacing — hence the rounding error — shrinks geometrically as you add bits:</p>
+
+        <div class="eq"><span class="eq-tag">EQ 11.6 — QUANTIZATION ERROR vs BIT-WIDTH</span>
+        $$ \text{levels} = 2^b, \quad \text{step } \Delta = \frac{R}{2^b - 1}, \quad \mathrm{RMSE} \approx \frac{\Delta}{\sqrt{12}} \;\propto\; 2^{-b}, \qquad \text{size} = \tfrac{b}{8}\ \text{bytes/param} $$
+        <div class="eq-note">\(R\) is the (clipped) range of the weights. For a uniform quantizer the rounding error is uniform on \([-\Delta/2,\,\Delta/2]\), whose RMS is \(\Delta/\sqrt{12}\). The headline: <b>each extra bit halves the error but only adds \(\tfrac18\) byte</b>. Going 16→8→4 bits is nearly free in quality; the pain starts below 4, where halving error is no longer enough to hide the few large-magnitude <b>outlier</b> weights that dominate the loss. Beating EQ 11.6 below 4 bits requires non-uniform codebooks and preprocessing, not just smaller steps.</div>
+        </div>
+
+        <p>Three ideas, stacked, are what make sub-4-bit work:</p>
+        <ul>
+          <li><strong>Error-aware rounding (GPTQ).</strong> Don't round each weight independently. Quantize column by column and, using second-order (Hessian) information from a calibration set, push the rounding error of each weight into the weights not yet quantized — so the layer's <em>output</em> error, not the per-weight error, is what's minimized.</li>
+          <li><strong>Incoherence processing &amp; rotation (QuIP#, QuaRot, SpinQuant).</strong> Multiply weights (and activations) by random orthogonal/Hadamard rotations. A rotation preserves the matmul but <em>spreads the outliers out</em>, making the distribution more uniform and far easier to quantize. QuIP# adds a lattice (E8) vector codebook on top, reaching ~2 bits with surprisingly little loss.</li>
+          <li><strong>Fast unbiased rounding (TurboQuant).</strong> The 2025 line of work makes the rotation/quantization step itself near-optimal and cheap: data-oblivious, distortion-near-the-information-theoretic-limit quantizers that run fast enough to apply at inference time, narrowing the gap between what's provably achievable and what's practical at 2–4 bits.</li>
+        </ul>
+
+        <p>The most cited demonstration that sub-4-bit can be a <em>training</em> target, not just a post-hoc squeeze, is <strong>BitNet b1.58</strong>: weights constrained to the ternary set \(\{-1, 0, +1\}\) — about \(\log_2 3 \approx 1.58\) bits each — trained from scratch, reportedly matching full-precision Transformers at billions of parameters while replacing most multiplies with additions. It remains contested how far this holds at the very largest scales, but it reframed the floor from "4 bits" to "less than 2".</p>
+
+        <div class="exercise" data-answer="true|t|yes" data-hint="Read EQ 11.6: size = b/8 bytes/param falls with b, but RMSE ∝ 2^-b rises as b drops below 4.">
+          <div class="ex-q">True or false: pushing a model below 4 bits per weight ("sub-4-bit" quantization) is fundamentally a trade — it shrinks the stored model size but raises quantization error, costing some quality. (Enter <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">EQ 11.6 makes both sides explicit: size \(=\tfrac{b}{8}\) bytes/param falls as \(b\) drops, while error \(\propto 2^{-b}\) rises. Above 4 bits the quality loss is negligible; below 4 it becomes real and you must spend cleverness (rotation, codebooks, error-aware rounding) to keep it small. There is no free lunch — it is a size-versus-quality trade. <b>True</b>.</div>
+        </div>
+
+        <div class="exercise" data-answer="17.5" data-tol="0.02" data-unit="GB" data-hint="bytes/param = b/8 = 2/8 = 0.25; multiply by 70e9 and divide by 1e9.">
+          <div class="ex-q">A <b>70B</b>-parameter model is quantized to \(b = 2\) bits per weight. Using \( \text{bytes/param} = b/8 \) (EQ 11.6), how many <b>GB</b> do the weights occupy? (Use \(1\,\text{GB} = 10^9\) bytes.)</div>
+          <div class="ex-reveal-src">Bytes per parameter \(= b/8 = 2/8 = 0.25\). Total \(= 70\times10^9 \times 0.25 = 1.75\times10^{10}\) bytes \(= \) <b>17.5</b> GB — versus 140 GB at FP16. That is the prize: a 70B model that fits a single 24 GB consumer card, if you can hold the quality.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Quantization error vs bit-width, down to 2-3 bits (EQ 11.6)
+import numpy as np
+rng = np.random.default_rng(0)
+w = rng.normal(0, 1, 200_000)            # trained weights ~ Gaussian
+R = 6.0                                   # clip to +/-3 sigma -> range 6
+
+bits = [16, 8, 4, 3, 2]
+rel = []
+for b in bits:
+    levels = 2**b
+    step = R / (levels - 1)
+    q = np.round(np.clip(w, -R/2, R/2) / step) * step   # uniform quantize
+    err = np.sqrt(np.mean((w - q)**2)) / np.sqrt(np.mean(w**2))
+    rel.append(err)
+    print(f"{b:>2} bit | {levels:>6} levels | {b/8:>5.3f} B/param | rel RMSE {err:.4f}")
+
+print("\nerror roughly halves per added bit (RMSE ~ 2^-b);")
+print("8->4 bits barely moves it, but 4->2 bits multiplies it ~5x -- the sub-4-bit wall.")
+plot_xy(bits, rel)                        # error climbs sharply below 4 bits</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="fr26-quant" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT 11.3 — BIT-WIDTH TRADE-OFF</span><span class="w-sub">SIZE vs QUALITY · EQ 11.6</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>BITS PER WEIGHT b <output id="fr26-quant-b-out">4.00</output></label><input type="range" id="fr26-quant-b" min="1.58" max="16" step="0.01" value="4"/></div>
+              <div class="ctl"><label>MODEL SIZE <output id="fr26-quant-n-out">70B params</output></label><input type="range" id="fr26-quant-n" min="0" max="6.2" step="0.1" value="4.8"/></div>
+            </div>
+            <canvas class="w-canvas" id="fr26-quant-canvas" height="200"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">WEIGHTS SIZE</div><div class="r-value" id="fr26-quant-size">—</div></div>
+              <div class="readout acc"><div class="r-label">REL. QUANT ERROR</div><div class="r-value" id="fr26-quant-err">—</div></div>
+              <div class="readout acc"><div class="r-label">REGIME</div><div class="r-value" id="fr26-quant-regime">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Drag bit-width from 16 down toward 1.58 (BitNet's ternary floor). Above 4 bits, size falls while the dashed error curve barely moves — nearly free. Below 4, error climbs steeply and the curve enters the red zone where naive uniform quantization breaks; only rotation + codebook methods (QuIP#, TurboQuant) keep quality usable there. The vertical line marks the 4-bit floor of Chapter 07.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 11.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">11.5</span><h2>What's racing the Transformer</h2></div>
+        <p>Step back and the 2026 frontier is a four-cornered race, not a coronation. Each contender trades a different axis:</p>
+
+        <table class="data">
+          <thead><tr><th>Family</th><th>Token-mix cost</th><th>Decode memory</th><th>Best at</th><th>Weakest at</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Transformer</strong></td><td class="m">O(n²)</td><td class="m">O(n) KV cache</td><td>Exact recall, reasoning, ecosystem maturity</td><td>Long-context cost &amp; memory</td></tr>
+            <tr><td><strong>SSM (Mamba-2)</strong></td><td class="hl">O(n)</td><td class="hl">O(1) state</td><td>Throughput, very long context, streaming</td><td>Precise long-range copy / retrieval</td></tr>
+            <tr><td><strong>Linear / gated attn</strong></td><td class="hl">O(n)</td><td class="hl">O(1) state</td><td>Cheap mixing; close cousin of SSD</td><td>Sharp content-addressable lookup</td></tr>
+            <tr><td><strong>Hybrid</strong></td><td class="m">O(n) + few O(n²)</td><td class="m">small KV + state</td><td>Most of both worlds; current sweet spot</td><td>Tuning the attention ratio; not yet peak-SOTA</td></tr>
+          </tbody>
+        </table>
+
+        <p>Orthogonal to all four sits <strong>quantization</strong>: any of them can be squeezed to 4, 3, or ~2 bits, so the real deployment object in 2026 is "a hybrid, in 4-bit" rather than any single pure design. Two further frontier currents press on the same surface and were treated earlier in this volume — <strong>mixture-of-experts</strong> (Chapter 09), which cuts active FLOPs per token by routing to a few experts, and <strong>diffusion language models</strong> (Chapter 10), which replace left-to-right decoding with parallel iterative refinement. None of these is mutually exclusive; a 2026 system can be an MoE hybrid SSM-Transformer served in 4-bit.</p>
+
+        <p class="note"><strong>The honest scorecard.</strong> SSMs and linear attention have <em>won</em> the long-context efficiency argument — at million-token scale there is no contest. They have <em>not</em> won the peak-capability argument: as of 2026 the best reasoning and recall results still come from attention-heavy models, and the most successful sub-quadratic designs hedge by keeping attention layers. The Transformer's monopoly is broken; its leadership is not. The likeliest 2026–2027 outcome is not a successor but a <strong>blend</strong> — and knowing which operator to spend where is the new architectural skill.</p>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>You now have the whole machine — from the residual stream to the 2026 frontier.</strong> The capstone assembles every chapter into one end-to-end picture: how a token becomes an embedding, flows through attention or a state-space scan, gets trained, aligned, fine-tuned, compressed, and finally served — and where each chapter's idea lives in a real deployment.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 11.R ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">11.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://arxiv.org/abs/2312.00752" target="_blank" rel="noopener">Gu, A. &amp; Dao, T. (2023). <span class="ref-venue">Mamba: Linear-Time Sequence Modeling with Selective State Spaces</span>.</a> <span class="ref-meta">COLM 2024 — the selective SSM and hardware-aware scan behind EQ 11.2–11.3.</span></li>
+          <li><a href="https://arxiv.org/abs/2405.21060" target="_blank" rel="noopener">Dao, T. &amp; Gu, A. (2024). <span class="ref-venue">Transformers are SSMs: Generalized Models and Efficient Algorithms Through Structured State Space Duality</span>.</a> <span class="ref-meta">ICML 2024 — Mamba-2 and the SSD duality of EQ 11.4.</span></li>
+          <li><a href="https://arxiv.org/abs/2111.00396" target="_blank" rel="noopener">Gu, A., Goel, K. &amp; Ré, C. (2021). <span class="ref-venue">Efficiently Modeling Long Sequences with Structured State Spaces (S4)</span>.</a> <span class="ref-meta">ICLR 2022 — the structured SSM that started the line (§11.2).</span></li>
+          <li><a href="https://arxiv.org/abs/2006.16236" target="_blank" rel="noopener">Katharopoulos, A., Vyas, A., Pappas, N. &amp; Fleuret, F. (2020). <span class="ref-venue">Transformers are RNNs: Fast Autoregressive Transformers with Linear Attention</span>.</a> <span class="ref-meta">ICML 2020 — the reassociation trick of EQ 11.5.</span></li>
+          <li><a href="https://arxiv.org/abs/2403.19887" target="_blank" rel="noopener">Lieber, O. et al. (2024). <span class="ref-venue">Jamba: A Hybrid Transformer-Mamba Language Model</span>.</a> <span class="ref-meta">AI21 — a production-scale interleaved Mamba/attention/MoE hybrid (§11.3).</span></li>
+          <li><a href="https://arxiv.org/abs/2210.17323" target="_blank" rel="noopener">Frantar, E., Ashkboos, S., Hoefler, T. &amp; Alistarh, D. (2022). <span class="ref-venue">GPTQ: Accurate Post-Training Quantization for Generative Pre-trained Transformers</span>.</a> <span class="ref-meta">ICLR 2023 — second-order error-aware rounding (§11.4).</span></li>
+          <li><a href="https://arxiv.org/abs/2402.04396" target="_blank" rel="noopener">Tseng, A., Chee, J., Sun, Q., Kuleshov, V. &amp; De Sa, C. (2024). <span class="ref-venue">QuIP#: Even Better LLM Quantization with Hadamard Incoherence and Lattice Codebooks</span>.</a> <span class="ref-meta">ICML 2024 — incoherence processing + E8 lattice codebooks toward ~2 bits.</span></li>
+          <li><a href="https://arxiv.org/abs/2402.17764" target="_blank" rel="noopener">Ma, S. et al. (2024). <span class="ref-venue">The Era of 1-bit LLMs: All Large Language Models are in 1.58 Bits (BitNet b1.58)</span>.</a> <span class="ref-meta">Microsoft Research — ternary {-1,0,+1} weights trained from scratch (§11.4).</span></li>
+          <li><a href="https://arxiv.org/abs/2404.00456" target="_blank" rel="noopener">Ashkboos, S. et al. (2024). <span class="ref-venue">QuaRot: Outlier-Free 4-Bit Inference in Rotated LLMs</span>.</a> <span class="ref-meta">NeurIPS 2024 — Hadamard rotations that spread weight/activation outliers (§11.4).</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../chapters/10-diffusion.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">10</span> Diffusion</div></a>
+        <a class="next" href="../chapters/capstone.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">—</span> Capstone</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — VOL II · CH 11</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* Chapter 11 — Frontier 2026 instruments. Single IIFE, no globals.
+   setTimeout-only animation; every widget guarded by element existence. */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  var C = (FM && FM.C) || {
+    MINT: "#a6f2cc", DEEP: "#2b5945", BLUE: "#4e8af7", RED: "#ff4136",
+    HAIR: "#2f3234", MUT: "#636363", SEC: "#9b9b9b", BRIGHT: "#ffffff",
+    MONO: "10px ui-monospace, SF Mono, Menlo, monospace"
+  };
+  function fmt(x) {
+    if (FM && FM.siFormat) return FM.siFormat(x, 1);
+    if (x >= 1e12) return (x / 1e12).toFixed(1) + "T";
+    if (x >= 1e9) return (x / 1e9).toFixed(1) + "B";
+    if (x >= 1e6) return (x / 1e6).toFixed(1) + "M";
+    if (x >= 1e3) return (x / 1e3).toFixed(1) + "K";
+    return x.toFixed(0);
+  }
+  function nFmt(n) {
+    return n >= 1048576 ? (n / 1048576) + "M" : n >= 1024 ? (n / 1024) + "K" : "" + n;
+  }
+
+  /* ============================================================
+     INSTRUMENT 11.1 — Scaling explorer: O(n^2) vs O(n)
+     ============================================================ */
+  (function () {
+    var root = document.getElementById("fr26-scale");
+    if (!root) return;
+    var nIn = document.getElementById("fr26-scale-n");
+    var dIn = document.getElementById("fr26-scale-d");
+    var NIn = document.getElementById("fr26-scale-N");
+    var nOut = document.getElementById("fr26-scale-n-out");
+    var dOut = document.getElementById("fr26-scale-d-out");
+    var NOut = document.getElementById("fr26-scale-N-out");
+    var cv = document.getElementById("fr26-scale-canvas");
+    var attnEl = document.getElementById("fr26-scale-attn");
+    var ssmEl = document.getElementById("fr26-scale-ssm");
+    var ratEl = document.getElementById("fr26-scale-ratio");
+
+    function render() {
+      var nExp = parseInt(nIn.value, 10);
+      var d = Math.pow(2, parseInt(dIn.value, 10));
+      var N = Math.pow(2, parseInt(NIn.value, 10));
+      var n = Math.pow(2, nExp);
+      nOut.textContent = nFmt(n);
+      dOut.textContent = d.toLocaleString();
+      NOut.textContent = N;
+
+      var attn = n * n * d;
+      var ssm = n * d * N;
+      attnEl.textContent = fmt(attn) + " FLOP";
+      ssmEl.textContent = fmt(ssm) + " FLOP";
+      ratEl.textContent = fmt(attn / ssm) + "×";
+
+      var s = FM.setupCanvas(cv, 220);
+      var ctx = s.ctx, w = s.w, h = s.h;
+      ctx.clearRect(0, 0, w, h);
+      var padL = 44, padR = 14, padT = 14, padB = 26;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+
+      // log-log axes over the full n range (2^9 .. 2^22), cost in log10 FLOPs
+      var minExp = 9, maxExp = 22;
+      var curveD = d, curveN = N;
+      var costs = [];
+      var lo = Infinity, hi = -Infinity, e;
+      for (e = minExp; e <= maxExp; e++) {
+        var nn = Math.pow(2, e);
+        var a = Math.log10(nn * nn * curveD);
+        var sm = Math.log10(nn * curveD * curveN);
+        costs.push({ e: e, a: a, s: sm });
+        lo = Math.min(lo, a, sm); hi = Math.max(hi, a, sm);
+      }
+      var padY = (hi - lo) * 0.06 || 1;
+      lo -= padY; hi += padY;
+      function px(ex) { return x0 + (ex - minExp) / (maxExp - minExp) * (x1 - x0); }
+      function py(v) { return y0 + (v - lo) / (hi - lo) * (y1 - y0); }
+
+      // grid
+      ctx.strokeStyle = "rgba(47,50,52,.55)"; ctx.lineWidth = 1;
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "center"; ctx.textBaseline = "top";
+      for (e = minExp; e <= maxExp; e += 2) {
+        var gx = px(e);
+        ctx.beginPath(); ctx.moveTo(gx, y1); ctx.lineTo(gx, y0); ctx.stroke();
+        ctx.fillText(nFmt(Math.pow(2, e)), gx, y0 + 6);
+      }
+
+      function curve(key, color, wid) {
+        ctx.strokeStyle = color; ctx.lineWidth = wid; ctx.beginPath();
+        costs.forEach(function (c, i) {
+          var X = px(c.e), Y = py(c[key]);
+          if (i === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y);
+        });
+        ctx.stroke();
+      }
+      curve("a", C.RED, 1.5);    // attention O(n^2)
+      curve("s", C.MINT, 1.75);  // ssm O(n)
+
+      // marker at current n
+      var cur = costs[nExp - minExp];
+      if (cur) {
+        var mx = px(nExp);
+        ctx.setLineDash([3, 4]); ctx.strokeStyle = "rgba(155,155,155,.5)";
+        ctx.beginPath(); ctx.moveTo(mx, y1); ctx.lineTo(mx, y0); ctx.stroke();
+        ctx.setLineDash([]);
+        [["a", C.RED], ["s", C.MINT]].forEach(function (p) {
+          ctx.fillStyle = p[1]; ctx.beginPath();
+          ctx.arc(mx, py(cur[p[0]]), 3.2, 0, 2 * Math.PI); ctx.fill();
+        });
+      }
+
+      // legend
+      ctx.textAlign = "left"; ctx.textBaseline = "middle";
+      ctx.fillStyle = C.RED; ctx.fillRect(x0 + 4, y1 + 6, 14, 2);
+      ctx.fillText("attention  O(n²·d)", x0 + 22, y1 + 7);
+      ctx.fillStyle = C.MINT; ctx.fillRect(x0 + 4, y1 + 20, 14, 2);
+      ctx.fillText("SSM  O(n·d·N)", x0 + 22, y1 + 21);
+
+      ctx.save();
+      ctx.translate(12, (y0 + y1) / 2); ctx.rotate(-Math.PI / 2);
+      ctx.textAlign = "center"; ctx.fillStyle = C.MUT;
+      ctx.fillText("log₁₀ FLOPs", 0, 0);
+      ctx.restore();
+    }
+
+    nIn.addEventListener("input", render);
+    dIn.addEventListener("input", render);
+    NIn.addEventListener("input", render);
+    window.addEventListener("resize", render);
+    render();
+  })();
+
+  /* ============================================================
+     INSTRUMENT 11.2 — Architecture comparison matrix
+     ============================================================ */
+  (function () {
+    var root = document.getElementById("fr26-arch");
+    if (!root) return;
+    var grid = document.getElementById("fr26-arch-grid");
+    var costEl = document.getElementById("fr26-arch-cost");
+    var memEl = document.getElementById("fr26-arch-mem");
+    var recallEl = document.getElementById("fr26-arch-recall");
+    var btns = root.querySelectorAll("[data-fr26-arch]");
+
+    var DATA = {
+      transformer: {
+        cost: "O(n²)", mem: "O(n) cache", recall: "EXACT",
+        rows: [
+          ["Token mixer", "Softmax self-attention — all pairs"],
+          ["Compute in n", "Quadratic O(n²·d)"],
+          ["Decode memory", "KV cache grows with context"],
+          ["Long-context", "Expensive; needs GQA / windows / MLA"],
+          ["Exact recall", "Verbatim — every key kept"],
+          ["Shipping in 2026", "GPT / Claude / Llama-class"]
+        ]
+      },
+      mamba: {
+        cost: "O(n)", mem: "O(1) state", recall: "LOSSY",
+        rows: [
+          ["Token mixer", "Selective state-space scan (EQ 11.3)"],
+          ["Compute in n", "Linear O(n·d·N)"],
+          ["Decode memory", "Fixed N-dim state — constant"],
+          ["Long-context", "Cheap; streams to millions of tokens"],
+          ["Exact recall", "Lossy — state is a summary"],
+          ["Shipping in 2026", "Mamba-2, Codestral-Mamba, Falcon-H"]
+        ]
+      },
+      hybrid: {
+        cost: "O(n) + few O(n²)", mem: "small cache + state", recall: "NEAR-EXACT",
+        rows: [
+          ["Token mixer", "Mostly SSM/linear + a few attention layers"],
+          ["Compute in n", "Linear-dominated; thin quadratic tax"],
+          ["Decode memory", "State + small KV cache"],
+          ["Long-context", "Cheap, with attention for the hard lookups"],
+          ["Exact recall", "Near-exact via the attention layers"],
+          ["Shipping in 2026", "Jamba, Zamba, Samba, Griffin-style"]
+        ]
+      }
+    };
+
+    function build(rows) {
+      grid.innerHTML = "";
+      rows.forEach(function (r, i) {
+        var cell = document.createElement("div");
+        cell.style.cssText =
+          "display:grid;grid-template-columns:118px 1fr;gap:12px;background:#000;padding:10px 14px;align-items:center;";
+        var k = document.createElement("div");
+        k.style.cssText =
+          "font-family:ui-monospace,Menlo,monospace;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:" +
+          C.MUT + ";";
+        k.textContent = r[0];
+        var v = document.createElement("div");
+        v.style.cssText = "font-size:12.5px;color:var(--text);line-height:1.45;";
+        v.textContent = r[1];
+        if (i === 4) v.style.color = C.MINT; // highlight the recall row
+        cell.appendChild(k); cell.appendChild(v);
+        grid.appendChild(cell);
+      });
+    }
+
+    function select(key) {
+      var d = DATA[key];
+      btns.forEach(function (b) {
+        b.classList.toggle("on", b.getAttribute("data-fr26-arch") === key);
+      });
+      build(d.rows);
+      costEl.textContent = d.cost;
+      memEl.textContent = d.mem;
+      recallEl.textContent = d.recall;
+    }
+
+    btns.forEach(function (b) {
+      b.addEventListener("click", function () { select(b.getAttribute("data-fr26-arch")); });
+    });
+    select("transformer");
+  })();
+
+  /* ============================================================
+     INSTRUMENT 11.3 — Bit-width trade-off (size vs quality)
+     ============================================================ */
+  (function () {
+    var root = document.getElementById("fr26-quant");
+    if (!root) return;
+    var bIn = document.getElementById("fr26-quant-b");
+    var nIn = document.getElementById("fr26-quant-n");
+    var bOut = document.getElementById("fr26-quant-b-out");
+    var nOut = document.getElementById("fr26-quant-n-out");
+    var cv = document.getElementById("fr26-quant-canvas");
+    var sizeEl = document.getElementById("fr26-quant-size");
+    var errEl = document.getElementById("fr26-quant-err");
+    var regimeEl = document.getElementById("fr26-quant-regime");
+
+    // model-size slider 0..6.2 -> params on a log-ish scale (0.5B .. ~700B)
+    function paramsFromSlider(v) {
+      var sizes = [0.5e9, 1e9, 3e9, 7e9, 13e9, 34e9, 70e9, 405e9];
+      // continuous interp in log space across slider 0..6.2
+      var t = v / 6.2 * (sizes.length - 1);
+      var i = Math.min(sizes.length - 2, Math.floor(t));
+      var f = t - i;
+      var lo = Math.log10(sizes[i]), hi = Math.log10(sizes[i + 1]);
+      return Math.pow(10, lo + f * (hi - lo));
+    }
+
+    // relative error model: uniform-quantizer RMSE ~ 2^-b, normalized so b=16 ~ 0
+    function relErr(b) {
+      var R = 6.0;
+      var step = R / (Math.pow(2, b) - 1);
+      return (step / Math.sqrt(12)) / 1.0; // weights ~ N(0,1), RMS(w)=1
+    }
+
+    function render() {
+      var b = parseFloat(bIn.value);
+      var params = paramsFromSlider(parseFloat(nIn.value));
+      bOut.textContent = b.toFixed(2);
+      nOut.textContent = fmt(params) + " params";
+
+      var bytes = params * b / 8;
+      var gb = bytes / 1e9;
+      sizeEl.textContent = gb >= 1 ? gb.toFixed(1) + " GB" : (gb * 1000).toFixed(0) + " MB";
+
+      var err = relErr(b);
+      errEl.textContent = (err * 100).toFixed(err < 0.01 ? 2 : 1) + "%";
+
+      var regime;
+      if (b >= 8) regime = "LOSSLESS-ish";
+      else if (b >= 4) regime = "SAFE (GPTQ/AWQ)";
+      else if (b >= 2) regime = "HARD (QuIP#/rotation)";
+      else regime = "TERNARY (BitNet)";
+      regimeEl.textContent = regime;
+      regimeEl.style.color = b >= 4 ? C.MINT : b >= 2 ? C.BLUE : C.RED;
+
+      // plot: error vs bit-width curve with markers + 4-bit floor line
+      var s = FM.setupCanvas(cv, 200);
+      var ctx = s.ctx, w = s.w, hgt = s.h;
+      ctx.clearRect(0, 0, w, hgt);
+      var padL = 40, padR = 14, padT = 14, padB = 24;
+      var x0 = padL, x1 = w - padR, y0 = hgt - padB, y1 = padT;
+      var bMin = 1.58, bMax = 16;
+      var eMax = relErr(bMin); // worst error at ternary floor
+      function px(bb) { return x0 + (bb - bMin) / (bMax - bMin) * (x1 - x0); }
+      function py(ee) { return y0 + (ee / eMax) * (y1 - y0); }
+
+      // sub-4-bit danger shading
+      ctx.fillStyle = "rgba(255,65,54,.07)";
+      ctx.fillRect(x0, y1, px(4) - x0, y0 - y1);
+
+      // grid + x labels
+      ctx.strokeStyle = "rgba(47,50,52,.55)"; ctx.lineWidth = 1;
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "center"; ctx.textBaseline = "top";
+      [2, 4, 8, 16].forEach(function (bb) {
+        var gx = px(bb);
+        ctx.beginPath(); ctx.moveTo(gx, y1); ctx.lineTo(gx, y0); ctx.stroke();
+        ctx.fillText(bb + "b", gx, y0 + 5);
+      });
+
+      // 4-bit floor line (Chapter 07)
+      ctx.setLineDash([4, 4]); ctx.strokeStyle = "rgba(78,138,247,.6)";
+      ctx.beginPath(); ctx.moveTo(px(4), y1); ctx.lineTo(px(4), y0); ctx.stroke();
+      ctx.setLineDash([]);
+
+      // error curve
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 1.75; ctx.beginPath();
+      var first = true, bb2;
+      for (bb2 = bMin; bb2 <= bMax + 0.001; bb2 += 0.1) {
+        var X = px(bb2), Y = py(relErr(bb2));
+        if (first) { ctx.moveTo(X, Y); first = false; } else ctx.lineTo(X, Y);
+      }
+      ctx.stroke();
+
+      // current-b marker
+      var mx = px(b), my = py(err);
+      ctx.fillStyle = b >= 4 ? C.MINT : b >= 2 ? C.BLUE : C.RED;
+      ctx.beginPath(); ctx.arc(mx, my, 4, 0, 2 * Math.PI); ctx.fill();
+      ctx.strokeStyle = "rgba(155,155,155,.4)"; ctx.setLineDash([2, 3]);
+      ctx.beginPath(); ctx.moveTo(mx, my); ctx.lineTo(mx, y0); ctx.stroke();
+      ctx.setLineDash([]);
+
+      ctx.textAlign = "left"; ctx.textBaseline = "middle";
+      ctx.fillStyle = C.MUT;
+      ctx.fillText("rel. quant error →", x0 + 4, y1 + 4);
+      ctx.save();
+      ctx.translate(12, (y0 + y1) / 2); ctx.rotate(-Math.PI / 2);
+      ctx.textAlign = "center"; ctx.fillText("error", 0, 0);
+      ctx.restore();
+    }
+
+    bIn.addEventListener("input", render);
+    nIn.addEventListener("input", render);
+    window.addEventListener("resize", render);
+    render();
+  })();
+
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

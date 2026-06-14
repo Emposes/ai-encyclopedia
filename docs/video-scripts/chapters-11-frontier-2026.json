@@ -1,0 +1,169 @@
+{
+  "concepts": [
+    {
+      "id": "chapters-11-frontier-2026-s1",
+      "chapter": "chapters/11-frontier-2026",
+      "section": "s1",
+      "title": "The post-Transformer landscape (2026)",
+      "eyebrow": "LLM FIELD MANUAL",
+      "beats": [
+        {
+          "text": "For eight years the Transformer had no serious rival, and in 2026 that monopoly is finally being contested.",
+          "visual": { "type": "title", "text": "The Post-Transformer Landscape", "sub": "Two pressures squeeze attention from opposite ends" }
+        },
+        {
+          "text": "Self-attention compares every token to every other token, so its compute grows quadratically with sequence length n.",
+          "visual": { "type": "plot", "ys": [1, 4, 9, 16, 25, 36], "xlabel": "context n", "ylabel": "attention compute", "mark": "O(n^2)" }
+        },
+        {
+          "text": "State-space models replace softmax with an operator that costs only O(n) and carries a fixed-size recurrent state.",
+          "visual": { "type": "equation", "tex": "C_{\\text{ssm}}(n)=\\Theta(n\\,d\\,N),\\quad M_{\\text{ssm}}(n)=\\Theta(1)", "note": "Linear compute, constant decode memory" }
+        },
+        {
+          "text": "The second attack is extreme weight compression, pushing frozen models below the four-bit floor toward 1.58 effective bits.",
+          "visual": { "type": "bars", "values": [16, 8, 4, 2], "labels": ["FP16", "INT8", "4-bit", "2-bit"], "highlight": 3 }
+        },
+        {
+          "text": "Doubling the sequence length multiplies a quadratic attention layer's compute by four, while a linear SSM only doubles.",
+          "visual": { "type": "stat", "value": 4, "label": "compute growth when n doubles", "unit": "x" }
+        },
+        {
+          "text": "The honest caveat: the Transformer is contested, not dethroned, and the strongest shipping designs are hybrids.",
+          "visual": { "type": "lattice" }
+        }
+      ]
+    },
+    {
+      "id": "chapters-11-frontier-2026-s2",
+      "chapter": "chapters/11-frontier-2026",
+      "section": "s2",
+      "title": "State-space models & SSD (Mamba-2)",
+      "eyebrow": "LLM FIELD MANUAL",
+      "beats": [
+        {
+          "text": "A state-space model is a linear recurrence from control theory that folds the entire past into one fixed hidden state.",
+          "visual": { "type": "title", "text": "State-Space Models & SSD", "sub": "A constant-size summary of everything seen so far" }
+        },
+        {
+          "text": "Each step updates the state from the input and reads an output off it, so decode memory stays constant.",
+          "visual": { "type": "equation", "tex": "h_t = \\bar{A}\\,h_{t-1} + \\bar{B}\\,x_t,\\qquad y_t = C\\,h_t", "note": "Linear recurrence; the state never grows" }
+        },
+        {
+          "text": "Early SSMs lost to attention because a fixed recurrence treats every token identically and cannot choose what to remember.",
+          "visual": { "type": "plot", "ys": [5, 5, 5, 5, 5, 5], "xlabel": "token", "ylabel": "attention paid", "mark": "fixed, content-blind" }
+        },
+        {
+          "text": "Mamba makes the recurrence selective by letting B, C, and the step size be functions of the current input.",
+          "visual": { "type": "equation", "tex": "\\Delta_t = \\mathrm{softplus}\\big(s_\\Delta(x_t)\\big)\\;\\Longrightarrow\\; h_t = \\bar{A}_t\\,h_{t-1} + \\bar{B}_t\\,x_t", "note": "A learnable gate: write, read, or forget per token" }
+        },
+        {
+          "text": "Mamba-2's duality result trains in a quadratic matmul form and decodes in the linear recurrent form, getting both.",
+          "visual": { "type": "equation", "tex": "y = \\big(L \\circ (CB^{\\top})\\big)\\,x = \\textstyle\\sum\\text{(linear scan)}", "note": "One operator, two dual costs" }
+        },
+        {
+          "text": "Mamba-2 matches a same-size Transformer on perplexity, but still loses on precise long-range recall from a lossy state.",
+          "visual": { "type": "stat", "value": 16, "label": "typical SSM state size N (constant)", "unit": "dims" }
+        }
+      ]
+    },
+    {
+      "id": "chapters-11-frontier-2026-s3",
+      "chapter": "chapters/11-frontier-2026",
+      "section": "s3",
+      "title": "Linear & hybrid attention at scale",
+      "eyebrow": "LLM FIELD MANUAL",
+      "beats": [
+        {
+          "text": "Linear attention is the other route to O(n), and the duality result shows it is a close cousin of state-space models.",
+          "visual": { "type": "title", "text": "Linear & Hybrid Attention", "sub": "Drop the softmax, keep the linearity" }
+        },
+        {
+          "text": "Replacing softmax with a feature map lets you reassociate the matmuls into a fixed-size running sum updated per token.",
+          "visual": { "type": "equation", "tex": "\\mathrm{Attn}(Q,K,V)_i = \\frac{\\phi(q_i)^{\\top} S_i}{\\phi(q_i)^{\\top} z_i}", "note": "Q(K^T V) is linear in n; no n-by-n matrix" }
+        },
+        {
+          "text": "Dropping the softmax removes its sharp content-addressable lookup, so naive linear attention underperforms at recall.",
+          "visual": { "type": "bars", "values": [95, 70], "labels": ["attention recall", "linear recall"], "highlight": 1 }
+        },
+        {
+          "text": "The decisive insight is that you do not have to choose: mostly linear layers, with a thin interleaving of attention.",
+          "visual": { "type": "plot", "ys": [1, 1, 1, 5, 1, 1, 1, 5], "xlabel": "layer", "ylabel": "cost", "mark": "1 attn per ~6 SSM" }
+        },
+        {
+          "text": "Jamba interleaves Mamba and Transformer blocks with mixture-of-experts, shipping a 256K-context production model.",
+          "visual": { "type": "stat", "value": 256, "label": "Jamba production context", "unit": "K tokens" }
+        },
+        {
+          "text": "The win is on cost and context length, not yet peak capability; no hybrid has displaced the best pure Transformers.",
+          "visual": { "type": "lattice" }
+        }
+      ]
+    },
+    {
+      "id": "chapters-11-frontier-2026-s4",
+      "chapter": "chapters/11-frontier-2026",
+      "section": "s4",
+      "title": "Extreme quantization — TurboQuant & sub-4-bit",
+      "eyebrow": "LLM FIELD MANUAL",
+      "beats": [
+        {
+          "text": "The second pressure is storage, and by 2026 the practical four-bit floor of Chapter 07 has moved lower.",
+          "visual": { "type": "title", "text": "Extreme Quantization", "sub": "Below four bits per weight" }
+        },
+        {
+          "text": "A b-bit quantizer has 2^b levels, so each extra bit halves the rounding error but only adds an eighth of a byte.",
+          "visual": { "type": "equation", "tex": "\\mathrm{RMSE} \\approx \\frac{\\Delta}{\\sqrt{12}} \\propto 2^{-b},\\qquad \\text{size} = \\tfrac{b}{8}\\ \\text{bytes/param}", "note": "Error halves per bit; size grows by 1/8 byte" }
+        },
+        {
+          "text": "Going from sixteen to eight to four bits is nearly free in quality; the pain starts below four where outliers dominate.",
+          "visual": { "type": "plot", "ys": [1, 2, 4, 8, 20], "xlabel": "fewer bits", "ylabel": "rel. error", "mark": "the sub-4-bit wall" }
+        },
+        {
+          "text": "Three ideas stack to make it work: error-aware rounding, Hadamard rotation that spreads outliers, and fast unbiased quantizers.",
+          "visual": { "type": "bars", "values": [4, 3, 2], "labels": ["GPTQ", "rotation", "QuIP# ~2b"], "highlight": 2 }
+        },
+        {
+          "text": "BitNet b1.58 trains ternary weights from scratch, roughly 1.58 bits each, reframing the floor from four bits to less than two.",
+          "visual": { "type": "stat", "value": 1.58, "label": "BitNet effective bits per weight", "unit": "bits", "decimals": 2 }
+        },
+        {
+          "text": "At two bits a 70-billion-parameter model occupies just 17.5 gigabytes, versus 140 at FP16, fitting one consumer card.",
+          "visual": { "type": "stat", "value": 17.5, "label": "70B model at 2-bit", "unit": "GB", "decimals": 1 }
+        }
+      ]
+    },
+    {
+      "id": "chapters-11-frontier-2026-s5",
+      "chapter": "chapters/11-frontier-2026",
+      "section": "s5",
+      "title": "What's racing the Transformer",
+      "eyebrow": "LLM FIELD MANUAL",
+      "beats": [
+        {
+          "text": "Step back and the 2026 frontier is a four-cornered race, not a coronation, with each contender trading a different axis.",
+          "visual": { "type": "title", "text": "What's Racing the Transformer", "sub": "Four families, four trade-offs" }
+        },
+        {
+          "text": "The Transformer pays quadratic compute and a growing cache for exact recall and reasoning, but suffers on long context.",
+          "visual": { "type": "plot", "ys": [1, 4, 9, 16, 25], "xlabel": "context n", "ylabel": "cost", "mark": "O(n^2)" }
+        },
+        {
+          "text": "SSMs and linear attention buy linear compute and constant memory, winning throughput at the cost of precise retrieval.",
+          "visual": { "type": "bars", "values": [9, 2, 2, 3], "labels": ["Transformer", "SSM", "Linear", "Hybrid"], "highlight": 1 }
+        },
+        {
+          "text": "Quantization is orthogonal, so the real 2026 deployment object is a hybrid in four-bit, not any single pure design.",
+          "visual": { "type": "equation", "tex": "\\text{system}_{2026} = \\text{MoE} \\circ \\text{hybrid}(\\text{SSM}, \\text{attn}) \\circ \\text{4-bit}", "note": "None of these are mutually exclusive" }
+        },
+        {
+          "text": "SSMs have won the long-context efficiency argument; at million-token scale there is no contest with attention.",
+          "visual": { "type": "stat", "value": 1000000, "label": "tokens where SSMs win decisively", "unit": "ctx" }
+        },
+        {
+          "text": "The likeliest outcome is not a successor but a blend, and knowing which operator to spend where is the new skill.",
+          "visual": { "type": "lattice" }
+        }
+      ]
+    }
+  ]
+}

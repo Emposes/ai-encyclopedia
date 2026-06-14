@@ -1,0 +1,169 @@
+{
+  "concepts": [
+    {
+      "id": "frameworks-03-ecosystem-deployment-s1",
+      "chapter": "frameworks/03-ecosystem-deployment",
+      "section": "s1",
+      "title": "From notebook to artifact",
+      "eyebrow": "FRAMEWORKS",
+      "beats": [
+        {
+          "text": "A model in a training loop is a live Python object; deployment turns it into a self-contained, frozen artifact.",
+          "visual": { "type": "title", "text": "From notebook to artifact", "sub": "Stripping away the training scaffolding" }
+        },
+        {
+          "text": "An artifact has three properties: it is portable, it is frozen so outputs are reproducible, and its static graph is optimizable.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "The model passes through four stages: research, checkpoint, artifact, and a hardware-locked compiled engine.",
+          "visual": { "type": "bars", "values": [1, 2, 3, 4], "labels": ["Research", "Checkpoint", "Artifact", "Engine"], "highlight": 2 }
+        },
+        {
+          "text": "Artifact size is the parameter count times the per-element width in bytes, so dtype decides where it fits.",
+          "visual": { "type": "equation", "tex": "\\text{bytes} = N_{\\text{params}} \\times \\frac{b_{\\text{bits}}}{8}", "note": "FP32 to 4, FP16 to 2, INT8 to 1, INT4 to 0.5 bytes per param" }
+        },
+        {
+          "text": "A 7-billion-parameter model occupies 28 GB in FP32, 14 GB in FP16, 7 GB in INT8, and 3.5 GB in INT4.",
+          "visual": { "type": "bars", "values": [28, 14, 7, 3.5], "labels": ["FP32", "FP16", "INT8", "INT4"], "highlight": 3 }
+        },
+        {
+          "text": "Two techniques recover the graph from eager Python: tracing records one example run, scripting compiles the source.",
+          "visual": { "type": "stat", "value": 2, "label": "Graph-capture techniques: tracing and scripting" }
+        }
+      ]
+    },
+    {
+      "id": "frameworks-03-ecosystem-deployment-s2",
+      "chapter": "frameworks/03-ecosystem-deployment",
+      "section": "s2",
+      "title": "ONNX — the interchange format",
+      "eyebrow": "FRAMEWORKS",
+      "beats": [
+        {
+          "text": "ONNX is the Open Neural Network Exchange: a framework-agnostic graph format plus a versioned standard operator set.",
+          "visual": { "type": "title", "text": "ONNX — the interchange format", "sub": "One graph format, every runtime" }
+        },
+        {
+          "text": "An ONNX file is a serialized protobuf: nodes naming standard operators, the tensors between them, and weight initializers.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "A hub collapses point-to-point conversion from F times R bespoke converters down to F plus R connectors.",
+          "visual": { "type": "equation", "tex": "F \\times R \\;\\longrightarrow\\; F + R", "note": "F frameworks, R runtimes, ONNX as the hub" }
+        },
+        {
+          "text": "For 5 frameworks and 6 runtimes, 30 point-to-point integrations collapse to just 11 with ONNX in the middle.",
+          "visual": { "type": "bars", "values": [30, 11], "labels": ["F x R = 30", "F + R = 11"], "highlight": 1 }
+        },
+        {
+          "text": "ONNX Runtime dispatches one graph to pluggable execution providers: CUDA, TensorRT, OpenVINO, CoreML, or the browser.",
+          "visual": { "type": "stat", "value": 6, "label": "Execution providers from one ONNX graph" }
+        },
+        {
+          "text": "ONNX is not free: dynamic control flow and custom ops can fail to export, and the opset version keeps moving.",
+          "visual": { "type": "plot", "ys": [11, 16, 17, 18, 21], "dot": 4, "xlabel": "release", "ylabel": "opset version", "mark": "opset drift" }
+        }
+      ]
+    },
+    {
+      "id": "frameworks-03-ecosystem-deployment-s3",
+      "chapter": "frameworks/03-ecosystem-deployment",
+      "section": "s3",
+      "title": "TorchScript, SavedModel & TFLite",
+      "eyebrow": "FRAMEWORKS",
+      "beats": [
+        {
+          "text": "Beside the neutral ONNX hub, each framework keeps a native artifact that often preserves more than ONNX can.",
+          "visual": { "type": "title", "text": "TorchScript, SavedModel & TFLite", "sub": "Native formats that stay in-ecosystem" }
+        },
+        {
+          "text": "TorchScript captured PyTorch models for the libtorch C++ runtime, but torch.export is now the strategic direction.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "SavedModel is TensorFlow's language-neutral serialization of graph, variables, and assets that TF Serving mounts.",
+          "visual": { "type": "stat", "value": 3, "label": "SavedModel parts: graph, variables, assets" }
+        },
+        {
+          "text": "TFLite, now LiteRT, converts a SavedModel into one compact FlatBuffer tuned for phones, microcontrollers, and NPUs.",
+          "visual": { "type": "bars", "values": [4, 2, 1], "labels": ["FP32", "FP16", "INT8"], "highlight": 2 }
+        },
+        {
+          "text": "Five formats span the field, from the cross-framework ONNX hub to the hardware-locked NVIDIA TensorRT engine.",
+          "visual": { "type": "bars", "values": [5, 4, 4, 3, 2], "labels": ["ONNX", "TFLite", "TensorRT", "TorchScript", "SavedModel"], "highlight": 0 }
+        },
+        {
+          "text": "Only ONNX clears the cross-framework filter; only edge formats survive the mobile filter, matching the decision tree.",
+          "visual": { "type": "stat", "value": 1, "label": "Formats passing the cross-framework filter" }
+        }
+      ]
+    },
+    {
+      "id": "frameworks-03-ecosystem-deployment-s4",
+      "chapter": "frameworks/03-ecosystem-deployment",
+      "section": "s4",
+      "title": "Serving — TorchServe, Triton & friends",
+      "eyebrow": "FRAMEWORKS",
+      "beats": [
+        {
+          "text": "A serving system loads the artifact, listens on a port, and turns request streams into prediction streams.",
+          "visual": { "type": "title", "text": "Serving — TorchServe & Triton", "sub": "From passive file to running endpoint" }
+        },
+        {
+          "text": "Throughput is batch size over batch time; with a large fixed cost and a small per-item cost, it climbs sharply.",
+          "visual": { "type": "equation", "tex": "\\text{throughput} = \\frac{B}{t_0 + \\beta B}", "note": "t_0 fixed per-call cost, beta marginal cost per item" }
+        },
+        {
+          "text": "A GPU runs a batch of 32 almost as fast as a batch of 1, so dynamic batching is the key serving trick.",
+          "visual": { "type": "plot", "ys": [1, 7, 13, 20, 28, 31], "dot": 4, "xlabel": "batch size", "ylabel": "throughput", "mark": "saturation" }
+        },
+        {
+          "text": "TorchServe is the simple PyTorch-only path; Triton is the framework-agnostic workhorse serving many backends at once.",
+          "visual": { "type": "bars", "values": [1, 6], "labels": ["TorchServe", "Triton"], "highlight": 1 }
+        },
+        {
+          "text": "Little's Law sizes a fleet: requests in flight equal the arrival rate times the mean time each request spends inside.",
+          "visual": { "type": "equation", "tex": "L = \\lambda W", "note": "L in flight, lambda arrival rate, W mean latency" }
+        },
+        {
+          "text": "At 200 requests per second and a 0.5 second latency, 100 requests are always in flight and must be provisioned.",
+          "visual": { "type": "stat", "value": 100, "label": "Concurrent requests in flight", "unit": "req" }
+        }
+      ]
+    },
+    {
+      "id": "frameworks-03-ecosystem-deployment-s5",
+      "chapter": "frameworks/03-ecosystem-deployment",
+      "section": "s5",
+      "title": "JAX & the wider ecosystem",
+      "eyebrow": "FRAMEWORKS",
+      "beats": [
+        {
+          "text": "JAX is a NumPy-compatible library of composable function transformations that compile through the XLA backend.",
+          "visual": { "type": "title", "text": "JAX & the wider ecosystem", "sub": "Composable transforms, StableHLO, weight formats" }
+        },
+        {
+          "text": "Its transforms are orthogonal: jit lowers to XLA, grad takes the gradient, vmap batches, and they compose.",
+          "visual": { "type": "equation", "tex": "f \\xrightarrow{\\texttt{jit}} \\text{XLA}(f), \\quad f \\xrightarrow{\\texttt{grad}} \\nabla f, \\quad f \\xrightarrow{\\texttt{vmap}} f^{(\\text{batched})}", "note": "jit(grad(vmap(f))) is one compiled batched gradient" }
+        },
+        {
+          "text": "The price of composition is purity: transformed functions must be side-effect-free, and serving goes through StableHLO.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "The ecosystem clusters around three poles: compilers and IRs, vendor engines, and weight formats.",
+          "visual": { "type": "bars", "values": [4, 4, 2], "labels": ["Compilers/IRs", "Vendor engines", "Weight formats"], "highlight": 0 }
+        },
+        {
+          "text": "Safetensors became the safe, zero-copy checkpoint format, while GGUF dominates the local consumer LLM world.",
+          "visual": { "type": "stat", "value": 2, "label": "Dominant weight formats: safetensors and GGUF" }
+        },
+        {
+          "text": "The durable pattern is a funnel: train, capture the graph, compile to an engine, then serve behind a batching server.",
+          "visual": { "type": "plot", "ys": [4, 3, 2, 1], "dot": 3, "xlabel": "stage", "ylabel": "generality", "mark": "each arrow trades generality for speed" }
+        }
+      ]
+    }
+  ]
+}

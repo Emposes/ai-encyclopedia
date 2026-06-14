@@ -1,0 +1,169 @@
+{
+  "concepts": [
+    {
+      "id": "dl-01-foundations-s1",
+      "chapter": "dl/01-foundations",
+      "section": "s1",
+      "title": "From MLP to deep networks",
+      "eyebrow": "DEEP LEARNING",
+      "beats": [
+        {
+          "text": "A multilayer perceptron stacks affine maps and pointwise nonlinearities, each layer transforming the activation from the layer before it.",
+          "visual": { "type": "title", "text": "From MLP to deep networks", "sub": "Stacking layers, and why depth is hard" }
+        },
+        {
+          "text": "Each layer computes a pre-activation from a weight matrix and bias, then passes it through a nonlinearity to get the activation.",
+          "visual": { "type": "equation", "tex": "z^{(\\ell)} = W^{(\\ell)} h^{(\\ell-1)} + b^{(\\ell)}, \\quad h^{(\\ell)} = \\phi(z^{(\\ell)})", "note": "One forward layer" }
+        },
+        {
+          "text": "In backpropagation the gradient at a layer is a product of one Jacobian per layer between it and the output.",
+          "visual": { "type": "equation", "tex": "\\frac{\\partial \\mathcal{L}}{\\partial h^{(\\ell)}} = \\left(\\prod_{k=\\ell+1}^{L} J^{(k)}\\right)^{\\!\\top} \\frac{\\partial \\mathcal{L}}{\\partial h^{(L)}}", "note": "Why depth is hard" }
+        },
+        {
+          "text": "If each layer multiplies by less than one the gradient vanishes geometrically; if more than one it explodes.",
+          "visual": { "type": "plot", "ys": [1, 0.59, 0.35, 0.21, 0.12, 0.07, 0.04], "dot": 6, "xlabel": "layer", "ylabel": "gradient", "mark": "vanishing" }
+        },
+        {
+          "text": "Picture a chain of amplifiers: fifty stages of gain zero point nine reduce the signal to about half a percent of its size.",
+          "visual": { "type": "stat", "value": 0.005, "label": "signal after 50 stages at gain 0.9", "decimals": 3 }
+        },
+        {
+          "text": "Switching from saturating sigmoids to ReLU removed the worst diagonal saturation, but did not control the weight factor itself.",
+          "visual": { "type": "equation", "tex": "\\phi(z) = \\max(0, z)", "note": "ReLU: non-saturating activation" }
+        }
+      ]
+    },
+    {
+      "id": "dl-01-foundations-s2",
+      "chapter": "dl/01-foundations",
+      "section": "s2",
+      "title": "Weight initialization — Xavier & He",
+      "eyebrow": "DEEP LEARNING",
+      "beats": [
+        {
+          "text": "Before any gradient step, the random starting weights already decide whether signal survives the forward pass through depth.",
+          "visual": { "type": "title", "text": "Weight initialization", "sub": "Xavier and He: tuning the starting variance" }
+        },
+        {
+          "text": "Pre-activation variance equals the fan-in times the weight variance times the incoming activation variance.",
+          "visual": { "type": "equation", "tex": "\\mathrm{Var}(z^{(\\ell)}) = n_{\\text{in}}\\,\\mathrm{Var}(W^{(\\ell)})\\,\\mathrm{Var}(h^{(\\ell-1)})", "note": "Variance propagation" }
+        },
+        {
+          "text": "Standard normal weights multiply variance by the fan-in each layer, which for width 256 is a factor of 256 per layer.",
+          "visual": { "type": "stat", "value": 256, "label": "variance blow-up per layer, naive init at width 256", "unit": "x" }
+        },
+        {
+          "text": "Xavier initialization takes the harmonic compromise between the forward and backward fan counts to keep variance near one.",
+          "visual": { "type": "equation", "tex": "\\mathrm{Var}(W) = \\frac{2}{n_{\\text{in}} + n_{\\text{out}}}", "note": "Xavier / Glorot" }
+        },
+        {
+          "text": "ReLU zeros half its inputs, so He initialization doubles the variance, keying off the fan-in alone.",
+          "visual": { "type": "equation", "tex": "\\mathrm{std}(W) = \\sqrt{\\frac{2}{n_{\\text{in}}}}", "note": "He / Kaiming, for ReLU" }
+        },
+        {
+          "text": "For a 128-input ReLU layer, He sets a starting standard deviation of about 0.125, far below the naive value of one.",
+          "visual": { "type": "bars", "values": [1.0, 0.088, 0.125], "labels": ["naive", "xavier", "he"], "highlight": 2 }
+        }
+      ]
+    },
+    {
+      "id": "dl-01-foundations-s3",
+      "chapter": "dl/01-foundations",
+      "section": "s3",
+      "title": "Batch normalization",
+      "eyebrow": "DEEP LEARNING",
+      "beats": [
+        {
+          "text": "Good initialization controls variance at step zero, but weights move during training and each layer's input distribution drifts.",
+          "visual": { "type": "title", "text": "Batch normalization", "sub": "Standardize each layer's pre-activations" }
+        },
+        {
+          "text": "BatchNorm subtracts the mini-batch mean, divides by the batch standard deviation, then re-scales and re-shifts with learned parameters.",
+          "visual": { "type": "equation", "tex": "\\hat{z}_i = \\frac{z_i - \\mu_{\\mathcal{B}}}{\\sqrt{\\sigma_{\\mathcal{B}}^2 + \\epsilon}}, \\quad y_i = \\gamma\\,\\hat{z}_i + \\beta", "note": "Batch normalization" }
+        },
+        {
+          "text": "The learned scale and shift let the network recover any mean and variance it needs, including the identity.",
+          "visual": { "type": "plot", "ys": [1.0, 0.62, 1.4, 0.45, 1.0, 1.0, 1.0, 1.0], "dot": 4, "xlabel": "layer", "ylabel": "std", "mark": "pinned to 1" }
+        },
+        {
+          "text": "Normalizing the batch {2,2,6,6} gives mean 4 and standard deviation 2, so an element of 5 maps to half a standard deviation.",
+          "visual": { "type": "stat", "value": 0.5, "label": "normalized value of z = 5 in batch {2,2,6,6}", "decimals": 1 }
+        },
+        {
+          "text": "BatchNorm allows higher learning rates, reduces sensitivity to initialization, and acts as a mild regularizer.",
+          "visual": { "type": "bars", "values": [0.30, 1.2], "labels": ["no BN ceiling", "with BN"], "highlight": 1 }
+        },
+        {
+          "text": "The classic footgun is inference: with no batch, BatchNorm switches to running averages, so forgetting eval mode breaks it.",
+          "visual": { "type": "title", "text": "Train vs inference", "sub": "Live batch stats vs running averages" }
+        }
+      ]
+    },
+    {
+      "id": "dl-01-foundations-s4",
+      "chapter": "dl/01-foundations",
+      "section": "s4",
+      "title": "Residual connections",
+      "eyebrow": "DEEP LEARNING",
+      "beats": [
+        {
+          "text": "Even well-initialized, batch-normalized networks hit a degradation problem, where adding layers made training accuracy worse.",
+          "visual": { "type": "title", "text": "Residual connections", "sub": "Make the identity the default" }
+        },
+        {
+          "text": "A residual block adds a learned correction to its own input rather than building a fresh representation from scratch.",
+          "visual": { "type": "equation", "tex": "h_{\\ell+1} = h_\\ell + F(h_\\ell; \\theta_\\ell)", "note": "The residual block" }
+        },
+        {
+          "text": "Differentiating the block gives the identity plus the block's Jacobian, adding a shortcut into the backward product.",
+          "visual": { "type": "equation", "tex": "\\frac{\\partial h_{\\ell+1}}{\\partial h_\\ell} = I + \\frac{\\partial F}{\\partial h_\\ell}", "note": "Gradient flow through a skip" }
+        },
+        {
+          "text": "Expanding the product leaves a bare identity term, so the output gradient reaches early layers undiminished.",
+          "visual": { "type": "plot", "ys": [1.0, 0.99, 0.98, 0.97, 0.96, 0.95, 0.94], "dot": 6, "xlabel": "layer (back)", "ylabel": "gradient", "mark": "residual holds" }
+        },
+        {
+          "text": "Where a plain net shrinks the gradient geometrically, the skip keeps a clean copy alive, so depth becomes additive.",
+          "visual": { "type": "bars", "values": [0.0001, 1.0], "labels": ["plain @ L1", "residual @ L1"], "highlight": 1 }
+        },
+        {
+          "text": "The skip is the load-bearing idea that took networks to hundreds of layers and runs through every Transformer block.",
+          "visual": { "type": "stat", "value": 1000, "label": "ResNet depth made trainable by skips", "unit": "+ layers" }
+        }
+      ]
+    },
+    {
+      "id": "dl-01-foundations-s5",
+      "chapter": "dl/01-foundations",
+      "section": "s5",
+      "title": "Regularization — dropout & weight decay",
+      "eyebrow": "DEEP LEARNING",
+      "beats": [
+        {
+          "text": "The first three fixes make a deep net trainable; regularization makes it generalize instead of memorizing the training set.",
+          "visual": { "type": "title", "text": "Regularization", "sub": "Dropout and weight decay" }
+        },
+        {
+          "text": "Dropout randomly zeros each activation with probability p, then rescales survivors so the expected activation is unchanged.",
+          "visual": { "type": "equation", "tex": "\\tilde{h}_i = \\frac{m_i}{1-p}\\,h_i, \\quad m_i \\sim \\mathrm{Bernoulli}(1-p)", "note": "Inverted dropout, training time" }
+        },
+        {
+          "text": "Each forward pass trains a different sub-network, so at test time the full network behaves like an implicit ensemble.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "Weight decay adds an L2 penalty, so every weight is shrunk by a constant fraction before the data-driven update.",
+          "visual": { "type": "equation", "tex": "\\mathcal{L}_{\\text{reg}} = \\mathcal{L} + \\frac{\\lambda}{2}\\sum_j w_j^2", "note": "L2 / weight decay" }
+        },
+        {
+          "text": "With adaptive optimizers, AdamW decouples the decay from the gradient step and is the modern default.",
+          "visual": { "type": "bars", "values": [0.0001, 0.001, 0.01, 0.1], "labels": ["1e-4", "1e-3", "1e-2", "1e-1"], "highlight": 2 }
+        },
+        {
+          "text": "These fixes overlap and partly substitute for one another, each an engineering patch on signal that compounds through depth.",
+          "visual": { "type": "title", "text": "The honest picture", "sub": "Overlapping fixes, not laws of nature" }
+        }
+      ]
+    }
+  ]
+}

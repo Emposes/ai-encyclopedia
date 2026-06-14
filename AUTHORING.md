@@ -97,10 +97,11 @@ Read this entire file, then skim the reference chapter `chapters/06-finetuning.h
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js"></script>
 <script src="../assets/js/glossary.js"></script>
 <script src="../assets/js/shared.js"></script>
-<!-- Volume I only, if the chapter has pycells: -->
-<!-- <script src="../assets/js/pyrunner.js"></script> -->
+<script src="../assets/js/pyrunner.js"></script>
+<script src="../assets/js/exercises.js"></script>
 <script>
 /* chapter instruments — single IIFE, no globals */
 (function () {
@@ -109,9 +110,12 @@ Read this entire file, then skim the reference chapter `chapters/06-finetuning.h
   // … widgets, each guarded by element existence …
 })();
 </script>
+<script src="../assets/js/lesson.js"></script>
 </body>
 </html>
 ```
+
+**Script order is exact** (the lesson player reads videos.js and must load last): `videos.js → glossary.js → shared.js → pyrunner.js → exercises.js →` your inline IIFE `→ lesson.js`. Write plain paths (no `?v=`); the build adds cache-bust hashes.
 
 ## Component patterns (use verbatim)
 
@@ -171,13 +175,56 @@ dg-label…), `.callout` (`<span class="co-icon">LABEL</span><p>…</p>`, add `.
 
 ## Voice & pedagogy
 
-- Manual voice: precise, confident, occasionally vivid. Never hype. Intuition first,
+- Manual voice: precise, confident, plain. Reference-grade, not marketing. Intuition first,
   then the math, then the engineering consequence.
+- **Avoid AI-writing tells**: don't lean on em-dashes (use periods/colons), avoid the
+  formulaic lede shape "X is the Y that Z", and skip chipper microcopy. No decorative
+  glyphs (▸ › ✦ ◈ ✎ ✓ etc.) in UI or headings — keep it clean and typographic.
 - Every chapter ends with a `.callout` whose icon is `NEXT`, bridging to the next chapter.
 - Honesty beats neatness: include the caveats experts would raise.
 - Use the existing Vol II chapters as the quality bar — match or exceed.
 - Difficulty: INTRO = no math beyond algebra · CORE = comfortable with the manual's
   notation · ADVANCED = research-adjacent.
+
+## V2 additions (REQUIRED for all new chapters)
+
+**Track + level tags.** Put both on the `<body>` so the build can index the page:
+`<body data-track="TRACK" data-level="intro|core|advanced">`. TRACK is the directory
+slug: `stats data ml mlops dl rl game-theory timeseries quant frameworks chapters
+prompting agents`. The hero badge text (INTRO/CORE/ADVANCED) must match `data-level`.
+
+**Per-track EQ / instrument prefixes.** Vol I `M` · Vol III `P` · Vol IV `A` · Vol II plain.
+New tracks: stats `S` · data `D` · mlops `V` · dl `N` · rl `R` · game-theory `G` ·
+timeseries `T` · quant `Q` · frameworks `F`. So a quant ch-3 equation is `EQ Q3.1`,
+an instrument `INSTRUMENT Q3.1 — NAME`, ids prefixed with the chapter slug.
+
+**References section (REQUIRED, last section before the pager).** Every chapter cites
+its real primary sources as clickable links. Use the shipped `.ref-list` component
+(no inline styles needed):
+```html
+<section class="section" id="sN"><div class="sec-head"><span class="sec-num">N.R</span><h2>References</h2></div>
+<ol class="ref-list">
+  <li><a href="https://arxiv.org/abs/XXXX.XXXXX" target="_blank" rel="noopener">Author, A. &amp; Author, B. (YEAR). <span class="ref-venue">Title of the paper</span>.</a> <span class="ref-meta">venue/note</span></li>
+</ol></section>
+```
+Prefer arXiv `abs/` links, DOIs, or official docs. Cite the canonical source for each
+major result in the chapter (≥3 where the field has them; textbooks are fine for
+classical topics). Add the matching `#sN` entry to the sidebar nav. The build
+aggregates all `.ref-list` items into the global Bibliography — so links must be real.
+
+**Exercises (REQUIRED — ≥2 per chapter, "write-the-value" style).** Place inside the
+relevant section(s). exercises.js enhances them into graded inputs; the lesson player
+turns them into the "Try it" step. Contract:
+```html
+<div class="exercise" data-answer="3" data-tol="0.001" data-unit="" data-hint="apply the update rule">
+  <div class="ex-q">A question whose answer is a single number; inline math with \( ... \).</div>
+  <div class="ex-reveal-src">The worked solution, ending in the <b>numeric answer</b>.</div>
+</div>
+```
+`data-answer` numeric (graded with relative tolerance `data-tol`, default 0.02) or a
+short string; `data-unit` optional; `data-hint` one line. Make exercises test the
+chapter's core computation (e.g. "compute this GARCH one-step variance", "this PSI
+bucket's contribution"). Do NOT add the input/buttons yourself — exercises.js does.
 
 ## Self-check before you finish (do all of these)
 

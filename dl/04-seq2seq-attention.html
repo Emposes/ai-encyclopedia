@@ -1,0 +1,662 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Seq2Seq &amp; the Birth of Attention — AI Encyclopedia</title>
+<meta name="description" content="Cramming a whole sentence into one fixed vector was the bottleneck; letting the decoder look back at every input — attention — broke it open and led straight to the Transformer." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+<link rel="canonical" href="https://ai-encyclopedia.com/dl/04-seq2seq-attention" />
+<meta property="og:url" content="https://ai-encyclopedia.com/dl/04-seq2seq-attention" />
+</head>
+<body data-track="dl" data-level="core">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ DEEP LEARNING / 04 / SEQ2SEQ</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../dl/05-autoencoders.html">NEXT: AUTOENCODERS →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">DEEP LEARNING · CHAPTER 04 / 07</div>
+    <h1>Seq2Seq &amp; the Birth of Attention</h1>
+    <p class="lede">An encoder reads a sentence and a decoder writes its translation. The 2014 design made both recurrent networks and passed a single state vector between them. <strong>Compressing a whole sentence into one fixed vector was the bottleneck</strong>, and letting the decoder look back at every input word, weighting them on demand, removed it. That mechanism is <em>attention</em>, and it leads directly to the Transformer.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 24 MIN</b></span>
+      <span>BUILDS ON<b>DEEP LEARNING 03</b></span>
+      <span>INSTRUMENTS<b>HEATMAP · BOTTLENECK · ALIGNMENT</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">4.1</span>The encoder-decoder framework</a>
+      <a href="#s2"><span class="n">4.2</span>The fixed-vector bottleneck</a>
+      <a href="#s3"><span class="n">4.3</span>Bahdanau (additive) attention</a>
+      <a href="#s4"><span class="n">4.4</span>Luong (multiplicative) attention</a>
+      <a href="#s5"><span class="n">4.5</span>The bridge to the Transformer</a>
+      <a href="#s6"><span class="n">4.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 4.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">4.1</span><h2>The encoder-decoder framework</h2></div>
+        <p>Machine translation poses a hard problem for a plain recurrent net: the input and output are both sequences, but of <em>different</em> lengths, in <em>different</em> languages, with no word-by-word alignment. Sutskever, Vinyals and Le (2014) cut the knot with a deceptively simple architecture, now called <strong>sequence-to-sequence (seq2seq)</strong>: one RNN to read, a second RNN to write.</p>
+
+        <p>The <strong>encoder</strong> consumes the source tokens \(x_1, \ldots, x_{T_x}\) one at a time, updating a hidden state. Its <em>final</em> hidden state \(h_{T_x}\) is taken as a summary of the whole sentence — the <strong>context vector</strong> \(c\). The <strong>decoder</strong> is a language model conditioned on \(c\): it starts from \(c\), emits a token, feeds that token back in, and repeats until it produces an end-of-sequence symbol.</p>
+
+        <div class="eq"><span class="eq-tag">EQ N4.1 — THE SEQ2SEQ OBJECTIVE</span>
+        $$ c = h_{T_x}, \qquad p(y_1, \ldots, y_{T_y} \mid x) \;=\; \prod_{i=1}^{T_y} p\!\left( y_i \,\middle|\, y_{&lt;i},\, c \right) $$
+        <div class="eq-note">The encoder compresses the entire source into one vector \(c\); the decoder factorizes the output probability autoregressively, each token conditioned on all previous output tokens \(y_{&lt;i}\) and on \(c\). Training maximizes the log-likelihood of the correct translation — exactly the cross-entropy you already know, summed over output positions. <b>Note that every output token sees the same, frozen \(c\): the encoder gets one chance to say everything.</b> Sutskever et al. found a single trick — <em>reversing the source word order</em> — bought a large BLEU gain, a tell that the fixed vector was straining under long-range dependencies.</div>
+        </div>
+
+        <p>Two LSTMs (the encoder typically deep, 4 layers in the original) trained end-to-end on millions of sentence pairs reached competitive WMT'14 English→French BLEU — the first time a pure neural system rivaled the phrase-based statistical machine-translation pipelines it would soon replace. The framework generalizes far beyond translation: summarization, dialogue, code generation, speech-to-text, and image captioning are all seq2seq with different encoders.</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># A toy encoder: roll up a sentence into ONE context vector c (EQ N4.1).
+# The point: no matter how long the source, c has fixed width -> the bottleneck.
+import numpy as np
+rng = np.random.default_rng(0)
+d = 6                                  # hidden width
+
+def encode(x_embeds):                  # a stand-in RNN: c = tanh(W h + U x)
+    Wh = rng.normal(0, 0.4, (d, d)); Ux = rng.normal(0, 0.4, (d, d))
+    h = np.zeros(d)
+    for x in x_embeds:                 # read left to right, keep ONLY the last state
+        h = np.tanh(Wh @ h + Ux @ x)
+    return h                           # c = h_{T_x}
+
+for T in (3, 9, 27):                   # short, medium, long source sentences
+    src = rng.normal(0, 1, (T, d))     # T token embeddings
+    c = encode(src)
+    print(f"source length {T:2d} tokens -> context vector c has width {c.size} "
+          f"(norm {np.linalg.norm(c):.2f})")
+print("\nThe vector NEVER grows. 27 words must fit in the same 6 numbers as 3.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 4.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">4.2</span><h2>The fixed-vector bottleneck</h2></div>
+        <p>The architecture's elegance is also its flaw. Every nuance of a 40-word source sentence — who did what to whom, every clause, every named entity — must be squeezed into one fixed-dimensional vector \(c\) and held there, unchanged, while the decoder unspools a translation that may itself be 40 words long. The encoder's last state is a lossy, length-blind summary.</p>
+
+        <p>The symptom is unmistakable: seq2seq BLEU is fine on short sentences and <strong>falls off a cliff as length grows</strong>. Cho et al. (2014) documented the decay directly; the longer the input, the more the single vector saturates and the earlier source words it must remember fade. This is an information-theoretic ceiling, not a tuning problem — you cannot store an arbitrarily long sentence in a constant number of bits without loss.</p>
+
+        <div class="callout">
+          <span class="co-icon">INTUITION</span>
+          <p>Imagine reading a paragraph, then writing its translation from memory <em>without looking back at the page</em>. That is the fixed-vector decoder. Attention is being <em>allowed to glance back at the source</em> — at whichever word you need, exactly when you need it.</p>
+        </div>
+
+        <div class="widget" id="s2s-bottleneck" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT N4.1 — BOTTLENECK vs ATTENTION</span><span class="w-sub">TRANSLATION QUALITY vs SOURCE LENGTH</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>CONTEXT WIDTH d <output id="s2s-bn-d-out">512</output></label><input type="range" id="s2s-bn-d" min="6" max="11" step="1" value="9"/></div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>DECODER READS</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-s2s-bn="fixed">FIXED c</button>
+                  <button class="w-btn ghost" data-s2s-bn="attn">ATTENTION</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="s2s-bn-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">QUALITY @ 10 WORDS</div><div class="r-value" id="s2s-bn-short">—</div></div>
+              <div class="readout acc"><div class="r-label">QUALITY @ 50 WORDS</div><div class="r-value" id="s2s-bn-long">—</div></div>
+              <div class="readout"><div class="r-label">REGIME</div><div class="r-value" id="s2s-bn-mode">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">A stylized model of the empirical curve from Bahdanau et al. (Fig. 2). With a <em>fixed</em> context vector, quality decays past the length the width can hold — widen <code>d</code> and the cliff moves right but never disappears. Switch to <em>attention</em> and the curve goes flat: the decoder reads the source afresh at every step, so length stops mattering.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 4.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">4.3</span><h2>Bahdanau (additive) attention</h2></div>
+        <p>Bahdanau, Cho and Bengio (2014) made the decisive move. Keep <em>all</em> the encoder hidden states — one per source word, \(h_1, \ldots, h_{T_x}\), now called <strong>annotations</strong> (and produced by a bidirectional RNN so each \(h_j\) summarizes the whole sentence centered on word \(j\)). At every decoding step \(i\), build a <em>different</em> context vector \(c_i\) by taking a weighted average of those annotations — with weights the decoder chooses on the fly.</p>
+
+        <p>The weights come from an <strong>alignment model</strong>: a tiny feedforward net that scores how well decoder state \(s_{i-1}\) matches each annotation \(h_j\). Because the score is computed with a sum inside a \(\tanh\), this is called <strong>additive</strong> attention.</p>
+
+        <div class="eq"><span class="eq-tag">EQ N4.2 — ADDITIVE ALIGNMENT SCORE</span>
+        $$ e_{ij} \;=\; v_a^{\top} \tanh\!\left( W_a\, s_{i-1} + U_a\, h_j \right) $$
+        <div class="eq-note">\(s_{i-1}\) is the decoder's previous state (the "query"); \(h_j\) is the \(j\)-th source annotation (a "key"). \(W_a, U_a\) project both into a shared space; \(\tanh\) mixes them; \(v_a\) collapses the result to one scalar relevance score. Crucially, \(W_a, U_a, v_a\) are <b>learned jointly with the whole translator</b> — alignment is never supervised, it emerges from the translation loss. This is the original attention mechanism, three years before "Attention Is All You Need."</div>
+        </div>
+
+        <p>Softmax over the source positions turns scores into a probability distribution — the <strong>attention weights</strong> \(\alpha_{ij}\) — and the context vector is their weighted sum of annotations:</p>
+
+        <div class="eq"><span class="eq-tag">EQ N4.3 — WEIGHTS &amp; CONTEXT VECTOR</span>
+        $$ \alpha_{ij} = \frac{\exp(e_{ij})}{\sum_{k=1}^{T_x} \exp(e_{ik})}, \qquad c_i = \sum_{j=1}^{T_x} \alpha_{ij}\, h_j, \qquad \sum_{j=1}^{T_x} \alpha_{ij} = 1 $$
+        <div class="eq-note">For each output position \(i\), the weights \(\alpha_{i\cdot}\) form a convex combination over the source — they sum to exactly 1, so \(c_i\) is a soft, differentiable <em>lookup</em> into the encoder. The context now <b>varies per output step</b>: translating the verb pulls weight onto the source verb; translating the object pulls weight onto the object. There is no longer one frozen \(c\). The fixed-length bottleneck is gone — the decoder's "memory" is the whole source, re-addressed every step.</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><div>Suppose for output step \(i\) the alignment net produces raw scores over four source words: \(e_{i\cdot} = (1.0,\ 0.0,\ 0.5,\ -0.5)\).</div></div>
+          <div class="x-step"><span class="x-n">02</span><div>Exponentiate: \(e^{1.0}=2.718\), \(e^{0.0}=1.000\), \(e^{0.5}=1.649\), \(e^{-0.5}=0.607\). Sum \(= 5.974\).</div></div>
+          <div class="x-step"><span class="x-n">03</span><div>Softmax (EQ N4.3): \(\alpha_{i\cdot} = (0.455,\ 0.167,\ 0.276,\ 0.102)\). They sum to \(1.000\) — a valid distribution over the source.</div></div>
+          <div class="x-step"><span class="x-n">04</span><div>Context \(c_i = 0.455\,h_1 + 0.167\,h_2 + 0.276\,h_3 + 0.102\,h_4\): mostly the first source word, but a genuine blend — never a hard pick. That softness is what makes the whole thing differentiable.</div></div>
+          <span class="x-result">RESULT: attention weights = (0.455, 0.167, 0.276, 0.102), sum = 1</span>
+        </div></div>
+        </div>
+
+        <div class="exercise" data-answer="1" data-tol="0.001" data-hint="alpha is a softmax over the source positions — what must any softmax output sum to?">
+          <div class="ex-q">A decoder attends over \(T_x = 4\) encoder annotations with weights \( \alpha_{i1}, \alpha_{i2}, \alpha_{i3}, \alpha_{i4} \) produced by softmax (EQ N4.3). What does \( \sum_{j=1}^{4} \alpha_{ij} \) equal?</div>
+          <div class="ex-reveal-src">Softmax normalizes its outputs by their own sum, so they always form a probability distribution: \( \sum_{j} \alpha_{ij} = \) <b>1</b>. This is why \(c_i\) is a convex combination — a true weighted average — of the annotations.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># EQ N4.2: additive attention scores from scratch, then softmax to weights.
+import numpy as np
+rng = np.random.default_rng(1)
+d, a = 5, 4                              # hidden width d, alignment width a
+Tx = 4                                   # four source words
+
+H = rng.normal(0, 1, (Tx, d))           # encoder annotations h_1..h_Tx
+s_prev = rng.normal(0, 1, d)            # decoder state s_{i-1}
+Wa = rng.normal(0, 0.5, (a, d))         # project the query
+Ua = rng.normal(0, 0.5, (a, d))         # project each key
+va = rng.normal(0, 0.5, a)              # collapse to a scalar
+
+e = np.array([va @ np.tanh(Wa @ s_prev + Ua @ h) for h in H])   # EQ N4.2
+alpha = np.exp(e - e.max()); alpha /= alpha.sum()               # softmax, EQ N4.3
+
+np.set_printoptions(precision=3, suppress=True)
+print("raw alignment scores e_ij :", e)
+print("attention weights  alpha :", alpha)
+print("weights sum to           :", round(float(alpha.sum()), 6), "<- always 1")
+print("argmax source word       :", int(alpha.argmax()))</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="s2s-heatmap" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT N4.2 — ATTENTION-WEIGHT HEATMAP</span><span class="w-sub">EN → FR · ROWS = OUTPUT · COLS = SOURCE · EQ N4.3</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>SOFTMAX TEMPERATURE <output id="s2s-hm-temp-out">1.00</output></label><input type="range" id="s2s-hm-temp" min="0.2" max="3" step="0.05" value="1"/></div>
+            </div>
+            <canvas class="w-canvas" id="s2s-hm-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">OUTPUT TOKEN (HOVER ROW)</div><div class="r-value" id="s2s-hm-tok">the</div></div>
+              <div class="readout acc"><div class="r-label">ALIGNED SOURCE WORD</div><div class="r-value" id="s2s-hm-align">the</div></div>
+              <div class="readout"><div class="r-label">PEAK WEIGHT</div><div class="r-value" id="s2s-hm-peak">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">A toy alignment for <em>"the agreement on the economic area"</em> → <em>"l'accord sur la zone économique"</em>. Each row is one output word's distribution over the source (each row sums to 1). The bright near-diagonal band is monotonic translation; the off-diagonal cells are real reordering — French <em>zone économique</em> flips the adjective order of English <em>economic area</em>, exactly the case where a fixed vector fails. Hover a row; drop the temperature to sharpen each lookup toward a hard pick, raise it to blur toward a uniform average.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 4.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">4.4</span><h2>Luong (multiplicative) attention</h2></div>
+        <p>A year later, Luong, Pham and Manning (2015) simplified and systematized the idea. Their headline observation: the \(\tanh\) feedforward scorer is more machinery than you need. If query and key live in the same space, a plain <strong>dot product</strong> already measures their alignment — and a dot product is a single, GPU-friendly matrix multiply rather than a small MLP. Hence <strong>multiplicative</strong> (a.k.a. dot-product) attention.</p>
+
+        <div class="eq"><span class="eq-tag">EQ N4.4 — LUONG SCORING FUNCTIONS</span>
+        $$ \mathrm{score}(s_i, h_j) = \begin{cases} s_i^{\top} h_j & \textbf{dot} \\[4pt] s_i^{\top} W_a\, h_j & \textbf{general} \\[4pt] v_a^{\top}\tanh\!\left(W_a [\,s_i;\,h_j\,]\right) & \textbf{concat} \end{cases} $$
+        <div class="eq-note">Three variants, increasing in flexibility. <b>dot</b> assumes encoder and decoder share a space — zero new parameters. <b>general</b> inserts one learned matrix \(W_a\) to bridge mismatched spaces — the usual default. <b>concat</b> (≈ Bahdanau) recovers the additive form. Luong also used the <em>current</em> decoder state \(s_i\) (not \(s_{i-1}\) as in Bahdanau), and reframed it as "global vs local" attention — local restricting the window to a few source positions for very long inputs.</div>
+        </div>
+
+        <p>Two architectures, one essential idea. The differences are practical: additive attention is marginally more robust when query and key dimensions differ; multiplicative attention is faster and more memory-efficient, and at large dimension it needs the now-famous \(1/\sqrt{d_k}\) rescaling to keep softmax out of saturation. <strong>That scaled dot product is exactly the score function the Transformer would adopt</strong> — Luong's <em>general</em> form, with the projections renamed \(W_Q\) and \(W_K\), <em>is</em> scaled dot-product attention.</p>
+
+        <table class="data">
+          <thead><tr><th>Property</th><th>Bahdanau (2014)</th><th>Luong (2015)</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Score</strong></td><td class="m">additive (tanh MLP)</td><td class="m">dot / general / concat</td></tr>
+            <tr><td><strong>Decoder state used</strong></td><td class="m">\(s_{i-1}\) (previous)</td><td class="m">\(s_i\) (current)</td></tr>
+            <tr><td><strong>Encoder</strong></td><td class="m">bidirectional RNN</td><td class="m">top LSTM layer</td></tr>
+            <tr><td><strong>Cost / extra params</strong></td><td class="m">MLP per pair</td><td class="hl">one matmul (dot: none)</td></tr>
+            <tr><td><strong>Descendant</strong></td><td class="m">—</td><td class="hl">scaled dot-product attn</td></tr>
+          </tbody>
+        </table>
+
+        <div class="exercise" data-answer="true" data-tol="0.001" data-hint="does the context vector still have to be one fixed-length summary, or is it rebuilt each step?">
+          <div class="ex-q">True or false: attention removes the fixed-length context bottleneck of plain seq2seq, because the decoder rebuilds a fresh context vector \(c_i\) from <em>all</em> encoder states at every output step. (Answer <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">The whole point of EQ N4.3 is that \(c_i = \sum_j \alpha_{ij} h_j\) is recomputed for each \(i\) over the entire source. Nothing is forced through a single constant-width vector, so the length-blind bottleneck disappears. The answer is <b>true</b>.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># EQ N4.3/N4.4: the context vector as the attention-weighted sum of encoder states,
+# scored with Luong dot-product attention. Verify it is a convex combination.
+import numpy as np
+rng = np.random.default_rng(2)
+d, Tx = 5, 4
+H = rng.normal(0, 1, (Tx, d))           # encoder states (rows = source words)
+s_i = rng.normal(0, 1, d)               # current decoder state
+
+scores = H @ s_i                        # EQ N4.4 "dot": one matmul, no params
+alpha  = np.exp(scores - scores.max()); alpha /= alpha.sum()   # softmax
+c_i    = alpha @ H                       # EQ N4.3: weighted sum of states
+
+np.set_printoptions(precision=3, suppress=True)
+print("attention weights alpha :", alpha, " (sum", round(float(alpha.sum()),3), ")")
+print("context vector  c_i     :", c_i)
+# A convex combo must lie inside the per-dim min/max of the states it blends:
+lo, hi = H.min(0), H.max(0)
+print("c_i within state hull?  :", bool(np.all(c_i >= lo - 1e-9) and
+                                        np.all(c_i <= hi + 1e-9)))</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="s2s-align" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT N4.3 — ALIGNMENT VISUALIZER</span><span class="w-sub">SOFT WORD-TO-WORD LINKS · DOT-PRODUCT SCORE</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>OUTPUT STEP i <output id="s2s-al-i-out">1 / 5</output></label><input type="range" id="s2s-al-i" min="0" max="4" step="1" value="0"/></div>
+              <div class="ctl"><label>SHARPNESS (1/τ) <output id="s2s-al-t-out">1.0×</output></label><input type="range" id="s2s-al-t" min="0.4" max="4" step="0.1" value="1"/></div>
+            </div>
+            <canvas class="w-canvas" id="s2s-al-canvas" height="260"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">EMITTING</div><div class="r-value" id="s2s-al-out">l'accord</div></div>
+              <div class="readout acc"><div class="r-label">STRONGEST LINK</div><div class="r-value" id="s2s-al-link">agreement</div></div>
+              <div class="readout"><div class="r-label">ENTROPY (bits)</div><div class="r-value" id="s2s-al-ent">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Step through the output one token at a time and watch the soft links re-aim at the source words that matter. The line opacity is \(\alpha_{ij}\); raising sharpness collapses the fan toward a single hard link (low entropy ≈ a dictionary lookup), lowering it spreads attention across the sentence (high entropy ≈ averaging). Notice the crossing lines at <em>zone économique</em>: attention reorders without being told the alignment.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 4.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">4.5</span><h2>The bridge to the Transformer</h2></div>
+        <p>By 2016 attention was bolted onto every competitive RNN translator. But it still rode on top of recurrence: the encoder and decoder remained sequential RNNs, and that sequentiality — each step waiting on the last — capped how much you could parallelize on a GPU and how far gradients reached across long sentences.</p>
+
+        <p>Vaswani et al. (2017) asked the obvious next question: <em>if attention is doing the real work of moving information, do we need the RNN at all?</em> "Attention Is All You Need" answered no. Three moves complete the bridge from this chapter:</p>
+
+        <ul>
+          <li><strong>Self-attention.</strong> Bahdanau and Luong attention is <em>cross</em>-attention — the decoder attending to the encoder. Point the same mechanism at a sequence's own positions and you get self-attention, which replaces recurrence entirely. Every token can mix with every other in <em>one</em> parallel step.</li>
+          <li><strong>Scaled dot-product, multi-head.</strong> Luong's dot/general score, divided by \(\sqrt{d_k}\) (EQ N4.4 plus the variance fix), becomes the core operation; running \(h\) of them in parallel subspaces gives multi-head attention. The query/key/value vocabulary is just the alignment-model query and the annotation keys/values, renamed and made symmetric.</li>
+          <li><strong>Positional encodings.</strong> Drop recurrence and the model loses all sense of order, so position is injected directly into the embeddings — the one piece the RNN used to supply for free.</li>
+        </ul>
+
+        <div class="eq"><span class="eq-tag">EQ N4.5 — FROM ALIGNMENT SCORE TO SCALED DOT-PRODUCT</span>
+        $$ \underbrace{e_{ij} = v_a^{\top}\tanh(W_a s_i + U_a h_j)}_{\text{Bahdanau, EQ N4.2}} \;\longrightarrow\; \underbrace{e_{ij} = \frac{(W_Q s_i)^{\top}(W_K h_j)}{\sqrt{d_k}}}_{\text{Transformer (Vol II · EQ 3.1)}} $$
+        <div class="eq-note">Same skeleton — score every key against the query, softmax, take a weighted sum of values — with the learned MLP scorer swapped for a cheap scaled dot product and the recurrent backbone deleted. <b>Everything that followed (BERT, GPT, and modern LLMs) is this idea scaled up.</b> The 2014 bottleneck and the 2017 Transformer are two ends of one short, straight line; the full mechanism, multi-head, KV cache and all, is the subject of Vol II · Chapter 03.</div>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>Attention gave the decoder a memory; the next chapter asks what a network learns when it has no labels at all.</strong> Chapter 05: autoencoders — the encoder-decoder shape turned inward to compress, denoise, and discover latent structure, and the variational twist that makes those latents generate.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 4.R — References ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">4.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://arxiv.org/abs/1409.3215" target="_blank" rel="noopener">Sutskever, I., Vinyals, O. &amp; Le, Q. V. (2014). <span class="ref-venue">Sequence to Sequence Learning with Neural Networks</span>.</a> <span class="ref-meta">NeurIPS 2014 — the encoder-decoder LSTM framework (EQ N4.1) and the source-reversal trick.</span></li>
+          <li><a href="https://arxiv.org/abs/1409.0473" target="_blank" rel="noopener">Bahdanau, D., Cho, K. &amp; Bengio, Y. (2014). <span class="ref-venue">Neural Machine Translation by Jointly Learning to Align and Translate</span>.</a> <span class="ref-meta">ICLR 2015 — additive attention (EQ N4.2/N4.3); the birth of the mechanism and the length-decay figure.</span></li>
+          <li><a href="https://arxiv.org/abs/1508.04025" target="_blank" rel="noopener">Luong, M.-T., Pham, H. &amp; Manning, C. D. (2015). <span class="ref-venue">Effective Approaches to Attention-based Neural Machine Translation</span>.</a> <span class="ref-meta">EMNLP 2015 — multiplicative (dot/general/concat) and global-vs-local attention (EQ N4.4).</span></li>
+          <li><a href="https://arxiv.org/abs/1406.1078" target="_blank" rel="noopener">Cho, K., van Merriënboer, B., Gulcehre, C., Bahdanau, D., Bougares, F., Schwenk, H. &amp; Bengio, Y. (2014). <span class="ref-venue">Learning Phrase Representations using RNN Encoder-Decoder for Statistical Machine Translation</span>.</a> <span class="ref-meta">EMNLP 2014 — the RNN encoder-decoder and GRU; documents the fixed-vector length decay (§4.2).</span></li>
+          <li><a href="https://arxiv.org/abs/1706.03762" target="_blank" rel="noopener">Vaswani, A., Shazeer, N., Parmar, N., Uszkoreit, J., Jones, L., Gomez, A. N., Kaiser, Ł. &amp; Polosukhin, I. (2017). <span class="ref-venue">Attention Is All You Need</span>.</a> <span class="ref-meta">NeurIPS 2017 — drops recurrence for pure self-attention; the destination of EQ N4.5.</span></li>
+          <li><a href="https://arxiv.org/abs/1502.03044" target="_blank" rel="noopener">Xu, K., Ba, J., Kiros, R., Cho, K., Courville, A., Salakhutdinov, R., Zemel, R. &amp; Bengio, Y. (2015). <span class="ref-venue">Show, Attend and Tell: Neural Image Caption Generation with Visual Attention</span>.</a> <span class="ref-meta">ICML 2015 — soft/hard attention beyond translation; shows the mechanism generalizes (§4.1).</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../dl/03-sequence-models.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">03</span> Sequence Models</div></a>
+        <a class="next" href="../dl/05-autoencoders.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">05</span> Autoencoders</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — DEEP LEARNING · CH 04</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* ============================================================
+   Seq2Seq & the Birth of Attention — chapter instruments
+   Single IIFE, no globals. setTimeout-only animation.
+   Every widget guarded by element existence; meaningful
+   initial render with zero interaction.
+   ============================================================ */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  /* shared toy alignment: EN source -> FR target, with a hand-built
+     logit matrix that encodes both the diagonal and the FR adjective flip. */
+  var SRC = ["the", "agreement", "on", "the", "economic", "area"];
+  var TGT = ["l'accord", "sur", "la", "zone", "économique", "."];
+  /* base alignment logits[i][j] : output i over source j (peaks marked) */
+  var BASE = [
+    /* l'accord   */ [1.4, 2.6, 0.2, 0.6, 0.1, 0.1],
+    /* sur        */ [0.2, 0.3, 2.7, 0.4, 0.1, 0.1],
+    /* la         */ [1.1, 0.2, 0.3, 1.9, 0.2, 0.3],
+    /* zone       */ [0.1, 0.3, 0.2, 0.4, 0.6, 2.6],   /* zone <- area (flip) */
+    /* économique */ [0.1, 0.2, 0.1, 0.2, 2.7, 0.7],   /* économique <- economic (flip) */
+    /* .          */ [0.2, 0.2, 0.2, 0.2, 0.3, 1.0]
+  ];
+  function rowSoftmax(row, temp) { return FM.softmax(row, temp); }
+  function entropyBits(p) {
+    var s = 0;
+    for (var k = 0; k < p.length; k++) if (p[k] > 1e-12) s -= p[k] * Math.log2(p[k]);
+    return s;
+  }
+  function debounceResize(fn) {
+    var t = null;
+    window.addEventListener("resize", function () {
+      if (t) clearTimeout(t);
+      t = setTimeout(fn, 120);
+    });
+  }
+
+  /* ========================================================
+     INSTRUMENT N4.1 — BOTTLENECK vs ATTENTION
+     stylized BLEU-like quality vs source length.
+     fixed c: logistic decay whose knee scales with log2(d);
+     attention: near-flat. Two seg buttons; d slider.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("s2s-bottleneck");
+    if (!root) return;
+    var canvas = document.getElementById("s2s-bn-canvas");
+    var dIn = document.getElementById("s2s-bn-d");
+    var dOut = document.getElementById("s2s-bn-d-out");
+    var shortEl = document.getElementById("s2s-bn-short");
+    var longEl = document.getElementById("s2s-bn-long");
+    var modeEl = document.getElementById("s2s-bn-mode");
+    var btns = root.querySelectorAll("[data-s2s-bn]");
+    var mode = "fixed";
+
+    function quality(len, d, useAttn) {
+      /* attention: a high, gently sloped plateau (slight decay from search errors) */
+      if (useAttn) return 0.92 - 0.0006 * len;
+      /* fixed c: capacity knee near ~ 4*log2(d) words; logistic falloff past it */
+      var knee = 4 * Math.log2(d);          /* d=64 -> 24w, d=2048 -> 44w */
+      var q = 0.92 / (1 + Math.exp((len - knee) / 6));
+      return Math.max(0.04, q);
+    }
+
+    function render() {
+      var d = Math.pow(2, parseInt(dIn.value, 10));
+      dOut.textContent = d.toLocaleString();
+      var useAttn = mode === "attn";
+
+      var qs = quality(10, d, useAttn), ql = quality(50, d, useAttn);
+      shortEl.textContent = (qs * 100).toFixed(0);
+      longEl.textContent = (ql * 100).toFixed(0);
+      longEl.parentElement.querySelector(".r-value").style.color =
+        ql > 0.6 ? C.MINT : (ql < 0.3 ? C.RED : C.SEC);
+      modeEl.textContent = useAttn ? "ATTENTION (flat)" : "FIXED VECTOR";
+      modeEl.style.color = useAttn ? C.MINT : C.SEC;
+
+      var ctx2 = FM.setupCanvas(canvas, 300);
+      var ctx = ctx2.ctx, w = ctx2.w, h = ctx2.h;
+      var padL = 44, padR = 14, padT = 16, padB = 30;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      ctx.clearRect(0, 0, w, h);
+      var LMAX = 60;
+      function px(L) { return x0 + L / LMAX * (x1 - x0); }
+      function py(q) { return y0 - q * (y0 - y1); }
+
+      /* frame + grid */
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(x0, y1, x1 - x0, y0 - y1);
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      var qg;
+      for (qg = 0; qg <= 4; qg++) {
+        var gy = py(qg / 4);
+        ctx.strokeStyle = "rgba(47,50,52,.5)";
+        ctx.beginPath(); ctx.moveTo(x0, gy); ctx.lineTo(x1, gy); ctx.stroke();
+        ctx.fillStyle = C.MUT; ctx.fillText((qg * 25) + "", x0 - 6, gy);
+      }
+      ctx.textAlign = "center"; ctx.textBaseline = "top";
+      var lg;
+      for (lg = 0; lg <= 60; lg += 10) {
+        ctx.fillStyle = C.MUT; ctx.fillText(lg + "", px(lg), y0 + 6);
+      }
+      ctx.fillStyle = C.SEC; ctx.textAlign = "left";
+      ctx.fillText("SOURCE LENGTH (WORDS)  →", x0 + 2, y0 + 16);
+
+      /* faint ghost of the other regime for contrast */
+      function curve(useA, color, dash, lw) {
+        ctx.strokeStyle = color; ctx.lineWidth = lw;
+        ctx.setLineDash(dash);
+        ctx.beginPath();
+        for (var L = 0; L <= LMAX; L++) {
+          var qx = px(L), qy = py(quality(L, d, useA));
+          if (L === 0) ctx.moveTo(qx, qy); else ctx.lineTo(qx, qy);
+        }
+        ctx.stroke(); ctx.setLineDash([]);
+      }
+      curve(!useAttn, "rgba(155,155,155,.30)", [3, 4], 1);   /* the alternative, faint */
+      curve(useAttn, useAttn ? C.MINT : C.RED, [], 2);        /* the active curve */
+
+      /* markers at 10 and 50 words */
+      [10, 50].forEach(function (L) {
+        var mx = px(L), my = py(quality(L, d, useAttn));
+        ctx.fillStyle = useAttn ? C.MINT : C.RED;
+        ctx.beginPath(); ctx.arc(mx, my, 3.5, 0, 2 * Math.PI); ctx.fill();
+      });
+
+      /* legend */
+      ctx.font = C.MONO; ctx.textAlign = "right"; ctx.textBaseline = "top";
+      ctx.fillStyle = useAttn ? C.MINT : C.RED;
+      ctx.fillText(useAttn ? "ATTENTION" : "FIXED c", x1 - 4, y1 + 4);
+    }
+
+    btns.forEach(function (b) {
+      b.addEventListener("click", function () {
+        btns.forEach(function (o) { o.classList.remove("on"); });
+        b.classList.add("on");
+        mode = b.getAttribute("data-s2s-bn");
+        render();
+      });
+    });
+    dIn.addEventListener("input", render);
+    debounceResize(render);
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT N4.2 — ATTENTION-WEIGHT HEATMAP
+     rows = output (FR), cols = source (EN); cell brightness
+     = alpha_ij (each row a softmax). Hover a row to inspect.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("s2s-heatmap");
+    if (!root) return;
+    var canvas = document.getElementById("s2s-hm-canvas");
+    var tIn = document.getElementById("s2s-hm-temp");
+    var tOut = document.getElementById("s2s-hm-temp-out");
+    var tokEl = document.getElementById("s2s-hm-tok");
+    var alignEl = document.getElementById("s2s-hm-align");
+    var peakEl = document.getElementById("s2s-hm-peak");
+    var hoverRow = 0;
+    var geom = null;
+
+    function weights(temp) {
+      return BASE.map(function (row) { return rowSoftmax(row, temp); });
+    }
+
+    function render() {
+      var temp = +tIn.value;
+      tOut.textContent = temp.toFixed(2);
+      var W = weights(temp);
+
+      var ctx2 = FM.setupCanvas(canvas, 320);
+      var ctx = ctx2.ctx, w = ctx2.w, h = ctx2.h;
+      ctx.clearRect(0, 0, w, h);
+      var padL = 92, padT = 58, padR = 14, padB = 14;
+      var nC = SRC.length, nR = TGT.length;
+      var cw = (w - padL - padR) / nC;
+      var ch = (h - padT - padB) / nR;
+      geom = { padL: padL, padT: padT, cw: cw, ch: ch, nR: nR, nC: nC };
+
+      /* column labels (source, EN) — angled-ish, drawn horizontally small */
+      ctx.font = C.MONO; ctx.textBaseline = "bottom";
+      ctx.textAlign = "center";
+      for (var j = 0; j < nC; j++) {
+        ctx.fillStyle = C.SEC;
+        ctx.fillText(SRC[j], padL + cw * (j + 0.5), padT - 8);
+      }
+      ctx.fillStyle = C.MUT; ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+      ctx.fillText("SOURCE (EN) →", padL, 16);
+
+      /* cells */
+      for (var i = 0; i < nR; i++) {
+        for (j = 0; j < nC; j++) {
+          var a = W[i][j];
+          var x = padL + j * cw, y = padT + i * ch;
+          /* mint at intensity a on near-black */
+          ctx.fillStyle = "rgba(166,242,204," + (0.08 + 0.92 * a).toFixed(3) + ")";
+          ctx.fillRect(x + 1, y + 1, cw - 2, ch - 2);
+          if (a > 0.18) {
+            ctx.fillStyle = a > 0.5 ? "#04130c" : C.BRIGHT;
+            ctx.font = C.MONO; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+            ctx.fillText(a.toFixed(2), x + cw / 2, y + ch / 2);
+          }
+        }
+        /* row label (target, FR) */
+        ctx.fillStyle = (i === hoverRow) ? C.MINT : C.SEC;
+        ctx.font = C.MONO; ctx.textAlign = "right"; ctx.textBaseline = "middle";
+        ctx.fillText(TGT[i], padL - 8, padT + i * ch + ch / 2);
+      }
+
+      /* highlight the hovered row's frame */
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 1.5;
+      ctx.strokeRect(padL, padT + hoverRow * ch, nC * cw, ch);
+
+      /* readouts for the hovered row */
+      var prow = W[hoverRow], best = 0;
+      for (j = 1; j < nC; j++) if (prow[j] > prow[best]) best = j;
+      tokEl.textContent = TGT[hoverRow];
+      alignEl.textContent = SRC[best];
+      peakEl.textContent = (prow[best] * 100).toFixed(0) + "%";
+    }
+
+    canvas.addEventListener("mousemove", function (ev) {
+      if (!geom) return;
+      var rect = canvas.getBoundingClientRect();
+      var y = ev.clientY - rect.top;
+      var r = Math.floor((y - geom.padT) / geom.ch);
+      if (r >= 0 && r < geom.nR && r !== hoverRow) { hoverRow = r; render(); }
+    });
+    tIn.addEventListener("input", render);
+    debounceResize(render);
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT N4.3 — ALIGNMENT VISUALIZER
+     two rows of word chips (source top, target bottom); for
+     the chosen output step i, draw soft links whose opacity
+     is alpha_ij. Sharpness = 1/temp; report entropy in bits.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("s2s-align");
+    if (!root) return;
+    var canvas = document.getElementById("s2s-al-canvas");
+    var iIn = document.getElementById("s2s-al-i");
+    var tIn = document.getElementById("s2s-al-t");
+    var iOut = document.getElementById("s2s-al-i-out");
+    var tOut = document.getElementById("s2s-al-t-out");
+    var outEl = document.getElementById("s2s-al-out");
+    var linkEl = document.getElementById("s2s-al-link");
+    var entEl = document.getElementById("s2s-al-ent");
+
+    function render() {
+      var i = parseInt(iIn.value, 10);
+      var sharp = +tIn.value;           /* sharpness = 1/temp */
+      var temp = 1 / sharp;
+      iOut.textContent = (i + 1) + " / " + TGT.length;
+      tOut.textContent = sharp.toFixed(1) + "×";
+
+      var p = rowSoftmax(BASE[i], temp);
+      var best = 0, k;
+      for (k = 1; k < p.length; k++) if (p[k] > p[best]) best = k;
+      outEl.textContent = TGT[i];
+      linkEl.textContent = SRC[best];
+      entEl.textContent = entropyBits(p).toFixed(2);
+
+      var ctx2 = FM.setupCanvas(canvas, 260);
+      var ctx = ctx2.ctx, w = ctx2.w, h = ctx2.h;
+      ctx.clearRect(0, 0, w, h);
+      var nS = SRC.length, nT = TGT.length;
+      var topY = 46, botY = h - 46;
+      var padX = 24;
+      function sx(j) { return padX + (j + 0.5) / nS * (w - 2 * padX); }
+      function tx(j) { return padX + (j + 0.5) / nT * (w - 2 * padX); }
+
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+      ctx.fillText("SOURCE (EN)", padX, topY - 26);
+      ctx.fillText("TARGET (FR)", padX, botY + 30);
+
+      /* soft links from every source word to the active target word i */
+      for (var j = 0; j < nS; j++) {
+        var a = p[j];
+        ctx.strokeStyle = "rgba(166,242,204," + (0.05 + 0.95 * a).toFixed(3) + ")";
+        ctx.lineWidth = 0.6 + 4.2 * a;
+        ctx.beginPath();
+        ctx.moveTo(sx(j), topY + 10);
+        ctx.lineTo(tx(i), botY - 10);
+        ctx.stroke();
+      }
+
+      /* source chips */
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      for (j = 0; j < nS; j++) {
+        var on = (j === best);
+        ctx.fillStyle = on ? "rgba(166,242,204,.16)" : "rgba(47,50,52,.55)";
+        var cwid = Math.max(34, ctx.measureText(SRC[j]).width + 16);
+        ctx.fillRect(sx(j) - cwid / 2, topY - 9, cwid, 18);
+        ctx.strokeStyle = on ? C.MINT : C.HAIR; ctx.lineWidth = 1;
+        ctx.strokeRect(sx(j) - cwid / 2, topY - 9, cwid, 18);
+        ctx.fillStyle = on ? C.MINT : C.SEC; ctx.font = C.MONO;
+        ctx.fillText(SRC[j], sx(j), topY);
+      }
+      /* target chips, active one highlighted */
+      for (j = 0; j < nT; j++) {
+        var act = (j === i);
+        ctx.fillStyle = act ? "rgba(78,138,247,.18)" : "rgba(47,50,52,.55)";
+        var twid = Math.max(34, ctx.measureText(TGT[j]).width + 16);
+        ctx.fillRect(tx(j) - twid / 2, botY - 9, twid, 18);
+        ctx.strokeStyle = act ? C.BLUE : C.HAIR; ctx.lineWidth = 1;
+        ctx.strokeRect(tx(j) - twid / 2, botY - 9, twid, 18);
+        ctx.fillStyle = act ? C.BRIGHT : C.MUT; ctx.font = C.MONO;
+        ctx.fillText(TGT[j], tx(j), botY);
+      }
+    }
+
+    iIn.addEventListener("input", render);
+    tIn.addEventListener("input", render);
+    debounceResize(render);
+    render();
+  })();
+
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

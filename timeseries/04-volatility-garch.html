@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Volatility Modeling — ARCH &amp; GARCH — AI Encyclopedia</title>
+<meta name="description" content="Volatility clusters — calm begets calm, storms beget storms — and ARCH/GARCH is how finance turns that stylized fact into a forecastable conditional variance and a Value-at-Risk number." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+<link rel="canonical" href="https://ai-encyclopedia.com/timeseries/04-volatility-garch" />
+<meta property="og:url" content="https://ai-encyclopedia.com/timeseries/04-volatility-garch" />
+</head>
+<body data-track="timeseries" data-level="advanced">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ TIME SERIES / 04 / GARCH</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../timeseries/05-multivariate.html">NEXT: MULTIVARIATE (VAR) →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">TIME SERIES &amp; ECONOMETRICS · CHAPTER 04 / 06</div>
+    <h1>Volatility Modeling — ARCH &amp; GARCH</h1>
+    <p class="lede">Returns are close to unforecastable, but their <em>size</em> is not. <strong>Volatility clusters: calm periods follow calm periods and large moves follow large moves.</strong> GARCH captures this by writing today's variance as an explicit function of yesterday's surprise and yesterday's variance, which is what lets you forecast risk, scale positions, and quantify the loss you should be prepared to absorb.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>ADVANCED</b></span>
+      <span>READING TIME<b>≈ 28 MIN</b></span>
+      <span>BUILDS ON<b>TIME SERIES 01–03</b></span>
+      <span>INSTRUMENTS<b>GARCH SIM · RETURNS+VOL · TERM STRUCTURE</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">4.1</span>Volatility clustering</a>
+      <a href="#s2"><span class="n">4.2</span>ARCH</a>
+      <a href="#s3"><span class="n">4.3</span>GARCH(1,1)</a>
+      <a href="#s4"><span class="n">4.4</span>Asymmetry: EGARCH &amp; GJR</a>
+      <a href="#s5"><span class="n">4.5</span>Forecasting &amp; VaR</a>
+      <a href="#s6"><span class="n">4.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 4.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">4.1</span><h2>Volatility clustering — the stylized fact</h2></div>
+        <p>Plot the daily returns of any liquid asset and one thing jumps out: the wild days come in <em>bunches</em>. October 2008, March 2020, August 2024 — each is a dense thicket of large moves up and down, separated by long stretches of placid drift. Mandelbrot noticed it in 1963: <em>"large changes tend to be followed by large changes, of either sign, and small changes by small changes."</em> This is <strong>volatility clustering</strong>, and it is the single most robust empirical regularity in all of finance.</p>
+
+        <p>The classical models of the previous chapters cannot represent it. They assume <strong>homoscedasticity</strong> — a constant variance \(\sigma^2\) for the noise term. Under that assumption a calm Tuesday and a panicked Thursday are draws from the same distribution, which is plainly false. What clustering demands instead is <strong>conditional heteroscedasticity</strong>: a variance that <em>changes through time</em> and, crucially, is <em>predictable</em> from the past even when the return itself is not.</p>
+
+        <div class="eq"><span class="eq-tag">EQ T4.1 — THE STYLIZED FACTS, FORMALLY</span>
+        $$ \mathrm{Corr}(r_t,\, r_{t-k}) \approx 0 \qquad\text{but}\qquad \mathrm{Corr}(r_t^2,\, r_{t-k}^2) &gt; 0 \;\; \text{for many lags } k $$
+        <div class="eq-note">Raw returns \(r_t\) are serially <b>uncorrelated</b> (you cannot predict tomorrow's sign — markets are near-efficient). Yet squared (or absolute) returns are <em>strongly positively autocorrelated</em>, and that autocorrelation decays slowly. <b>The level is noise; the magnitude has memory.</b> Returns are also fat-tailed (leptokurtic) and, in equities, negatively skewed — a model of volatility must reproduce all three.</div>
+        </div>
+
+        <p>Two more facts complete the picture and motivate everything below. First, the unconditional return distribution has <strong>fat tails</strong> — far more 4σ and 5σ days than a Gaussian allows — even when daily returns are conditionally normal, because mixing normals of different variances manufactures kurtosis for free. Second, in equity markets volatility responds <strong>asymmetrically</strong>: a 3% drop raises tomorrow's expected volatility more than a 3% gain does. That <em>leverage effect</em> (§4.4) is why the family did not stop at GARCH.</p>
+
+        <p class="note">A subtlety worth stating up front: GARCH does not predict <em>returns</em>, and it would be a category error to expect it to. It predicts the <em>scale</em> of returns — the width of tomorrow's distribution, not its center. That is exactly the quantity risk management, option pricing, and position sizing actually need.</p>
+      </section>
+
+      <!-- ====================== 4.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">4.2</span><h2>ARCH — conditional variance</h2></div>
+        <p>Robert Engle's 1982 insight — which won the 2003 Nobel — was to let the variance of the current shock depend on the <em>magnitudes</em> of recent shocks. Write the return (after removing any mean) as a standardized innovation scaled by a time-varying volatility:</p>
+
+        <div class="eq"><span class="eq-tag">EQ T4.2 — THE ARCH(q) MODEL</span>
+        $$ r_t = \mu + \varepsilon_t, \qquad \varepsilon_t = \sigma_t\, z_t, \quad z_t \overset{\text{iid}}{\sim} \mathcal{N}(0,1), \qquad \sigma_t^2 = \omega + \sum_{i=1}^{q}\alpha_i\, \varepsilon_{t-i}^2 $$
+        <div class="eq-note">\(z_t\) is the unpredictable part — pure white noise of unit variance. All the structure lives in \(\sigma_t^2\), the <b>conditional variance</b>: a baseline \(\omega &gt; 0\) plus a weighted sum of recent squared shocks. A big move yesterday (\(\varepsilon_{t-1}^2\) large) mechanically inflates today's variance, then feeds forward — that is clustering, written as a recursion. For the variance to stay positive we need \(\omega &gt; 0,\ \alpha_i\ge 0\); for it to be stationary we need \(\sum_i \alpha_i &lt; 1\).</div>
+        </div>
+
+        <p>ARCH works, but it is clumsy. Real volatility persistence decays over many weeks, so capturing it with a finite sum of squared shocks forces a large \(q\) — often 5 to 10 lags — and a long parameter vector that is awkward to estimate and prone to overfitting. The model also imposes that variance reacts only to a fixed, short window of past shocks, with hard cutoffs. Engle's student Bollerslev fixed both problems in one stroke.</p>
+
+        <p>Parameters are fit by <strong>maximum likelihood</strong>: choose \((\omega, \alpha)\) to maximize the Gaussian log-likelihood of the observed returns under the recursively computed \(\sigma_t^2\). The objective is non-linear but smooth, and the runnable cells below show the recursion that any optimizer would evaluate at each step.</p>
+
+        <div class="eq"><span class="eq-tag">EQ T4.3 — THE GAUSSIAN LOG-LIKELIHOOD (WHAT MLE MAXIMIZES)</span>
+        $$ \ell(\theta) = -\frac{1}{2}\sum_{t=1}^{T}\!\left[\log(2\pi) + \log \sigma_t^2(\theta) + \frac{\varepsilon_t^2}{\sigma_t^2(\theta)}\right] $$
+        <div class="eq-note">Each term rewards a \(\sigma_t^2\) that is <em>large when the shock is large and small when it is small</em>: the \(\varepsilon_t^2/\sigma_t^2\) penalty punishes underestimating a violent day, while \(\log\sigma_t^2\) punishes crying wolf on a calm one. <b>Maximizing this is exactly learning to size tomorrow's distribution from today's.</b> Heavy-tailed innovations (Student-t) replace the Gaussian when residuals stay fat-tailed after fitting — common for daily equity data.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 4.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">4.3</span><h2>GARCH(1,1) — the workhorse</h2></div>
+        <p>The <strong>Generalized</strong> ARCH model adds one term — yesterday's <em>variance</em> — and that single addition is why GARCH(1,1) has been the default for forty years. It captures slow-decaying persistence with just three parameters, an unbeatable parsimony-to-realism ratio:</p>
+
+        <div class="eq"><span class="eq-tag">EQ T4.4 — GARCH(1,1)</span>
+        $$ \sigma_t^2 = \omega + \alpha\,\varepsilon_{t-1}^2 + \beta\,\sigma_{t-1}^2, \qquad \omega &gt; 0,\ \alpha\ge 0,\ \beta\ge 0,\ \alpha+\beta &lt; 1 $$
+        <div class="eq-note">Three forces set tomorrow's variance: a constant floor \(\omega\); the <b>news / reaction</b> term \(\alpha\,\varepsilon_{t-1}^2\) (how hard yesterday's surprise hits); and the <b>memory / persistence</b> term \(\beta\,\sigma_{t-1}^2\) (how much of yesterday's variance carries over). Unrolling the recursion shows GARCH(1,1) is an <em>infinite</em> exponentially-weighted sum of all past squared shocks — an ARCH(∞) — which is exactly why three numbers do the work of ten.</div>
+        </div>
+
+        <p>Two derived quantities carry most of the intuition. The <strong>persistence</strong> is the sum \(\alpha+\beta\): it governs how slowly a volatility shock dies out, and for daily equity indices it is famously close to one — typically \(0.95\) to \(0.99\). The <strong>unconditional (long-run) variance</strong> is the level the recursion reverts to:</p>
+
+        <div class="eq"><span class="eq-tag">EQ T4.5 — LONG-RUN VARIANCE &amp; MEAN REVERSION</span>
+        $$ \bar{\sigma}^2 \;=\; \frac{\omega}{1 - \alpha - \beta}, \qquad \sigma_t^2 - \bar{\sigma}^2 \;=\; \alpha\big(\varepsilon_{t-1}^2 - \bar{\sigma}^2\big) + (\alpha+\beta)\big(\sigma_{t-1}^2 - \bar{\sigma}^2\big) $$
+        <div class="eq-note">Taking expectations of EQ T4.4 in the stationary state gives \(\bar\sigma^2(1-\alpha-\beta)=\omega\). Variance always pulls back toward \(\bar\sigma^2\): after a spike it decays, after a lull it rises. <b>The closer \(\alpha+\beta\) is to 1, the slower that pull</b> — at \(\alpha+\beta=1\) shocks never fully fade (the IGARCH boundary, where \(\bar\sigma^2\) is undefined and the EWMA / RiskMetrics model lives). This single number, the half-life \(\log(0.5)/\log(\alpha+\beta)\), is what a risk manager reads first.</div>
+        </div>
+
+        <div class="exercise" data-answer="0.00044" data-tol="0.02" data-hint="GARCH(1,1): omega + alpha·(prev shock²) + beta·(prev variance). Add the three terms.">
+          <div class="ex-q">A GARCH(1,1) model has \(\omega = 0.00001\), \(\alpha = 0.1\), \(\beta = 0.85\). Yesterday's conditional variance was \(\sigma_{t-1}^2 = 0.0004\) and yesterday's squared shock was \(\varepsilon_{t-1}^2 = 0.0009\). What is today's conditional variance \(\sigma_t^2\)?</div>
+          <div class="ex-reveal-src">Apply EQ T4.4 term by term: \(\alpha\,\varepsilon_{t-1}^2 = 0.1 \times 0.0009 = 0.00009\); \(\beta\,\sigma_{t-1}^2 = 0.85 \times 0.0004 = 0.00034\). Sum with \(\omega\): \(0.00001 + 0.00009 + 0.00034 = \) <b>0.00044</b>. (Today's volatility is \(\sqrt{0.00044} \approx 0.021\), i.e. about a 2.1% daily move.)</div>
+        </div>
+
+        <div class="exercise" data-answer="true" data-tol="0" data-hint="Persistence is α + β; how slowly shocks decay depends on how close that sum is to 1.">
+          <div class="ex-q">True or false: when \(\alpha + \beta\) is close to 1, a shock to volatility decays <em>slowly</em>, so today's turbulence stays elevated for a long time. (Answer <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">From EQ T4.5 the deviation \(\sigma_t^2 - \bar\sigma^2\) shrinks by a factor of \((\alpha+\beta)\) each step. If \(\alpha+\beta\) is near 1 that factor is near 1, so the deviation barely shrinks per day and volatility reverts to its mean only over many sessions — long memory, slow decay. The statement is <b>true</b>.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Simulate a GARCH(1,1) process; plot returns and conditional vol
+import numpy as np
+rng = np.random.default_rng(1)
+omega, alpha, beta = 1e-5, 0.10, 0.85          # persistence alpha+beta = 0.95
+T = 600
+var_lr = omega / (1 - alpha - beta)            # long-run (unconditional) variance
+r   = np.zeros(T)
+s2  = np.zeros(T); s2[0] = var_lr              # start at the long-run level
+for t in range(1, T):
+    s2[t] = omega + alpha * r[t-1]**2 + beta * s2[t-1]
+    r[t]  = np.sqrt(s2[t]) * rng.standard_normal()
+
+vol = np.sqrt(s2)
+print(f"long-run daily vol : {np.sqrt(var_lr):.4f}  (annualized ~{np.sqrt(var_lr)*np.sqrt(252):.1%})")
+print(f"realised daily vol : {r.std():.4f}")
+print(f"max  |return|      : {np.abs(r).max():.4f}   on day {int(np.argmax(np.abs(r)))}")
+print(f"corr(r, lag r)     : {np.corrcoef(r[1:], r[:-1])[0,1]:+.3f}  (near 0: level is noise)")
+print(f"corr(r^2, lag r^2) : {np.corrcoef(r[1:]**2, (r[:-1])**2)[0,1]:+.3f}  (positive: magnitude has memory)")
+plot_xy(list(range(T)), vol)                    # the clustering, made visible</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Run the GARCH(1,1) variance recursion on returns; print the one-step vol
+import numpy as np
+omega, alpha, beta = 1e-5, 0.10, 0.85
+# a short return series ending in two violent days (a shock arriving)
+r = np.array([0.004, -0.006, 0.002, -0.003, 0.005,
+              -0.028, 0.031, -0.004, 0.007, -0.002])
+
+var_lr = omega / (1 - alpha - beta)
+s2 = var_lr                                     # seed at the long-run variance
+print(" day   return    sigma^2        sigma (daily vol)")
+for t, rt in enumerate(r):
+    s2 = omega + alpha * rt**2 + beta * s2      # EQ T4.4
+    print(f"  {t:2d}  {rt:+.4f}   {s2:.6e}     {np.sqrt(s2):.4%}")
+
+# one-step-ahead forecast uses the LAST observed shock and variance
+s2_next = omega + alpha * r[-1]**2 + beta * s2
+print(f"\none-step-ahead sigma^2 : {s2_next:.6e}")
+print(f"one-step-ahead vol     : {np.sqrt(s2_next):.4%}  (note the spike that lingers)")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="garch-sim" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT T4.1 — GARCH(1,1) SIMULATOR</span><span class="w-sub">EQ T4.4 · CLUSTERING &amp; PERSISTENCE · SEEDED</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>REACTION α <output id="garch-alpha-out">0.10</output></label><input type="range" id="garch-alpha" min="0" max="0.30" step="0.01" value="0.10"/></div>
+              <div class="ctl"><label>PERSISTENCE β <output id="garch-beta-out">0.85</output></label><input type="range" id="garch-beta" min="0" max="0.98" step="0.01" value="0.85"/></div>
+            </div>
+            <canvas class="w-canvas" id="garch-sim-canvas" height="340"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">α + β (PERSISTENCE)</div><div class="r-value" id="garch-sim-pers">—</div></div>
+              <div class="readout"><div class="r-label">SHOCK HALF-LIFE</div><div class="r-value" id="garch-sim-hl">—</div></div>
+              <div class="readout"><div class="r-label">LONG-RUN DAILY VOL</div><div class="r-value" id="garch-sim-lr">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The <span style="color:var(--accent);">mint</span> line is the conditional volatility \(\sigma_t\); the faint grey bars are the simulated returns it scales. Push α up and volatility reacts violently to each shock but the spikes are jagged and short. Push β up and the spikes smooth into long plateaus — memory. When α + β crosses ~0.97 the half-life balloons and the series stops mean-reverting on any human timescale: that is the IGARCH regime where the model says "today's storm is the new normal until further notice." The same seed is reused so you compare regimes, not luck.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 4.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">4.4</span><h2>Asymmetry — EGARCH &amp; GJR-GARCH</h2></div>
+        <p>Plain GARCH has a blind spot baked into its algebra: it reacts to \(\varepsilon_{t-1}^2\), and squaring throws away the sign. A −4% day and a +4% day produce identical forecasts. But equity volatility is emphatically <em>not</em> symmetric — bad news raises future volatility far more than equally-sized good news. This <strong>leverage effect</strong> (a falling stock raises its debt-to-equity ratio, mechanically raising risk; and falling prices trigger forced selling and fear) is one of the most reliable patterns in markets, and two extensions of GARCH were built to capture it.</p>
+
+        <p><strong>GJR-GARCH</strong> (Glosten–Jagannathan–Runkle, 1993) is the minimal fix: add one term that switches on only for negative shocks.</p>
+
+        <div class="eq"><span class="eq-tag">EQ T4.6 — GJR-GARCH(1,1)</span>
+        $$ \sigma_t^2 = \omega + \alpha\,\varepsilon_{t-1}^2 + \gamma\, \mathbb{1}_{\{\varepsilon_{t-1} &lt; 0\}}\,\varepsilon_{t-1}^2 + \beta\,\sigma_{t-1}^2 $$
+        <div class="eq-note">The indicator \(\mathbb{1}_{\{\varepsilon_{t-1} &lt; 0\}}\) equals 1 after a down day and 0 otherwise, so a negative shock contributes \((\alpha+\gamma)\varepsilon_{t-1}^2\) while a positive one contributes only \(\alpha\,\varepsilon_{t-1}^2\). <b>A positive \(\gamma\) is the leverage effect made into a parameter</b> — and for equity indices \(\gamma\) is reliably positive and often larger than \(\alpha\) itself. Persistence becomes \(\alpha + \beta + \tfrac{1}{2}\gamma\) (the \(\tfrac12\) is the probability a shock is negative).</div>
+        </div>
+
+        <p><strong>EGARCH</strong> (Nelson, 1991) takes a different route: model the <em>log</em> of variance, which guarantees positivity without any constraints on the signs of the coefficients, and let the news term depend on both the magnitude and the sign of the standardized shock \(z_{t-1} = \varepsilon_{t-1}/\sigma_{t-1}\).</p>
+
+        <div class="eq"><span class="eq-tag">EQ T4.7 — EGARCH(1,1)</span>
+        $$ \log \sigma_t^2 = \omega + \beta \log \sigma_{t-1}^2 + \alpha\Big(\,|z_{t-1}| - \mathbb{E}|z_{t-1}|\,\Big) + \theta\, z_{t-1} $$
+        <div class="eq-note">The \(\alpha\) term is the symmetric magnitude response; the \(\theta\, z_{t-1}\) term is the asymmetry — with \(\theta &lt; 0\), a negative \(z\) (a down day) raises \(\log\sigma_t^2\) more than a positive one of equal size. Because it works in logs, <b>EGARCH needs no positivity constraints</b> and can express richer news-impact curves, at the cost of a likelihood that is fiddlier to optimize. Forecasting multiple steps ahead is also messier than GARCH's clean linear recursion.</div>
+        </div>
+
+        <p>The <strong>news-impact curve</strong> — next period's variance plotted against this period's shock, holding \(\sigma_{t-1}^2\) fixed — is the cleanest way to see the difference. Plain GARCH gives a symmetric parabola centered at zero; GJR and EGARCH tilt it, steepening the left (bad-news) arm.</p>
+
+        <div class="widget" id="garch-news" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT T4.2 — NEWS-IMPACT CURVE</span><span class="w-sub">GARCH vs GJR · σ²ₜ vs εₜ₋₁ · EQ T4.4 / T4.6</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>REACTION α <output id="garch-news-alpha-out">0.06</output></label><input type="range" id="garch-news-alpha" min="0" max="0.20" step="0.005" value="0.06"/></div>
+              <div class="ctl"><label>LEVERAGE γ <output id="garch-news-gamma-out">0.10</output></label><input type="range" id="garch-news-gamma" min="0" max="0.25" step="0.005" value="0.10"/></div>
+            </div>
+            <canvas class="w-canvas" id="garch-news-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">σ² AFTER −3% DAY</div><div class="r-value" id="garch-news-down">—</div></div>
+              <div class="readout"><div class="r-label">σ² AFTER +3% DAY</div><div class="r-value" id="garch-news-up">—</div></div>
+              <div class="readout acc"><div class="r-label">DOWN / UP RATIO</div><div class="r-value" id="garch-news-ratio">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The <span style="color:var(--blue);">blue</span> parabola is symmetric GARCH — it does not care which way the market moved. The <span style="color:var(--accent);">mint</span> curve is GJR: raise the leverage γ and watch the left (loss) arm steepen while the right arm stays put, the kink at zero growing sharper. The down/up ratio is how much more a 3% loss inflates tomorrow's variance than a 3% gain — set γ = 0 and it snaps to exactly 1.0, recovering plain GARCH. For real equity indices this ratio is routinely 2 or more.</div>
+        </div>
+
+        <p class="note">Which to use is genuinely contested. GJR is simpler, nests GARCH cleanly (test \(\gamma=0\)), and is easy to forecast — most practitioners reach for it first. EGARCH is more flexible and unconstrained but harder to fit and to project forward, and its log scale makes the parameters less directly interpretable. Hansen &amp; Lunde's large 2005 horse race found that for daily equity data <em>nothing reliably beat a plain GARCH(1,1)</em> for forecasting, while for exchange rates the asymmetric variants helped little — a useful humility check against over-engineering.</p>
+      </section>
+
+      <!-- ====================== 4.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">4.5</span><h2>Forecasting volatility &amp; the VaR link</h2></div>
+        <p>The payoff of a fitted GARCH model is a <strong>forecast of future variance</strong>, and the recursion makes multi-step forecasts almost free. The one-step forecast is just the recursion evaluated at the last observed values. For horizons beyond one, the unknown future shock \(\varepsilon_{t+h-1}^2\) is replaced by its expectation, which under the model is the forecast variance itself — collapsing the whole thing to clean geometric mean reversion toward \(\bar\sigma^2\):</p>
+
+        <div class="eq"><span class="eq-tag">EQ T4.8 — h-STEP VARIANCE FORECAST</span>
+        $$ \mathbb{E}_t\!\left[\sigma_{t+h}^2\right] \;=\; \bar{\sigma}^2 \;+\; (\alpha+\beta)^{\,h-1}\big(\sigma_{t+1}^2 - \bar{\sigma}^2\big), \qquad h = 1, 2, 3, \ldots $$
+        <div class="eq-note">The forecast is the long-run level \(\bar\sigma^2\) plus the current deviation, geometrically discounted by the persistence \((\alpha+\beta)\) per step. <b>From a calm start it climbs toward \(\bar\sigma^2\); from a panic it decays toward it</b> — the <em>term structure of volatility</em>. High persistence flattens the curve (a slow approach), low persistence snaps it back fast. Aggregating to an \(H\)-day variance sums these: \(\sum_{h=1}^{H}\mathbb{E}_t[\sigma_{t+h}^2]\), which under iid would just be \(H\sigma^2\) — the famous \(\sqrt{H}\) scaling, which GARCH corrects whenever you are not already at the long-run level.</div>
+        </div>
+
+        <p>This term structure is precisely what an option's implied-volatility surface tries to price, and what a risk system needs to project losses over a 1-day or 10-day horizon. The most consequential application is <strong>Value-at-Risk (VaR)</strong>: the loss threshold a portfolio will not exceed with probability \(1-p\) over a given horizon. Plug the GARCH conditional volatility into the quantile of the innovation distribution:</p>
+
+        <div class="eq"><span class="eq-tag">EQ T4.9 — CONDITIONAL VALUE-AT-RISK (PARAMETRIC)</span>
+        $$ \mathrm{VaR}_{t}^{\,p} \;=\; -\Big(\mu + z_{p}\,\sigma_{t}\Big), \qquad z_{p} = \Phi^{-1}(p) $$
+        <div class="eq-note">\(z_p\) is the lower-tail quantile of the standardized innovation (\(\Phi^{-1}(0.01) \approx -2.326\) for a Gaussian 1% VaR; use the Student-t quantile for fat tails). <b>Because \(\sigma_t\) is conditional, the VaR breathes with the market</b> — it widens automatically in turbulent clusters and tightens in calm, unlike a static historical VaR that lags the regime badly. The 10-day regulatory VaR scales by the GARCH variance forecast \(\sqrt{\sum_{h=1}^{10}\mathbb{E}_t[\sigma_{t+h}^2]}\), not by a naive \(\sqrt{10}\,\sigma_t\) — the difference is exactly the mean reversion of EQ T4.8.</div>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">KEY</span>
+          <p><strong>Why a conditional VaR matters.</strong> A static VaR built on a trailing 250-day window treats March 2020 and a sleepy summer as equally likely tomorrow. It under-warns going into a crisis (the window is still full of calm days) and over-warns coming out of one (the window is still full of the crash). GARCH-based VaR reacts within a day or two because \(\sigma_t\) is recomputed every step — the practical reason banks adopted conditional volatility models for capital after 1996.</p>
+        </div>
+
+        <div class="widget" id="garch-term" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT T4.3 — VOLATILITY FORECAST TERM STRUCTURE</span><span class="w-sub">EQ T4.8 · MEAN REVERSION TO σ̄ · LIVE</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>PERSISTENCE α+β <output id="garch-term-pers-out">0.94</output></label><input type="range" id="garch-term-pers" min="0.50" max="0.995" step="0.005" value="0.94"/></div>
+              <div class="ctl"><label>TODAY'S DAILY VOL σₜ₊₁ <output id="garch-term-now-out">3.5%</output></label><input type="range" id="garch-term-now" min="0.5" max="8" step="0.1" value="3.5"/></div>
+            </div>
+            <canvas class="w-canvas" id="garch-term-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">LONG-RUN DAILY VOL σ̄</div><div class="r-value" id="garch-term-lr">—</div></div>
+              <div class="readout acc"><div class="r-label">10-DAY VOL (GARCH)</div><div class="r-value" id="garch-term-10">—</div></div>
+              <div class="readout"><div class="r-label">10-DAY 99% VaR</div><div class="r-value" id="garch-term-var">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Long-run vol is pinned at σ̄ = 1.5%/day (≈ 24% annualized). Start above it — a panic — and the <span style="color:var(--accent);">mint</span> term-structure curve <em>decays</em> back toward the <span style="color:var(--secondary);">dashed</span> long-run line; drag today's vol below σ̄ and it <em>climbs</em>. Crank persistence toward 1 and the curve flattens to a near-horizontal plateau (shocks barely revert). The 10-day VaR reads off the aggregated GARCH variance with a Gaussian 99% quantile (z ≈ 2.326) — compare it mentally to a naive √10 × σₜ₊₁ and notice how much the mean reversion matters when you start far from σ̄.</div>
+        </div>
+
+        <p>GARCH is not the last word. It assumes the variance process is driven only by past returns; <strong>realized-volatility</strong> models (HAR-RV) instead feed high-frequency intraday data straight in and routinely forecast better. <strong>Stochastic-volatility</strong> models give variance its own innovation term rather than making it a deterministic function of past shocks — more flexible, harder to estimate. And implied volatility from options markets is forward-looking in a way no return-based model can be. But for a three-parameter model you can fit in milliseconds and explain on a napkin, GARCH(1,1) remains the benchmark every richer model must beat — and frequently does not.</p>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>We have modeled the volatility of one series in isolation — but risk lives in how series move <em>together</em>.</strong> A portfolio's variance is a quadratic form in a whole covariance matrix, and in a crisis correlations snap toward one exactly when diversification is supposed to save you. Chapter 05 turns the dial from one dimension to many: Vector Autoregression (VAR) for the joint dynamics of several series, the cross-correlations and Granger causality they encode, and the multivariate-GARCH machinery (DCC) that lets the whole covariance matrix breathe through time.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 4.R — References ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">4.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://doi.org/10.2307/1912773" target="_blank" rel="noopener">Engle, R. F. (1982). <span class="ref-venue">Autoregressive Conditional Heteroscedasticity with Estimates of the Variance of United Kingdom Inflation</span>.</a> <span class="ref-meta">Econometrica 50(4) — the original ARCH model (EQ T4.2); the work cited for Engle's 2003 Nobel Prize.</span></li>
+          <li><a href="https://doi.org/10.1016/0304-4076(86)90063-1" target="_blank" rel="noopener">Bollerslev, T. (1986). <span class="ref-venue">Generalized Autoregressive Conditional Heteroskedasticity</span>.</a> <span class="ref-meta">Journal of Econometrics 31(3) — adds the lagged-variance term, giving GARCH(1,1) (EQ T4.4), the field's workhorse.</span></li>
+          <li><a href="https://doi.org/10.2307/2938260" target="_blank" rel="noopener">Nelson, D. B. (1991). <span class="ref-venue">Conditional Heteroskedasticity in Asset Returns: A New Approach</span>.</a> <span class="ref-meta">Econometrica 59(2) — the EGARCH model (EQ T4.7), capturing the leverage effect in log-variance.</span></li>
+          <li><a href="https://doi.org/10.1111/j.1540-6261.1993.tb05128.x" target="_blank" rel="noopener">Glosten, L. R., Jagannathan, R. &amp; Runkle, D. E. (1993). <span class="ref-venue">On the Relation between the Expected Value and the Volatility of the Nominal Excess Return on Stocks</span>.</a> <span class="ref-meta">Journal of Finance 48(5) — the GJR-GARCH asymmetric extension (EQ T4.6).</span></li>
+          <li><a href="https://doi.org/10.1002/jae.800" target="_blank" rel="noopener">Hansen, P. R. &amp; Lunde, A. (2005). <span class="ref-venue">A Forecast Comparison of Volatility Models: Does Anything Beat a GARCH(1,1)?</span>.</a> <span class="ref-meta">Journal of Applied Econometrics 20(7) — the large horse race finding GARCH(1,1) hard to beat for equities.</span></li>
+          <li><a href="https://doi.org/10.1198/073500102288618487" target="_blank" rel="noopener">Engle, R. F. (2002). <span class="ref-venue">Dynamic Conditional Correlation: A Simple Class of Multivariate GARCH Models</span>.</a> <span class="ref-meta">Journal of Business &amp; Economic Statistics 20(3) — the DCC model bridging to the multivariate chapter.</span></li>
+          <li><a href="https://doi.org/10.1086/294632" target="_blank" rel="noopener">Mandelbrot, B. (1963). <span class="ref-venue">The Variation of Certain Speculative Prices</span>.</a> <span class="ref-meta">Journal of Business 36(4) — the first clear statement of volatility clustering and fat tails (EQ T4.1).</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../timeseries/03-exponential-smoothing.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">03</span> Smoothing</div></a>
+        <a class="next" href="../timeseries/05-multivariate.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">05</span> Multivariate (VAR)</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — TIME SERIES · CH 04</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* ============================================================
+   Volatility Modeling — ARCH & GARCH — chapter instruments
+   Single IIFE, no globals. setTimeout-only animation.
+   Every widget guarded by element existence; meaningful
+   initial render with zero interaction.
+   ============================================================ */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  function fnum(x, d) { d = d === undefined ? 3 : d; return x.toFixed(d); }
+  function pct(x, d) { d = d === undefined ? 2 : d; return (x * 100).toFixed(d) + "%"; }
+
+  /* ========================================================
+     INSTRUMENT T4.1 — GARCH(1,1) simulator
+     omega fixed; alpha/beta sliders show clustering & memory.
+     One seeded path reused so regimes are comparable.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("garch-sim");
+    if (!root) return;
+    var canvas = document.getElementById("garch-sim-canvas");
+    var aIn = document.getElementById("garch-alpha");
+    var bIn = document.getElementById("garch-beta");
+    var aOut = document.getElementById("garch-alpha-out");
+    var bOut = document.getElementById("garch-beta-out");
+    var persEl = document.getElementById("garch-sim-pers");
+    var hlEl = document.getElementById("garch-sim-hl");
+    var lrEl = document.getElementById("garch-sim-lr");
+    var OMEGA = 1e-5, N = 320;
+
+    /* pre-draw a fixed sequence of standard-normal innovations (seeded) */
+    var rnd = FM.mulberry32(20240613);
+    var Z = [];
+    for (var i = 0; i < N; i++) {
+      /* Box–Muller from two uniforms for a clean N(0,1) */
+      var u1 = Math.max(rnd(), 1e-12), u2 = rnd();
+      Z.push(Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2));
+    }
+
+    function simulate(alpha, beta) {
+      var persist = alpha + beta;
+      var varLR = persist < 1 ? OMEGA / (1 - persist) : OMEGA / 0.01; /* cap at boundary */
+      var s2 = varLR, r = 0;
+      var vol = new Array(N), ret = new Array(N);
+      for (var t = 0; t < N; t++) {
+        s2 = OMEGA + alpha * r * r + beta * s2;
+        r = Math.sqrt(s2) * Z[t];
+        vol[t] = Math.sqrt(s2);
+        ret[t] = r;
+      }
+      return { vol: vol, ret: ret, varLR: varLR, persist: persist };
+    }
+
+    function render() {
+      var alpha = +aIn.value, beta = +bIn.value;
+      aOut.textContent = fnum(alpha, 2);
+      bOut.textContent = fnum(beta, 2);
+      var sim = simulate(alpha, beta);
+      var persist = sim.persist;
+      persEl.textContent = fnum(persist, 3);
+      persEl.style.color = persist >= 0.97 ? C.RED : C.MINT;
+      var hl = persist > 0 && persist < 1 ? Math.log(0.5) / Math.log(persist) : Infinity;
+      hlEl.textContent = persist >= 1 ? "∞ (IGARCH)" :
+                         hl > 999 ? ">999 d" : Math.round(hl) + " d";
+      lrEl.textContent = persist < 1 ? pct(Math.sqrt(sim.varLR), 2) : "undefined";
+
+      var c = FM.setupCanvas(canvas, 340);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      var padL = 50, padR = 14, padT = 16, padB = 26;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      ctx.clearRect(0, 0, w, h);
+
+      /* vertical scale: cover the conditional vol range with headroom */
+      var maxVol = 0;
+      for (var i = 0; i < N; i++) if (sim.vol[i] > maxVol) maxVol = sim.vol[i];
+      maxVol *= 1.12;
+      if (maxVol < 1e-6) maxVol = 1e-6;
+      function px(t) { return x0 + t / (N - 1) * (x1 - x0); }
+      function py(v) { return y0 - v / maxVol * (y0 - y1); }
+
+      /* frame + gridlines (vol axis in %) */
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(x0, y1, x1 - x0, y0 - y1);
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      for (i = 0; i <= 4; i++) {
+        var gv = maxVol * i / 4, gy = py(gv);
+        ctx.strokeStyle = "rgba(47,50,52,.5)";
+        ctx.beginPath(); ctx.moveTo(x0, gy); ctx.lineTo(x1, gy); ctx.stroke();
+        ctx.fillStyle = C.MUT; ctx.fillText((gv * 100).toFixed(1) + "%", x0 - 6, gy);
+      }
+
+      /* returns as faint centered bars (visual texture of the magnitude) */
+      var mid = py(maxVol * 0.5);
+      var rmax = 0;
+      for (i = 0; i < N; i++) if (Math.abs(sim.ret[i]) > rmax) rmax = Math.abs(sim.ret[i]);
+      if (rmax < 1e-9) rmax = 1e-9;
+      ctx.strokeStyle = "rgba(155,155,155,.30)"; ctx.lineWidth = 1;
+      for (i = 0; i < N; i++) {
+        var bx = px(i);
+        var bh = (sim.ret[i] / rmax) * (y0 - y1) * 0.42;
+        ctx.beginPath(); ctx.moveTo(bx, mid); ctx.lineTo(bx, mid - bh); ctx.stroke();
+      }
+
+      /* long-run vol reference line */
+      if (persist < 1) {
+        var lrY = py(Math.sqrt(sim.varLR));
+        ctx.strokeStyle = C.SEC; ctx.setLineDash([3, 4]); ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(x0, lrY); ctx.lineTo(x1, lrY); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = C.SEC; ctx.textAlign = "left"; ctx.textBaseline = "bottom";
+        ctx.fillText("σ̄", x0 + 4, lrY - 2);
+      }
+
+      /* conditional volatility line */
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (i = 0; i < N; i++) {
+        var X = px(i), Y = py(sim.vol[i]);
+        if (i === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y);
+      }
+      ctx.stroke();
+
+      /* labels */
+      ctx.font = C.MONO; ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillStyle = C.MINT; ctx.fillText("σₜ  CONDITIONAL VOL", x0 + 6, y1 + 4);
+      ctx.fillStyle = "rgba(155,155,155,.7)"; ctx.fillText("│ RETURNS", x0 + 6, y1 + 18);
+    }
+
+    aIn.addEventListener("input", render);
+    bIn.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT T4.2 — News-impact curve: GARCH vs GJR
+     sigma^2_t vs eps_{t-1}, holding sigma^2_{t-1} fixed.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("garch-news");
+    if (!root) return;
+    var canvas = document.getElementById("garch-news-canvas");
+    var aIn = document.getElementById("garch-news-alpha");
+    var gIn = document.getElementById("garch-news-gamma");
+    var aOut = document.getElementById("garch-news-alpha-out");
+    var gOut = document.getElementById("garch-news-gamma-out");
+    var downEl = document.getElementById("garch-news-down");
+    var upEl = document.getElementById("garch-news-up");
+    var ratioEl = document.getElementById("garch-news-ratio");
+    var OMEGA = 1e-5, BETA = 0.85, S2_PREV = 4e-4; /* fixed prior variance */
+    var EMIN = -0.06, EMAX = 0.06, NS = 240;
+
+    function garchVar(eps, alpha) {
+      return OMEGA + alpha * eps * eps + BETA * S2_PREV;
+    }
+    function gjrVar(eps, alpha, gamma) {
+      var lev = eps < 0 ? gamma : 0;
+      return OMEGA + (alpha + lev) * eps * eps + BETA * S2_PREV;
+    }
+
+    function render() {
+      var alpha = +aIn.value, gamma = +gIn.value;
+      aOut.textContent = fnum(alpha, 3);
+      gOut.textContent = fnum(gamma, 3);
+
+      var down = gjrVar(-0.03, alpha, gamma);
+      var up = gjrVar(0.03, alpha, gamma);
+      downEl.textContent = down.toExponential(2);
+      upEl.textContent = up.toExponential(2);
+      ratioEl.textContent = fnum(down / up, 2) + "×";
+      ratioEl.style.color = down / up > 1.001 ? C.MINT : C.SEC;
+
+      var c = FM.setupCanvas(canvas, 320);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      var padL = 56, padR = 14, padT = 16, padB = 30;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      ctx.clearRect(0, 0, w, h);
+
+      /* vertical range over both curves */
+      var lo = Infinity, hi = -Infinity, i, e, v;
+      for (i = 0; i < NS; i++) {
+        e = EMIN + (EMAX - EMIN) * i / (NS - 1);
+        v = garchVar(e, alpha); if (v < lo) lo = v; if (v > hi) hi = v;
+        v = gjrVar(e, alpha, gamma); if (v < lo) lo = v; if (v > hi) hi = v;
+      }
+      var padv = (hi - lo) * 0.1 || hi * 0.1; lo -= padv; hi += padv;
+      if (lo < 0) lo = 0;
+      function px(e) { return x0 + (e - EMIN) / (EMAX - EMIN) * (x1 - x0); }
+      function py(val) { return y0 - (val - lo) / (hi - lo) * (y0 - y1); }
+
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(x0, y1, x1 - x0, y0 - y1);
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      for (i = 0; i <= 4; i++) {
+        var gv = lo + (hi - lo) * i / 4, gy = py(gv);
+        ctx.strokeStyle = "rgba(47,50,52,.5)";
+        ctx.beginPath(); ctx.moveTo(x0, gy); ctx.lineTo(x1, gy); ctx.stroke();
+        ctx.fillStyle = C.MUT; ctx.fillText(gv.toExponential(1), x0 - 6, gy);
+      }
+
+      /* zero-shock vertical marker */
+      ctx.strokeStyle = C.HAIR; ctx.setLineDash([4, 4]);
+      var zx = px(0);
+      ctx.beginPath(); ctx.moveTo(zx, y1); ctx.lineTo(zx, y0); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = C.SEC; ctx.textAlign = "center"; ctx.textBaseline = "top";
+      ctx.fillText("ε=0", zx, y0 + 6);
+      ctx.textAlign = "left"; ctx.fillText("−6%", x0, y0 + 6);
+      ctx.textAlign = "right"; ctx.fillText("+6%", x1, y0 + 6);
+
+      /* symmetric GARCH (blue) */
+      ctx.strokeStyle = C.BLUE; ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (i = 0; i < NS; i++) {
+        e = EMIN + (EMAX - EMIN) * i / (NS - 1);
+        var X = px(e), Y = py(garchVar(e, alpha));
+        if (i === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y);
+      }
+      ctx.stroke();
+
+      /* GJR (mint) */
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (i = 0; i < NS; i++) {
+        e = EMIN + (EMAX - EMIN) * i / (NS - 1);
+        var X2 = px(e), Y2 = py(gjrVar(e, alpha, gamma));
+        if (i === 0) ctx.moveTo(X2, Y2); else ctx.lineTo(X2, Y2);
+      }
+      ctx.stroke();
+
+      /* legend */
+      ctx.font = C.MONO; ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillStyle = C.BLUE; ctx.fillText("■ GARCH (symmetric)", x0 + 6, y1 + 4);
+      ctx.fillStyle = C.MINT; ctx.fillText("■ GJR (leverage)", x0 + 6, y1 + 18);
+    }
+
+    aIn.addEventListener("input", render);
+    gIn.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT T4.3 — Volatility forecast term structure
+     E_t[sigma^2_{t+h}] mean-reverting to sigma-bar (EQ T4.8).
+     Long-run vol fixed at 1.5%/day; aggregate to 10-day VaR.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("garch-term");
+    if (!root) return;
+    var canvas = document.getElementById("garch-term-canvas");
+    var pIn = document.getElementById("garch-term-pers");
+    var nIn = document.getElementById("garch-term-now");
+    var pOut = document.getElementById("garch-term-pers-out");
+    var nOut = document.getElementById("garch-term-now-out");
+    var lrEl = document.getElementById("garch-term-lr");
+    var tenEl = document.getElementById("garch-term-10");
+    var varEl = document.getElementById("garch-term-var");
+    var SIG_LR = 0.015;          /* long-run daily vol = 1.5% */
+    var VAR_LR = SIG_LR * SIG_LR;
+    var Z99 = 2.326348;          /* Phi^{-1}(0.99) */
+    var H = 60;                  /* horizon shown */
+
+    function forecastVar(h, persist, var1) {
+      /* h = 1..H ; var1 = sigma^2_{t+1} (one-step, known) */
+      return VAR_LR + Math.pow(persist, h - 1) * (var1 - VAR_LR);
+    }
+
+    function render() {
+      var persist = +pIn.value;
+      var sigNow = +nIn.value / 100;        /* slider is in % */
+      var var1 = sigNow * sigNow;
+      pOut.textContent = fnum(persist, 3);
+      nOut.textContent = (sigNow * 100).toFixed(1) + "%";
+
+      /* aggregate 10-day variance = sum of daily forecasts h=1..10 */
+      var agg10 = 0, h;
+      for (h = 1; h <= 10; h++) agg10 += forecastVar(h, persist, var1);
+      var vol10 = Math.sqrt(agg10);
+      lrEl.textContent = (SIG_LR * 100).toFixed(2) + "%";
+      tenEl.textContent = (vol10 * 100).toFixed(2) + "%";
+      varEl.textContent = (Z99 * vol10 * 100).toFixed(2) + "%";
+
+      var c = FM.setupCanvas(canvas, 320);
+      var ctx = c.ctx, w = c.w, hh = c.h;
+      var padL = 50, padR = 14, padT = 16, padB = 28;
+      var x0 = padL, x1 = w - padR, y0 = hh - padB, y1 = padT;
+      ctx.clearRect(0, 0, w, hh);
+
+      /* curve of forecast daily vol per horizon */
+      var curve = [], maxV = SIG_LR, i;
+      for (i = 1; i <= H; i++) {
+        var v = Math.sqrt(forecastVar(i, persist, var1));
+        curve.push(v);
+        if (v > maxV) maxV = v;
+      }
+      maxV *= 1.12;
+      function px(hor) { return x0 + (hor - 1) / (H - 1) * (x1 - x0); }
+      function py(v) { return y0 - v / maxV * (y0 - y1); }
+
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(x0, y1, x1 - x0, y0 - y1);
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      for (i = 0; i <= 4; i++) {
+        var gv = maxV * i / 4, gy = py(gv);
+        ctx.strokeStyle = "rgba(47,50,52,.5)";
+        ctx.beginPath(); ctx.moveTo(x0, gy); ctx.lineTo(x1, gy); ctx.stroke();
+        ctx.fillStyle = C.MUT; ctx.fillText((gv * 100).toFixed(1) + "%", x0 - 6, gy);
+      }
+
+      /* long-run vol line */
+      var lrY = py(SIG_LR);
+      ctx.strokeStyle = C.SEC; ctx.setLineDash([3, 4]); ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x0, lrY); ctx.lineTo(x1, lrY); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = C.SEC; ctx.textAlign = "left"; ctx.textBaseline = "bottom";
+      ctx.fillText("σ̄ = 1.5%", x0 + 4, lrY - 2);
+
+      /* horizon ticks */
+      ctx.fillStyle = C.MUT; ctx.textBaseline = "top";
+      ctx.textAlign = "left"; ctx.fillText("h=1", x0, y0 + 6);
+      ctx.textAlign = "center"; ctx.fillText("h=10", px(10), y0 + 6);
+      ctx.textAlign = "right"; ctx.fillText("h=" + H, x1, y0 + 6);
+
+      /* 10-day marker */
+      ctx.strokeStyle = C.HAIR; ctx.setLineDash([4, 4]);
+      ctx.beginPath(); ctx.moveTo(px(10), y1); ctx.lineTo(px(10), y0); ctx.stroke();
+      ctx.setLineDash([]);
+
+      /* the term-structure curve */
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (i = 0; i < H; i++) {
+        var X = px(i + 1), Y = py(curve[i]);
+        if (i === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y);
+      }
+      ctx.stroke();
+      /* start dot */
+      ctx.fillStyle = C.MINT;
+      ctx.beginPath(); ctx.arc(px(1), py(curve[0]), 3.2, 0, 2 * Math.PI); ctx.fill();
+
+      ctx.font = C.MONO; ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillStyle = C.MINT; ctx.fillText("E[σₜ₊ₕ]  FORECAST VOL", x0 + 6, y1 + 4);
+    }
+
+    pIn.addEventListener("input", render);
+    nIn.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

@@ -1,0 +1,165 @@
+{
+  "concepts": [
+    {
+      "id": "mlops-02-hyperparameter-tuning-s1",
+      "chapter": "mlops/02-hyperparameter-tuning",
+      "section": "s1",
+      "title": "The search space & the objective",
+      "eyebrow": "MODEL RISK",
+      "beats": [
+        {
+          "text": "Hyperparameters are the settings fixed before training, such as learning rate, tree depth, and regularization strength.",
+          "visual": { "type": "title", "text": "The search space & the objective", "sub": "Choosing which configurations to try" }
+        },
+        {
+          "text": "Tuning is an optimization problem: find the configuration that minimizes the cross-validated loss over the search space.",
+          "visual": { "type": "equation", "tex": "\\theta^{\\star} = \\arg\\min_{\\theta \\in \\Theta} f(\\theta), \\quad f(\\theta) = \\frac{1}{k}\\sum_{i=1}^{k} L\\big(y, \\hat{f}_{\\theta}^{(-i)}(x)\\big)", "note": "f is a black box, and each query trains the model k times" }
+        },
+        {
+          "text": "The objective is a black box with no gradient, and every evaluation is expensive because one query means k model fits.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "Learning rate spans orders of magnitude, so you sample it log-uniformly, giving each decade from ten to the minus five upward equal attention.",
+          "visual": { "type": "equation", "tex": "\\sqrt{10^{-5}\\cdot 10^{-1}} = \\sqrt{10^{-6}} = 10^{-3}", "note": "geometric center of a log-uniform range" }
+        },
+        {
+          "text": "A full grid is the product of per-axis counts, so ten values across six hyperparameters is already a million configurations.",
+          "visual": { "type": "stat", "value": 1000000, "label": "configurations for 10 values across 6 hyperparameters", "unit": "fits" }
+        },
+        {
+          "text": "Of the dozen hyperparameters you nominally tune, usually only two or three actually move the validation score.",
+          "visual": { "type": "bars", "values": [9, 7, 2, 1, 1, 1], "labels": ["h1", "h2", "h3", "h4", "h5", "h6"], "highlight": 0 }
+        }
+      ]
+    },
+    {
+      "id": "mlops-02-hyperparameter-tuning-s2",
+      "chapter": "mlops/02-hyperparameter-tuning",
+      "section": "s2",
+      "title": "Grid search: exhaustive and quietly wasteful",
+      "eyebrow": "MODEL RISK",
+      "beats": [
+        {
+          "text": "Grid search picks finite values per hyperparameter, takes the Cartesian product, evaluates every point, and keeps the best.",
+          "visual": { "type": "title", "text": "Grid search", "sub": "Exhaustive and quietly wasteful" }
+        },
+        {
+          "text": "Refining a grid from five to ten values per axis multiplies the cost by two to the power of D, so resolution gets exponentially coarser.",
+          "visual": { "type": "plot", "ys": [25, 100, 225, 400, 625, 900], "xlabel": "values per axis", "ylabel": "evaluations (2D)", "mark": "exponential cost" }
+        },
+        {
+          "text": "A g by g grid makes g-squared evaluations but tests only g distinct values of the one axis that actually matters.",
+          "visual": { "type": "equation", "tex": "g^{D} \\text{ evaluations}, \\quad \\text{but only } g \\text{ distinct values of the axis that matters}", "note": "the rest of the budget repeats unimportant combinations" }
+        },
+        {
+          "text": "In the runnable example a six by six grid spends thirty-six evaluations yet probes only six distinct values of the dominant x axis.",
+          "visual": { "type": "bars", "values": [36, 6], "labels": ["grid evals", "distinct x tested"], "highlight": 1 }
+        },
+        {
+          "text": "Grid search stays defensible for one or two cheap hyperparameters, or where an auditable even sweep matters in regulated settings.",
+          "visual": { "type": "stat", "value": 2, "label": "hyperparameters where a small grid is clear and defensible", "unit": "max" }
+        }
+      ]
+    },
+    {
+      "id": "mlops-02-hyperparameter-tuning-s3",
+      "chapter": "mlops/02-hyperparameter-tuning",
+      "section": "s3",
+      "title": "Random search: the surprising default",
+      "eyebrow": "MODEL RISK",
+      "beats": [
+        {
+          "text": "Random search replaces the grid with independent draws from each hyperparameter's distribution for a fixed budget of trials.",
+          "visual": { "type": "title", "text": "Random search", "sub": "The surprising default" }
+        },
+        {
+          "text": "Bergstra and Bengio showed in 2012 that at equal budget random search matches or beats grid search on neural-network tuning.",
+          "visual": { "type": "bars", "values": [6, 36], "labels": ["grid distinct x", "random distinct x"], "highlight": 1 }
+        },
+        {
+          "text": "With low effective dimensionality random search spends its whole budget on many distinct values of the few axes that matter.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "The coverage guarantee says n independent draws miss the top p fraction of the space with probability one minus p, raised to n.",
+          "visual": { "type": "equation", "tex": "\\Pr[\\text{at least one trial in top } p] = 1 - (1-p)^{n} \\;\\Longrightarrow\\; n \\geq \\frac{\\ln(1-c)}{\\ln(1-p)}", "note": "independent of how many hyperparameters you have" }
+        },
+        {
+          "text": "To hit the top five percent of configurations with ninety-five percent confidence you need only fifty-nine random trials.",
+          "visual": { "type": "stat", "value": 59, "label": "trials to reach top 5% with 95% confidence", "unit": "trials" }
+        },
+        {
+          "text": "That bound is dimension-free: it depends only on how good good enough is, not on the number of hyperparameters.",
+          "visual": { "type": "plot", "ys": [0.05, 0.4, 0.64, 0.79, 0.87, 0.95], "dot": 5, "xlabel": "trials (tens)", "ylabel": "coverage probability", "mark": "59 trials reaches 0.95" }
+        }
+      ]
+    },
+    {
+      "id": "mlops-02-hyperparameter-tuning-s4",
+      "chapter": "mlops/02-hyperparameter-tuning",
+      "section": "s4",
+      "title": "Bayesian optimization: spend queries where they pay",
+      "eyebrow": "MODEL RISK",
+      "beats": [
+        {
+          "text": "Grid and random search are uninformed; Bayesian optimization closes the loop by learning from the trials seen so far.",
+          "visual": { "type": "title", "text": "Bayesian optimization", "sub": "Spend queries where they pay" }
+        },
+        {
+          "text": "It fits a cheap probabilistic surrogate of the objective, then uses it to choose the most promising next query.",
+          "visual": { "type": "plot", "ys": [3.1, 1.9, 1.2, 0.7, 0.4, 0.3], "dot": 5, "xlabel": "evaluation", "ylabel": "best f found", "mark": "converges in tens of trials" }
+        },
+        {
+          "text": "A Gaussian process returns a posterior mean and a standard deviation, which is large exactly where you have not yet looked.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "The confidence-bound acquisition picks the lowest mean minus kappa times sigma, rewarding both low predicted loss and high uncertainty.",
+          "visual": { "type": "equation", "tex": "\\theta_{\\text{next}} = \\arg\\min_{\\theta} \\big[\\mu(\\theta) - \\kappa\\,\\sigma(\\theta)\\big], \\quad \\kappa \\geq 0", "note": "kappa is the explore-exploit dial" }
+        },
+        {
+          "text": "For mean two and sigma zero point two, kappa equals two gives an acquisition value of one point six for minimization.",
+          "visual": { "type": "stat", "value": 1.6, "label": "acquisition value for mu=2.0, sigma=0.2, kappa=2", "decimals": 1 }
+        },
+        {
+          "text": "Gaussian-process surrogates scale poorly past a couple dozen dimensions, so modern tuners pair them with an early-stopping scheduler.",
+          "visual": { "type": "bars", "values": [3, 2, 1, 1], "labels": ["BO", "random/wait", "TPE", "scheduler"], "highlight": 0 }
+        }
+      ]
+    },
+    {
+      "id": "mlops-02-hyperparameter-tuning-s5",
+      "chapter": "mlops/02-hyperparameter-tuning",
+      "section": "s5",
+      "title": "Hyperband & successive halving",
+      "eyebrow": "MODEL RISK",
+      "beats": [
+        {
+          "text": "For iterative learners a configuration's fate is often visible early, so you need not run every candidate to completion.",
+          "visual": { "type": "title", "text": "Hyperband & successive halving", "sub": "A tournament on budget" }
+        },
+        {
+          "text": "Successive halving starts many configs on a tiny budget, discards the worst fraction, and gives survivors more budget each round.",
+          "visual": { "type": "bars", "values": [27, 9, 3, 1], "labels": ["R0", "R1", "R2", "R3"], "highlight": 3 }
+        },
+        {
+          "text": "Survivors fall geometrically while per-config budget rises geometrically, so total budget spent per round stays roughly constant.",
+          "visual": { "type": "equation", "tex": "n_r = \\Big\\lfloor \\frac{n_0}{\\eta^{r}} \\Big\\rfloor, \\quad b_r = b_0\\,\\eta^{r}, \\quad n_r\\, b_r \\approx n_0\\, b_0", "note": "eta is the cull factor, usually 3" }
+        },
+        {
+          "text": "With eta three and twenty-seven starting configs, the bracket reaches a single survivor in exactly three elimination rounds.",
+          "visual": { "type": "stat", "value": 3, "label": "elimination rounds for n0=27, eta=3", "unit": "rounds" }
+        },
+        {
+          "text": "Hyperband refuses to choose one bracket and instead hedges across a spectrum of config-versus-budget trade-offs.",
+          "visual": { "type": "plot", "ys": [81, 27, 9, 3, 1], "xlabel": "bracket round", "ylabel": "configs (most aggressive)", "mark": "many brackets hedged" }
+        },
+        {
+          "text": "Hyperband loses only a small logarithmic factor to the best fixed bracket chosen in hindsight, the basis of today's ASHA scheduler.",
+          "visual": { "type": "lattice" }
+        }
+      ]
+    }
+  ]
+}

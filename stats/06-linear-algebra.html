@@ -1,0 +1,759 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Linear Algebra for Machine Learning — AI Encyclopedia</title>
+<meta name="description" content="Every model is linear algebra underneath — and eigenvectors and the SVD reveal the directions data actually lives in." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+<link rel="canonical" href="https://ai-encyclopedia.com/stats/06-linear-algebra" />
+<meta property="og:url" content="https://ai-encyclopedia.com/stats/06-linear-algebra" />
+</head>
+<body data-track="stats" data-level="core">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ STATISTICS / 06 / LINEAR ALGEBRA</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../stats/07-markov-chains.html">NEXT: MARKOV CHAINS →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">MATHEMATICS &amp; STATISTICS · CHAPTER 06 / 08</div>
+    <h1>Linear Algebra for Machine Learning</h1>
+    <p class="lede">Beneath the framework and the GPU, almost every model in this encyclopedia is the same object: a stack of linear maps with some nonlinearity between them. <strong>Eigenvectors and the singular value decomposition reveal the directions data actually occupies.</strong> This chapter develops the vocabulary of vectors, matrices, norms, and rank, then reaches the two factorizations behind PCA, embeddings, recommenders, and low-rank fine-tuning.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 24 MIN</b></span>
+      <span>BUILDS ON<b>STATS 01–05</b></span>
+      <span>INSTRUMENTS<b>LINEAR MAP · SVD · EIGEN</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">6.1</span>Vectors &amp; matrices</a>
+      <a href="#s2"><span class="n">6.2</span>Norms, dot products, projection</a>
+      <a href="#s3"><span class="n">6.3</span>Maps, rank &amp; null space</a>
+      <a href="#s4"><span class="n">6.4</span>Eigenvalues &amp; eigenvectors</a>
+      <a href="#s5"><span class="n">6.5</span>The SVD</a>
+      <a href="#s6"><span class="n">6.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 6.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">6.1</span><h2>Vectors, matrices &amp; the operations that matter</h2></div>
+        <p>A <strong>vector</strong> is an ordered list of numbers, and you should hold two pictures of it at once: an arrow from the origin in \(\mathbb{R}^n\), and a single data point — one row of your dataset, one word embedding, one image flattened. A <strong>matrix</strong> \(A \in \mathbb{R}^{m \times n}\) is a grid of numbers, and it too wears two hats: a table of data (rows are examples, columns are features), and — the view this chapter cares about — a <em>function</em> that takes a vector in and returns a vector out.</p>
+
+        <p>Three operations carry essentially all the weight. <strong>Scaling and addition</strong> let you form <em>linear combinations</em> \(\alpha\mathbf{u} + \beta\mathbf{v}\); the set of all such combinations of some vectors is their <strong>span</strong>, a flat subspace through the origin. <strong>Matrix–vector multiplication</strong> applies the map. And <strong>matrix–matrix multiplication</strong> composes two maps — its only subtlety is that inner dimensions must agree and order matters: \(AB \neq BA\) in general.</p>
+
+        <div class="eq"><span class="eq-tag">EQ S6.1 — MATRIX–VECTOR PRODUCT (TWO READINGS)</span>
+        $$ (A\mathbf{x})_i \;=\; \sum_{j=1}^{n} A_{ij}\, x_j \qquad\Longleftrightarrow\qquad A\mathbf{x} \;=\; \sum_{j=1}^{n} x_j\, \mathbf{a}_{:,j} $$
+        <div class="eq-note">The left form is the textbook one: output entry \(i\) is the dot product of row \(i\) of \(A\) with \(\mathbf{x}\). The right form is the one that builds intuition: \(A\mathbf{x}\) is a <b>linear combination of the columns of \(A\)</b>, weighted by the entries of \(\mathbf{x}\). That single re-reading explains rank, span, and the column space (§6.3) in one move — and it is exactly what a fully-connected layer \(\mathbf{y} = W\mathbf{x} + \mathbf{b}\) computes a few billion times a second.</div>
+        </div>
+
+        <p>Matrix multiplication is associative and distributive but, crucially, <em>not commutative</em>: rotating then stretching is not the same as stretching then rotating. The <strong>transpose</strong> \(A^\top\) flips rows and columns and obeys \((AB)^\top = B^\top A^\top\). The <strong>identity</strong> \(I\) leaves vectors untouched, and an <strong>inverse</strong> \(A^{-1}\) (when it exists — only for square, full-rank \(A\)) undoes the map. Most matrices in machine learning are <em>not</em> invertible, which is the whole reason §6.5 exists.</p>
+
+        <div class="callout">
+          <span class="co-icon">SHAPE DISCIPLINE</span>
+          <p><strong>Half of all numerical bugs are shape bugs.</strong> For \(AB\) to be defined, \(A\) must be \(m\times k\) and \(B\) must be \(k\times n\) — the inner \(k\) must match, and the result is \(m\times n\). When a model crashes at 3 a.m., the first thing a practitioner prints is <code>.shape</code>. Reading every product right-to-left as "a map applied to the output of another map" makes the dimensions self-checking.</p>
+        </div>
+
+        <div class="exercise" data-answer="8" data-tol="0.001" data-hint="The product of an m×k and a k×n matrix is m×n; count its entries.">
+          <div class="ex-q">Let \(A\) be \(2\times 3\) and \(B\) be \(3\times 4\). The inner dimensions match (both \(3\)), so \(AB\) is defined. How many entries does the resulting matrix \(AB\) have?</div>
+          <div class="ex-reveal-src">An \(m\times k\) times a \(k\times n\) matrix gives an \(m\times n\) result. Here \(AB\) is \(2\times 4\), so it has \(2 \times 4 = \) <b>8</b> entries. The shared inner dimension \(k=3\) is summed over and does not appear in the output shape.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 6.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">6.2</span><h2>Norms, dot products &amp; projections</h2></div>
+        <p>To do geometry you need length and angle. The <strong>dot product</strong> supplies both: it is the engine behind similarity scores, attention logits, least-squares, and the kernel trick. The <strong>L2 (Euclidean) norm</strong> is a vector's length; the dot product of two unit vectors is the cosine of the angle between them.</p>
+
+        <div class="eq"><span class="eq-tag">EQ S6.2 — DOT PRODUCT, NORM &amp; COSINE</span>
+        $$ \mathbf{u}\cdot\mathbf{v} = \sum_{i=1}^{n} u_i v_i = \|\mathbf{u}\|\,\|\mathbf{v}\|\cos\theta, \qquad \|\mathbf{v}\|_2 = \sqrt{\mathbf{v}\cdot\mathbf{v}} = \sqrt{\textstyle\sum_i v_i^2} $$
+        <div class="eq-note">Two vectors are <b>orthogonal</b> exactly when \(\mathbf{u}\cdot\mathbf{v}=0\) (\(\cos\theta = 0\)). <b>Cosine similarity</b> \(\dfrac{\mathbf{u}\cdot\mathbf{v}}{\|\mathbf{u}\|\,\|\mathbf{v}\|}\) is the dot product after normalizing length — the default way to compare embeddings, because it cares about direction, not magnitude. The L1 norm \(\|\mathbf{v}\|_1 = \sum_i|v_i|\) and the max norm \(\|\mathbf{v}\|_\infty = \max_i|v_i|\) are the other two you meet daily; L1 regularization owes its sparsity to the diamond shape of its unit ball.</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><div>Take \(\mathbf{v} = (3, 4)\). Its L2 norm is \(\sqrt{3^2 + 4^2} = \sqrt{9 + 16} = \sqrt{25} = 5\) — the classic 3-4-5 right triangle.</div></div>
+          <div class="x-step"><span class="x-n">02</span><div>Its L1 norm is \(|3| + |4| = 7\); its max norm is \(\max(3,4) = 4\). Always \(\|\mathbf{v}\|_\infty \le \|\mathbf{v}\|_2 \le \|\mathbf{v}\|_1\).</div></div>
+          <div class="x-step"><span class="x-n">03</span><div>Dot with \(\mathbf{u} = (4, -3)\): \(3\cdot 4 + 4\cdot(-3) = 12 - 12 = 0\) — orthogonal. Indeed \((3,4)\) and \((4,-3)\) meet at a right angle.</div></div>
+          <span class="x-result">RESULT: ‖(3,4)‖₂ = 5, and (3,4) ⟂ (4,−3)</span>
+        </div></div>
+        </div>
+
+        <p>The geometric companion to the dot product is the <strong>projection</strong>. To project \(\mathbf{x}\) onto the direction of \(\mathbf{a}\) is to find the point on the line through \(\mathbf{a}\) closest to \(\mathbf{x}\) — the "shadow" \(\mathbf{x}\) casts on that line. This single idea, generalized to projecting onto the column space of a matrix, <em>is</em> least-squares regression.</p>
+
+        <div class="eq"><span class="eq-tag">EQ S6.3 — PROJECTION ONTO A DIRECTION</span>
+        $$ \mathrm{proj}_{\mathbf{a}}(\mathbf{x}) \;=\; \frac{\mathbf{a}\cdot\mathbf{x}}{\mathbf{a}\cdot\mathbf{a}}\;\mathbf{a}, \qquad\text{and the residual } \mathbf{x} - \mathrm{proj}_{\mathbf{a}}(\mathbf{x}) \perp \mathbf{a} $$
+        <div class="eq-note">The scalar \(\dfrac{\mathbf{a}\cdot\mathbf{x}}{\mathbf{a}\cdot\mathbf{a}}\) is "how many copies of \(\mathbf{a}\)" you need; multiplying by \(\mathbf{a}\) places the shadow on the line. The leftover, the <b>residual</b>, is orthogonal to \(\mathbf{a}\) by construction — the defining property that makes projection the unique <em>closest</em> point. Ordinary least squares is exactly this with \(\mathbf{a}\) replaced by a whole subspace: \(\hat{\mathbf{y}} = X(X^\top X)^{-1}X^\top\mathbf{y}\) projects the targets onto the column space of the design matrix.</div>
+        </div>
+
+        <div class="exercise" data-answer="5" data-tol="0.001" data-hint="L2 norm is the square root of the sum of squares.">
+          <div class="ex-q">What is the L2 (Euclidean) norm of the vector \( \mathbf{v} = (3, 4) \)? Compute \( \|\mathbf{v}\|_2 = \sqrt{3^2 + 4^2} \).</div>
+          <div class="ex-reveal-src">\( \|\mathbf{v}\|_2 = \sqrt{3^2 + 4^2} = \sqrt{9 + 16} = \sqrt{25} = \) <b>5</b>. This is the length of the hypotenuse of a 3-4-5 right triangle.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Norms, dot products, cosine similarity, and projection (EQ S6.2-S6.3)
+import numpy as np
+
+u = np.array([3.0, 4.0])
+v = np.array([4.0, -3.0])
+x = np.array([2.0, 1.0])
+
+print("||u||_2 (sqrt of sum of squares):", np.linalg.norm(u))      # -> 5.0
+print("||u||_1 (sum of abs)            :", np.linalg.norm(u, 1))    # -> 7.0
+print("||u||_inf (max abs)             :", np.linalg.norm(u, np.inf))
+
+dot = u @ v
+print("\nu . v        :", dot, " -> orthogonal" if abs(dot) < 1e-9 else "")
+print("cosine(u, v) :", (u @ v) / (np.linalg.norm(u) * np.linalg.norm(v)))
+
+# project x onto the direction of u
+coef = (u @ x) / (u @ u)
+proj = coef * u
+resid = x - proj
+print("\nproj_u(x)    :", proj.round(4))
+print("residual     :", resid.round(4))
+print("residual . u :", round(float(resid @ u), 12), " <- exactly orthogonal")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 6.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">6.3</span><h2>A matrix as a linear map; rank &amp; null space</h2></div>
+        <p>Here is the conceptual hinge of the chapter. A matrix \(A\) is a <strong>linear map</strong> \(\mathbf{x}\mapsto A\mathbf{x}\): it sends lines to lines, keeps the origin fixed, and respects linear combinations, \(A(\alpha\mathbf{u}+\beta\mathbf{v}) = \alpha A\mathbf{u} + \beta A\mathbf{v}\). Geometrically a \(2\times 2\) matrix can rotate, scale, shear, reflect, or flatten the plane — and nothing else. The instrument below lets you grab the four entries and <em>watch</em> the unit grid deform.</p>
+
+        <p>Two subspaces describe everything a map does. The <strong>column space</strong> (range) is the set of all outputs \(A\mathbf{x}\) — by EQ S6.1 it is precisely the span of the columns. The <strong>null space</strong> (kernel) is the set of inputs that get crushed to zero, \(A\mathbf{x}=\mathbf{0}\). The dimension of the column space is the <strong>rank</strong> — the number of <em>genuinely independent</em> directions the map can produce.</p>
+
+        <div class="eq"><span class="eq-tag">EQ S6.4 — RANK–NULLITY THEOREM</span>
+        $$ \underbrace{\operatorname{rank}(A)}_{\dim(\text{column space})} \;+\; \underbrace{\operatorname{nullity}(A)}_{\dim(\text{null space})} \;=\; n \quad (\text{number of columns of } A \in \mathbb{R}^{m\times n}) $$
+        <div class="eq-note">Every input dimension is accounted for: it either survives into the output (contributing to rank) or is annihilated (contributing to nullity). A square matrix is invertible <b>iff</b> it is full rank, i.e. nullity \(=0\), i.e. \(\det A \neq 0\). Row rank always equals column rank — a small miracle worth pausing on. <b>Real data matrices are nearly low-rank</b>: a thousand columns of survey answers might have effective rank 20, because the columns are correlated. That redundancy is exactly what §6.5 exploits.</div>
+        </div>
+
+        <p>For a \(2\times 2\) map the <strong>determinant</strong> \(\det A = ad - bc\) (for \(A = \left[\begin{smallmatrix} a &amp; b \\ c &amp; d \end{smallmatrix}\right]\)) is the signed area-scaling factor: a unit square of area 1 becomes a parallelogram of area \(|\det A|\). A determinant of zero means the map flattens the plane onto a line (or a point) — it loses a dimension, drops rank, and cannot be inverted. A negative determinant means the map also flips orientation (a reflection).</p>
+
+        <div class="widget" id="la-map" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT S6.1 — 2×2 LINEAR-MAP VISUALIZER</span><span class="w-sub">DRAG ENTRIES · UNIT GRID · EIGENVECTORS</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>a (col 1, row 1) <output id="la-map-a-out">2.0</output></label><input type="range" id="la-map-a" min="-3" max="3" step="0.1" value="2"/></div>
+              <div class="ctl"><label>b (col 2, row 1) <output id="la-map-b-out">1.0</output></label><input type="range" id="la-map-b" min="-3" max="3" step="0.1" value="1"/></div>
+            </div>
+            <div class="ctl-row">
+              <div class="ctl"><label>c (col 1, row 2) <output id="la-map-c-out">1.0</output></label><input type="range" id="la-map-c" min="-3" max="3" step="0.1" value="1"/></div>
+              <div class="ctl"><label>d (col 2, row 2) <output id="la-map-d-out">2.0</output></label><input type="range" id="la-map-d" min="-3" max="3" step="0.1" value="2"/></div>
+            </div>
+            <canvas class="w-canvas" id="la-map-canvas" height="340"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">det A (AREA × ORIENT.)</div><div class="r-value" id="la-map-det">—</div></div>
+              <div class="readout"><div class="r-label">RANK</div><div class="r-value" id="la-map-rank">—</div></div>
+              <div class="readout"><div class="r-label">REAL EIGENVALUES λ</div><div class="r-value" id="la-map-eigs" style="font-size:13px;">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The faint grid is the input plane; the <span style="color:var(--accent);">mint</span> grid is its image under \(A\). The blue arrows are the images of the standard basis — they <em>are</em> the columns of \(A\). When real eigenvalues exist, their eigenvectors are drawn as <span style="color:var(--danger);">red</span> rays: directions the map only stretches, never turns. Pull the determinant to zero (try a=2, b=1, c=2, d=1) and the whole plane collapses onto a single line — rank drops to 1, the map is no longer invertible. Default \(A = \left[\begin{smallmatrix}2&amp;1\\1&amp;2\end{smallmatrix}\right]\) has eigenvalues 3 and 1 along the diagonals \((1,1)\) and \((1,-1)\).</div>
+        </div>
+      </section>
+
+      <!-- ====================== 6.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">6.4</span><h2>Eigenvalues &amp; eigenvectors — the invariant directions</h2></div>
+        <p>Most directions get rotated when you apply a matrix. A precious few do not: the map only <em>stretches</em> them, leaving their line untouched. Those special directions are the <strong>eigenvectors</strong>, and the stretch factors are the <strong>eigenvalues</strong>. They are the natural coordinate system of the map — the axes along which its behavior is pure scaling.</p>
+
+        <div class="eq"><span class="eq-tag">EQ S6.5 — THE EIGENVALUE EQUATION</span>
+        $$ A\mathbf{v} = \lambda\mathbf{v}, \quad \mathbf{v}\neq\mathbf{0} \qquad\Longleftrightarrow\qquad \det(A - \lambda I) = 0 $$
+        <div class="eq-note">\(A\mathbf{v}=\lambda\mathbf{v}\) says: applying \(A\) to \(\mathbf{v}\) just rescales it by \(\lambda\). For a nonzero \(\mathbf{v}\) to exist, \(A-\lambda I\) must be singular, giving the <b>characteristic polynomial</b> \(\det(A-\lambda I)=0\). For a \(2\times 2\) matrix this is the tidy quadratic \(\lambda^2 - (\operatorname{tr}A)\,\lambda + \det A = 0\), where \(\operatorname{tr}A = a+d\). Two facts fall straight out: <b>the eigenvalues sum to the trace and multiply to the determinant.</b></div>
+        </div>
+
+        <p>Eigen-decomposition is everywhere once you know its face. <strong>PCA</strong> diagonalizes the covariance matrix; its eigenvectors are the principal axes of the data cloud and the eigenvalues are the variance along each. <strong>PageRank</strong> is the dominant eigenvector of the web's link matrix. The <strong>spectral theorem</strong> guarantees that any symmetric matrix \(A = A^\top\) — covariance matrices, graph Laplacians, Gram matrices, Hessians — has real eigenvalues and a full set of <em>orthogonal</em> eigenvectors, which is what makes those objects so well-behaved. A symmetric matrix is <strong>positive-definite</strong> exactly when all its eigenvalues are positive: the condition for a strictly convex quadratic and a unique loss minimum (Stats 02).</p>
+
+        <div class="callout warn">
+          <span class="co-icon">CAVEAT</span>
+          <p><strong>Not every matrix is so tidy.</strong> A real matrix can have <em>complex</em> eigenvalues — a pure rotation \(\left[\begin{smallmatrix}0&amp;-1\\1&amp;0\end{smallmatrix}\right]\) has eigenvalues \(\pm i\) and <em>no</em> real eigenvector, because it turns every direction. Non-symmetric matrices may also be <strong>defective</strong>: they lack a full set of independent eigenvectors and cannot be diagonalized at all. The SVD (§6.5) sidesteps every one of these pathologies — it exists for <em>any</em> matrix, square or not, real or rank-deficient — which is why it, not eigen-decomposition, is the workhorse of applied linear algebra.</p>
+        </div>
+
+        <div class="widget" id="la-eigen" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT S6.2 — 2×2 EIGEN-DECOMPOSITION STEPPER</span><span class="w-sub">trace · det · CHARACTERISTIC ROOTS · EQ S6.5</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>a <output id="la-eig-a-out">2.0</output></label><input type="range" id="la-eig-a" min="-4" max="4" step="0.1" value="2"/></div>
+              <div class="ctl"><label>b <output id="la-eig-b-out">1.0</output></label><input type="range" id="la-eig-b" min="-4" max="4" step="0.1" value="1"/></div>
+              <div class="ctl"><label>c <output id="la-eig-c-out">1.0</output></label><input type="range" id="la-eig-c" min="-4" max="4" step="0.1" value="1"/></div>
+              <div class="ctl"><label>d <output id="la-eig-d-out">2.0</output></label><input type="range" id="la-eig-d" min="-4" max="4" step="0.1" value="2"/></div>
+            </div>
+            <div id="la-eig-steps" style="border:1px solid var(--hairline);border-radius:4px;overflow:hidden;margin-top:6px;"></div>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">trace = λ₁ + λ₂</div><div class="r-value" id="la-eig-tr">—</div></div>
+              <div class="readout"><div class="r-label">det = λ₁ · λ₂</div><div class="r-value" id="la-eig-dt">—</div></div>
+              <div class="readout acc"><div class="r-label">EIGENVALUES</div><div class="r-value" id="la-eig-vals" style="font-size:14px;">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Reads off the characteristic equation step by step: trace, determinant, discriminant \(\tau^2 - 4\delta\), then the roots \(\lambda = \tfrac{1}{2}\big(\tau \pm \sqrt{\tau^2 - 4\delta}\big)\). When the discriminant goes negative the roots turn <span style="color:var(--blue);">complex</span> (a rotational map — no real eigenvector). The default \(\left[\begin{smallmatrix}2&amp;1\\1&amp;2\end{smallmatrix}\right]\) gives \(\tau=4\), \(\delta=3\), discriminant \(4\), and eigenvalues <b>3 and 1</b>. Notice trace and determinant always equal the sum and product of the eigenvalues — a free correctness check.</div>
+        </div>
+
+        <div class="exercise" data-answer="3" data-tol="0.001" data-hint="A diagonal matrix has its eigenvalues sitting on the diagonal.">
+          <div class="ex-q">What is the largest eigenvalue of the diagonal matrix \( \begin{bmatrix} 2 &amp; 0 \\ 0 &amp; 3 \end{bmatrix} \)?</div>
+          <div class="ex-reveal-src">For a diagonal (or triangular) matrix the eigenvalues are exactly the diagonal entries: here \( \{2, 3\} \). The largest is <b>3</b>. (Check: trace \(= 2+3 = 5 = \lambda_1 + \lambda_2\); determinant \(= 2\cdot 3 = 6 = \lambda_1\lambda_2\). ✓)</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Power iteration: find the dominant eigenvector, compare to numpy.linalg.eig
+import numpy as np
+rng = np.random.default_rng(0)
+
+A = np.array([[2.0, 1.0],
+              [1.0, 2.0]])           # symmetric: eigenvalues 3 and 1
+
+v = rng.normal(size=2)               # random start
+v /= np.linalg.norm(v)
+for it in range(50):                 # repeatedly apply A and renormalize
+    w = A @ v
+    v = w / np.linalg.norm(w)
+lam = v @ (A @ v)                    # Rayleigh quotient -> the eigenvalue
+
+# numpy's reference decomposition
+vals, vecs = np.linalg.eig(A)
+top = np.argmax(np.abs(vals))
+
+print("power-iteration eigenvalue :", round(float(lam), 6))
+print("numpy top eigenvalue       :", round(float(vals[top].real), 6))
+print("power-iteration eigenvector:", np.round(np.abs(v), 4))
+print("numpy top eigenvector      :", np.round(np.abs(vecs[:, top]), 4))
+print("A v - lambda v (~0)        :", np.round(A @ v - lam * v, 6))</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 6.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">6.5</span><h2>The Singular Value Decomposition — the master factorization</h2></div>
+        <p>Eigen-decomposition is fussy: it wants square, ideally symmetric, non-defective matrices. The <strong>Singular Value Decomposition</strong> has no such demands. <em>Every</em> matrix — rectangular, rank-deficient, whatever — factors as a rotation, a pure axis-aligned scaling, and another rotation:</p>
+
+        <div class="eq"><span class="eq-tag">EQ S6.6 — THE SVD</span>
+        $$ A = U\Sigma V^\top, \qquad A \in \mathbb{R}^{m\times n},\; U^\top U = I,\; V^\top V = I,\; \Sigma = \operatorname{diag}(\sigma_1 \ge \sigma_2 \ge \cdots \ge 0) $$
+        <div class="eq-note">\(V\) (right singular vectors) is an orthonormal basis of the input space, \(U\) (left singular vectors) of the output space, and the <b>singular values</b> \(\sigma_i\) on \(\Sigma\) say how much each direction is stretched. Read it as a recipe: \(A\) rotates by \(V^\top\), scales each axis by \(\sigma_i\), then rotates by \(U\). The rank of \(A\) is just the count of nonzero \(\sigma_i\). The singular values are the square roots of the eigenvalues of \(A^\top A\), connecting the SVD back to §6.4. Every matrix has one; it is the closest thing linear algebra has to a universal tool.</div>
+        </div>
+
+        <p>The SVD's superpower is <strong>optimal compression</strong>. Keep only the largest \(k\) singular values — zero out the rest — and you get the best possible rank-\(k\) approximation of \(A\), in a precise sense. This is the <strong>Eckart–Young theorem</strong>, one of the most useful results in all of applied mathematics:</p>
+
+        <div class="eq"><span class="eq-tag">EQ S6.7 — ECKART–YOUNG: BEST LOW-RANK APPROXIMATION</span>
+        $$ A_k = \sum_{i=1}^{k} \sigma_i\, \mathbf{u}_i \mathbf{v}_i^\top \;=\; \arg\min_{\operatorname{rank}(B)\le k} \|A - B\|, \qquad \|A - A_k\|_F = \sqrt{\textstyle\sum_{i>k}\sigma_i^2} $$
+        <div class="eq-note">No rank-\(k\) matrix approximates \(A\) better than truncating its SVD — true in both the spectral norm (error \(=\sigma_{k+1}\)) and the Frobenius norm (error \(=\sqrt{\sum_{i>k}\sigma_i^2}\)). <b>The reconstruction error is governed entirely by the singular values you threw away.</b> If the spectrum decays fast — as it does for almost all real data — a tiny \(k\) captures nearly everything. This single theorem underlies PCA, image compression, latent-semantic indexing, collaborative-filtering recommenders, and the low-rank update at the heart of LoRA fine-tuning (Vol II · CH 06).</div>
+        </div>
+
+        <p>The connection to PCA is exact: center your data matrix, take its SVD, and the right singular vectors \(\mathbf{v}_i\) are the principal components, with variance \(\sigma_i^2/(N-1)\) along each. Computing PCA via the SVD rather than by forming \(X^\top X\) is also numerically preferable — squaring the matrix squares its condition number and throws away precision.</p>
+
+        <div class="widget" id="la-svd" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT S6.3 — SVD LOW-RANK APPROXIMATION</span><span class="w-sub">RANK-k RECONSTRUCTION · ECKART–YOUNG · EQ S6.7</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>TARGET</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-la-svd-img="ramp">SMOOTH RAMP</button>
+                  <button class="w-btn ghost" data-la-svd-img="ring">RING</button>
+                  <button class="w-btn ghost" data-la-svd-img="check">CHECKER</button>
+                </div>
+              </div>
+            </div>
+            <div class="ctl-row">
+              <div class="ctl"><label>KEPT RANK k <output id="la-svd-k-out">3</output></label><input type="range" id="la-svd-k" min="1" max="16" step="1" value="3"/></div>
+            </div>
+            <canvas class="w-canvas" id="la-svd-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">FULL RANK</div><div class="r-value" id="la-svd-rank">16</div></div>
+              <div class="readout acc"><div class="r-label">RELATIVE ERROR ‖A−Aₖ‖/‖A‖</div><div class="r-value" id="la-svd-err">—</div></div>
+              <div class="readout"><div class="r-label">STORAGE vs FULL</div><div class="r-value" id="la-svd-store">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Left panel is the original \(16\times16\) matrix as a heatmap; right panel is its rank-\(k\) reconstruction \(A_k = \sum_{i\le k}\sigma_i\mathbf{u}_i\mathbf{v}_i^\top\). Drag \(k\) and watch the error fall. The <b>smooth ramp</b> is essentially rank 2 — by \(k=2\) the error is already near zero. The <b>ring</b> has a longer tail of singular values, so its error decays gradually. The blocky <b>checkerboard</b> hides a surprise: despite looking high-frequency it has only two nonzero singular values (both \(\approx 8\)), so \(k=2\) reconstructs it perfectly — a reminder that <em>visual</em> complexity and <em>algebraic</em> rank are different things. A rank-\(k\) factorization stores \(k(m+n)\) numbers instead of \(mn\): at \(k=3\) on a \(16\times16\) grid that is 96 vs 256 numbers, and the gap widens enormously at scale. The error reported is exactly \(\sqrt{\sum_{i>k}\sigma_i^2}/\|A\|_F\), as Eckart–Young promises.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># SVD a small matrix, reconstruct with the top-k singular values, print the error
+import numpy as np
+rng = np.random.default_rng(1)
+
+# a 6x5 matrix with a deliberately low-rank core plus a little noise
+core = rng.normal(size=(6, 2)) @ rng.normal(size=(2, 5))   # true rank 2
+A = core + 0.05 * rng.normal(size=(6, 5))
+
+U, s, Vt = np.linalg.svd(A, full_matrices=False)
+print("singular values:", np.round(s, 3))
+
+normA = np.linalg.norm(A)             # Frobenius norm
+for k in range(1, len(s) + 1):
+    Ak = (U[:, :k] * s[:k]) @ Vt[:k]                  # rank-k reconstruction
+    err_measured = np.linalg.norm(A - Ak) / normA
+    err_formula  = np.sqrt((s[k:] ** 2).sum()) / normA   # Eckart-Young, EQ S6.7
+    print(f"k={k}: rel.error {err_measured:.4f}  "
+          f"(formula sqrt(sum sigma_i>k^2): {err_formula:.4f})")
+
+print("\nerror collapses after k=2 -- the matrix is essentially rank 2,")
+print("and the measured error matches the Eckart-Young formula exactly.")
+plot_xy(list(range(1, len(s) + 1)), list(s))   # the singular-value spectrum</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>You now have the static geometry; next comes the dynamics.</strong> A linear map applied <em>over and over</em> — a stochastic transition matrix stepping a probability distribution forward — is a Markov chain, and its long-run behavior is decided by exactly the eigenstructure you just met: the dominant eigenvalue is 1, and its eigenvector is the stationary distribution. Chapter 07 turns the matrix loose in time.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 6.R — References ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">6.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://math.mit.edu/~gs/linearalgebra/" target="_blank" rel="noopener">Strang, G. (2016). <span class="ref-venue">Introduction to Linear Algebra</span> (5th ed.). Wellesley-Cambridge Press.</a> <span class="ref-meta">the standard intuition-first text for the column-space, rank, eigenvalue, and SVD material here.</span></li>
+          <li><a href="https://doi.org/10.56021/9781421407944" target="_blank" rel="noopener">Golub, G. H. &amp; Van Loan, C. F. (2013). <span class="ref-venue">Matrix Computations</span> (4th ed.). Johns Hopkins University Press.</a> <span class="ref-meta">the canonical numerical reference for the SVD, power iteration, and conditioning.</span></li>
+          <li><a href="https://doi.org/10.1007/BF02288367" target="_blank" rel="noopener">Eckart, C. &amp; Young, G. (1936). <span class="ref-venue">The approximation of one matrix by another of lower rank</span>. <i>Psychometrika</i>, 1(3), 211–218.</a> <span class="ref-meta">the optimal low-rank approximation theorem (EQ S6.7).</span></li>
+          <li><a href="https://doi.org/10.1080/14786440109462720" target="_blank" rel="noopener">Pearson, K. (1901). <span class="ref-venue">On lines and planes of closest fit to systems of points in space</span>. <i>Philosophical Magazine</i>, 2(11), 559–572.</a> <span class="ref-meta">the origin of principal-component analysis as projection onto a best-fit subspace (§6.2, §6.5).</span></li>
+          <li><a href="https://doi.org/10.1137/1035134" target="_blank" rel="noopener">Stewart, G. W. (1993). <span class="ref-venue">On the early history of the singular value decomposition</span>. <i>SIAM Review</i>, 35(4), 551–566.</a> <span class="ref-meta">historical context tracing the SVD from Beltrami and Jordan to its modern role.</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../stats/05-bayesian.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">05</span> Bayesian</div></a>
+        <a class="next" href="../stats/07-markov-chains.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">07</span> Markov Chains</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — STATISTICS · CH 06</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* ============================================================
+   Linear Algebra for Machine Learning — chapter instruments
+   Single IIFE, no globals. All math (eigenvalues, SVD) shares
+   a tiny numerics core so the widgets agree with the Python cells.
+   ============================================================ */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  function fnum(x, d) { d = d === undefined ? 2 : d; return (Math.round(x * Math.pow(10, d)) / Math.pow(10, d)).toFixed(d); }
+
+  /* real eigenvalues of a 2x2 [[a,b],[c,d]]; returns {real, l1, l2} */
+  function eig2(a, b, c, d) {
+    var tr = a + d, det = a * d - b * c;
+    var disc = tr * tr - 4 * det;
+    if (disc >= 0) {
+      var s = Math.sqrt(disc);
+      return { real: true, tr: tr, det: det, disc: disc, l1: (tr + s) / 2, l2: (tr - s) / 2 };
+    }
+    var im = Math.sqrt(-disc) / 2;
+    return { real: false, tr: tr, det: det, disc: disc, re: tr / 2, im: im };
+  }
+  /* unit eigenvector of [[a,b],[c,d]] for eigenvalue lam (returns null if degenerate) */
+  function eigvec2(a, b, c, d, lam) {
+    /* solve (A - lam I) v = 0 ; pick the more reliable row */
+    var r1 = [a - lam, b], r2 = [c, d - lam];
+    var v;
+    if (Math.abs(r1[0]) + Math.abs(r1[1]) >= Math.abs(r2[0]) + Math.abs(r2[1])) {
+      v = [r1[1], -(r1[0])];           /* orthogonal to row 1 */
+    } else {
+      v = [r2[1], -(r2[0])];
+    }
+    var n = Math.hypot(v[0], v[1]);
+    if (n < 1e-9) return null;
+    return [v[0] / n, v[1] / n];
+  }
+
+  /* ========================================================
+     INSTRUMENT S6.1 — 2x2 linear-map visualizer
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("la-map");
+    if (!root) return;
+    var ids = ["a", "b", "c", "d"];
+    var inp = {}, out = {};
+    ids.forEach(function (k) {
+      inp[k] = document.getElementById("la-map-" + k);
+      out[k] = document.getElementById("la-map-" + k + "-out");
+    });
+    var canvas = document.getElementById("la-map-canvas");
+    var detEl = document.getElementById("la-map-det");
+    var rankEl = document.getElementById("la-map-rank");
+    var eigsEl = document.getElementById("la-map-eigs");
+
+    function render() {
+      var a = +inp.a.value, b = +inp.b.value, c = +inp.c.value, d = +inp.d.value;
+      out.a.textContent = fnum(a, 1); out.b.textContent = fnum(b, 1);
+      out.c.textContent = fnum(c, 1); out.d.textContent = fnum(d, 1);
+
+      var det = a * d - b * c;
+      detEl.textContent = (det >= 0 ? "+" : "") + fnum(det, 2);
+      detEl.style.color = Math.abs(det) < 1e-3 ? C.RED : C.MINT;
+      var rank = Math.abs(det) > 1e-6 ? 2 : ((Math.abs(a) + Math.abs(b) + Math.abs(c) + Math.abs(d)) > 1e-6 ? 1 : 0);
+      rankEl.textContent = rank;
+
+      var e = eig2(a, b, c, d);
+      if (e.real) eigsEl.textContent = fnum(e.l1, 2) + " , " + fnum(e.l2, 2);
+      else eigsEl.textContent = "complex (rotation)";
+
+      var cv = FM.setupCanvas(canvas, 340);
+      var ctx = cv.ctx, w = cv.w, h = cv.h;
+      ctx.clearRect(0, 0, w, h);
+      var cx = w / 2, cy = h / 2;
+      var scale = Math.min(w, h) / 9;      /* world units -> px; show ~ +-4.5 */
+      function PX(x, y) { return [cx + x * scale, cy - y * scale]; }
+
+      /* input grid (faint) */
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = "rgba(99,99,99,.28)";
+      var g;
+      for (g = -4; g <= 4; g++) {
+        var p1 = PX(g, -4), p2 = PX(g, 4);
+        ctx.beginPath(); ctx.moveTo(p1[0], p1[1]); ctx.lineTo(p2[0], p2[1]); ctx.stroke();
+        var p3 = PX(-4, g), p4 = PX(4, g);
+        ctx.beginPath(); ctx.moveTo(p3[0], p3[1]); ctx.lineTo(p4[0], p4[1]); ctx.stroke();
+      }
+      /* transformed grid (mint) : image of input lines under A */
+      function MAP(x, y) { return [a * x + b * y, c * x + d * y]; }
+      ctx.strokeStyle = "rgba(166,242,204,.55)"; ctx.lineWidth = 1;
+      for (g = -4; g <= 4; g++) {
+        var m1 = MAP(g, -4), m2 = MAP(g, 4);
+        var q1 = PX(m1[0], m1[1]), q2 = PX(m2[0], m2[1]);
+        ctx.beginPath(); ctx.moveTo(q1[0], q1[1]); ctx.lineTo(q2[0], q2[1]); ctx.stroke();
+        var m3 = MAP(-4, g), m4 = MAP(4, g);
+        var q3 = PX(m3[0], m3[1]), q4 = PX(m4[0], m4[1]);
+        ctx.beginPath(); ctx.moveTo(q3[0], q3[1]); ctx.lineTo(q4[0], q4[1]); ctx.stroke();
+      }
+      /* unit circle -> ellipse (shows the singular-value stretch) */
+      ctx.strokeStyle = "rgba(166,242,204,.9)"; ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      var i;
+      for (i = 0; i <= 96; i++) {
+        var t = i / 96 * Math.PI * 2;
+        var mp = MAP(Math.cos(t), Math.sin(t));
+        var pp = PX(mp[0], mp[1]);
+        if (i === 0) ctx.moveTo(pp[0], pp[1]); else ctx.lineTo(pp[0], pp[1]);
+      }
+      ctx.stroke();
+
+      /* eigenvector rays (red) when real */
+      if (e.real) {
+        [e.l1, e.l2].forEach(function (lam) {
+          var v = eigvec2(a, b, c, d, lam);
+          if (!v) return;
+          var L = 4.4;
+          var a1 = PX(-v[0] * L, -v[1] * L), a2 = PX(v[0] * L, v[1] * L);
+          ctx.strokeStyle = C.RED; ctx.lineWidth = 1.5;
+          ctx.setLineDash([5, 4]);
+          ctx.beginPath(); ctx.moveTo(a1[0], a1[1]); ctx.lineTo(a2[0], a2[1]); ctx.stroke();
+          ctx.setLineDash([]);
+        });
+      }
+
+      /* basis vectors -> columns of A (blue arrows) */
+      function arrow(x, y, col) {
+        var o = PX(0, 0), p = PX(x, y);
+        ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(o[0], o[1]); ctx.lineTo(p[0], p[1]); ctx.stroke();
+        var ang = Math.atan2(p[1] - o[1], p[0] - o[0]);
+        ctx.beginPath();
+        ctx.moveTo(p[0], p[1]);
+        ctx.lineTo(p[0] - 8 * Math.cos(ang - 0.4), p[1] - 8 * Math.sin(ang - 0.4));
+        ctx.lineTo(p[0] - 8 * Math.cos(ang + 0.4), p[1] - 8 * Math.sin(ang + 0.4));
+        ctx.closePath(); ctx.fill();
+      }
+      arrow(a, c, C.BLUE);     /* A e1 = first column (a, c) */
+      arrow(b, d, C.BLUE);     /* A e2 = second column (b, d) */
+
+      /* origin dot + labels */
+      var o0 = PX(0, 0);
+      ctx.fillStyle = C.BRIGHT;
+      ctx.beginPath(); ctx.arc(o0[0], o0[1], 2.5, 0, 2 * Math.PI); ctx.fill();
+      ctx.font = C.MONO; ctx.fillStyle = C.SEC;
+      ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillStyle = C.BLUE; ctx.fillText("→ columns of A", 8, 8);
+      if (e.real) { ctx.fillStyle = C.RED; ctx.fillText("⋯ eigen-directions", 8, 22); }
+      ctx.fillStyle = C.MINT; ctx.fillText("unit circle → ellipse", 8, e.real ? 36 : 22);
+    }
+    ids.forEach(function (k) { inp[k].addEventListener("input", render); });
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT S6.2 — 2x2 eigen-decomposition stepper
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("la-eigen");
+    if (!root) return;
+    var ids = ["a", "b", "c", "d"];
+    var inp = {}, out = {};
+    ids.forEach(function (k) {
+      inp[k] = document.getElementById("la-eig-" + k);
+      out[k] = document.getElementById("la-eig-" + k + "-out");
+    });
+    var stepsEl = document.getElementById("la-eig-steps");
+    var trEl = document.getElementById("la-eig-tr");
+    var dtEl = document.getElementById("la-eig-dt");
+    var valsEl = document.getElementById("la-eig-vals");
+
+    function stepRow(n, html) {
+      return '<div style="display:flex;gap:12px;align-items:baseline;padding:9px 14px;border-bottom:1px solid var(--hairline);">' +
+             '<span style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.14em;color:var(--text-muted);min-width:18px;">' + n + '</span>' +
+             '<span style="font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--text);">' + html + '</span></div>';
+    }
+    function render() {
+      var a = +inp.a.value, b = +inp.b.value, c = +inp.c.value, d = +inp.d.value;
+      out.a.textContent = fnum(a, 1); out.b.textContent = fnum(b, 1);
+      out.c.textContent = fnum(c, 1); out.d.textContent = fnum(d, 1);
+
+      var e = eig2(a, b, c, d);
+      var rows = "";
+      rows += stepRow("01", "trace τ = a + d = " + fnum(a, 1) + " + " + fnum(d, 1) + " = <b>" + fnum(e.tr, 2) + "</b>");
+      rows += stepRow("02", "det δ = ad − bc = " + fnum(a * d, 2) + " − " + fnum(b * c, 2) + " = <b>" + fnum(e.det, 2) + "</b>");
+      rows += stepRow("03", "discriminant τ² − 4δ = " + fnum(e.tr * e.tr, 2) + " − " + fnum(4 * e.det, 2) + " = <b>" + fnum(e.disc, 2) + "</b>");
+      if (e.real) {
+        rows += stepRow("04", "λ = ½(τ ± √disc) = ½(" + fnum(e.tr, 2) + " ± " + fnum(Math.sqrt(e.disc), 2) + ")");
+        rows += stepRow("05", "<span style='color:var(--accent);'>λ₁ = " + fnum(e.l1, 3) + " , λ₂ = " + fnum(e.l2, 3) + "</span>");
+        valsEl.textContent = fnum(e.l1, 3) + " , " + fnum(e.l2, 3);
+        valsEl.style.color = C.MINT;
+      } else {
+        rows += stepRow("04", "discriminant &lt; 0 → complex roots (a rotation: no real eigenvector)");
+        rows += stepRow("05", "<span style='color:var(--blue);'>λ = " + fnum(e.re, 3) + " ± " + fnum(e.im, 3) + " i</span>");
+        valsEl.textContent = fnum(e.re, 2) + " ± " + fnum(e.im, 2) + "i";
+        valsEl.style.color = C.BLUE;
+      }
+      stepsEl.innerHTML = rows;
+      trEl.textContent = fnum(e.tr, 2);
+      dtEl.textContent = fnum(e.det, 2);
+    }
+    ids.forEach(function (k) { inp[k].addEventListener("input", render); });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT S6.3 — SVD low-rank approximation
+     Jacobi eigensolver on A^T A -> singular values & vectors,
+     so the widget needs no external linear-algebra library.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("la-svd");
+    if (!root) return;
+    var N = 16;
+    var kIn = document.getElementById("la-svd-k");
+    var kOut = document.getElementById("la-svd-k-out");
+    var canvas = document.getElementById("la-svd-canvas");
+    var errEl = document.getElementById("la-svd-err");
+    var storeEl = document.getElementById("la-svd-store");
+    var imgBtns = root.querySelectorAll("[data-la-svd-img]");
+    var which = "ramp";
+
+    /* --- build the target matrices (N x N) --- */
+    function buildMatrix(kind) {
+      var M = [], i, j;
+      for (i = 0; i < N; i++) {
+        M[i] = [];
+        for (j = 0; j < N; j++) {
+          if (kind === "ring") {
+            var dx = i - (N - 1) / 2, dy = j - (N - 1) / 2;
+            var rr = Math.sqrt(dx * dx + dy * dy);
+            M[i][j] = Math.exp(-Math.pow(rr - 5, 2) / 4);          /* a soft ring */
+          } else if (kind === "check") {
+            M[i][j] = ((i >> 1) + (j >> 1)) % 2 === 0 ? 1 : 0;     /* 2x2 checker */
+          } else {
+            M[i][j] = (i + j) / (2 * (N - 1));                     /* smooth ramp */
+          }
+        }
+      }
+      return M;
+    }
+
+    /* --- symmetric eigen-decomposition via cyclic Jacobi rotations --- */
+    function jacobiEig(S) {
+      var n = S.length, i, j, p, q, sweep;
+      var A = S.map(function (r) { return r.slice(); });
+      var V = [];
+      for (i = 0; i < n; i++) { V[i] = []; for (j = 0; j < n; j++) V[i][j] = (i === j ? 1 : 0); }
+      for (sweep = 0; sweep < 60; sweep++) {
+        var off = 0;
+        for (p = 0; p < n; p++) for (q = p + 1; q < n; q++) off += A[p][q] * A[p][q];
+        if (off < 1e-18) break;
+        for (p = 0; p < n; p++) {
+          for (q = p + 1; q < n; q++) {
+            if (Math.abs(A[p][q]) < 1e-15) continue;
+            var theta = (A[q][q] - A[p][p]) / (2 * A[p][q]);
+            var t = (theta >= 0 ? 1 : -1) / (Math.abs(theta) + Math.sqrt(theta * theta + 1));
+            var cc = 1 / Math.sqrt(t * t + 1), ss = t * cc;
+            for (i = 0; i < n; i++) {
+              var aip = A[i][p], aiq = A[i][q];
+              A[i][p] = cc * aip - ss * aiq;
+              A[i][q] = ss * aip + cc * aiq;
+            }
+            for (i = 0; i < n; i++) {
+              var api = A[p][i], aqi = A[q][i];
+              A[p][i] = cc * api - ss * aqi;
+              A[q][i] = ss * api + cc * aqi;
+            }
+            for (i = 0; i < n; i++) {
+              var vip = V[i][p], viq = V[i][q];
+              V[i][p] = cc * vip - ss * viq;
+              V[i][q] = ss * vip + cc * viq;
+            }
+          }
+        }
+      }
+      var vals = [], idx = [];
+      for (i = 0; i < n; i++) { vals[i] = A[i][i]; idx[i] = i; }
+      idx.sort(function (x, y) { return vals[y] - vals[x]; });     /* descending */
+      return { vals: idx.map(function (k2) { return vals[k2]; }),
+               vecs: idx.map(function (k2) { return V.map(function (r) { return r[k2]; }); }) };
+    }
+
+    function matT(M) {
+      var n = M.length, m = M[0].length, T = [], i, j;
+      for (j = 0; j < m; j++) { T[j] = []; for (i = 0; i < n; i++) T[j][i] = M[i][j]; }
+      return T;
+    }
+    function matMul(Aa, Bb) {            /* Aa: nxk, Bb: kxm */
+      var n = Aa.length, k = Bb.length, m = Bb[0].length, Cc = [], i, j, l;
+      for (i = 0; i < n; i++) { Cc[i] = []; for (j = 0; j < m; j++) { var s = 0; for (l = 0; l < k; l++) s += Aa[i][l] * Bb[l][j]; Cc[i][j] = s; } }
+      return Cc;
+    }
+    function frob(M) { var s = 0, i, j; for (i = 0; i < M.length; i++) for (j = 0; j < M[0].length; j++) s += M[i][j] * M[i][j]; return Math.sqrt(s); }
+
+    /* SVD of NxN symmetric-friendly matrix via eig of A^T A.
+       sigma_i = sqrt(lambda_i), V = eigvecs of A^T A, u_i = A v_i / sigma_i */
+    function svd(M) {
+      var At = matT(M);
+      var ATA = matMul(At, M);                 /* N x N */
+      var ev = jacobiEig(ATA);
+      var sig = ev.vals.map(function (l) { return Math.sqrt(Math.max(l, 0)); });
+      var V = ev.vecs;                          /* each entry is a column vector */
+      var U = [];
+      for (var r = 0; r < sig.length; r++) {
+        var v = V[r], Av = [], i, j, acc;
+        for (i = 0; i < N; i++) { acc = 0; for (j = 0; j < N; j++) acc += M[i][j] * v[j]; Av.push(acc); }
+        var u = sig[r] > 1e-9 ? Av.map(function (x) { return x / sig[r]; }) : Av.map(function () { return 0; });
+        U.push(u);
+      }
+      return { U: U, sig: sig, V: V };
+    }
+
+    function reconstruct(svdObj, k) {
+      var R = [], i, j;
+      for (i = 0; i < N; i++) { R[i] = []; for (j = 0; j < N; j++) R[i][j] = 0; }
+      for (var r = 0; r < k; r++) {
+        var u = svdObj.U[r], v = svdObj.V[r], s = svdObj.sig[r];
+        for (i = 0; i < N; i++) for (j = 0; j < N; j++) R[i][j] += s * u[i] * v[j];
+      }
+      return R;
+    }
+
+    var current = null, svdCache = null, normA = 1;
+    function rebuild() {
+      current = buildMatrix(which);
+      svdCache = svd(current);
+      normA = frob(current);
+    }
+
+    function heat(ctx, M, x0, y0, side) {
+      var cell = side / N, i, j, lo = Infinity, hi = -Infinity;
+      for (i = 0; i < N; i++) for (j = 0; j < N; j++) { if (M[i][j] < lo) lo = M[i][j]; if (M[i][j] > hi) hi = M[i][j]; }
+      if (hi - lo < 1e-9) hi = lo + 1;
+      for (i = 0; i < N; i++) for (j = 0; j < N; j++) {
+        var t = (M[i][j] - lo) / (hi - lo);             /* 0..1 */
+        /* black -> deep green -> mint ramp */
+        var rC = Math.round(166 * t * t);
+        var gC = Math.round(43 + (242 - 43) * t);
+        var bC = Math.round(69 + (204 - 69) * t);
+        ctx.fillStyle = "rgb(" + rC + "," + (t < 0.04 ? 0 : gC) + "," + (t < 0.04 ? 0 : bC) + ")";
+        ctx.fillRect(x0 + j * cell, y0 + i * cell, cell + 0.6, cell + 0.6);
+      }
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(x0, y0, side, side);
+    }
+
+    function render() {
+      if (!svdCache) rebuild();
+      var k = +kIn.value;
+      kOut.textContent = k;
+      var Ak = reconstruct(svdCache, k);
+
+      /* relative Frobenius error == sqrt(sum_{i>k} sigma_i^2)/||A|| (Eckart-Young) */
+      var tail = 0;
+      for (var r = k; r < svdCache.sig.length; r++) tail += svdCache.sig[r] * svdCache.sig[r];
+      var relErr = Math.sqrt(tail) / normA;
+      errEl.textContent = (relErr * 100).toFixed(2) + " %";
+
+      var fullN = N * N;
+      var lowN = k * (N + N);
+      storeEl.textContent = lowN + " / " + fullN + " (" + Math.round(100 * lowN / fullN) + "%)";
+
+      var cv = FM.setupCanvas(canvas, 300);
+      var ctx = cv.ctx, w = cv.w, h = cv.h;
+      ctx.clearRect(0, 0, w, h);
+      var side = Math.min((w - 60) / 2, h - 40);
+      var gap = 40;
+      var totW = side * 2 + gap;
+      var x0 = (w - totW) / 2, y0 = (h - side) / 2 + 6;
+      heat(ctx, current, x0, y0, side);
+      heat(ctx, Ak, x0 + side + gap, y0, side);
+
+      ctx.font = C.MONO; ctx.fillStyle = C.SEC;
+      ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+      ctx.fillText("ORIGINAL  A  (rank " + N + ")", x0 + side / 2, y0 - 6);
+      ctx.fillStyle = C.MINT;
+      ctx.fillText("RECONSTRUCTION  Aₖ  (rank " + k + ")", x0 + side + gap + side / 2, y0 - 6);
+      /* arrow between */
+      ctx.strokeStyle = C.MUT; ctx.fillStyle = C.MUT; ctx.lineWidth = 1.5;
+      var ay = y0 + side / 2, ax0 = x0 + side + 8, ax1 = x0 + side + gap - 8;
+      ctx.beginPath(); ctx.moveTo(ax0, ay); ctx.lineTo(ax1, ay); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(ax1, ay); ctx.lineTo(ax1 - 6, ay - 4); ctx.lineTo(ax1 - 6, ay + 4); ctx.closePath(); ctx.fill();
+    }
+
+    imgBtns.forEach(function (b) {
+      b.addEventListener("click", function () {
+        var v = (b.getAttribute("data-la-svd-img") || "").trim();
+        which = (v === "ring" || v === "check") ? v : "ramp";
+        imgBtns.forEach(function (o) { o.classList.toggle("on", o === b); });
+        rebuild();
+        render();
+      });
+    });
+    kIn.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    rebuild();
+    render();
+  })();
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

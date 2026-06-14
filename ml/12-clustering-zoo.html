@@ -1,0 +1,988 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>The Clustering Zoo — Hierarchical, DBSCAN &amp; GMM — AI Encyclopedia</title>
+<meta name="description" content="k-means sees only round, equal blobs. This chapter builds the algorithms that see the shapes it cannot: hierarchical clustering and its dendrograms, density-based DBSCAN with a built-in noise label, and Gaussian mixture models fitted by EM — plus how to choose k and validate a clustering honestly." />
+<link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
+<meta name="theme-color" content="#000000" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+<link rel="canonical" href="https://ai-encyclopedia.com/ml/12-clustering-zoo" />
+<meta property="og:url" content="https://ai-encyclopedia.com/ml/12-clustering-zoo" />
+</head>
+<body data-track="ml" data-level="core">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ MACHINE LEARNING / 12 / CLUSTERING ZOO</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../ml/13-matrix-factorization.html">NEXT: MATRIX FACTORIZATION →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">MACHINE LEARNING · CHAPTER 12 / 15</div>
+    <h1>The Clustering Zoo — Hierarchical, DBSCAN &amp; GMM</h1>
+    <p class="lede">k-means is fast and simple, but its squared-distance-to-a-centre objective can only carve the plane into round, equal, convex blobs. Hand it two interleaving crescents, a dense core inside a sparse halo, or a stretched ellipse, and it returns a confident but wrong partition. <strong>The rest of the clustering zoo exists to see the shapes k-means cannot:</strong> linking points into trees, chasing density instead of distance, and replacing hard balls with soft, full-covariance Gaussians.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 28 MIN</b></span>
+      <span>BUILDS ON<b>ML 05 · 11</b></span>
+      <span>INSTRUMENTS<b>COMPARATOR · DENDROGRAM · EM STEPPER</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">12.1</span>What k-means cannot see</a>
+      <a href="#s2"><span class="n">12.2</span>Hierarchical &amp; dendrograms</a>
+      <a href="#s3"><span class="n">12.3</span>DBSCAN: density-based</a>
+      <a href="#s4"><span class="n">12.4</span>Gaussian mixtures &amp; EM</a>
+      <a href="#s5"><span class="n">12.5</span>Choosing k &amp; validating</a>
+      <a href="#s6"><span class="n">12.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 12.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">12.1</span><h2>What k-means cannot see (recap)</h2></div>
+        <p>Chapter 05 built k-means from scratch: drop \(k\) centroids, assign each point to its nearest one, recompute each centroid as the mean of its members, repeat. The whole method optimizes a single objective — the within-cluster sum of squared distances, or <em>inertia</em> — and that one choice of objective bakes in three assumptions the output never confesses to.</p>
+
+        <div class="eq"><span class="eq-tag">EQ M12.1 — WHAT THE INERTIA OBJECTIVE ASSUMES</span>
+        $$ J \;=\; \sum_{i=1}^{n}\big\lVert x_i - \mu_{c_i}\big\rVert^{2} \;=\; \sum_{j=1}^{k}\sum_{i \in S_j}\big\lVert x_i - \mu_j \big\rVert^{2} $$
+        <div class="eq-note">Squared Euclidean distance to a single centre \(\mu_j\) is the <em>only</em> shape information k-means has. Three consequences fall straight out of that formula: clusters are implicitly <b>spherical</b> (every direction is penalized equally — a circle, never an ellipse), <b>equal-sized</b> (a point joins whichever centre is nearer in raw distance, so a big loose cluster cannibalizes a small tight one), and <b>exhaustive</b> (every point must join some cluster — there is no term for "this is an outlier"). Real data violates all three routinely; k-means violates them silently.</div>
+        </div>
+
+        <p>The recap, then, is a list of failure modes — and a map of which animal in the zoo fixes each one:</p>
+        <table class="data">
+          <thead><tr><th>k-means assumes…</th><th>How data breaks it</th><th>Reach for…</th></tr></thead>
+          <tbody>
+            <tr><td>Clusters are convex, round balls</td><td>two interleaving crescents (the two-moons set of Ch 04) get sliced crosswise, never traced</td><td class="m">DBSCAN · spectral clustering</td></tr>
+            <tr><td>Clusters are equal-sized &amp; isotropic</td><td>a stretched ellipse, or a dense core beside a sparse halo: the boundary lands where <em>variances</em> balance, not where you would draw it</td><td class="m">Gaussian mixtures (full covariance, soft assignment)</td></tr>
+            <tr><td>Every point belongs somewhere</td><td>a handful of outliers each capture, or badly drag, a centroid</td><td class="m">DBSCAN (has a literal noise label)</td></tr>
+            <tr><td>\(k\) is known in advance</td><td>it almost never is; inertia falls monotonically with \(k\) and cannot choose it for you</td><td class="m">dendrogram cuts · DBSCAN (no \(k\)) · silhouette / BIC (§12.5)</td></tr>
+          </tbody>
+        </table>
+
+        <p>One honest framing before the algorithms arrive. There is no universally "correct" clustering — clustering is the search for structure no label ever defined, so every method optimizes a <em>proxy</em> (compactness, connectivity, density, likelihood) and the right method is the one whose proxy matches your purpose. The zoo is not a ladder from worse to better; it is a set of differently-shaped lenses. The instrument below is the whole chapter in one frame: one dataset, three lenses, three verdicts.</p>
+
+        <div class="widget" id="czoo-compare" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT M12.1 — ALGORITHM COMPARATOR</span><span class="w-sub">ONE DATASET · k-MEANS vs DBSCAN vs GMM</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>DATASET</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-czoo-data="moons">TWO MOONS</button>
+                  <button class="w-btn ghost" data-czoo-data="aniso">ELLIPSES</button>
+                  <button class="w-btn ghost" data-czoo-data="density">CORE + HALO</button>
+                  <button class="w-btn ghost" data-czoo-data="blobs">ROUND BLOBS</button>
+                </div>
+              </div>
+            </div>
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>ALGORITHM</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost" data-czoo-algo="kmeans">k-MEANS</button>
+                  <button class="w-btn ghost on" data-czoo-algo="dbscan">DBSCAN</button>
+                  <button class="w-btn ghost" data-czoo-algo="gmm">GMM</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="czoo-compare-canvas" height="340"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">CLUSTERS FOUND</div><div class="r-value" id="czoo-compare-k">—</div></div>
+              <div class="readout"><div class="r-label">NOISE / UNASSIGNED</div><div class="r-value" id="czoo-compare-noise">—</div></div>
+              <div class="readout acc"><div class="r-label">VERDICT vs TRUTH</div><div class="r-value" id="czoo-compare-verdict" style="font-size:13px;line-height:1.4;">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Each dataset has a "right" answer your eye can see. Start on <b>TWO MOONS</b> and step through the algorithms: k-means slices both crescents straight across (the centres land between the moons, not along them); the Gaussian mixture, still centre-based, does little better; only <b>DBSCAN</b> traces each crescent by following the chain of dense neighbours. Switch to <b>ELLIPSES</b> and the story inverts — there the soft, full-covariance <b>GMM</b> wins and DBSCAN, with one global density threshold, struggles. <b>CORE + HALO</b> punishes the single threshold for everyone. No animal wins every dataset; matching the lens to the shape is the entire skill.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 12.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">12.2</span><h2>Hierarchical clustering &amp; dendrograms</h2></div>
+        <p>k-means demands you commit to \(k\) before you have seen any structure. <strong>Agglomerative hierarchical clustering</strong> refuses to commit: it builds the entire family of clusterings at once, from \(n\) singletons up to one all-encompassing cluster, and lets you read off whichever level you like afterward. The algorithm is almost embarrassingly simple — start with every point as its own cluster, then repeatedly merge the two <em>closest</em> clusters until only one remains:</p>
+
+        <div class="eq"><span class="eq-tag">EQ M12.2 — AGGLOMERATIVE MERGE &amp; LINKAGE</span>
+        $$ (A^\star, B^\star) \;=\; \arg\min_{A \neq B}\; D(A, B), \qquad D_{\text{single}} = \min_{a \in A,\, b \in B}\lVert a - b\rVert, \quad D_{\text{complete}} = \max_{a \in A,\, b \in B}\lVert a - b\rVert, \quad D_{\text{ward}} = \Delta\,\text{SSE} $$
+        <div class="eq-note">Everything turns on \(D(A,B)\), the <b>linkage</b> — how you measure the distance between two <em>clusters</em>, not two points. <b>Single</b> linkage uses the nearest pair, so it chains along thin filaments and can trace non-convex shapes (but suffers "chaining", merging distinct groups joined by a single bridge of points). <b>Complete</b> linkage uses the farthest pair, forcing compact, ball-like clusters. <b>Ward</b> linkage merges the pair that increases total within-cluster squared error least — it is, in effect, hierarchical k-means and the most common default. Different linkages produce genuinely different trees from identical data; the choice is a modelling decision, not a detail.</div>
+        </div>
+
+        <p>The output is not a flat partition but a <strong>dendrogram</strong>: a binary tree whose leaves are the \(n\) points and whose every internal node is a merge, drawn at a <em>height</em> equal to the linkage distance at which that merge happened. The tree records the complete order in which structure assembled. To extract clusters you draw a horizontal line at some height \(h\) and cut: every branch the line crosses becomes one cluster. Cut low and you get many tight clusters; cut high and they fuse into a few loose ones — and the big vertical gaps in the tree (long stretches where no merge happens) mark the most natural, most stable places to cut.</p>
+
+        <p>The arithmetic of the tree itself is fixed and worth internalizing. Each merge reduces the cluster count by exactly one, starting from \(n\) and ending at \(1\), so a dataset of \(n\) points always produces exactly \(n-1\) merges — and therefore \(n-1\) internal nodes in the dendrogram.</p>
+
+        <div class="exercise" data-answer="49" data-tol="0.001" data-hint="Each agglomerative merge reduces the cluster count by one, from n singletons down to one cluster.">
+          <div class="ex-q">You run agglomerative hierarchical clustering on a dataset of \( n = 50 \) points, all the way up to a single root cluster. How many <b>merge</b> operations does the algorithm perform in total?</div>
+          <div class="ex-reveal-src">Each merge takes two clusters and makes one, so the cluster count drops by exactly 1 per merge. Starting at \( n = 50 \) singletons and ending at 1 cluster requires \( 50 - 1 = \) <b>49</b> merges — and the dendrogram therefore has 49 internal nodes, one per merge.</div>
+        </div>
+
+        <div class="exercise" data-answer="4" data-tol="0.001" data-hint="Clusters = 1 + (number of merges that happen ABOVE the cut height). Count the merge heights greater than 1.0.">
+          <div class="ex-q">A dendrogram's six leaves are joined by five merges at heights \( 0.4,\ 0.9,\ 1.1,\ 1.2,\ 2.8 \). You cut the tree with a horizontal line at height \( h = 1.0 \). How many clusters does the cut produce?</div>
+          <div class="ex-reveal-src">A cut undoes every merge that happened <em>above</em> \( h \) and keeps every merge below it intact. The merges at \( 0.4 \) and \( 0.9 \) are below \( 1.0 \) and survive; the three at \( 1.1, 1.2, 2.8 \) are above the line and are undone. Each surviving merge fuses two groups into one, so the count is \( 6 \text{ leaves} - 2 \text{ surviving merges} = \) <b>4</b> clusters. Equivalently, clusters \( = 1 + (\text{merges above the cut}) = 1 + 3 = 4 \).</div>
+        </div>
+
+        <p>Explore the cut directly. The instrument below builds a Ward dendrogram over a small seeded set; drag the cut height and watch clusters split and fuse, with the resulting partition coloured on the scatter beside it.</p>
+
+        <div class="widget" id="czoo-dendro" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT M12.2 — DENDROGRAM EXPLORER</span><span class="w-sub">WARD LINKAGE · DRAG THE CUT · EQ M12.2</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>CUT HEIGHT h <output id="czoo-dendro-h-out">2.40</output></label><input type="range" id="czoo-dendro-h" min="0" max="100" step="1" value="58"/></div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>LINKAGE</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-czoo-link="ward">WARD</button>
+                  <button class="w-btn ghost" data-czoo-link="single">SINGLE</button>
+                  <button class="w-btn ghost" data-czoo-link="complete">COMPLETE</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="czoo-dendro-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">CLUSTERS AT THIS CUT</div><div class="r-value" id="czoo-dendro-k">—</div></div>
+              <div class="readout"><div class="r-label">CUT HEIGHT</div><div class="r-value" id="czoo-dendro-hval">—</div></div>
+              <div class="readout"><div class="r-label">LARGEST GAP (NATURAL CUT)</div><div class="r-value" id="czoo-dendro-gap" style="font-size:13px;">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The dashed white line is your cut; everything it crosses is a cluster, coloured live on the scatter at right. Slide it down through a long vertical gap and the cluster count is stable across the whole gap — that flatness is exactly why the gap marks a "natural" number of clusters. Now switch linkage: <b>SINGLE</b> chains the points into long straggly groups (watch one bridge merge two visually-separate blobs early), while <b>COMPLETE</b> and <b>WARD</b> insist on compact balls. Same points, three different trees — linkage is a real choice.</div>
+        </div>
+
+        <p class="note"><strong>Cost and when to use it.</strong> The naive algorithm is \(O(n^3)\) time and \(O(n^2)\) memory (it holds the full pairwise-distance matrix), so vanilla agglomerative clustering tops out around tens of thousands of points — SLINK/CLINK bring single and complete linkage down to \(O(n^2)\), and for larger \(n\) you sub-sample or switch tools. Its real strengths are the <em>nested</em> structure (taxonomies, gene-expression heatmaps, document hierarchies) and not having to pick \(k\) up front. The honest caveat: agglomerative merges are <em>greedy and irrevocable</em> — a bad early merge can never be undone, which is precisely the weakness density-based methods sidestep next.</p>
+      </section>
+
+      <!-- ====================== 12.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">12.3</span><h2>DBSCAN — density-based clustering</h2></div>
+        <p>Centre-based methods ask "which prototype is this point near?". <strong>DBSCAN</strong> (Density-Based Spatial Clustering of Applications with Noise) asks a different and often better question: "is this point in a crowded neighbourhood, and is that crowd connected to other crowds?". A cluster, in this view, is simply a connected region of high point density, of <em>any shape</em>, surrounded by regions of low density. That single reframing buys three things k-means cannot offer: arbitrary cluster shapes, no need to specify \(k\), and a built-in notion of noise.</p>
+
+        <p>DBSCAN has exactly two parameters and three kinds of point. The parameters are \(\varepsilon\) (the neighbourhood radius) and <code>minPts</code> (how many neighbours make a point "dense"). The point types follow:</p>
+
+        <div class="eq"><span class="eq-tag">EQ M12.3 — CORE, BORDER, NOISE</span>
+        $$ N_\varepsilon(p) = \{\, q : \lVert p - q \rVert \le \varepsilon \,\}, \qquad p \text{ is a } \textbf{core point} \iff \lvert N_\varepsilon(p) \rvert \ge \texttt{minPts} $$
+        <div class="eq-note">\(N_\varepsilon(p)\) is the set of points within radius \(\varepsilon\) of \(p\), <em>including \(p\) itself</em>. A <b>core point</b> has at least <code>minPts</code> neighbours in that ball — it sits in a crowd. A <b>border point</b> is not itself dense but falls within \(\varepsilon\) of some core point — it is on the fringe of a crowd. A <b>noise point</b> is neither: too few neighbours, and not close enough to any core. Clusters grow by <b>density-reachability</b>: start at any unvisited core point and absorb everything reachable through a chain of overlapping \(\varepsilon\)-balls of core points. <b>Because the cluster follows the chain of dense neighbours rather than a distance-to-centre, it can bend into any shape</b> — crescents, spirals, rings — that k-means would shatter.</div>
+        </div>
+
+        <p>The noise label is the quiet superpower. Every other method in this chapter forces every point into some cluster; DBSCAN explicitly refuses, tagging genuinely isolated points as noise rather than letting one outlier drag a centroid across the plane. This is a feature, not a bug — but it is also the source of the most common exam confusion, so state it plainly: a point in a sparse, low-density region (too few neighbours within \(\varepsilon\), and not within \(\varepsilon\) of any core point) is labelled <em>noise</em> and left out of every cluster.</p>
+
+        <div class="exercise" data-answer="true" data-tol="0" data-hint="DBSCAN is the one method here that does NOT force every point into a cluster.">
+          <div class="ex-q">True or false: DBSCAN labels points that lie in low-density regions — too few neighbours within \( \varepsilon \), and not within \( \varepsilon \) of any core point — as <b>noise</b>, leaving them out of every cluster. (Enter <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">This is exactly the definition of a noise point in EQ M12.3: neither core (fewer than <code>minPts</code> neighbours) nor border (not within \( \varepsilon \) of a core point). Unlike k-means, hierarchical clustering, or GMM — all of which assign every point to some cluster — DBSCAN has a dedicated noise label for low-density points. The statement is <b>true</b>.</div>
+        </div>
+
+        <p>Choosing the two knobs is the whole craft of DBSCAN. <code>minPts</code> is usually set to roughly \(2 \times \text{dimensionality}\) (so \(\approx 4\) for 2-D data; larger for noisier or higher-dimensional data), and \(\varepsilon\) is read off a <strong>k-distance plot</strong>: sort every point's distance to its \(k\)-th nearest neighbour and look for the "elbow" where the curve turns sharply upward — that knee is the density boundary between cluster and noise. The build-it-yourself cell below implements the whole algorithm in numpy and runs it on the two-moons set k-means famously fails on.</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># DBSCAN from scratch (EQ M12.3) on two interleaving moons.
+# k-means slices the crescents; density-reachability traces them.
+import numpy as np
+rng = np.random.default_rng(7)
+
+def two_moons(n=150, noise=0.07):
+    t = np.linspace(0, np.pi, n)
+    a = np.c_[np.cos(t),        np.sin(t)]          # upper crescent
+    b = np.c_[1 - np.cos(t), 1 - np.sin(t) - 0.5]   # lower, offset crescent
+    X = np.vstack([a, b]) + rng.normal(0, noise, (2*n, 2))
+    return X
+
+def dbscan(X, eps, min_pts):
+    n = len(X); labels = np.full(n, -1); cid = -1            # -1 = noise/unset
+    D = np.sqrt(((X[:, None] - X[None]) ** 2).sum(-1))       # pairwise distances
+    neigh = [np.where(D[i] <= eps)[0] for i in range(n)]     # eps-balls (EQ M12.3)
+    visited = np.zeros(n, bool)
+    for i in range(n):
+        if visited[i]: continue
+        visited[i] = True
+        if len(neigh[i]) < min_pts: continue                # not core -> leave as noise
+        cid += 1; labels[i] = cid; seeds = list(neigh[i])   # start a new cluster
+        k = 0
+        while k < len(seeds):                               # grow by reachability
+            j = seeds[k]; k += 1
+            if labels[j] == -1: labels[j] = cid             # absorb a border point
+            if not visited[j]:
+                visited[j] = True
+                if len(neigh[j]) >= min_pts:                # j is core -> expand
+                    seeds += [q for q in neigh[j] if q not in seeds]
+    return labels
+
+X = two_moons()
+labels = dbscan(X, eps=0.22, min_pts=5)
+n_clusters = labels.max() + 1
+n_noise = int((labels == -1).sum())
+print(f"clusters found : {n_clusters}   (truth = 2 crescents)")
+print(f"noise points   : {n_noise}   (k-means would force ALL of these into a cluster)")
+plot_scatter(X[:, 0], X[:, 1], labels)</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — drop eps to 0.1 and watch the moons shatter into noise</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <p class="note"><strong>The honest limitations — and the modern fix.</strong> DBSCAN uses a single global \(\varepsilon\), so it struggles when clusters have very different densities (the right \(\varepsilon\) for the dense core is wrong for the sparse halo — you watched this in Instrument M12.1's CORE + HALO set), and like all Euclidean-distance methods it degrades in high dimensions as distances concentrate. Its near-universal successor, <strong>HDBSCAN</strong> (2017), removes the \(\varepsilon\) knob entirely: it builds a hierarchy across <em>all</em> density levels and extracts the most stable clusters, handling variable density gracefully — it is the default density clusterer in practice today. Worth knowing the lineage: DBSCAN is the idea, HDBSCAN is what you usually run.</p>
+      </section>
+
+      <!-- ====================== 12.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">12.4</span><h2>Gaussian Mixture Models &amp; EM</h2></div>
+        <p>k-means makes two hard commitments per point: a hard assignment (you belong to cluster 3, full stop) and a single isotropic radius (every cluster is a circle). The <strong>Gaussian mixture model</strong> softens both. It models the data as having been generated by \(k\) Gaussians blended together: to draw a point, first pick a component \(j\) with probability \(\pi_j\), then sample from that component's Gaussian \(\mathcal{N}(\mu_j, \Sigma_j)\). The density of any point is the weighted sum over all components:</p>
+
+        <div class="eq"><span class="eq-tag">EQ M12.4 — THE MIXTURE DENSITY</span>
+        $$ p(x) \;=\; \sum_{j=1}^{k} \pi_j\, \mathcal{N}\!\big(x \mid \mu_j,\, \Sigma_j\big), \qquad \pi_j \ge 0,\quad \sum_{j=1}^{k}\pi_j = 1 $$
+        <div class="eq-note">\(\pi_j\) is the <b>mixing weight</b> (the prior probability of component \(j\)); \(\mu_j\) its mean; \(\Sigma_j\) its <b>covariance matrix</b>, which is what frees the model from k-means' circles. A diagonal \(\Sigma_j\) gives axis-aligned ellipses; a <b>full</b> \(\Sigma_j\) gives ellipses tilted at any angle and of any aspect ratio — so a GMM can fit the stretched, rotated clusters k-means mangles. The constraint \(\sum_j \pi_j = 1\) makes \(p(x)\) a proper probability density. In fact <b>k-means is the limiting case of a GMM</b> with equal weights, shared spherical covariance \(\Sigma_j = \sigma^2 I\), and \(\sigma \to 0\) forcing assignments hard.</div>
+        </div>
+
+        <p>Because each component is a full Gaussian, a GMM does not say "point \(i\) is in cluster \(j\)". It computes a <strong>responsibility</strong> \(\gamma_{ij}\) — the posterior probability that component \(j\) generated point \(i\) — a soft, fractional membership that can be 70% one cluster and 30% another. That softness is the whole point: it honestly represents the ambiguity of points sitting between clusters, which hard k-means simply discards.</p>
+
+        <div class="eq"><span class="eq-tag">EQ M12.5 — EM: THE E-STEP AND M-STEP</span>
+        $$ \textbf{E:}\;\; \gamma_{ij} = \frac{\pi_j\,\mathcal{N}(x_i \mid \mu_j, \Sigma_j)}{\sum_{l=1}^{k}\pi_l\,\mathcal{N}(x_i \mid \mu_l, \Sigma_l)} \qquad\qquad \textbf{M:}\;\; \pi_j = \frac{N_j}{n},\;\; \mu_j = \frac{1}{N_j}\sum_i \gamma_{ij} x_i,\;\; \Sigma_j = \frac{1}{N_j}\sum_i \gamma_{ij}(x_i - \mu_j)(x_i - \mu_j)^{\top} $$
+        <div class="eq-note">where \(N_j = \sum_i \gamma_{ij}\) is the <b>effective</b> number of points in component \(j\). The <b>Expectation–Maximization</b> algorithm alternates exactly as Lloyd's loop does, but soft: the <b>E-step</b> fixes the parameters and computes every responsibility (a soft "assign"); the <b>M-step</b> fixes the responsibilities and re-estimates each \(\pi_j, \mu_j, \Sigma_j\) as responsibility-weighted statistics (a soft "update"). Each full iteration is guaranteed to <b>increase the data log-likelihood</b> \(\sum_i \log p(x_i)\) — or leave it unchanged — and it converges to a local maximum that depends on the initialization, so multiple restarts (often k-means++ seeding) are standard. Replace the soft \(\gamma_{ij}\) with a hard 0/1 assignment and EM <em>becomes</em> k-means.</div>
+        </div>
+
+        <p>The parameter count is where the freedom shows its price. Each component carries a mean (one number per dimension), a covariance, and a weight. For a 2-D, full-covariance model the means alone are \(2\) numbers per component — \(2k\) in total — and that is the figure the exercise below pins down, because it is the cheapest way to feel how parameters scale with \(k\).</p>
+
+        <div class="exercise" data-answer="10" data-tol="0.001" data-hint="A 2-D mean has 2 numbers; there are k components, so the means contribute 2k parameters. Take k = 5.">
+          <div class="ex-q">A Gaussian mixture in 2-D has \( k = 5 \) full-covariance components. Counting only the <b>mean</b> parameters (each component's mean is a point in 2-D), how many mean parameters does the model have in total?</div>
+          <div class="ex-reveal-src">Each mean \( \mu_j \) lives in \( \mathbb{R}^2 \), so it contributes 2 numbers; with \( k \) components the means contribute \( 2k \) parameters in total. For \( k = 5 \): \( 2 \times 5 = \) <b>10</b> mean parameters. (For the full picture each full covariance adds \( d(d+1)/2 = 3 \) more per component, plus \( k-1 \) free weights — but the means alone scale as \( 2k \).)</div>
+        </div>
+
+        <p>Watch EM converge one step at a time. The stepper seeds two Gaussians badly, then alternates E and M: the E-step recolours every point by its responsibility (a blend, never a hard pick), and the M-step slides and reshapes the two ellipses to fit. The log-likelihood climbs monotonically in the readout — that climb <em>is</em> the convergence guarantee of EQ M12.5.</p>
+
+        <div class="widget" id="czoo-em" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT M12.3 — GMM / EM STEPPER</span><span class="w-sub">2 COMPONENTS · RESPONSIBILITIES + FITTED GAUSSIANS · EQ M12.5</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>CONTROL</label>
+                <div class="seg-row">
+                  <button class="w-btn" id="czoo-em-step">E / M STEP</button>
+                  <button class="w-btn" id="czoo-em-auto">AUTO ▶</button>
+                  <button class="w-btn ghost" id="czoo-em-reinit">RE-INIT ↻</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="czoo-em-canvas" height="330"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">NEXT HALF-STEP</div><div class="r-value" id="czoo-em-phase" style="font-size:14px;">E-STEP</div></div>
+              <div class="readout"><div class="r-label">ITERATIONS</div><div class="r-value" id="czoo-em-iter">0</div></div>
+              <div class="readout acc"><div class="r-label">LOG-LIKELIHOOD</div><div class="r-value" id="czoo-em-ll">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The two ellipses are the fitted Gaussians at \( \pm 2\sigma \); point colour blends mint and blue by responsibility, so a purple point is one EM is genuinely unsure about. Press <b>E / M STEP</b> alternately: the E-step only recolours (parameters frozen), the M-step only moves and reshapes the ellipses (colours frozen). The log-likelihood never falls — that monotone climb is EQ M12.5's guarantee made visible. Now <b>RE-INIT</b> a few times: most starts find the two true clusters, but a bad seed can collapse a component onto a few points (likelihood spikes toward \( +\infty \)) — the singularity pathology that real implementations regularize \( \Sigma_j \) to avoid.</div>
+        </div>
+
+        <p>And the 1-D version in numpy, stripped to its skeleton: EM for a two-component mixture on a line. Watch the two means separate to the true generating centres and the weights settle near their true mixing proportions as the log-likelihood plateaus.</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># EM for a 1-D two-component GMM (EQ M12.5). Recover means & weights.
+import numpy as np
+rng = np.random.default_rng(0)
+
+# true mixture: 40% N(0,1), 60% N(5, 1.5^2)
+x = np.concatenate([rng.normal(0.0, 1.0, 200),
+                    rng.normal(5.0, 1.5, 300)])
+n = len(x)
+
+def normal(x, mu, var):                       # 1-D Gaussian density
+    return np.exp(-(x - mu)**2 / (2*var)) / np.sqrt(2*np.pi*var)
+
+mu  = np.array([-1.0, 1.0])                    # deliberately bad init
+var = np.array([1.0, 1.0])
+pi  = np.array([0.5, 0.5])
+
+for it in range(40):
+    # E-step: responsibilities gamma[i, j]
+    comp = np.stack([pi[j]*normal(x, mu[j], var[j]) for j in range(2)], axis=1)
+    ll = np.log(comp.sum(1)).sum()            # data log-likelihood (climbs each iter)
+    g = comp / comp.sum(1, keepdims=True)
+    # M-step: weighted means, variances, weights
+    Nj = g.sum(0)
+    pi  = Nj / n
+    mu  = (g * x[:, None]).sum(0) / Nj
+    var = (g * (x[:, None] - mu)**2).sum(0) / Nj
+    if it in (0, 4, 39):
+        print(f"iter {it:2d}: loglik={ll:8.1f}  means={np.round(mu,2)}  weights={np.round(pi,2)}")
+
+print("\nconverged means  :", np.round(np.sort(mu), 2), " (true: 0.0, 5.0)")
+print("converged weights:", np.round(pi[np.argsort(mu)], 2), " (true: 0.4, 0.6)")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — set both init means to 2.0 and watch a bad start stall</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 12.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">12.5</span><h2>Choosing k &amp; validating clusters</h2></div>
+        <p>Every method here either needs \(k\) (k-means, GMM, a dendrogram cut) or trades it for density knobs (DBSCAN's \(\varepsilon\), <code>minPts</code>). Without labels there is no accuracy to optimize, so validation splits into two honest questions: <em>internal</em> validation (is the clustering geometrically good on its own terms?) and the far better <em>external</em> answer (does a downstream task care?). The internal tools each have a failure mode, and knowing the failure mode is the skill.</p>
+
+        <p>The <strong>elbow method</strong> plots inertia \(J\) against \(k\) and looks for the bend where adding centres stops paying. It is the weakest tool here, because — as Chapter 05 proved — \(J\) falls monotonically with \(k\) all the way to the absurd \(J = 0\) at one centre per point, so there is often no clean elbow at all. The <strong>silhouette score</strong> is sharper: for each point it compares the mean distance to its own cluster against the mean distance to the nearest <em>other</em> cluster.</p>
+
+        <div class="eq"><span class="eq-tag">EQ M12.6 — SILHOUETTE OF A POINT</span>
+        $$ s(i) \;=\; \frac{b(i) - a(i)}{\max\big(a(i),\, b(i)\big)} \;\in\; [-1,\, 1], \qquad a(i) = \text{mean dist to own cluster}, \quad b(i) = \text{mean dist to nearest other cluster} $$
+        <div class="eq-note">\(a(i)\) measures <b>cohesion</b> (how tight your own cluster is), \(b(i)\) measures <b>separation</b> (how far the nearest rival cluster is). \(s(i) \to 1\) means the point is deep inside a well-separated cluster; \(s(i) \approx 0\) means it sits on a boundary; \(s(i) &lt; 0\) means it is closer to a neighbouring cluster than its own — a likely misassignment. Average \(s(i)\) over all points and you get a single score in \([-1,1]\); the \(k\) that maximizes it is a defensible choice. <b>The catch: silhouette is built from distance-to-centre logic, so it favours convex, k-means-shaped clusters and will under-rate a correct DBSCAN clustering of crescents.</b> An internal metric can only reward the shape it was designed around.</div>
+        </div>
+
+        <p>For probabilistic models there is a principled alternative that penalizes complexity directly. A GMM can always raise its likelihood by adding components, so you cannot pick \(k\) by likelihood alone — but the <strong>Bayesian Information Criterion</strong> subtracts a penalty for every parameter, trading fit against parsimony:</p>
+
+        <div class="eq"><span class="eq-tag">EQ M12.7 — BIC FOR MODEL SELECTION</span>
+        $$ \text{BIC} \;=\; m\,\ln(n) \;-\; 2\,\ln \hat{L}, \qquad m = \#\text{free parameters},\quad n = \#\text{points},\quad \hat{L} = \text{maximized likelihood} $$
+        <div class="eq-note">Lower BIC is better. The \(-2\ln\hat L\) term rewards fit; the \(m\ln(n)\) term punishes every extra parameter, so a component that barely improves the likelihood is rejected for the parameters it costs. For a \(d\)-dimensional, full-covariance GMM each component carries \(d\) mean parameters \(+\;d(d+1)/2\) covariance parameters \(+\;1\) weight, with one weight constrained away — so \(m = k\,[\,d + d(d{+}1)/2\,] + (k-1)\). Sweep \(k\), keep the minimum-BIC model. <b>BIC is the most principled \(k\)-selector in this chapter — but it is only valid when the data really is a mixture of Gaussians</b>; on crescents it will confidently choose the wrong \(k\) because the model is wrong, not the criterion.</div>
+        </div>
+
+        <p>The genuinely decisive answer is external. When the clusters feed something downstream — segments feeding a campaign, codes feeding a classifier, groups a domain expert will inspect — let <em>that</em> task's metric choose \(k\) and the algorithm. This converts an unanswerable unsupervised question back into a measurable one, and it is the most honest move in the whole chapter. Where you have at least <em>some</em> ground-truth labels, the <strong>Adjusted Rand Index</strong> compares a clustering to the truth while correcting for chance agreement (0 = random, 1 = perfect), and is the standard external score.</p>
+
+        <div class="callout warn">
+          <span class="co-icon">FINE PRINT</span>
+          <p><strong>Four traps that quietly invalidate a clustering.</strong> (1) <em>Scale.</em> Every Euclidean method here inherits Chapter 02's pathology — an unscaled feature in different units silently owns the result; standardize first unless the units are genuinely shared. (2) <em>Metric chases shape.</em> Silhouette and inertia reward convex blobs, so they will rank a wrong k-means clustering above a correct DBSCAN one — never validate a density method with a centre-based score. (3) <em>The curse of dimensionality.</em> In high dimensions all pairwise distances concentrate toward equality, so distance-based clustering loses its grip; cluster in a learned low-dimensional embedding (next chapter) instead. (4) <em>Clusters always appear.</em> Every algorithm here returns clusters even on pure noise — before trusting any partition, ask whether structure exists at all (e.g. the Hopkins statistic), because a confident clustering of structureless data is the most seductive artifact in the field.</p>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>Clustering compresses \(n\) points into a handful of groups; the next chapter compresses a whole matrix into a handful of factors.</strong> Chapter 13 — <em>Matrix Factorization</em> — turns the user-item rating tables behind every recommender into low-rank products of latent factors, connects SVD, NMF and ALS, and shows how the same algebra that powers collaborative filtering reappears as the embedding machinery throughout modern AI.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 12.R ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">12.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://cdn.aaai.org/KDD/1996/KDD96-037.pdf" target="_blank" rel="noopener">Ester, M., Kriegel, H.-P., Sander, J. &amp; Xu, X. (1996). <span class="ref-venue">A Density-Based Algorithm for Discovering Clusters in Large Spatial Databases with Noise</span>.</a> <span class="ref-meta">Proc. KDD-96 — the original DBSCAN: core/border/noise points and density-reachability (§12.3, EQ M12.3).</span></li>
+          <li><a href="https://doi.org/10.1111/j.2517-6161.1977.tb01600.x" target="_blank" rel="noopener">Dempster, A. P., Laird, N. M. &amp; Rubin, D. B. (1977). <span class="ref-venue">Maximum Likelihood from Incomplete Data via the EM Algorithm</span>.</a> <span class="ref-meta">Journal of the Royal Statistical Society B 39(1) — the Expectation–Maximization algorithm behind GMM fitting (§12.4, EQ M12.5).</span></li>
+          <li><a href="https://doi.org/10.1016/0377-0427(87)90125-7" target="_blank" rel="noopener">Rousseeuw, P. J. (1987). <span class="ref-venue">Silhouettes: A Graphical Aid to the Interpretation and Validation of Cluster Analysis</span>.</a> <span class="ref-meta">Journal of Computational and Applied Mathematics 20 — the silhouette score for choosing and validating k (§12.5, EQ M12.6).</span></li>
+          <li><a href="https://doi.org/10.1080/01621459.1963.10500845" target="_blank" rel="noopener">Ward, J. H. (1963). <span class="ref-venue">Hierarchical Grouping to Optimize an Objective Function</span>.</a> <span class="ref-meta">Journal of the American Statistical Association 58(301) — Ward's minimum-variance linkage for agglomerative clustering (§12.2, EQ M12.2).</span></li>
+          <li><a href="https://doi.org/10.1214/aos/1176344136" target="_blank" rel="noopener">Schwarz, G. (1978). <span class="ref-venue">Estimating the Dimension of a Model</span>.</a> <span class="ref-meta">Annals of Statistics 6(2) — the Bayesian Information Criterion for model (and component-count) selection (§12.5, EQ M12.7).</span></li>
+          <li><a href="https://doi.org/10.1007/s10618-013-0311-4" target="_blank" rel="noopener">Campello, R. J. G. B., Moulavi, D., Zimek, A. &amp; Sander, J. (2015). <span class="ref-venue">Hierarchical Density Estimates for Data Clustering, Visualization, and Outlier Detection</span>.</a> <span class="ref-meta">ACM TKDD 10(1) — HDBSCAN, the variable-density successor that removes DBSCAN's ε knob (§12.3 note).</span></li>
+          <li><a href="https://doi.org/10.1007/BF01908075" target="_blank" rel="noopener">Hubert, L. &amp; Arabie, P. (1985). <span class="ref-venue">Comparing Partitions</span>.</a> <span class="ref-meta">Journal of Classification 2(1) — the Adjusted Rand Index for chance-corrected external validation (§12.5).</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../ml/11-distances-similarity.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">11</span> Distances &amp; Similarity</div></a>
+        <a class="next" href="../ml/13-matrix-factorization.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">13</span> Matrix Factorization</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — MACHINE LEARNING · CH 12</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* ============================================================
+   The Clustering Zoo — chapter instruments
+   Single IIFE, no globals. Shared: a seeded Box–Muller sampler,
+   tiny k-means / DBSCAN / GMM fitters, and canvas helpers.
+   All multi-step animation uses setInterval (background-safe).
+   ============================================================ */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+  var RENDERS = [];
+
+  /* ---------- shared seeded Gaussian (Box–Muller on mulberry32) ---------- */
+  function gaussFactory(seed) {
+    var rng = FM.mulberry32(seed), spare = null;
+    return function () {
+      if (spare !== null) { var s = spare; spare = null; return s; }
+      var u = 0, v;
+      while (u <= 1e-12) u = rng();
+      v = rng();
+      var mag = Math.sqrt(-2 * Math.log(u));
+      spare = mag * Math.sin(2 * Math.PI * v);
+      return mag * Math.cos(2 * Math.PI * v);
+    };
+  }
+  function frame(ctx, w, h) {
+    ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+    ctx.strokeRect(0.5, 0.5, w - 1, h - 1);
+  }
+  var PAL = [C.MINT, C.BLUE, C.RED, C.SEC, C.DEEP, C.BRIGHT];
+
+  /* ========================================================
+     INSTRUMENT M12.1 — ALGORITHM COMPARATOR
+     One dataset, three lenses. k-means, a tiny DBSCAN, and a
+     spherical-GMM proxy run on identical seeded points.
+     ======================================================== */
+  (function comparator() {
+    var root = document.getElementById("czoo-compare");
+    if (!root) return;
+    var canvas = document.getElementById("czoo-compare-canvas");
+    var kEl = document.getElementById("czoo-compare-k");
+    var noiseEl = document.getElementById("czoo-compare-noise");
+    var verdictEl = document.getElementById("czoo-compare-verdict");
+    var dataBtns = root.querySelectorAll("[data-czoo-data]");
+    var algoBtns = root.querySelectorAll("[data-czoo-algo]");
+    var dataset = "moons", algo = "dbscan";
+
+    /* ---- dataset builders (seeded, deterministic) ---- */
+    function buildData(name) {
+      var g = gaussFactory(31), pts = [], truth = [], i, t;
+      if (name === "moons") {
+        for (i = 0; i < 90; i++) {
+          t = Math.PI * i / 89;
+          pts.push([Math.cos(t) + 0.06 * g(), Math.sin(t) + 0.06 * g()]); truth.push(0);
+        }
+        for (i = 0; i < 90; i++) {
+          t = Math.PI * i / 89;
+          pts.push([1 - Math.cos(t) + 0.06 * g(), 1 - Math.sin(t) - 0.5 + 0.06 * g()]); truth.push(1);
+        }
+      } else if (name === "aniso") {
+        var cen = [[-1.4, -0.4], [1.4, 0.4]], ang = [0.6, 0.6], j;
+        for (j = 0; j < 2; j++) {
+          var ca = Math.cos(ang[j]), sa = Math.sin(ang[j]);
+          for (i = 0; i < 90; i++) {
+            var a = 1.4 * g(), b = 0.28 * g();
+            pts.push([cen[j][0] + a * ca - b * sa, cen[j][1] + a * sa + b * ca]); truth.push(j);
+          }
+        }
+      } else if (name === "density") {
+        for (i = 0; i < 110; i++) { pts.push([0.30 * g(), 0.30 * g()]); truth.push(0); }   /* dense core */
+        for (i = 0; i < 70; i++) {                                                          /* sparse halo */
+          var r = 2.4 + 0.45 * g(), th = 2 * Math.PI * (i / 70);
+          pts.push([r * Math.cos(th) + 0.18 * g(), r * Math.sin(th) + 0.18 * g()]); truth.push(1);
+        }
+      } else { /* blobs */
+        var bc = [[-1.6, -1.0], [1.6, -1.1], [0.0, 1.6]], k2;
+        for (k2 = 0; k2 < 3; k2++)
+          for (i = 0; i < 60; i++) { pts.push([bc[k2][0] + 0.42 * g(), bc[k2][1] + 0.42 * g()]); truth.push(k2); }
+      }
+      return { pts: pts, truth: truth };
+    }
+
+    var DATACFG = {
+      moons:   { k: 2, eps: 0.24, minPts: 5, kt: 2, win: "DBSCAN", note: "two crescents" },
+      aniso:   { k: 2, eps: 0.55, minPts: 6, kt: 2, win: "GMM",    note: "two tilted ellipses" },
+      density: { k: 2, eps: 0.55, minPts: 6, kt: 2, win: "(none clean)", note: "core + ring" },
+      blobs:   { k: 3, eps: 0.55, minPts: 5, kt: 3, win: "ALL",    note: "three round blobs" }
+    };
+
+    function kmeans(pts, k) {
+      var r = FM.mulberry32(404), cents = [], used = {}, idx, i, j, it;
+      while (cents.length < k) { idx = Math.floor(r() * pts.length); if (used[idx]) continue; used[idx] = 1; cents.push([pts[idx][0], pts[idx][1]]); }
+      var asg = new Array(pts.length).fill(0);
+      for (it = 0; it < 25; it++) {
+        for (i = 0; i < pts.length; i++) {
+          var bd = Infinity, bj = 0;
+          for (j = 0; j < k; j++) { var dx = pts[i][0] - cents[j][0], dy = pts[i][1] - cents[j][1], d = dx * dx + dy * dy; if (d < bd) { bd = d; bj = j; } }
+          asg[i] = bj;
+        }
+        var sx = [], sy = [], cn = [];
+        for (j = 0; j < k; j++) { sx.push(0); sy.push(0); cn.push(0); }
+        for (i = 0; i < pts.length; i++) { sx[asg[i]] += pts[i][0]; sy[asg[i]] += pts[i][1]; cn[asg[i]]++; }
+        for (j = 0; j < k; j++) if (cn[j]) cents[j] = [sx[j] / cn[j], sy[j] / cn[j]];
+      }
+      return { labels: asg, noise: 0, nclust: k };
+    }
+
+    function dbscan(pts, eps, minPts) {
+      var n = pts.length, labels = new Array(n).fill(-1), cid = -1, i, j;
+      var neigh = [];
+      for (i = 0; i < n; i++) {
+        var nb = [];
+        for (j = 0; j < n; j++) { var dx = pts[i][0] - pts[j][0], dy = pts[i][1] - pts[j][1]; if (dx * dx + dy * dy <= eps * eps) nb.push(j); }
+        neigh.push(nb);
+      }
+      var visited = new Array(n).fill(false);
+      for (i = 0; i < n; i++) {
+        if (visited[i]) continue;
+        visited[i] = true;
+        if (neigh[i].length < minPts) continue;
+        cid++; labels[i] = cid;
+        var seeds = neigh[i].slice(), k = 0;
+        while (k < seeds.length) {
+          var q = seeds[k]; k++;
+          if (labels[q] === -1) labels[q] = cid;
+          if (!visited[q]) {
+            visited[q] = true;
+            if (neigh[q].length >= minPts) {
+              for (var m = 0; m < neigh[q].length; m++) if (seeds.indexOf(neigh[q][m]) === -1) seeds.push(neigh[q][m]);
+            }
+          }
+        }
+      }
+      var noise = 0; for (i = 0; i < n; i++) if (labels[i] === -1) noise++;
+      return { labels: labels, noise: noise, nclust: cid + 1 };
+    }
+
+    /* spherical-GMM proxy: soft EM with shared isotropic variance (centre-based,
+       so it behaves like k-means with soft edges — honest about GMM's limits here) */
+    function gmm(pts, k) {
+      var r = FM.mulberry32(909), cents = [], used = {}, idx, i, j, it;
+      while (cents.length < k) { idx = Math.floor(r() * pts.length); if (used[idx]) continue; used[idx] = 1; cents.push([pts[idx][0], pts[idx][1]]); }
+      var varc = []; for (j = 0; j < k; j++) varc.push(1.0);
+      var n = pts.length, G = [];
+      for (i = 0; i < n; i++) G.push(new Array(k).fill(0));
+      for (it = 0; it < 30; it++) {
+        for (i = 0; i < n; i++) {
+          var sum = 0;
+          for (j = 0; j < k; j++) { var dx = pts[i][0] - cents[j][0], dy = pts[i][1] - cents[j][1]; var p = Math.exp(-(dx * dx + dy * dy) / (2 * varc[j])) / varc[j]; G[i][j] = p; sum += p; }
+          for (j = 0; j < k; j++) G[i][j] = sum > 0 ? G[i][j] / sum : 1 / k;
+        }
+        for (j = 0; j < k; j++) {
+          var Nj = 0, mx = 0, my = 0, vs = 0, i2;
+          for (i2 = 0; i2 < n; i2++) { Nj += G[i2][j]; mx += G[i2][j] * pts[i2][0]; my += G[i2][j] * pts[i2][1]; }
+          if (Nj < 1e-9) continue;
+          cents[j] = [mx / Nj, my / Nj];
+          for (i2 = 0; i2 < n; i2++) { var ex = pts[i2][0] - cents[j][0], ey = pts[i2][1] - cents[j][1]; vs += G[i2][j] * (ex * ex + ey * ey); }
+          varc[j] = Math.max(vs / (2 * Nj), 0.05);
+        }
+      }
+      var lab = [];
+      for (i = 0; i < n; i++) { var bj = 0, bv = -1; for (j = 0; j < k; j++) if (G[i][j] > bv) { bv = G[i][j]; bj = j; } lab.push(bj); }
+      return { labels: lab, noise: 0, nclust: k };
+    }
+
+    /* purity vs truth: best-match fraction over clustered (non-noise) points */
+    function purity(labels, truth) {
+      var groups = {}, i;
+      for (i = 0; i < labels.length; i++) {
+        if (labels[i] === -1) continue;
+        var key = labels[i];
+        if (!groups[key]) groups[key] = {};
+        groups[key][truth[i]] = (groups[key][truth[i]] || 0) + 1;
+      }
+      var correct = 0, total = 0;
+      for (var g in groups) {
+        var best = 0, tot = 0;
+        for (var t in groups[g]) { tot += groups[g][t]; if (groups[g][t] > best) best = groups[g][t]; }
+        correct += best; total += tot;
+      }
+      return total ? correct / total : 0;
+    }
+
+    function render() {
+      var D = buildData(dataset), cfg = DATACFG[dataset], res;
+      if (algo === "kmeans") res = kmeans(D.pts, cfg.k);
+      else if (algo === "dbscan") res = dbscan(D.pts, cfg.eps, cfg.minPts);
+      else res = gmm(D.pts, cfg.k);
+
+      var sc = FM.setupCanvas(canvas, 340), ctx = sc.ctx, W = sc.w, H = 340, i;
+      ctx.clearRect(0, 0, W, H);
+      frame(ctx, W, H);
+
+      /* fit data extent → isotropic scale */
+      var xs = D.pts.map(function (p) { return p[0]; }), ys = D.pts.map(function (p) { return p[1]; });
+      var minx = Math.min.apply(null, xs), maxx = Math.max.apply(null, xs);
+      var miny = Math.min.apply(null, ys), maxy = Math.max.apply(null, ys);
+      var spanx = maxx - minx, spany = maxy - miny, span = Math.max(spanx, spany) * 1.15 || 1;
+      var cx = (minx + maxx) / 2, cy = (miny + maxy) / 2;
+      var scale = Math.min(W, H) / span;
+      function PX(x) { return W / 2 + (x - cx) * scale; }
+      function PY(y) { return H / 2 - (y - cy) * scale; }
+
+      for (i = 0; i < D.pts.length; i++) {
+        var lab = res.labels[i];
+        if (lab === -1) { ctx.fillStyle = "rgba(99,99,99,0.55)"; }
+        else ctx.fillStyle = PAL[lab % PAL.length];
+        ctx.globalAlpha = lab === -1 ? 0.6 : 0.9;
+        ctx.beginPath(); ctx.arc(PX(D.pts[i][0]), PY(D.pts[i][1]), lab === -1 ? 2.2 : 3.2, 0, 2 * Math.PI); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT; ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText("GREY × = NOISE / UNASSIGNED · TRUTH: " + cfg.note, 10, 10);
+
+      kEl.textContent = String(res.nclust);
+      noiseEl.textContent = res.noise > 0 ? res.noise + " pts" : "0 (forced)";
+
+      var pur = purity(res.labels, D.truth);
+      var good = pur >= 0.95 && (algo !== "kmeans" || dataset === "blobs");
+      var verdict, col;
+      if (dataset === "moons") {
+        if (algo === "dbscan") { verdict = "traces both crescents ✓"; col = C.MINT; }
+        else { verdict = "slices the crescents ✗"; col = C.RED; }
+      } else if (dataset === "aniso") {
+        if (algo === "gmm") { verdict = "fits both ellipses ✓"; col = C.MINT; }
+        else if (algo === "kmeans") { verdict = "splits the ellipses ✗"; col = C.RED; }
+        else { verdict = "fragments / over-noises ~"; col = C.SEC; }
+      } else if (dataset === "density") {
+        verdict = "one global threshold fails all ~"; col = C.SEC;
+      } else { /* blobs */
+        verdict = good ? "round blobs — all agree ✓" : "recovers the blobs ✓"; col = C.MINT;
+      }
+      verdictEl.textContent = verdict;
+      verdictEl.style.color = col;
+    }
+
+    dataBtns.forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        dataset = btn.getAttribute("data-czoo-data");
+        dataBtns.forEach(function (o) { o.classList.toggle("on", o === btn); });
+        render();
+      });
+    });
+    algoBtns.forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        algo = btn.getAttribute("data-czoo-algo");
+        algoBtns.forEach(function (o) { o.classList.toggle("on", o === btn); });
+        render();
+      });
+    });
+
+    RENDERS.push(render);
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT M12.2 — DENDROGRAM EXPLORER
+     Build a full agglomerative tree (ward/single/complete) over
+     a seeded set; the cut-height slider colours the partition.
+     ======================================================== */
+  (function dendrogram() {
+    var root = document.getElementById("czoo-dendro");
+    if (!root) return;
+    var canvas = document.getElementById("czoo-dendro-canvas");
+    var hIn = document.getElementById("czoo-dendro-h"), hOut = document.getElementById("czoo-dendro-h-out");
+    var kEl = document.getElementById("czoo-dendro-k");
+    var hvalEl = document.getElementById("czoo-dendro-hval");
+    var gapEl = document.getElementById("czoo-dendro-gap");
+    var linkBtns = root.querySelectorAll("[data-czoo-link]");
+    var linkage = "ward";
+
+    /* seeded points: three loose blobs (24 pts — small enough to draw a tree) */
+    var g = gaussFactory(77), PTS = [], C0 = [[-1.7, -0.9], [1.7, -1.0], [0.0, 1.7]], b, i;
+    for (b = 0; b < 3; b++) for (i = 0; i < 8; i++) PTS.push([C0[b][0] + 0.5 * g(), C0[b][1] + 0.5 * g()]);
+    var N = PTS.length;
+
+    function dist2(a, b2) { var dx = a[0] - b2[0], dy = a[1] - b2[1]; return dx * dx + dy * dy; }
+
+    /* build tree: returns merges [{a,b,height,members:[]}], leaves order */
+    function buildTree() {
+      var clusters = [], id;
+      for (id = 0; id < N; id++) clusters.push({ id: id, members: [id], cx: PTS[id][0], cy: PTS[id][1], size: 1, height: 0, left: null, right: null });
+      var merges = [];
+      function linkDist(A, B) {
+        var a, bb, d, best;
+        if (linkage === "single") {
+          best = Infinity;
+          for (a = 0; a < A.members.length; a++) for (bb = 0; bb < B.members.length; bb++) { d = Math.sqrt(dist2(PTS[A.members[a]], PTS[B.members[bb]])); if (d < best) best = d; }
+          return best;
+        } else if (linkage === "complete") {
+          best = 0;
+          for (a = 0; a < A.members.length; a++) for (bb = 0; bb < B.members.length; bb++) { d = Math.sqrt(dist2(PTS[A.members[a]], PTS[B.members[bb]])); if (d > best) best = d; }
+          return best;
+        } else { /* ward: increase in SSE = (nA nB)/(nA+nB) * ||muA-muB||^2 */
+          var dd = (A.cx - B.cx) * (A.cx - B.cx) + (A.cy - B.cy) * (A.cy - B.cy);
+          return Math.sqrt(A.size * B.size / (A.size + B.size) * dd);
+        }
+      }
+      while (clusters.length > 1) {
+        var bi = 0, bj = 1, bd = Infinity, x, y;
+        for (x = 0; x < clusters.length; x++) for (y = x + 1; y < clusters.length; y++) {
+          var d = linkDist(clusters[x], clusters[y]);
+          if (d < bd) { bd = d; bi = x; bj = y; }
+        }
+        var A = clusters[bi], B = clusters[bj];
+        var mem = A.members.concat(B.members);
+        var size = A.size + B.size;
+        var merged = { id: -1, members: mem, cx: (A.cx * A.size + B.cx * B.size) / size, cy: (A.cy * A.size + B.cy * B.size) / size, size: size, height: bd, left: A, right: B };
+        merges.push({ height: bd });
+        clusters.splice(bj, 1); clusters.splice(bi, 1); clusters.push(merged);
+      }
+      return { rootNode: clusters[0], merges: merges };
+    }
+
+    /* assign an x-position to each leaf via in-order traversal */
+    function layout(node, order) {
+      if (!node.left) { node.x = order.length; order.push(node); return; }
+      layout(node.left, order); layout(node.right, order);
+      node.x = (node.left.x + node.right.x) / 2;
+    }
+
+    /* cut the tree at height h → list of subtree roots (clusters) */
+    function cut(node, h, out) {
+      if (node.height <= h || !node.left) { out.push(node); return; }
+      cut(node.left, h, out); cut(node.right, h, out);
+    }
+
+    var tree, order, maxH;
+    function rebuild() {
+      tree = buildTree();
+      order = [];
+      layout(tree.rootNode, order);
+      maxH = tree.rootNode.height || 1;
+    }
+
+    function render() {
+      var sc = FM.setupCanvas(canvas, 300), ctx = sc.ctx, W = sc.w, H = 300, i;
+      ctx.clearRect(0, 0, W, H);
+
+      var splitX = W * 0.56;                 /* left: dendrogram · right: scatter */
+      var padT = 18, padB = 26, padL = 10;
+      var dW = splitX - padL - 10, dH = H - padT - padB;
+
+      /* height fraction from slider */
+      var hf = parseInt(hIn.value, 10) / 100;
+      var hcut = hf * maxH;
+      hOut.textContent = hcut.toFixed(2);
+
+      function LX(x) { return padL + (x + 0.5) / N * dW; }
+      function LY(hh) { return padT + (1 - hh / maxH) * dH; }   /* height up the page */
+
+      /* draw dendrogram links recursively, colour by cut membership */
+      var clusters = [];
+      cut(tree.rootNode, hcut, clusters);
+      /* map each leaf → its cluster index */
+      var leafCluster = {};
+      clusters.forEach(function (cl, ci) { cl.members.forEach(function (m) { leafCluster[m] = ci; }); });
+
+      function colorFor(node) {
+        var ci = leafCluster[node.members[0]];
+        var allSame = node.members.every(function (m) { return leafCluster[m] === ci; });
+        return (allSame && node.height <= hcut) ? PAL[ci % PAL.length] : C.MUT;
+      }
+      function drawNode(node) {
+        if (!node.left) return;
+        drawNode(node.left); drawNode(node.right);
+        var y = LY(node.height), xl = LX(node.left.x), xr = LX(node.right.x);
+        var yl = LY(node.left.height || 0), yr = LY(node.right.height || 0);
+        ctx.strokeStyle = colorFor(node); ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.moveTo(xl, yl); ctx.lineTo(xl, y);
+        ctx.lineTo(xr, y); ctx.lineTo(xr, yr);
+        ctx.stroke();
+      }
+      drawNode(tree.rootNode);
+
+      /* the cut line */
+      ctx.setLineDash([5, 4]); ctx.strokeStyle = "rgba(255,255,255,0.6)"; ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.moveTo(padL, LY(hcut)); ctx.lineTo(splitX - 10, LY(hcut)); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT; ctx.textAlign = "left"; ctx.textBaseline = "bottom";
+      ctx.fillText("DENDROGRAM (" + linkage.toUpperCase() + ") — HEIGHT ↑", padL, padT - 4);
+      ctx.textAlign = "right"; ctx.fillStyle = "rgba(255,255,255,0.7)";
+      ctx.fillText("CUT", splitX - 12, LY(hcut) - 3);
+
+      /* right panel: scatter coloured by the same clusters */
+      var rx0 = splitX + 8, rW = W - rx0 - 10, rH = H - padT - padB;
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1; ctx.strokeRect(rx0, padT, rW, rH);
+      var xs = PTS.map(function (p) { return p[0]; }), ys = PTS.map(function (p) { return p[1]; });
+      var minx = Math.min.apply(null, xs), maxx = Math.max.apply(null, xs);
+      var miny = Math.min.apply(null, ys), maxy = Math.max.apply(null, ys);
+      var span = Math.max(maxx - minx, maxy - miny) * 1.2 || 1;
+      var mcx = (minx + maxx) / 2, mcy = (miny + maxy) / 2;
+      var msc = Math.min(rW, rH) / span;
+      function SX(x) { return rx0 + rW / 2 + (x - mcx) * msc; }
+      function SY(y) { return padT + rH / 2 - (y - mcy) * msc; }
+      for (i = 0; i < N; i++) {
+        ctx.fillStyle = PAL[leafCluster[i] % PAL.length];
+        ctx.globalAlpha = 0.92;
+        ctx.beginPath(); ctx.arc(SX(PTS[i][0]), SY(PTS[i][1]), 3.4, 0, 2 * Math.PI); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = C.MUT; ctx.textAlign = "left"; ctx.textBaseline = "bottom";
+      ctx.fillText("PARTITION AT THIS CUT", rx0, padT - 4);
+
+      kEl.textContent = String(clusters.length);
+      hvalEl.textContent = hcut.toFixed(2);
+
+      /* largest gap between consecutive merge heights = natural cut zone */
+      var hs = tree.merges.map(function (m) { return m.height; }).sort(function (a, b) { return a - b; });
+      var bestGap = 0, gapLo = 0, gapHi = 0, gi;
+      for (gi = 1; gi < hs.length; gi++) { var gp = hs[gi] - hs[gi - 1]; if (gp > bestGap) { bestGap = gp; gapLo = hs[gi - 1]; gapHi = hs[gi]; } }
+      gapEl.textContent = gapLo.toFixed(2) + "–" + gapHi.toFixed(2);
+    }
+
+    linkBtns.forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        linkage = btn.getAttribute("data-czoo-link");
+        linkBtns.forEach(function (o) { o.classList.toggle("on", o === btn); });
+        rebuild(); render();
+      });
+    });
+    hIn.addEventListener("input", render);
+
+    rebuild();
+    RENDERS.push(render);
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT M12.3 — GMM / EM STEPPER
+     Two full-covariance Gaussians fit two seeded blobs by EM.
+     E-step recolours by responsibility; M-step reshapes ellipses.
+     Log-likelihood (readout) is monotone non-decreasing.
+     ======================================================== */
+  (function emStepper() {
+    var root = document.getElementById("czoo-em");
+    if (!root) return;
+    var canvas = document.getElementById("czoo-em-canvas");
+    var stepBtn = document.getElementById("czoo-em-step");
+    var autoBtn = document.getElementById("czoo-em-auto");
+    var reinitBtn = document.getElementById("czoo-em-reinit");
+    var phaseEl = document.getElementById("czoo-em-phase");
+    var iterEl = document.getElementById("czoo-em-iter");
+    var llEl = document.getElementById("czoo-em-ll");
+
+    /* seeded data: two overlapping, slightly tilted blobs */
+    function makeData(seed) {
+      var g = gaussFactory(seed), pts = [], i;
+      for (i = 0; i < 80; i++) { var a = 0.9 * g(), b = 0.4 * g(); pts.push([-1.0 + a + 0.3 * b, -0.5 + 0.3 * a + b]); }
+      for (i = 0; i < 80; i++) { var a2 = 0.5 * g(), b2 = 0.9 * g(); pts.push([1.2 + a2, 0.6 + b2 - 0.3 * a2]); }
+      return pts;
+    }
+
+    var PTS, K = 2, mu, cov, pi, gamma, phase, iter, seedBump = 0, timer = null;
+
+    function init() {
+      stopAuto();
+      PTS = makeData(2026 + seedBump * 53);
+      var r = FM.mulberry32(11 + seedBump * 17), used = {}, idx;
+      mu = [];
+      while (mu.length < K) { idx = Math.floor(r() * PTS.length); if (used[idx]) continue; used[idx] = 1; mu.push([PTS[idx][0], PTS[idx][1]]); }
+      cov = []; pi = [];
+      for (var j = 0; j < K; j++) { cov.push([1.0, 0.0, 1.0]); pi.push(1 / K); }   /* [a,b,d] for [[a,b],[b,d]] */
+      gamma = []; for (var i = 0; i < PTS.length; i++) gamma.push(new Array(K).fill(1 / K));
+      phase = "E"; iter = 0;
+      render();
+    }
+
+    function gauss2(p, m, cv) {
+      var a = cv[0], b = cv[1], d = cv[2];
+      var det = a * d - b * b; if (det < 1e-9) det = 1e-9;
+      var ia = d / det, ib = -b / det, id = a / det;
+      var dx = p[0] - m[0], dy = p[1] - m[1];
+      var q = dx * (ia * dx + ib * dy) + dy * (ib * dx + id * dy);
+      return Math.exp(-0.5 * q) / (2 * Math.PI * Math.sqrt(det));
+    }
+    function logLik() {
+      var s = 0, i, j;
+      for (i = 0; i < PTS.length; i++) {
+        var px = 0; for (j = 0; j < K; j++) px += pi[j] * gauss2(PTS[i], mu[j], cov[j]);
+        s += Math.log(Math.max(px, 1e-300));
+      }
+      return s;
+    }
+    function eStep() {
+      var i, j;
+      for (i = 0; i < PTS.length; i++) {
+        var sum = 0, row = [];
+        for (j = 0; j < K; j++) { var p = pi[j] * gauss2(PTS[i], mu[j], cov[j]); row.push(p); sum += p; }
+        for (j = 0; j < K; j++) gamma[i][j] = sum > 0 ? row[j] / sum : 1 / K;
+      }
+    }
+    function mStep() {
+      var j, i;
+      for (j = 0; j < K; j++) {
+        var Nj = 0, mx = 0, my = 0;
+        for (i = 0; i < PTS.length; i++) { Nj += gamma[i][j]; mx += gamma[i][j] * PTS[i][0]; my += gamma[i][j] * PTS[i][1]; }
+        if (Nj < 1e-9) continue;
+        mu[j] = [mx / Nj, my / Nj]; pi[j] = Nj / PTS.length;
+        var a = 0, b = 0, d = 0;
+        for (i = 0; i < PTS.length; i++) { var ex = PTS[i][0] - mu[j][0], ey = PTS[i][1] - mu[j][1], w = gamma[i][j]; a += w * ex * ex; b += w * ex * ey; d += w * ey * ey; }
+        cov[j] = [Math.max(a / Nj, 0.04), b / Nj, Math.max(d / Nj, 0.04)];   /* regularize diag → no singularity */
+      }
+    }
+    function step() {
+      if (phase === "E") { eStep(); phase = "M"; }
+      else { mStep(); phase = "E"; iter++; }
+      render();
+    }
+    function stopAuto() { if (timer) { clearInterval(timer); timer = null; autoBtn.textContent = "AUTO ▶"; } }
+
+    /* draw the 2σ ellipse of covariance [a,b,d] centred at m */
+    function drawEllipse(ctx, m, cv, color, PX, PY, scale) {
+      var a = cv[0], b = cv[1], d = cv[2];
+      var tr = a + d, det = a * d - b * b;
+      var disc = Math.sqrt(Math.max(tr * tr / 4 - det, 0));
+      var l1 = tr / 2 + disc, l2 = tr / 2 - disc;
+      var ang;
+      if (Math.abs(b) < 1e-9) ang = (a >= d) ? 0 : Math.PI / 2;
+      else ang = Math.atan2(l1 - a, b);
+      var r1 = 2 * Math.sqrt(Math.max(l1, 1e-6)), r2 = 2 * Math.sqrt(Math.max(l2, 1e-6));
+      ctx.strokeStyle = color; ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      for (var t = 0; t <= 64; t++) {
+        var th = 2 * Math.PI * t / 64;
+        var ex = r1 * Math.cos(th), ey = r2 * Math.sin(th);
+        var rx = ex * Math.cos(ang) - ey * Math.sin(ang);
+        var ry = ex * Math.sin(ang) + ey * Math.cos(ang);
+        var X = PX(m[0] + rx), Y = PY(m[1] + ry);
+        if (t === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y);
+      }
+      ctx.stroke();
+    }
+
+    function render() {
+      var sc = FM.setupCanvas(canvas, 330), ctx = sc.ctx, W = sc.w, H = 330, i;
+      ctx.clearRect(0, 0, W, H);
+      frame(ctx, W, H);
+      var minx = -4, maxx = 4.5, miny = -3.5, maxy = 4;
+      var scale = Math.min(W / (maxx - minx), H / (maxy - miny));
+      var cx = (minx + maxx) / 2, cy = (miny + maxy) / 2;
+      function PX(x) { return W / 2 + (x - cx) * scale; }
+      function PY(y) { return H / 2 - (y - cy) * scale; }
+
+      var mint = [166, 242, 204], blue = [78, 138, 247];
+      for (i = 0; i < PTS.length; i++) {
+        var g0 = gamma[i][0];
+        var rr = Math.round(mint[0] * g0 + blue[0] * (1 - g0));
+        var gg = Math.round(mint[1] * g0 + blue[1] * (1 - g0));
+        var bb = Math.round(mint[2] * g0 + blue[2] * (1 - g0));
+        ctx.fillStyle = "rgb(" + rr + "," + gg + "," + bb + ")";
+        ctx.globalAlpha = 0.9;
+        ctx.beginPath(); ctx.arc(PX(PTS[i][0]), PY(PTS[i][1]), 3.0, 0, 2 * Math.PI); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+      drawEllipse(ctx, mu[0], cov[0], C.MINT, PX, PY, scale);
+      drawEllipse(ctx, mu[1], cov[1], C.BLUE, PX, PY, scale);
+      /* centres */
+      [0, 1].forEach(function (j) {
+        var col = j === 0 ? C.MINT : C.BLUE, mx = PX(mu[j][0]), my = PY(mu[j][1]);
+        ctx.strokeStyle = C.BRIGHT; ctx.lineWidth = 4;
+        ctx.beginPath(); ctx.moveTo(mx - 5, my); ctx.lineTo(mx + 5, my); ctx.moveTo(mx, my - 5); ctx.lineTo(mx, my + 5); ctx.stroke();
+        ctx.strokeStyle = col; ctx.lineWidth = 1.8;
+        ctx.beginPath(); ctx.moveTo(mx - 5, my); ctx.lineTo(mx + 5, my); ctx.moveTo(mx, my - 5); ctx.lineTo(mx, my + 5); ctx.stroke();
+      });
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT; ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText("ELLIPSES = 2σ FITTED GAUSSIANS · COLOUR = RESPONSIBILITY", 10, 10);
+
+      phaseEl.textContent = phase === "E" ? "E-STEP (recolour)" : "M-STEP (reshape)";
+      iterEl.textContent = String(iter);
+      llEl.textContent = logLik().toFixed(1);
+    }
+
+    stepBtn.addEventListener("click", function () { stopAuto(); step(); });
+    autoBtn.addEventListener("click", function () {
+      if (timer) { stopAuto(); return; }
+      autoBtn.textContent = "PAUSE ❚❚";
+      timer = setInterval(step, 600);
+    });
+    reinitBtn.addEventListener("click", function () { seedBump++; init(); });
+
+    RENDERS.push(render);
+    init();
+  })();
+
+  /* ---------- re-render on resize (debounced) ---------- */
+  var rsT = null;
+  window.addEventListener("resize", function () {
+    if (rsT) clearTimeout(rsT);
+    rsT = setTimeout(function () { for (var i = 0; i < RENDERS.length; i++) RENDERS[i](); }, 150);
+  });
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

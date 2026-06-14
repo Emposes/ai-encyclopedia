@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Fine-Tuning Open Models — AI Encyclopedia</title>
+<meta name="description" content="Owning the weights lets you teach a model your domain. When to fine-tune vs prompt vs RAG, how to build the dataset, LoRA/QLoRA in practice, evaluation, and serving your fine-tune." />
+<link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
+<meta name="theme-color" content="#000000" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+<link rel="canonical" href="https://ai-encyclopedia.com/openmodels/03-finetuning-open" />
+<meta property="og:url" content="https://ai-encyclopedia.com/openmodels/03-finetuning-open" />
+</head>
+<body data-track="openmodels" data-level="core">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ OPEN MODELS / 03 / FINE-TUNING</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../openmodels/04-training-techniques.html">NEXT: TRAINING TECHNIQUES →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">OPEN MODELS &amp; PRACTICE · CHAPTER 03 / 05</div>
+    <h1>Fine-Tuning Open Models</h1>
+    <p class="lede">Closed APIs rent you a fixed behavior; open weights let you change it. <strong>Owning the weights means you can teach the model your domain, provided you build the dataset and pick the method that fits your budget.</strong> This chapter is the practitioner's path: decide whether to tune at all, assemble examples worth learning from, run LoRA/QLoRA without a datacenter, measure whether it helped, and ship the result.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 24 MIN</b></span>
+      <span>BUILDS ON<b>OPEN MODELS · 01–02 · Vol II · CH 05–06</b></span>
+      <span>INSTRUMENTS<b>DECISION TREE · DATA→GAIN · LoRA CALC</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">3.1</span>Fine-tune vs prompt vs RAG</a>
+      <a href="#s2"><span class="n">3.2</span>Building the dataset</a>
+      <a href="#s3"><span class="n">3.3</span>LoRA/QLoRA in practice</a>
+      <a href="#s4"><span class="n">3.4</span>Evaluation &amp; iteration</a>
+      <a href="#s5"><span class="n">3.5</span>Serving your fine-tune</a>
+      <a href="#s6"><span class="n">3.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 3.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">3.1</span><h2>Fine-tune vs prompt vs RAG</h2></div>
+        <p>Fine-tuning is the <em>third</em> tool you reach for, not the first. Owning the weights makes it tempting to treat every gap as a training problem, but the cheaper two levers solve most of them. The escalation ladder, in order of effort:</p>
+
+        <table class="data">
+          <thead><tr><th>Approach</th><th>Changes</th><th>Reach for it when…</th><th>Wrong tool when…</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Prompting</strong></td><td class="m">nothing</td><td>Instructions + a few examples already steer the base/instruct model where you need it</td><td>You need deep, consistent behavior or the prompt tax is paid on every request at scale</td></tr>
+            <tr><td><strong>RAG</strong></td><td class="m">context</td><td>The gap is <em>knowledge</em> — private, fresh, or too large to memorize; facts that change weekly</td><td>The gap is <em>behavior</em>, format, tone, or a skill the model lacks</td></tr>
+            <tr><td><strong>Fine-tuning</strong></td><td class="m">weights</td><td>Style, output format, domain dialect, tool-call protocols, a narrow skill; or collapsing a long system prompt into the weights to cut latency and cost</td><td>You are trying to inject facts (fragile, goes stale) or to fix what a larger model already does out of the box</td></tr>
+          </tbody>
+        </table>
+
+        <p>The sharpest distinction is <strong>knowledge versus behavior</strong>. RAG is a retrieval layer: it puts the right documents in the context window so the model can read them, which is exactly what you want when the answer depends on facts that move — a product catalog, this quarter's policy, a codebase that changes daily. Fine-tuning bakes a <em>pattern</em> into the parameters: how to phrase an answer, which JSON schema to emit, how to think through a domain-specific task. Trying to teach facts by fine-tuning is the classic mistake — the model learns them brittly, forgets the long tail, and you must retrain every time the facts change. The three are not rivals; production systems usually <em>stack</em> them: a fine-tuned model that follows your house style, fed retrieved context, behind a thin prompt.</p>
+
+        <div class="callout">
+          <span class="co-icon">DECIDE</span>
+          <p><strong>A one-line test.</strong> Ask: "If I could paste the perfect paragraph into the prompt, would the problem be solved?" If yes, it is a <em>knowledge</em> gap → RAG (or just a better prompt). If the model still wouldn't behave the way you need even with perfect context, it is a <em>behavior</em> gap → fine-tune. Most teams discover, after honest testing, that prompting plus RAG covers 80% of cases — and reserve fine-tuning for the consistency, format, and cost wins that nothing else delivers.</p>
+        </div>
+
+        <p>There is also a cost angle unique to open weights. A fine-tune lets a <em>smaller</em> model match a larger one on a narrow task, and a small specialized model is cheaper to serve, faster to decode, and fits hardware the big model never could (the memory math of Open Models · §2). So fine-tuning is not only "make it better" — sometimes it is "make a 3B model do the one job you previously needed a 70B for."</p>
+
+        <div class="exercise" data-answer="true" data-hint="Retraining to chase facts that move is the failure mode fine-tuning is bad at.">
+          <div class="ex-q">RAG is often preferable to fine-tuning when the knowledge the model needs changes frequently. True or false?</div>
+          <div class="ex-reveal-src">Fine-tuning bakes patterns into weights and must be re-run whenever the underlying facts change, so it goes stale on fast-moving knowledge. RAG simply retrieves the current document into context, so updating the knowledge means updating the index, not the model. For frequently-changing knowledge, RAG is the right tool — the answer is <b>true</b>.</div>
+        </div>
+
+        <div class="widget" id="ftopen-tree" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT OM3.1 — TUNE / PROMPT / RAG DECISION TREE</span><span class="w-sub">ANSWER 3 QUESTIONS · LIVE VERDICT</span></div>
+          <div class="w-body">
+            <div class="ctl-row" style="flex-wrap:wrap;">
+              <div class="ctl" style="flex:1 1 100%;">
+                <label>1 · WHAT IS THE GAP?</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-ftopen-gap="behavior">BEHAVIOR / FORMAT / SKILL</button>
+                  <button class="w-btn ghost" data-ftopen-gap="knowledge">FACTS / KNOWLEDGE</button>
+                </div>
+              </div>
+              <div class="ctl" style="flex:1 1 100%;">
+                <label>2 · DOES THE KNOWLEDGE CHANGE OFTEN?</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-ftopen-volatile="yes">CHANGES OFTEN</button>
+                  <button class="w-btn ghost" data-ftopen-volatile="no">MOSTLY STABLE</button>
+                </div>
+              </div>
+              <div class="ctl" style="flex:1 1 100%;">
+                <label>3 · HOW MANY GOOD EXAMPLES CAN YOU GET?</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-ftopen-data="few">&lt; 100</button>
+                  <button class="w-btn ghost" data-ftopen-data="some">100 – 1K</button>
+                  <button class="w-btn ghost" data-ftopen-data="many">1K +</button>
+                </div>
+              </div>
+            </div>
+            <div style="border:1px solid var(--hairline);border-radius:4px;padding:16px;margin-top:6px;">
+              <div style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.16em;color:#636363;margin-bottom:8px;">RECOMMENDATION</div>
+              <div id="ftopen-tree-verdict" style="font-size:18px;font-weight:600;color:#a6f2cc;letter-spacing:.02em;">—</div>
+              <div id="ftopen-tree-why" style="font-size:13px;color:#9b9b9b;line-height:1.55;margin-top:8px;">—</div>
+            </div>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">PRIMARY LEVER</div><div class="r-value" id="ftopen-tree-primary">—</div></div>
+              <div class="readout"><div class="r-label">COMBINE WITH</div><div class="r-value" id="ftopen-tree-combo" style="font-size:13px;">—</div></div>
+              <div class="readout acc"><div class="r-label">CONFIDENCE</div><div class="r-value" id="ftopen-tree-conf">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Toggle the three answers and watch the verdict move. The tree encodes the chapter's rule: knowledge gaps go to RAG (especially volatile ones), behavior gaps go to fine-tuning — but only once you have enough examples; below ~100 it usually recommends prompting first. The combinations matter as much as the leaves: a behavior gap over stable knowledge is the canonical fine-tune-plus-RAG stack.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 3.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">3.2</span><h2>Building a fine-tuning dataset</h2></div>
+        <p>Once you have decided to tune, the dataset <em>is</em> the project. The method (§3.3) is a solved, ten-line affair; the data is where all the difficulty and almost all the quality lives. A supervised fine-tune (SFT) is, mechanically, just next-token prediction over examples of the behavior you want — so the model becomes exactly as good as the examples are, and no better.</p>
+
+        <p>The unit is a conversation, expressed in the base model's <strong>chat template</strong>. An instruction example is a list of messages with roles — typically a <code>system</code> message, a <code>user</code> turn, and the gold <code>assistant</code> response you want the model to imitate. The trainer renders these into one flat token string using the model's exact template, and computes the loss only on the assistant tokens (the prompt is context, not a target):</p>
+
+        <div class="eq"><span class="eq-tag">EQ OM3.1 — SFT OBJECTIVE (LOSS ON COMPLETION ONLY)</span>
+        $$ \mathcal{L}_{\text{SFT}} \;=\; -\sum_{i \in \text{completion}} \log p_\theta\!\left( y_i \mid y_{&lt;i},\, \text{prompt} \right) $$
+        <div class="eq-note">Standard cross-entropy, but masked: the sum runs only over the assistant's tokens \(y_i\). The prompt and system tokens are fed in but never scored, so the model learns to <em>produce</em> the answer given the question rather than to also reproduce the question. <b>The single most common bug is using the wrong chat template</b> — train with one delimiter set and serve with another and the model answers correctly but formats garbage, because the special tokens that frame its turn no longer line up.</div>
+        </div>
+
+        <p>What separates a dataset that works from one that wastes a GPU-week:</p>
+        <ul>
+          <li><strong>Quality dominates quantity.</strong> The LIMA result is the canonical evidence: 1,000 carefully curated examples produced a strongly aligned model, outperforming much larger but noisier sets. A few hundred to a few thousand <em>excellent</em> examples beat tens of thousands of mediocre ones. Read 50 of your own examples by hand before training — if you wouldn't accept the answer, neither should the model.</li>
+          <li><strong>Match the serving distribution.</strong> Train on prompts shaped like the ones you'll actually receive. A model fine-tuned on tidy textbook questions degrades on the messy, typo-ridden inputs of production.</li>
+          <li><strong>Cover the format exactly.</strong> If you need valid JSON, every assistant response in the data must be valid JSON. The model learns the surface form ruthlessly.</li>
+          <li><strong>Decontaminate against your evals.</strong> If test prompts leak into training, your metrics become fiction. Dedup and check overlap before you trust a number.</li>
+          <li><strong>Balance, then probe forgetting.</strong> A dataset that is 100% one narrow task will sharpen that task and dull everything else (catastrophic forgetting). Mix in a little general instruction data, or accept and measure the regression.</li>
+        </ul>
+
+        <p>Sources, in rough order of value: <strong>your own logs and human-written gold answers</strong> (best, expensive); <strong>distillation</strong> — generate completions from a stronger model and curate them (cheap, scalable, but check the license of the teacher and the data); and <strong>existing open instruction sets</strong> for general capability ballast. The toy formatter below shows the shape every trainer expects — raw role-tagged turns rendered into one template string.</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Format a toy instruction dataset into chat-template strings (ChatML-style)
+import numpy as np
+
+# raw examples: each a list of {role, content} turns
+data = [
+    [{"role": "system",    "content": "You are a terse SQL assistant."},
+     {"role": "user",      "content": "users older than 30?"},
+     {"role": "assistant", "content": "SELECT * FROM users WHERE age > 30;"}],
+    [{"role": "user",      "content": "count the orders"},
+     {"role": "assistant", "content": "SELECT COUNT(*) FROM orders;"}],
+]
+
+def render(msgs):                              # ChatML: <|im_start|>role ... <|im_end|>
+    s = ""
+    for m in msgs:
+        s += f"<|im_start|>{m['role']}\n{m['content']}<|im_end|>\n"
+    return s
+
+lens = []
+for i, ex in enumerate(data):
+    text = render(ex)
+    lens.append(len(text.split()))            # crude whitespace token proxy
+    print(f"--- example {i} ({lens[-1]} ~tokens) ---")
+    print(text)
+
+print(f"examples: {len(data)} | mean ~tokens: {np.mean(lens):.1f} "
+      f"| max: {int(np.max(lens))}")
+print("loss is computed ONLY on the assistant spans; system+user are context.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="ftopen-data" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT OM3.2 — DATASET SIZE vs GAIN</span><span class="w-sub">DIMINISHING RETURNS · LIMA INTUITION</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>EXAMPLES N <output id="ftopen-data-n-out">1,000</output></label><input type="range" id="ftopen-data-n" min="1.4" max="5" step="0.05" value="3"/></div>
+              <div class="ctl"><label>DATA QUALITY <output id="ftopen-data-q-out">0.75</output></label><input type="range" id="ftopen-data-q" min="0.2" max="1" step="0.05" value="0.75"/></div>
+            </div>
+            <canvas class="w-canvas" id="ftopen-data-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">EST. QUALITY GAIN</div><div class="r-value" id="ftopen-data-gain">—</div></div>
+              <div class="readout"><div class="r-label">MARGINAL GAIN / 2× DATA</div><div class="r-value" id="ftopen-data-marg">—</div></div>
+              <div class="readout"><div class="r-label">REGIME</div><div class="r-value" id="ftopen-data-regime" style="font-size:13px;">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">A saturating curve: gain rises fast then flattens, and the ceiling is set by <em>quality</em>, not count. Slide quality down and the whole curve sags — no amount of mediocre data reaches a high-quality model. Slide N past a few thousand and watch the marginal gain per doubling collapse: this is the LIMA lesson made visible. The model is illustrative, not a benchmark prediction.</div>
+        </div>
+
+        <p class="note"><strong>How much do you actually need?</strong> For a style/format adaptation, a few hundred clean examples often suffice. For a genuine new skill (a code dialect, a tool-call protocol, a reasoning pattern), low thousands. Past ~10K examples on a single narrow task you are usually buying robustness and edge-case coverage, not headline quality — and your effort is better spent auditing the examples you have than collecting more.</p>
+      </section>
+
+      <!-- ====================== 3.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">3.3</span><h2>LoRA / QLoRA in practice</h2></div>
+        <p>The full theory of parameter-efficient fine-tuning — the low-rank hypothesis, the PEFT zoo, the NF4 quantization data type — is laid out in <strong>Vol II · Chapter 06</strong>. Here is the operating recap and the open-weights specifics, because LoRA is what makes "I own the weights" affordable on hardware you actually have.</p>
+
+        <p><strong>Full fine-tuning</strong> updates every parameter. With AdamW that costs roughly 16 bytes per parameter (weights + gradients + two optimizer moments, in mixed precision), so a 7B model wants ~112 GB of optimizer state before activations — it overflows an 80 GB card. It also produces a full model copy per task and risks catastrophic forgetting. <strong>LoRA</strong> dodges all three. Freeze the pretrained weight \(W_0\) and learn the update as a product of two thin matrices:</p>
+
+        <div class="eq"><span class="eq-tag">EQ OM3.2 — LoRA: A LOW-RANK UPDATE</span>
+        $$ W \;=\; W_0 + \Delta W \;=\; W_0 + \frac{\alpha}{r}\, B A, \qquad A \in \mathbb{R}^{r \times d_{\text{in}}},\; B \in \mathbb{R}^{d_{\text{out}} \times r},\; r \ll d $$
+        <div class="eq-note">\(A\) starts Gaussian, \(B\) starts at <b>zero</b>, so training begins exactly at the pretrained model and drifts away smoothly. The scale \(\alpha/r\) keeps behavior stable across ranks. Trainable parameters per matrix drop from \(d_{\text{out}}\,d_{\text{in}}\) to \(r\,(d_{\text{in}} + d_{\text{out}})\). After training, \(BA\) can be <b>merged into \(W_0\)</b> for zero inference overhead, or kept separate and hot-swapped — one base model multiplexing many LoRA "personalities" (§3.5).</div>
+        </div>
+
+        <p>The trainable count is the whole reason it fits. For a square \(d \times d\) projection the adapter trains \(2dr\) parameters versus \(d^2\) — a fraction of \(2r/d\). At \(d = 4096,\ r = 8\) that is \(2 \cdot 4096 \cdot 8 = 65{,}536\) out of \(16.8\)M, about \(0.39\%\) of the matrix. Optimizer state shrinks proportionally, which is what turns a 112 GB job into a few GB.</p>
+
+        <div class="exercise" data-answer="65536" data-tol="0.001" data-hint="A square layer means d_in = d_out = d, so A plus B is 2·d·r.">
+          <div class="ex-q">You attach a LoRA adapter of rank \( r = 8 \) to a square projection with \( d_{\text{in}} = d_{\text{out}} = 4096 \). How many trainable parameters does the adapter add (matrix \(A\) plus matrix \(B\))?</div>
+          <div class="ex-reveal-src">Trainable params \( = r(d_{\text{in}} + d_{\text{out}}) = 2dr = 2 \times 8 \times 4096 = \) <b>65536</b>. That is about \(0.39\%\) of the full \(4096^2 = 16{,}777{,}216\)-parameter update — and the optimizer state shrinks by the same factor, which is why the job fits on a laptop GPU.</div>
+        </div>
+
+        <p><strong>QLoRA</strong> goes one step further so even 65–70B models tune on a single card. It freezes the base weights in 4-bit <strong>NF4</strong> (a data type whose 16 levels sit at the quantiles of a Gaussian, where trained weights actually live), trains bf16 LoRA adapters on top, dequantizing per matmul, and pages optimizer state to CPU on memory spikes. Quality tracks 16-bit LoRA closely on instruction-tuning benchmarks — the result that made serious fine-tuning a consumer-hardware activity. A 70B base at 4 bits is \(70 \times 10^9 \times 0.5 = 35\) GB of frozen weights, small enough for a single 48 GB card with room for adapters and activations.</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># LoRA parameter count vs full fine-tune, across a real layer stack
+import numpy as np
+
+# one transformer block of a 4096-dim model (Llama-ish): attn + MLP linears
+# (name, d_in, d_out)
+layers = [
+    ("q_proj", 4096, 4096), ("k_proj", 4096, 1024), ("v_proj", 4096, 1024),
+    ("o_proj", 4096, 4096), ("gate",   4096, 14336),
+    ("up",     4096, 14336), ("down",  14336, 4096),
+]
+r, alpha = 8, 16
+
+full = lora = 0
+print(f"{'layer':>7} | {'full d_in*d_out':>15} | {'LoRA r(d_in+d_out)':>18}")
+for name, din, dout in layers:
+    f = din * dout
+    l = r * (din + dout)
+    full += f; lora += l
+    print(f"{name:>7} | {f:15,} | {l:18,}")
+
+print("-" * 50)
+print(f"{'TOTAL':>7} | {full:15,} | {lora:18,}")
+print(f"trainable fraction (1 block): {100*lora/full:.3f} %")
+# AdamW full FT ~16 B/param of optimizer state; LoRA only on adapters
+print(f"optimizer state  full: {16*full/1e6:8.1f} MB   "
+      f"LoRA: {16*lora/1e6:6.2f} MB  per block")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="ftopen-lora" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT OM3.3 — LoRA RANK vs TRAINABLE PARAMS</span><span class="w-sub">ONE LINEAR LAYER · EQ OM3.2</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>d_in <output id="ftopen-lora-din-out">4,096</output></label><input type="range" id="ftopen-lora-din" min="9" max="15" step="1" value="12"/></div>
+              <div class="ctl"><label>d_out <output id="ftopen-lora-dout-out">4,096</output></label><input type="range" id="ftopen-lora-dout" min="9" max="15" step="1" value="12"/></div>
+              <div class="ctl"><label>RANK r <output id="ftopen-lora-r-out">8</output></label><input type="range" id="ftopen-lora-r" min="0" max="9" step="1" value="3"/></div>
+            </div>
+            <div style="border:1px solid var(--hairline);border-radius:4px;padding:14px;margin-top:4px;">
+              <div style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.16em;color:#636363;margin-bottom:8px;">TRAINABLE FRACTION OF THE FULL UPDATE</div>
+              <div style="height:14px;background:rgba(47,50,52,.4);border-radius:2px;overflow:hidden;">
+                <div id="ftopen-lora-bar" style="height:100%;width:1%;background:#a6f2cc;transition:width .25s ease-in-out;"></div>
+              </div>
+            </div>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">FULL ΔW (d_in·d_out)</div><div class="r-value" id="ftopen-lora-full">—</div></div>
+              <div class="readout acc"><div class="r-label">LoRA r·(d_in+d_out)</div><div class="r-value" id="ftopen-lora-params">—</div></div>
+              <div class="readout acc"><div class="r-label">TRAINABLE %</div><div class="r-value" id="ftopen-lora-pct">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Set both dims to 4,096 and rank to 8 to reproduce the exercise: 65,536 params, 0.39%. Notice that for a fixed layer the trainable count grows <em>linearly</em> in rank, while the full update is fixed — so doubling rank doubles the adapter but barely moves the fraction. Current default: attach to <em>all</em> linear layers (Q, K, V, O, gate, up, down) at rank 8–64, with \(\alpha = 2r\) a common starting point.</div>
+        </div>
+
+        <p class="note"><strong>Where to attach, what rank.</strong> The original LoRA paper targeted only \(W_Q, W_V\); the modern default is all linear layers, which beats raising the rank at equal parameter budget. Ranks 8–64 cover most tasks — style transfers sit low, new skills sit higher. Variants tune the edges: <strong>rsLoRA</strong> rescales by \(\alpha/\sqrt{r}\) for stability at high rank, <strong>DoRA</strong> decomposes magnitude from direction for a small quality bump, and DPO-with-LoRA is the standard budget-alignment stack (Vol II · §5).</p>
+      </section>
+
+      <!-- ====================== 3.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">3.4</span><h2>Evaluation &amp; iteration</h2></div>
+        <p>A fine-tune is not done when the loss curve looks good — it is done when it measurably beats the model you started from on the thing you care about, without quietly breaking everything else. Training loss going down only tells you the model is memorizing your data; it says nothing about generalization, and past a couple of epochs it actively lies (loss falls while real quality drops — the model overfits the exact phrasings in the set).</p>
+
+        <p>Build the eval <em>before</em> you train, and hold it out completely. A practical evaluation has three legs:</p>
+        <ul>
+          <li><strong>The target metric.</strong> A held-out set of the task itself, scored automatically where possible — exact match, JSON-validity rate, pass@1 on tests, an LLM-as-judge rubric (Vol II · §5) for open-ended outputs. This is the number you are trying to move.</li>
+          <li><strong>A forgetting probe.</strong> A small general benchmark (a slice of MMLU, a reasoning set, a few coding tasks) that the base model already passed. If these regress, you traded general capability for narrow skill — sometimes acceptable, never acceptable <em>silently</em>.</li>
+          <li><strong>Human eyes.</strong> Read 50 outputs per checkpoint. Automated metrics miss tone, subtle format drift, and the "fluent but wrong" failure that no exact-match catches.</li>
+        </ul>
+
+        <p>Then iterate on the variable that actually matters. The loop is almost always <em>data → train → eval → fix the data</em>, not endless hyperparameter sweeps. When the model fails, the failure is usually a hole in the dataset (a case you didn't cover, a format you weren't consistent about), and the fix is examples, not a different learning rate. Sweep only what is cheap and high-leverage: number of epochs (1–3, watch for overfit), learning rate (≈1e-4 for LoRA, cosine decay), and rank if quality is capped.</p>
+
+        <div class="callout warn">
+          <span class="co-icon">PITFALLS</span>
+          <p><strong>The four classic failures, in order of frequency.</strong> (1) <em>Wrong chat template</em> — the model answers fine but the special tokens are misaligned, so output is malformed; verify the template end-to-end. (2) <em>Eval contamination</em> — a test example leaked into training and your headline number is fiction; dedup and check overlap. (3) <em>Overfitting at epoch 3+</em> — training loss down, real quality down; stop earlier. (4) <em>Silent capability regression</em> — always run the forgetting probe, not just the target metric.</p>
+        </div>
+
+        <p class="note">A useful sanity bar: if the fine-tune does not clearly beat a <em>well-prompted</em> base model on your held-out set, you have not yet earned the complexity of owning a custom checkpoint. The prompt-only baseline is the number every fine-tune must beat to justify itself.</p>
+      </section>
+
+      <!-- ====================== 3.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">3.5</span><h2>Serving your fine-tune</h2></div>
+        <p>A LoRA fine-tune leaves you with a choice at deploy time, and it is one of the quiet superpowers of the method. The adapter is a small set of \(A, B\) matrices; you can either fold them into the base weights or keep them separate.</p>
+
+        <ul>
+          <li><strong>Merge for latency.</strong> Compute \(W_0 + \tfrac{\alpha}{r} BA\) once and save a normal full-precision (or re-quantized) checkpoint. The result is an ordinary model — zero inference overhead, served by any engine (llama.cpp, vLLM, SGLang) exactly like the base. Best when you have one fine-tune and want maximum tokens-per-second. Note that merging into an already-quantized base then re-quantizing can lose a little quality versus merging into the full-precision weights — merge high, quantize after.</li>
+          <li><strong>Keep separate for multi-tenancy.</strong> Load one base model in VRAM and swap many tiny adapters in and out, even batching requests for different adapters together. A typical rank-16 adapter is a few hundred MB versus tens of GB for the model it steers, so one GPU can host hundreds of "personalities." Frameworks like <strong>S-LoRA</strong> and vLLM's multi-LoRA serving make this a production pattern — ideal when you have many per-customer or per-task fine-tunes over a shared base.</li>
+        </ul>
+
+        <p>The economics of the merged path are the same memory math from Open Models · §2: footprint is bits-per-weight times parameters, decode is bandwidth-bound, KV cache grows with context and batch. A merged 4-bit fine-tune of a 7B model is the same ~3.5 GB and ~200 tok/s ceiling as its base — you changed what it says, not what it costs. For distribution, the GGUF you ship is the merged-then-quantized file; for an internal fleet serving many tasks, the multi-LoRA route keeps your VRAM bill flat as the number of fine-tunes grows.</p>
+
+        <p>One open-weights caveat worth stating plainly: <strong>licenses bind the fine-tune too</strong>. The base model's terms (and the license of any data you distilled from a teacher) flow through to your derivative. "Open weights" is not automatically "use however you like" — check the specific license before you ship a commercial product on top of a fine-tune.</p>
+
+        <pre><code><span class="c"># Open-weights fine-tune recipe that survives contact with reality</span>
+<span class="k">base</span>:     strongest open instruct model that fits your serving budget
+<span class="k">method</span>:   QLoRA (NF4) · r=8–16 · alpha=2r · all linear layers · dropout 0.05
+<span class="k">data</span>:     hundreds–few-thousand curated examples; exact chat template;
+          dedup; decontaminate vs evals; read 50 by hand
+<span class="k">train</span>:    lr 1e-4 · cosine · warmup 3% · 1–3 epochs · effective batch 32–128
+<span class="k">eval</span>:     target metric + forgetting probe + 50 manual reads / checkpoint;
+          must beat a well-prompted base model
+<span class="k">ship</span>:     merge -&gt; quantize -&gt; GGUF for one model · or multi-LoRA for many</code></pre>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>SFT teaches the model to imitate; the next chapter teaches it to be preferred.</strong> Training Techniques goes beyond supervised fine-tuning into the methods that shape behavior at a deeper level — preference optimization (DPO and friends), reward modeling, and the RL-style fine-tunes (GRPO over LoRA adapters) that increasingly ship small reasoning models on open weights.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 3.R — References ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">3.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://arxiv.org/abs/2106.09685" target="_blank" rel="noopener">Hu, E.&nbsp;J., Shen, Y., Wallis, P. et&nbsp;al. (2021). <span class="ref-venue">LoRA: Low-Rank Adaptation of Large Language Models</span>.</a> <span class="ref-meta">ICLR 2022 — the low-rank weight update (EQ OM3.2) at the heart of practical open-model fine-tuning.</span></li>
+          <li><a href="https://arxiv.org/abs/2305.14314" target="_blank" rel="noopener">Dettmers, T., Pagnoni, A., Holtzman, A. &amp; Zettlemoyer, L. (2023). <span class="ref-venue">QLoRA: Efficient Finetuning of Quantized LLMs</span>.</a> <span class="ref-meta">NeurIPS 2023 — 4-bit NF4 base weights plus LoRA adapters; fine-tuning a 65B model on a single 48 GB GPU.</span></li>
+          <li><a href="https://arxiv.org/abs/2305.11206" target="_blank" rel="noopener">Zhou, C., Liu, P., Xu, P. et&nbsp;al. (2023). <span class="ref-venue">LIMA: Less Is More for Alignment</span>.</a> <span class="ref-meta">NeurIPS 2023 — 1,000 curated examples beat far larger noisy sets; the evidence behind "quality over quantity."</span></li>
+          <li><a href="https://arxiv.org/abs/2012.13255" target="_blank" rel="noopener">Aghajanyan, A., Zettlemoyer, L. &amp; Gupta, S. (2021). <span class="ref-venue">Intrinsic Dimensionality Explains the Effectiveness of Language Model Fine-Tuning</span>.</a> <span class="ref-meta">ACL 2021 — the empirical low-rank hypothesis that motivates LoRA.</span></li>
+          <li><a href="https://arxiv.org/abs/2402.09353" target="_blank" rel="noopener">Liu, S.-Y., Wang, C.-Y., Yin, H. et&nbsp;al. (2024). <span class="ref-venue">DoRA: Weight-Decomposed Low-Rank Adaptation</span>.</a> <span class="ref-meta">ICML 2024 — decouples magnitude from direction for a quality gain over vanilla LoRA.</span></li>
+          <li><a href="https://arxiv.org/abs/2311.03285" target="_blank" rel="noopener">Sheng, Y., Cao, S., Li, D. et&nbsp;al. (2023). <span class="ref-venue">S-LoRA: Serving Thousands of Concurrent LoRA Adapters</span>.</a> <span class="ref-meta">MLSys 2024 — multi-tenant serving of many adapters over one shared base model (§3.5).</span></li>
+          <li><a href="https://huggingface.co/docs/peft" target="_blank" rel="noopener">Hugging Face. <span class="ref-venue">PEFT: Parameter-Efficient Fine-Tuning — Documentation</span>.</a> <span class="ref-meta">Official library docs for LoRA/QLoRA/DoRA training and adapter management.</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../openmodels/02-running-open-models.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">02</span> Running Open Models</div></a>
+        <a class="next" href="../openmodels/04-training-techniques.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">04</span> Training Techniques</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — OPEN MODELS · CH 03</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* chapter instruments — single IIFE, no globals */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  var C = (FM && FM.C) || {
+    MINT: "#a6f2cc", DEEP: "#2b5945", BLUE: "#4e8af7", RED: "#ff4136",
+    HAIR: "#2f3234", MUT: "#636363", SEC: "#9b9b9b", BRIGHT: "#ffffff",
+    MONO: "10px ui-monospace, SF Mono, Menlo, monospace"
+  };
+  var MONO = C.MONO || "10px ui-monospace, SF Mono, Menlo, monospace";
+
+  function commas(n) {
+    return Math.round(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  }
+  function siInt(n) {
+    if (FM && FM.siFormat) return FM.siFormat(n, n >= 1e6 ? 1 : 0);
+    if (n >= 1e9) return (n / 1e9).toFixed(1) + "B";
+    if (n >= 1e6) return (n / 1e6).toFixed(1) + "M";
+    if (n >= 1e3) return (n / 1e3).toFixed(0) + "K";
+    return String(Math.round(n));
+  }
+
+  /* ============================================================
+     INSTRUMENT OM3.1 — TUNE / PROMPT / RAG DECISION TREE
+     Three categorical inputs -> a recommendation leaf.
+     Encodes the chapter rule: knowledge->RAG, behavior->fine-tune,
+     gated by data volume; combinations -> stacked recommendations.
+     ============================================================ */
+  (function decisionTree() {
+    var root = document.getElementById("ftopen-tree");
+    if (!root) return;
+    var verdictEl = document.getElementById("ftopen-tree-verdict");
+    var whyEl = document.getElementById("ftopen-tree-why");
+    var primaryEl = document.getElementById("ftopen-tree-primary");
+    var comboEl = document.getElementById("ftopen-tree-combo");
+    var confEl = document.getElementById("ftopen-tree-conf");
+    if (!verdictEl) return;
+
+    var state = { gap: "behavior", volatile: "yes", data: "few" };
+
+    function pickGroup(attr) {
+      return root.querySelectorAll("[data-ftopen-" + attr + "]");
+    }
+    function wire(attr, key) {
+      var btns = pickGroup(attr);
+      for (var i = 0; i < btns.length; i++) {
+        (function (btn) {
+          btn.addEventListener("click", function () {
+            for (var j = 0; j < btns.length; j++) btns[j].classList.remove("on");
+            btn.classList.add("on");
+            state[key] = btn.getAttribute("data-ftopen-" + attr);
+            render();
+          });
+        })(btns[i]);
+      }
+    }
+
+    function render() {
+      var verdict, why, primary, combo, conf, color;
+
+      if (state.gap === "knowledge") {
+        // knowledge gap -> RAG; volatility raises confidence
+        primary = "RAG";
+        if (state.volatile === "yes") {
+          verdict = "USE RAG — DO NOT FINE-TUNE";
+          why = "The gap is knowledge that changes often. Fine-tuning would bake stale facts into the weights and force a retrain on every update. Retrieve the current document into context instead — update the index, not the model.";
+          combo = "BETTER PROMPT";
+          conf = "HIGH";
+          color = C.MINT;
+        } else {
+          verdict = "RAG (OR A BIGGER PROMPT)";
+          why = "Stable facts: still a knowledge gap, so retrieval is the clean answer. If the corpus is small enough to fit, a well-built prompt may suffice. Fine-tuning facts remains brittle even when they rarely change.";
+          combo = "PROMPT CACHING";
+          conf = "HIGH";
+          color = C.MINT;
+        }
+      } else {
+        // behavior gap -> fine-tune, gated by data volume
+        primary = "FINE-TUNE";
+        if (state.data === "few") {
+          verdict = "PROMPT FIRST — TOO LITTLE DATA TO TUNE";
+          why = "It is a behavior gap, but under ~100 good examples is rarely enough to fine-tune well. Engineer the prompt and few-shot examples first; collect and curate more examples, then revisit.";
+          primary = "PROMPTING";
+          combo = "COLLECT DATA";
+          conf = "MEDIUM";
+          color = C.BLUE;
+        } else if (state.data === "some") {
+          verdict = "FINE-TUNE (LoRA / QLoRA)";
+          why = "A behavior/format/skill gap with enough examples to learn from. LoRA on all linear layers at rank 8–16 is the default; this much data suits a style or format adaptation well.";
+          combo = (state.volatile === "yes") ? "RAG FOR THE FACTS" : "RAG IF FACTS NEEDED";
+          conf = "HIGH";
+          color = C.MINT;
+        } else {
+          verdict = "FINE-TUNE — STRONG CASE";
+          why = "A behavior gap with 1K+ curated examples: the ideal fine-tuning regime, enough to teach a genuine new skill. Consider a smaller base model to win on serving cost.";
+          combo = (state.volatile === "yes") ? "RAG FOR THE FACTS" : "RAG IF FACTS NEEDED";
+          conf = "HIGH";
+          color = C.MINT;
+        }
+      }
+
+      verdictEl.textContent = verdict;
+      verdictEl.style.color = color;
+      whyEl.textContent = why;
+      primaryEl.textContent = primary;
+      comboEl.textContent = combo;
+      confEl.textContent = conf;
+    }
+
+    wire("gap", "gap");
+    wire("volatile", "volatile");
+    wire("data", "data");
+    render();
+  })();
+
+  /* ============================================================
+     INSTRUMENT OM3.2 — DATASET SIZE vs GAIN
+     Saturating curve gain(N) = ceiling * (1 - exp(-N / k)),
+     ceiling set by quality. Plots curve + marks current N.
+     Illustrative model, not a benchmark prediction.
+     ============================================================ */
+  (function dataGain() {
+    var root = document.getElementById("ftopen-data");
+    if (!root) return;
+    var canvas = document.getElementById("ftopen-data-canvas");
+    if (!canvas) return;
+    var nEl = document.getElementById("ftopen-data-n");
+    var qEl = document.getElementById("ftopen-data-q");
+    var nOut = document.getElementById("ftopen-data-n-out");
+    var qOut = document.getElementById("ftopen-data-q-out");
+    var gainEl = document.getElementById("ftopen-data-gain");
+    var margEl = document.getElementById("ftopen-data-marg");
+    var regimeEl = document.getElementById("ftopen-data-regime");
+
+    var K = 700; // examples constant: ~saturation scale (LIMA-ish)
+    function gainAt(N, q) {
+      var ceiling = q; // quality caps the achievable gain (0..1)
+      return ceiling * (1 - Math.exp(-N / K));
+    }
+
+    function render() {
+      var N = Math.round(Math.pow(10, parseFloat(nEl.value)));
+      var q = parseFloat(qEl.value);
+      nOut.textContent = commas(N);
+      qOut.textContent = q.toFixed(2);
+
+      var g = gainAt(N, q);
+      var g2 = gainAt(N * 2, q);
+      var marg = g2 - g;
+      gainEl.textContent = (g * 100).toFixed(1) + "%";
+      margEl.textContent = "+" + (marg * 100).toFixed(2) + " pts";
+      var regime = N < 200 ? "TOO LITTLE"
+                 : marg > 0.04 ? "STEEP — KEEP ADDING"
+                 : marg > 0.01 ? "FLATTENING"
+                 : "SATURATED — AUDIT, DON'T COLLECT";
+      regimeEl.textContent = regime;
+      regimeEl.style.color = N < 200 ? C.RED
+                           : marg > 0.04 ? C.MINT
+                           : marg > 0.01 ? C.BLUE : C.SEC;
+
+      var s = FM.setupCanvas(canvas, 300);
+      var ctx = s.ctx, w = s.w, h = s.h;
+      ctx.clearRect(0, 0, w, h);
+      var padL = 46, padR = 16, padT = 18, padB = 34;
+      var plotW = w - padL - padR, plotH = h - padT - padB;
+
+      var logMin = 1.4, logMax = 5; // 25 .. 100K examples
+      function xOf(logN) { return padL + ((logN - logMin) / (logMax - logMin)) * plotW; }
+      function yOf(val) { return padT + (1 - val) * plotH; }
+
+      // grid + y axis (gain 0..1)
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.font = MONO; ctx.fillStyle = C.MUT; ctx.textAlign = "right";
+      for (var gv = 0; gv <= 1.0001; gv += 0.25) {
+        var yy = yOf(gv);
+        ctx.beginPath(); ctx.moveTo(padL, yy); ctx.lineTo(w - padR, yy); ctx.stroke();
+        ctx.fillText((gv * 100).toFixed(0) + "%", padL - 6, yy + 3);
+      }
+      // x ticks (log decades)
+      ctx.textAlign = "center";
+      var decades = [{ l: 2, t: "100" }, { l: 3, t: "1K" }, { l: 4, t: "10K" }, { l: 5, t: "100K" }];
+      for (var d = 0; d < decades.length; d++) {
+        var xx = xOf(decades[d].l);
+        ctx.fillText(decades[d].t, xx, h - padB + 16);
+      }
+
+      // quality ceiling line
+      ctx.strokeStyle = "rgba(99,99,99,.7)"; ctx.lineWidth = 1; ctx.setLineDash([4, 4]);
+      ctx.beginPath(); ctx.moveTo(padL, yOf(q)); ctx.lineTo(w - padR, yOf(q)); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = C.MUT; ctx.textAlign = "left";
+      ctx.fillText("quality ceiling", padL + 6, yOf(q) - 5);
+
+      // the gain curve
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 2;
+      ctx.beginPath();
+      var first = true;
+      for (var lx = logMin; lx <= logMax + 1e-9; lx += (logMax - logMin) / 160) {
+        var nn = Math.pow(10, lx);
+        var yy2 = yOf(gainAt(nn, q));
+        if (first) { ctx.moveTo(xOf(lx), yy2); first = false; }
+        else ctx.lineTo(xOf(lx), yy2);
+      }
+      ctx.stroke();
+
+      // current-N marker
+      var cx = xOf(parseFloat(nEl.value)), cy = yOf(g);
+      ctx.strokeStyle = "rgba(78,138,247,.5)"; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+      ctx.beginPath(); ctx.moveTo(cx, padT); ctx.lineTo(cx, h - padB); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = C.BLUE;
+      ctx.beginPath(); ctx.arc(cx, cy, 4, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = C.BRIGHT; ctx.font = "11px ui-monospace, Menlo, monospace";
+      ctx.textAlign = (cx > w - 90) ? "right" : "left";
+      ctx.fillText(commas(N) + " ex", cx + (cx > w - 90 ? -8 : 8), cy - 8);
+
+      // axis labels
+      ctx.fillStyle = C.SEC; ctx.font = MONO; ctx.textAlign = "center";
+      ctx.fillText("training examples (log)  →", padL + plotW / 2, h - 4);
+      ctx.save(); ctx.translate(13, padT + plotH / 2); ctx.rotate(-Math.PI / 2);
+      ctx.fillText("relative quality gain", 0, 0); ctx.restore();
+    }
+
+    nEl.addEventListener("input", render);
+    qEl.addEventListener("input", render);
+    window.addEventListener("resize", render);
+    render();
+  })();
+
+  /* ============================================================
+     INSTRUMENT OM3.3 — LoRA RANK vs TRAINABLE PARAMS
+     full = d_in * d_out ; lora = r * (d_in + d_out) ; EQ OM3.2.
+     Dims and rank are powers of two via slider exponents.
+     ============================================================ */
+  (function loraCalc() {
+    var root = document.getElementById("ftopen-lora");
+    if (!root) return;
+    var dinEl = document.getElementById("ftopen-lora-din");
+    var doutEl = document.getElementById("ftopen-lora-dout");
+    var rEl = document.getElementById("ftopen-lora-r");
+    if (!dinEl || !doutEl || !rEl) return;
+    var dinOut = document.getElementById("ftopen-lora-din-out");
+    var doutOut = document.getElementById("ftopen-lora-dout-out");
+    var rOut = document.getElementById("ftopen-lora-r-out");
+    var fullEl = document.getElementById("ftopen-lora-full");
+    var paramsEl = document.getElementById("ftopen-lora-params");
+    var pctEl = document.getElementById("ftopen-lora-pct");
+    var barEl = document.getElementById("ftopen-lora-bar");
+
+    function render() {
+      var din = Math.pow(2, parseInt(dinEl.value, 10));
+      var dout = Math.pow(2, parseInt(doutEl.value, 10));
+      var r = Math.pow(2, parseInt(rEl.value, 10)); // exponent 0..9 -> 1..512
+      dinOut.textContent = commas(din);
+      doutOut.textContent = commas(dout);
+      rOut.textContent = commas(r);
+
+      var full = din * dout;
+      var lora = r * (din + dout);
+      var pct = 100 * lora / full;
+
+      fullEl.textContent = siInt(full);
+      paramsEl.textContent = commas(lora);
+      pctEl.textContent = (pct < 0.01 ? pct.toFixed(4) : pct < 1 ? pct.toFixed(2) : pct.toFixed(1)) + "%";
+
+      // bar width: clamp 1..100, sqrt-scaled so small fractions stay visible
+      var wpct = Math.max(1, Math.min(100, Math.sqrt(pct / 100) * 100));
+      barEl.style.width = wpct.toFixed(1) + "%";
+      barEl.style.background = pct >= 50 ? C.RED : pct >= 10 ? C.BLUE : C.MINT;
+    }
+
+    dinEl.addEventListener("input", render);
+    doutEl.addEventListener("input", render);
+    rEl.addEventListener("input", render);
+    render();
+  })();
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

@@ -1,0 +1,874 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>The Reinforcement Learning Problem — AI Encyclopedia</title>
+<meta name="description" content="An agent that learns from reward, not labels, faces a problem labels never pose: its own actions decide what data it sees next. The MDP, returns and discounting, policies and value functions, and the exploration–exploitation dilemma." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+<link rel="canonical" href="https://ai-encyclopedia.com/rl/01-the-rl-problem" />
+<meta property="og:url" content="https://ai-encyclopedia.com/rl/01-the-rl-problem" />
+</head>
+<body data-track="rl" data-level="intro">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ REINFORCEMENT LEARNING / 01 / THE PROBLEM</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../rl/02-dynamic-programming.html">NEXT: DYNAMIC PROGRAMMING →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">REINFORCEMENT LEARNING · CHAPTER 01 / 06</div>
+    <h1>The Reinforcement Learning Problem</h1>
+    <p class="lede">Supervised learning hands the model a fixed set of labeled examples to imitate. Reinforcement learning gives an agent only a scalar reward and a world to act in, which raises a difficulty labels never do: <strong>the agent's own actions decide what data it sees next</strong>. There is no fixed dataset to fit, because the dataset follows from the policy, and improving the policy changes the dataset. This chapter states that loop precisely: the Markov decision process, the return it optimizes, the policies and value functions that summarize it, and the exploration and exploitation trade-off that has no counterpart in supervised learning.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>INTRO</b></span>
+      <span>READING TIME<b>≈ 24 MIN</b></span>
+      <span>BUILDS ON<b>STATS · MARKOV CHAINS</b></span>
+      <span>INSTRUMENTS<b>GRIDWORLD · MDP ANATOMY · γ EXPLORER</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">1.1</span>Agents, environments &amp; rewards</a>
+      <a href="#s2"><span class="n">1.2</span>The Markov Decision Process</a>
+      <a href="#s3"><span class="n">1.3</span>Returns &amp; discounting</a>
+      <a href="#s4"><span class="n">1.4</span>Policies &amp; value functions</a>
+      <a href="#s5"><span class="n">1.5</span>Exploration vs exploitation</a>
+      <a href="#s6"><span class="n">1.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 1.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">1.1</span><h2>Agents, environments &amp; rewards</h2></div>
+        <p>Reinforcement learning is the study of <strong>learning by interaction</strong>. There is an <strong>agent</strong> — the thing that learns and decides — and an <strong>environment</strong> — everything else, the world the agent acts in and cannot directly control. They meet in a loop that runs forever, or until the episode ends. At each step the agent observes a <em>state</em>, chooses an <em>action</em>, and the environment responds with a <em>reward</em> and a new state. That single sentence is the whole game; everything in this volume is built on it.</p>
+
+        <div class="figure" id="rl1-loop-fig">
+          <svg viewBox="0 0 640 220" role="img" aria-label="The agent–environment interaction loop">
+            <defs>
+              <marker id="rl1-arrow" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
+                <path d="M0,0 L7,3 L0,6 Z" fill="#9b9b9b"></path>
+              </marker>
+            </defs>
+            <g class="dg-box-accent" data-pop>
+              <rect x="60" y="78" width="180" height="64" rx="6" fill="rgba(166,242,204,0.05)" stroke="#2b5945" stroke-width="1.2"></rect>
+              <text x="150" y="106" text-anchor="middle" fill="#e5e5e5" font-family="ui-monospace,Menlo,monospace" font-size="13">AGENT</text>
+              <text x="150" y="124" text-anchor="middle" fill="#636363" font-family="ui-monospace,Menlo,monospace" font-size="9.5">policy π(a | s)</text>
+            </g>
+            <g class="dg-box" data-pop>
+              <rect x="400" y="78" width="180" height="64" rx="6" fill="#1e2124" stroke="#565656" stroke-width="1.2"></rect>
+              <text x="490" y="106" text-anchor="middle" fill="#e5e5e5" font-family="ui-monospace,Menlo,monospace" font-size="13">ENVIRONMENT</text>
+              <text x="490" y="124" text-anchor="middle" fill="#636363" font-family="ui-monospace,Menlo,monospace" font-size="9.5">P(s′, r | s, a)</text>
+            </g>
+            <path data-draw d="M240,96 C320,60 320,60 400,96" fill="none" stroke="#9b9b9b" stroke-width="1.4" marker-end="url(#rl1-arrow)"></path>
+            <text x="320" y="58" text-anchor="middle" fill="#a6f2cc" font-family="ui-monospace,Menlo,monospace" font-size="10">action aₜ</text>
+            <path data-draw d="M400,124 C320,162 320,162 240,124" fill="none" stroke="#9b9b9b" stroke-width="1.4" marker-end="url(#rl1-arrow)"></path>
+            <text x="320" y="178" text-anchor="middle" fill="#4e8af7" font-family="ui-monospace,Menlo,monospace" font-size="10">reward rₜ₊₁ , state sₜ₊₁</text>
+          </svg>
+          <div class="dg-cap">The interaction loop. The agent emits an action; the environment returns a reward and the next state. Nothing else passes between them — no labels, no gradient, no ground-truth "correct action".</div>
+        </div>
+
+        <p>The contrast with supervised learning is sharper than it first appears, and it is the reason RL is its own field rather than a corner of classification. Three differences matter:</p>
+        <ul>
+          <li><strong>The signal is evaluative, not instructive.</strong> A label says <em>"the answer was 7."</em> A reward says only <em>"that was worth +1"</em> — it never reveals what the best action would have been. The agent must infer the better action by trying alternatives, which it can only do by acting differently.</li>
+          <li><strong>Feedback is delayed.</strong> The move that loses a chess game may have been made twenty turns earlier. Reward arrives long after the action that earned it, so the agent must solve a <em>credit-assignment</em> problem: which of my past decisions deserves the blame or the praise?</li>
+          <li><strong>The data is not i.i.d. — it is generated by the agent.</strong> A supervised dataset sits still while you fit it. In RL the distribution of states the agent encounters is produced <em>by its own policy</em>; change the policy and you change the data. An agent that never drives into the city never learns city driving. This feedback between policy and data is the defining difficulty, and it is exactly the bold idea this chapter is built around.</li>
+        </ul>
+
+        <p>The entire framework rests on one deceptively strong assumption, the <strong>reward hypothesis</strong>: that any goal we care about can be expressed as the maximization of expected cumulative scalar reward. Win the game; minimize fuel; keep the robot upright; finish the task a human would approve of. It is a remarkably general claim, and most of the field's hardest practical failures — reward hacking, specification gaming, agents that maximize the literal number while violating its intent — are failures of <em>writing down</em> the reward, not of optimizing it. We will return to that honesty repeatedly.</p>
+
+        <p class="note">A word on what "reward" is not. It is not a label and not a loss. It is part of the environment's definition, chosen by the problem designer, and the agent treats it as given and immutable. The agent's job is never to question the reward — only to collect as much of it, over time, as it can.</p>
+      </section>
+
+      <!-- ====================== 1.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">1.2</span><h2>The Markov Decision Process</h2></div>
+        <p>To do anything rigorous we need to formalize that loop, and the standard formalization is the <strong>Markov Decision Process (MDP)</strong>. An MDP is a Markov chain (see Stats · Markov Chains) with two additions: the transitions now depend on an <em>action</em> the agent chooses, and every transition emits a <em>reward</em>. It is the bridge between "an agent acting in a world" and "a problem we can solve with mathematics".</p>
+
+        <div class="eq"><span class="eq-tag">EQ R1.1 — THE MDP TUPLE</span>
+        $$ \mathcal{M} = \langle\, \mathcal{S},\ \mathcal{A},\ P,\ R,\ \gamma \,\rangle $$
+        <div class="eq-note">\(\mathcal{S}\) is the set of <b>states</b>; \(\mathcal{A}\) the set of <b>actions</b>; \(P(s' \mid s, a)\) the <b>transition</b> probability of landing in \(s'\) after taking \(a\) in \(s\); \(R(s, a)\) the expected immediate <b>reward</b>; and \(\gamma \in [0, 1]\) the <b>discount factor</b> (§1.3). Five objects fully specify the world. <b>Everything an RL algorithm computes — values, policies, plans — is a function of this tuple alone.</b></div>
+        </div>
+
+        <p>The word <em>Markov</em> carries the load. The state is assumed to be a <strong>sufficient statistic of the history</strong>: given the current state, the future is conditionally independent of the past. Where you go next depends only on where you are and what you do — not on how you got here.</p>
+
+        <div class="eq"><span class="eq-tag">EQ R1.2 — THE MARKOV PROPERTY</span>
+        $$ P\big(s_{t+1} \mid s_t, a_t, s_{t-1}, a_{t-1}, \ldots, s_0\big) \;=\; P\big(s_{t+1} \mid s_t, a_t\big) $$
+        <div class="eq-note">The full history collapses into the current state. This is not a law of nature — it is a <b>property of how you choose to define the state</b>. If a single video frame is not Markov (you cannot tell which way the ball is moving), stack four frames and it becomes Markov. <b>Most of the art of applying RL is engineering a state representation that makes this assumption true enough to be useful.</b> When the agent cannot observe the full state — only a partial observation — the problem becomes a POMDP, strictly harder, and is the subject of later chapters.</div>
+        </div>
+
+        <p>The transition function \(P\) and reward function \(R\) together are called the <strong>model</strong> of the environment. A crucial fork in the field follows from whether the agent knows them. If \(P\) and \(R\) are known, the agent can <em>plan</em> — compute the best policy by pure thought, no interaction required, which is the dynamic programming of Chapter 02. If they are unknown, the agent must <em>learn</em> from samples, which is the model-free reinforcement learning of the chapters after. The MDP is the common language for both.</p>
+
+        <table class="data">
+          <thead><tr><th>Symbol</th><th>Name</th><th>What it is</th><th>Gridworld example</th></tr></thead>
+          <tbody>
+            <tr><td class="m">𝒮</td><td>states</td><td>every distinguishable situation</td><td>each cell of the grid</td></tr>
+            <tr><td class="m">𝒜</td><td>actions</td><td>the agent's choices in a state</td><td>up, down, left, right</td></tr>
+            <tr><td class="m">P(s′|s,a)</td><td>transitions</td><td>where actions lead (maybe stochastic)</td><td>"move up" → cell above (90%), slip sideways (10%)</td></tr>
+            <tr><td class="m">R(s,a)</td><td>reward</td><td>scalar feedback per step</td><td>+1 at the goal, −1 in a trap, −0.04 per step</td></tr>
+            <tr><td class="m">γ</td><td>discount</td><td>how much the future counts</td><td>0.9 — distant rewards matter, but less</td></tr>
+          </tbody>
+        </table>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Define a tiny 3-state MDP and compute a trajectory's discounted return
+import numpy as np
+
+# states 0,1,2 ; action "go" moves you forward; reward is given on arrival
+# rewards collected along one episode: s0 -> s1 -> s2 (terminal)
+rewards = np.array([0.0, 1.0, 1.0, 1.0])   # r_1, r_2, r_3, r_4 received over time
+gamma   = 0.9
+
+# discounted return G = sum_t gamma^t * r_{t+1}   (EQ R1.3)
+discounts = gamma ** np.arange(len(rewards))
+G = float(np.sum(discounts * rewards))
+
+print("reward sequence :", rewards.tolist())
+print("discount weights:", discounts.round(4).tolist())
+print(f"discount factor : gamma = {gamma}")
+print(f"discounted return G = {G:.4f}")
+
+# the famous case: rewards [1,1,1] at t=0,1,2 with gamma=0.9
+g3 = sum(gamma**t * 1.0 for t in range(3))
+print(f"\nreturn of [1,1,1] at gamma=0.9 : {g3:.2f}   (= 1 + 0.9 + 0.81)")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="rl1-mdp" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT R1.1 — MDP ANATOMY</span><span class="w-sub">STATES · ACTIONS · TRANSITIONS · REWARDS</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>SELECTED STATE</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-rl1-state="0">START</button>
+                  <button class="w-btn ghost" data-rl1-state="1">MID</button>
+                  <button class="w-btn ghost" data-rl1-state="2">EDGE</button>
+                  <button class="w-btn ghost" data-rl1-state="3">GOAL</button>
+                </div>
+              </div>
+              <div class="ctl"><label>SLIP PROBABILITY <output id="rl1-mdp-slip-out">0.10</output></label><input type="range" id="rl1-mdp-slip" min="0" max="0.4" step="0.05" value="0.1"/></div>
+            </div>
+            <canvas class="w-canvas" id="rl1-mdp-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">INTENDED ACTION</div><div class="r-value" id="rl1-mdp-action">→</div></div>
+              <div class="readout acc"><div class="r-label">P(INTENDED)</div><div class="r-value" id="rl1-mdp-pmain">—</div></div>
+              <div class="readout"><div class="r-label">REWARD ON ARRIVAL</div><div class="r-value" id="rl1-mdp-reward">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">A four-state chain laid bare. Pick a state and watch its action edges fan out: the <span style="color:var(--accent);">mint</span> arrow is where the agent <em>intends</em> to go, the faint grey arrows are where it might <em>slip</em>. Raise the slip probability and the world grows stochastic — the same action no longer guarantees the same outcome, which is exactly what makes the agent need a <em>policy over states</em> rather than a fixed plan of moves. The GOAL state is terminal; its only edge loops back to itself with the terminal reward.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 1.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">1.3</span><h2>Returns &amp; discounting</h2></div>
+        <p>The agent does not maximize the immediate reward — that would be greedy and shortsighted. It maximizes the <strong>return</strong>: the total reward accumulated from now to the end of time. For an episode that terminates, the return is simply the sum of rewards. But many problems never terminate, and an infinite sum of rewards is itself infinite and meaningless to compare. The fix is to <em>discount</em>: weight a reward received \(k\) steps in the future by \(\gamma^k\).</p>
+
+        <div class="eq"><span class="eq-tag">EQ R1.3 — THE DISCOUNTED RETURN</span>
+        $$ G_t \;=\; R_{t+1} + \gamma R_{t+2} + \gamma^2 R_{t+3} + \cdots \;=\; \sum_{k=0}^{\infty} \gamma^k\, R_{t+k+1} $$
+        <div class="eq-note">\(G_t\) is the return from time \(t\) onward. The discount \(\gamma \in [0, 1]\) sets the agent's <b>horizon</b>: a reward \(k\) steps away is worth \(\gamma^k\) of an immediate one. <b>This single number encodes how far-sighted the agent is.</b> If every reward is bounded by \(R_{\max}\), the geometric series guarantees the return is finite — \(|G_t| \le R_{\max}/(1-\gamma)\) — which is the whole reason discounting exists for continuing tasks.</div>
+        </div>
+
+        <p>Discounting earns its place for three independent reasons, and it helps to keep them distinct. <strong>Mathematically</strong>, \(\gamma &lt; 1\) makes the infinite sum converge, so returns are comparable numbers rather than diverging infinities. <strong>Economically</strong>, it mirrors the time value of reward — a unit now is worth more than a unit later, exactly as in interest and inflation. <strong>Behaviorally</strong>, it expresses uncertainty about the future: at each step there is effectively a \((1-\gamma)\) chance the world ends, so \(\gamma\) is the per-step survival probability. The return is the expected total reward under that geometric lifetime.</p>
+
+        <div class="eq"><span class="eq-tag">EQ R1.4 — THE RECURSIVE FORM (WHY EVERYTHING IS BELLMAN)</span>
+        $$ G_t \;=\; R_{t+1} + \gamma\, G_{t+1} $$
+        <div class="eq-note">Factor one \(\gamma\) out of EQ R1.3 and the return splits cleanly: <b>this step's reward, plus the discounted return of everything after</b>. This one-line recursion is the seed of every value-function method in the rest of the volume — the Bellman equations of Chapter 02 are nothing but EQ R1.4 with an expectation wrapped around it. Recognizing returns as self-referential is the conceptual leap from "sum up rewards" to "reinforcement learning".</div>
+        </div>
+
+        <p>The endpoints of \(\gamma\) sharpen the intuition. At \(\gamma = 0\) the return collapses to \(R_{t+1}\): the agent cares only about the immediate reward and is <strong>purely myopic</strong>, blind to consequences. As \(\gamma \to 1\) every future reward counts almost fully and the agent becomes <strong>far-sighted</strong>, willing to suffer many small penalties now for a large payoff later — the patience a maze or a game of chess demands. Most problems live in between, and the choice of \(\gamma\) genuinely changes the optimal policy, not just the numbers: a maze-solver at \(\gamma = 0.99\) will take a longer, safer route that a \(\gamma = 0.8\) agent rejects as too distant to be worth it.</p>
+
+        <div class="exercise" data-answer="2.71" data-tol="0.01" data-hint="G = r0 + gamma·r1 + gamma²·r2, with all rewards 1.">
+          <div class="ex-q">An agent receives a reward of \(1\) at each of three consecutive steps and then the episode ends. With discount \(\gamma = 0.9\), what is the discounted return \(G\) from the first step? (Use EQ R1.3.)</div>
+          <div class="ex-reveal-src">\(G = \gamma^0\cdot 1 + \gamma^1\cdot 1 + \gamma^2\cdot 1 = 1 + 0.9 + 0.81 = \) <b>2.71</b>. Compare the undiscounted sum, which would be exactly 3 — discounting shaves off the value of the two later rewards.</div>
+        </div>
+
+        <div class="exercise" data-answer="true" data-tol="0" data-hint="Set gamma = 0 in EQ R1.3 and see which terms survive.">
+          <div class="ex-q">True or false: setting \(\gamma = 0\) makes the agent <em>purely myopic</em> — it optimizes only the immediate reward \(R_{t+1}\) and ignores all future consequences. (Answer <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">In EQ R1.3 every term except the first carries a factor of \(\gamma^k\) with \(k \ge 1\); at \(\gamma = 0\) all of those vanish (\(0^k = 0\)), leaving \(G_t = R_{t+1}\) alone. The agent values only the next reward and is blind to everything after it. The statement is <b>true</b>.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># How the discount factor reshapes the same reward stream (EQ R1.3)
+import numpy as np
+
+rewards = np.ones(40)                      # a steady +1 every step, 40 steps
+horizons = []
+for gamma in (0.0, 0.5, 0.9, 0.99):
+    w = gamma ** np.arange(len(rewards))   # discount weights
+    G = float((w * rewards).sum())
+    # "effective horizon" 1/(1-gamma): steps that meaningfully count
+    eff = np.inf if gamma >= 1 else 1.0 / (1.0 - gamma)
+    horizons.append((gamma, G, eff))
+    print(f"gamma={gamma:4} -> return {G:7.3f}   effective horizon ~ {eff:6.1f} steps")
+
+print("\ngamma=0 is myopic: return is exactly the first reward (1.0).")
+print("near gamma=1 the agent sums almost all 40 rewards and plans far ahead.")
+# closed form for an infinite stream of +1: 1/(1-gamma)
+print("infinite-stream limits 1/(1-g):",
+      [round(1/(1-g),2) for g in (0.5,0.9,0.99)])
+plot_xy([h[0] for h in horizons], [h[1] for h in horizons])</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="rl1-gamma" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT R1.2 — DISCOUNT-FACTOR EXPLORER</span><span class="w-sub">γ AND THE AGENT'S HORIZON · EQ R1.3</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>DISCOUNT γ <output id="rl1-gamma-g-out">0.90</output></label><input type="range" id="rl1-gamma-g" min="0" max="0.99" step="0.01" value="0.9"/></div>
+            </div>
+            <canvas class="w-canvas" id="rl1-gamma-canvas" height="280"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">EFFECTIVE HORIZON 1/(1−γ)</div><div class="r-value" id="rl1-gamma-eff">—</div></div>
+              <div class="readout"><div class="r-label">RETURN OF STEADY +1</div><div class="r-value" id="rl1-gamma-ret">—</div></div>
+              <div class="readout"><div class="r-label">WEIGHT ON STEP 10</div><div class="r-value" id="rl1-gamma-w10">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Each bar is the weight \(\gamma^k\) the agent places on the reward \(k\) steps ahead. At \(\gamma = 0\) only the first bar survives — pure myopia. Slide toward 1 and the bars flatten into a long, slowly-decaying tail: the agent's gaze stretches further into the future. The <b>effective horizon</b> \(1/(1-\gamma)\) is a useful rule of thumb for how many steps actually matter — γ = 0.9 sees about 10 steps, γ = 0.99 about 100. Notice how violently the horizon stretches as γ approaches 1; that sensitivity is why γ is one of the most consequential knobs in all of RL.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 1.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">1.4</span><h2>Policies &amp; value functions</h2></div>
+        <p>A <strong>policy</strong> is the agent's behavior: a rule that maps states to actions. It is the object RL ultimately searches for — the solution to the MDP. A policy can be <em>deterministic</em>, \(a = \pi(s)\), always taking the same action in a state; or <em>stochastic</em>, \(\pi(a \mid s)\), a probability distribution over actions. Stochastic policies matter more than they look: they are how an agent explores, and in some problems (and in every adversarial game) the optimal policy is irreducibly random.</p>
+
+        <div class="eq"><span class="eq-tag">EQ R1.5 — THE POLICY</span>
+        $$ \pi(a \mid s) \;=\; \Pr\big(A_t = a \mid S_t = s\big), \qquad \sum_{a \in \mathcal{A}} \pi(a \mid s) = 1 $$
+        <div class="eq-note">A policy is a conditional distribution over actions given the state. <b>The entire goal of reinforcement learning is to find a policy that maximizes expected return.</b> Crucially the policy depends on the state only — not on the time step or the history — which is exactly what the Markov property (EQ R1.2) buys us: in a Markov world, an optimal policy that depends only on the current state always exists.</div>
+        </div>
+
+        <p>To improve a policy we need to know how good it is, and "good" means <em>expected return</em>. This gives the two central quantities of the field. The <strong>state-value function</strong> \(V^\pi(s)\) is the expected return from starting in state \(s\) and following \(\pi\) thereafter. The <strong>action-value function</strong> \(Q^\pi(s, a)\) is the expected return from taking action \(a\) in state \(s\) and then following \(\pi\).</p>
+
+        <div class="eq"><span class="eq-tag">EQ R1.6 — STATE-VALUE AND ACTION-VALUE</span>
+        $$ V^\pi(s) \;=\; \mathbb{E}_\pi\!\big[\, G_t \mid S_t = s \,\big], \qquad Q^\pi(s, a) \;=\; \mathbb{E}_\pi\!\big[\, G_t \mid S_t = s,\, A_t = a \,\big] $$
+        <div class="eq-note">\(V^\pi(s)\) answers <em>"how much reward can I expect from here, behaving like this?"</em> and \(Q^\pi(s,a)\) answers <em>"and how much if I commit to action \(a\) first?"</em>. They are linked by \(V^\pi(s) = \sum_a \pi(a\mid s)\,Q^\pi(s,a)\). <b>The difference \(Q^\pi(s,a) - V^\pi(s)\) — the advantage — is the single most useful quantity in modern policy-gradient RL</b>, because it says whether an action beats the policy's own average without you needing to know the absolute scale.</div>
+        </div>
+
+        <p>Why two functions? Because of what each one lets you do without a model. If you know \(V^\pi\) but not the transitions \(P\), you cannot act greedily — you would need to know where each action leads to compare states. But if you know \(Q^\pi\), choosing the best action is trivial: take \(\arg\max_a Q(s,a)\), no model required. This is precisely why model-free control methods (Q-learning, SARSA) learn \(Q\) rather than \(V\). The value functions are the connective tissue of the whole field: estimate them, and a good policy falls out.</p>
+
+        <p class="note">A subtlety experts will insist on: values are always <em>relative to a policy</em>. There is no such thing as "the value of a state" in the abstract — only its value under some way of behaving. The exception is the <strong>optimal</strong> value function \(V^{*}(s) = \max_\pi V^\pi(s)\), the best achievable from each state, which Chapter 02 shows how to compute. Solving an MDP means finding \(V^{*}\) (or \(Q^{*}\)) and reading the optimal policy off it.</p>
+
+        <div class="exercise" data-answer="9.1" data-tol="0.02" data-hint="V(s) = sum over actions of pi(a|s) · Q(s,a) — a probability-weighted average.">
+          <div class="ex-q">In state \(s\) the policy is \(\pi(\text{up}\mid s) = 0.7\) and \(\pi(\text{down}\mid s) = 0.3\). The action-values are \(Q(s,\text{up}) = 10\) and \(Q(s,\text{down}) = 7\). What is the state-value \(V^\pi(s) = \sum_a \pi(a\mid s)\,Q^\pi(s,a)\)?</div>
+          <div class="ex-reveal-src">\(V^\pi(s) = 0.7 \times 10 + 0.3 \times 7 = 7 + 2.1 = \) <b>9.1</b>. The state-value is just the policy-weighted average of the action-values — which is why a policy that puts more weight on the better action raises \(V\).</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># V from Q, the advantage, and which action a greedy agent would pick (EQ R1.6)
+import numpy as np
+
+actions = ["up", "down", "left", "right"]
+Q  = np.array([10.0, 7.0, 4.0, 9.0])       # Q(s, a) for one state s
+pi = np.array([0.70, 0.10, 0.05, 0.15])    # current stochastic policy pi(a|s)
+assert np.isclose(pi.sum(), 1.0)
+
+V = float(pi @ Q)                          # V(s) = sum_a pi(a|s) Q(s,a)
+advantage = Q - V                          # A(s,a) = Q(s,a) - V(s)
+
+print(f"state value V(s)        : {V:.3f}")
+for a, q, adv, p in zip(actions, Q, advantage, pi):
+    flag = "  &lt;- above average" if adv > 0 else ""
+    print(f"  {a:5s}  Q={q:5.1f}  A={adv:+5.2f}  pi={p:.2f}{flag}")
+
+greedy = actions[int(np.argmax(Q))]
+print(f"\ngreedy action (argmax Q): {greedy}")
+print("a policy gradient step pushes pi toward actions with positive advantage.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 1.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">1.5</span><h2>Exploration vs exploitation</h2></div>
+        <p>Here is the dilemma that has no counterpart in supervised learning. To collect reward, the agent should <strong>exploit</strong> — take the action it currently believes is best. But its beliefs are estimates built from limited experience, and the only way to improve them is to <strong>explore</strong> — try actions it is unsure about, which may be worse. Every step forces a choice between cashing in what you know and gathering information that might let you do better later. Lean too far toward exploitation and you lock onto a mediocre habit, never discovering the better path you never tried. Lean too far toward exploration and you squander reward forever testing options you already know are bad.</p>
+
+        <p>This tension is fundamental, not an artifact of any algorithm, and it is sharpened by the feedback we opened the chapter with: <em>because the agent's actions decide what data it sees</em>, an action never taken is an action never learned from. A supervised learner sees every labeled example in the dataset whether it likes it or not. An RL agent sees only the consequences of what it chose to do — so under-exploration is self-reinforcing, a blind spot the agent cannot detect from inside.</p>
+
+        <p>The simplest workable strategy is <strong>ε-greedy</strong>: with probability \(1-\varepsilon\) take the current best (greedy) action, and with probability \(\varepsilon\) take a uniformly random action instead. It is crude but remarkably effective, and it is the exploration rule baked into the first generation of deep-RL agents.</p>
+
+        <div class="eq"><span class="eq-tag">EQ R1.7 — ε-GREEDY ACTION SELECTION</span>
+        $$ \pi(a \mid s) = \begin{cases} 1 - \varepsilon + \dfrac{\varepsilon}{|\mathcal{A}|} & \text{if } a = \arg\max_{a'} Q(s, a') \\[1.2em] \dfrac{\varepsilon}{|\mathcal{A}|} & \text{otherwise} \end{cases} $$
+        <div class="eq-note">With probability \(1-\varepsilon\) the agent exploits the greedy action; with probability \(\varepsilon\) it picks uniformly at random (so even the greedy action keeps a small \(\varepsilon/|\mathcal{A}|\) slice of the random mass). <b>\(\varepsilon\) is the exploration rate, and it is almost always annealed</b> — started high so the agent samples widely, then decayed toward zero as its value estimates sharpen and exploitation becomes safe. At \(\varepsilon = 0\) the policy is purely greedy; at \(\varepsilon = 1\) it is a uniformly random walk.</div>
+        </div>
+
+        <p>ε-greedy is not the only tool, and it has a real weakness worth stating: it explores <em>blindly</em>, treating a clearly-terrible action and a plausibly-good-but-untested one as equally worth a random visit. Smarter schemes — <strong>optimism in the face of uncertainty</strong> (UCB, which adds a bonus for actions tried less often), <strong>Boltzmann / softmax</strong> exploration (sample in proportion to estimated value), and <strong>posterior sampling</strong> (Thompson sampling) — direct exploration toward what is genuinely uncertain rather than uniformly random. The multi-armed bandit, the simplest possible RL problem (one state, no transitions, just the explore–exploit trade-off in isolation), is where these are studied cleanly and where the regret bounds that quantify "how much you lose by not knowing the best arm" are proved. We treat bandits in their own chapter.</p>
+
+        <div class="exercise" data-answer="0.925" data-tol="0.01" data-hint="Greedy action probability is 1 - eps + eps/|A|, with |A| = 4 actions.">
+          <div class="ex-q">An ε-greedy agent uses \(\varepsilon = 0.1\) over \(|\mathcal{A}| = 4\) actions. Using EQ R1.7, what total probability does it place on the single greedy action \(\arg\max_a Q(s,a)\)?</div>
+          <div class="ex-reveal-src">\(1 - \varepsilon + \dfrac{\varepsilon}{|\mathcal{A}|} = 1 - 0.1 + \dfrac{0.1}{4} = 0.9 + 0.025 = \) <b>0.925</b>. The remaining \(0.075\) is split evenly across the other three actions (\(0.025\) each), so the four probabilities sum to 1.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Epsilon-greedy action selection, with an annealed exploration rate (EQ R1.7)
+import numpy as np
+rng = np.random.default_rng(0)
+
+Q = np.array([1.0, 5.0, 2.0, 4.0])         # estimated action-values, 4 actions
+nA = len(Q)
+greedy = int(np.argmax(Q))                 # action index 1 here (value 5.0)
+
+def eps_greedy(Q, eps):
+    if rng.random() &lt; eps:                 # explore: uniform random
+        return rng.integers(len(Q))
+    return int(np.argmax(Q))               # exploit: the greedy action
+
+# anneal epsilon from 1.0 down to a 0.05 floor, and report the rate
+print(" step   epsilon   P(greedy)=1-eps+eps/|A|   empirical greedy share")
+for step in (0, 50, 200, 1000):
+    eps = max(0.05, 1.0 * (0.995 ** step)) # exponential decay with a floor
+    p_greedy = 1 - eps + eps / nA
+    picks = [eps_greedy(Q, eps) for _ in range(4000)]
+    share = np.mean(np.array(picks) == greedy)
+    print(f" {step:5d}   {eps:6.3f}        {p_greedy:6.3f}                {share:6.3f}")
+
+print(f"\ngreedy action = index {greedy} (Q = {Q[greedy]}).")
+print("as epsilon decays, the agent shifts from exploring to exploiting it.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="rl1-grid" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT R1.3 — GRIDWORLD EXPLORER</span><span class="w-sub">SET REWARDS · WATCH A POLICY EMERGE · VALUE ITERATION</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>DISCOUNT γ <output id="rl1-grid-g-out">0.90</output></label><input type="range" id="rl1-grid-g" min="0.5" max="0.99" step="0.01" value="0.9"/></div>
+              <div class="ctl"><label>STEP COST <output id="rl1-grid-c-out">−0.04</output></label><input type="range" id="rl1-grid-c" min="-0.2" max="0" step="0.01" value="-0.04"/></div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>PAINT</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-rl1-paint="goal">GOAL +1</button>
+                  <button class="w-btn ghost" data-rl1-paint="trap">TRAP −1</button>
+                  <button class="w-btn ghost" data-rl1-paint="wall">WALL</button>
+                  <button class="w-btn ghost" data-rl1-paint="clear">CLEAR</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="rl1-grid-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">VIEW</div><div class="r-value" id="rl1-grid-view" style="font-size:13px;">VALUES + POLICY</div></div>
+              <div class="readout acc"><div class="r-label">SWEEPS TO CONVERGE</div><div class="r-value" id="rl1-grid-iters">—</div></div>
+              <div class="readout"><div class="r-label">V AT START CELL</div><div class="r-value" id="rl1-grid-vstart">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Click cells to paint a <span style="color:var(--accent);">goal</span> (+1), a <span style="color:var(--danger);">trap</span> (−1), or a wall, then watch value iteration flood the grid: the <span style="color:var(--accent);">mint</span> shading is the state-value \(V(s)\), and the arrows are the greedy policy it implies — a plan the agent never wrote, only computed. Make the step cost more negative and the policy grows impatient, hugging the shortest path and accepting risk near the trap; soften it and the agent takes longer, safer detours. Raise γ and distant goals pull harder, reshaping arrows two and three cells away. This is the planning of Chapter 02, run live on whatever world you paint. (This solves a <em>known</em> MDP by dynamic programming — the agent here is given \(P\) and \(R\); the model-free chapters drop that luxury.)</div>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>We can now state the problem exactly — but not yet solve it.</strong> Chapter 02 supplies the first machinery: the <em>Bellman equations</em>, which turn the recursive return (EQ R1.4) into a fixed-point system, and the dynamic-programming algorithms — <em>policy evaluation</em>, <em>policy iteration</em>, and <em>value iteration</em> (the engine behind the Gridworld instrument above) — that compute the optimal value function and policy when the model \(P\) and \(R\) is known. Everything after that is the harder, real-world case: learning the same answers from experience alone.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 1.R — References ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">1.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="http://incompleteideas.net/book/the-book-2nd.html" target="_blank" rel="noopener">Sutton, R. S. &amp; Barto, A. G. (2018). <span class="ref-venue">Reinforcement Learning: An Introduction</span> (2nd ed.).</a> <span class="ref-meta">MIT Press — the canonical text; the agent–environment loop, MDPs, returns, value functions, and exploration as framed in this chapter.</span></li>
+          <li><a href="https://doi.org/10.1512/iumj.1957.6.56038" target="_blank" rel="noopener">Bellman, R. (1957). <span class="ref-venue">A Markovian Decision Process</span>.</a> <span class="ref-meta">Journal of Mathematics and Mechanics 6(5) — the formal origin of the MDP (EQ R1.1) and the recursive value relation behind EQ R1.4.</span></li>
+          <li><a href="https://doi.org/10.1007/BF00992698" target="_blank" rel="noopener">Watkins, C. J. C. H. &amp; Dayan, P. (1992). <span class="ref-venue">Q-learning</span>.</a> <span class="ref-meta">Machine Learning 8 — the action-value function \(Q^\pi\) (EQ R1.6) and the convergence result that grounds model-free control.</span></li>
+          <li><a href="https://doi.org/10.1038/nature14236" target="_blank" rel="noopener">Mnih, V. et al. (2015). <span class="ref-venue">Human-level control through deep reinforcement learning</span>.</a> <span class="ref-meta">Nature 518 — deep Q-networks; the modern demonstration that ε-greedy exploration (EQ R1.7) scales to high-dimensional state spaces.</span></li>
+          <li><a href="https://doi.org/10.1023/A:1013689704352" target="_blank" rel="noopener">Auer, P., Cesa-Bianchi, N. &amp; Fischer, P. (2002). <span class="ref-venue">Finite-time Analysis of the Multiarmed Bandit Problem</span>.</a> <span class="ref-meta">Machine Learning 47 — UCB and the regret framework for principled exploration beyond ε-greedy (§1.5).</span></li>
+          <li><a href="https://doi.org/10.1613/jair.301" target="_blank" rel="noopener">Kaelbling, L. P., Littman, M. L. &amp; Moore, A. W. (1996). <span class="ref-venue">Reinforcement Learning: A Survey</span>.</a> <span class="ref-meta">Journal of Artificial Intelligence Research 4 — an early, lucid survey of the problem formulation used throughout this chapter.</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../dl/07-training-deep-nets.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">07</span> Training Deep Nets</div></a>
+        <a class="next" href="../rl/02-dynamic-programming.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">02</span> Dynamic Programming</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — REINFORCEMENT LEARNING · CH 01</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* ============================================================
+   The Reinforcement Learning Problem — chapter instruments
+   Single IIFE, no globals. setTimeout-only animation.
+   Every widget guarded by element existence; meaningful
+   initial render with zero interaction.
+   ============================================================ */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  function fnum(x, d) { d = d === undefined ? 2 : d; return x.toFixed(d); }
+
+  /* ========================================================
+     INSTRUMENT R1.1 — MDP anatomy
+     A 4-state chain; selecting a state shows its action edges,
+     mint = intended outcome, grey = slip. Reward shown on arrival.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("rl1-mdp");
+    if (!root) return;
+    var canvas = document.getElementById("rl1-mdp-canvas");
+    var slipIn = document.getElementById("rl1-mdp-slip");
+    var slipOut = document.getElementById("rl1-mdp-slip-out");
+    var actEl = document.getElementById("rl1-mdp-action");
+    var pmainEl = document.getElementById("rl1-mdp-pmain");
+    var rewEl = document.getElementById("rl1-mdp-reward");
+    var btns = root.querySelectorAll("[data-rl1-state]");
+    var sel = 0;
+
+    var names = ["START", "MID", "EDGE", "GOAL"];
+    var rewards = [0, 0, 0, 1];          // reward received on arrival into state
+    var terminal = [false, false, false, true];
+
+    function render() {
+      var slip = +slipIn.value;
+      slipOut.textContent = fnum(slip, 2);
+      var pMain = 1 - slip;
+
+      // readouts
+      actEl.textContent = terminal[sel] ? "—" : "→ forward";
+      pmainEl.textContent = terminal[sel] ? "—" : fnum(pMain, 2);
+      // reward shown is the reward of the state the intended action lands in
+      var dest = terminal[sel] ? sel : sel + 1;
+      rewEl.textContent = (rewards[dest] >= 0 ? "+" : "") + rewards[dest].toFixed(2);
+      rewEl.style.color = rewards[dest] > 0 ? C.MINT : C.SEC;
+
+      var c = FM.setupCanvas(canvas, 300);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      ctx.clearRect(0, 0, w, h);
+
+      var n = 4;
+      var cy = h * 0.42;
+      var rad = 26;
+      var x0 = 56, x1 = w - 56;
+      var xs = [];
+      for (var i = 0; i < n; i++) xs.push(x0 + (x1 - x0) * i / (n - 1));
+
+      // draw transition edges first (under the nodes)
+      function drawArrow(x1a, y1a, x2a, y2a, color, lw, dash, curve) {
+        ctx.strokeStyle = color; ctx.lineWidth = lw;
+        if (dash) ctx.setLineDash(dash); else ctx.setLineDash([]);
+        ctx.beginPath();
+        var mx = (x1a + x2a) / 2, my = (y1a + y2a) / 2 - (curve || 0);
+        ctx.moveTo(x1a, y1a);
+        ctx.quadraticCurveTo(mx, my, x2a, y2a);
+        ctx.stroke();
+        // arrowhead
+        var ang = Math.atan2(y2a - my, x2a - mx);
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.moveTo(x2a, y2a);
+        ctx.lineTo(x2a - 9 * Math.cos(ang - 0.4), y2a - 9 * Math.sin(ang - 0.4));
+        ctx.lineTo(x2a - 9 * Math.cos(ang + 0.4), y2a - 9 * Math.sin(ang + 0.4));
+        ctx.closePath(); ctx.fill();
+        ctx.setLineDash([]);
+      }
+
+      if (!terminal[sel]) {
+        // intended forward edge (mint)
+        var fx = xs[sel] + rad, fy = cy;
+        var fxt = xs[sel + 1] - rad, fyt = cy;
+        drawArrow(fx, fy, fxt, fyt, C.MINT, 2.2, null, 0);
+        // probability label
+        ctx.font = C.MONO; ctx.fillStyle = C.MINT;
+        ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+        ctx.fillText("p=" + fnum(pMain, 2), (fx + fxt) / 2, cy - 8);
+        // slip edge (stay in place) - grey self loop, if slip > 0
+        if (slip > 0.001) {
+          ctx.strokeStyle = "rgba(155,155,155,.55)"; ctx.lineWidth = 1.4;
+          ctx.beginPath();
+          ctx.arc(xs[sel], cy - rad - 14, 13, 0.6 * Math.PI, 2.7 * Math.PI);
+          ctx.stroke();
+          // little arrowhead on the loop
+          ctx.fillStyle = "rgba(155,155,155,.7)";
+          ctx.beginPath();
+          ctx.moveTo(xs[sel] + 11, cy - rad - 6);
+          ctx.lineTo(xs[sel] + 17, cy - rad - 10);
+          ctx.lineTo(xs[sel] + 14, cy - rad - 2);
+          ctx.closePath(); ctx.fill();
+          ctx.font = C.MONO; ctx.fillStyle = "rgba(155,155,155,.8)";
+          ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+          ctx.fillText("slip p=" + fnum(slip, 2), xs[sel], cy - rad - 30);
+        }
+      } else {
+        // terminal self loop (mint, reward)
+        ctx.strokeStyle = C.MINT; ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(xs[sel], cy - rad - 14, 14, 0.6 * Math.PI, 2.7 * Math.PI);
+        ctx.stroke();
+        ctx.fillStyle = C.MINT;
+        ctx.beginPath();
+        ctx.moveTo(xs[sel] + 12, cy - rad - 6);
+        ctx.lineTo(xs[sel] + 18, cy - rad - 10);
+        ctx.lineTo(xs[sel] + 15, cy - rad - 2);
+        ctx.closePath(); ctx.fill();
+        ctx.font = C.MONO; ctx.fillStyle = C.MINT;
+        ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+        ctx.fillText("terminal", xs[sel], cy - rad - 30);
+      }
+
+      // draw nodes
+      for (i = 0; i < n; i++) {
+        var isSel = i === sel;
+        ctx.beginPath();
+        ctx.arc(xs[i], cy, rad, 0, 2 * Math.PI);
+        if (rewards[i] > 0) {
+          ctx.fillStyle = isSel ? "rgba(166,242,204,.18)" : "rgba(166,242,204,.10)";
+        } else {
+          ctx.fillStyle = isSel ? "rgba(255,255,255,.06)" : "#1e2124";
+        }
+        ctx.fill();
+        ctx.lineWidth = isSel ? 2 : 1.2;
+        ctx.strokeStyle = isSel ? C.MINT : (rewards[i] > 0 ? C.DEEP : C.HAIR);
+        ctx.stroke();
+        ctx.font = "11px ui-monospace, Menlo, monospace";
+        ctx.fillStyle = isSel ? C.BRIGHT : C.SEC;
+        ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText("s" + i, xs[i], cy - 4);
+        ctx.font = "9px ui-monospace, Menlo, monospace";
+        ctx.fillStyle = C.MUT;
+        ctx.fillText(names[i], xs[i], cy + 9);
+        // reward tag under terminal/reward states
+        if (rewards[i] !== 0) {
+          ctx.font = C.MONO; ctx.fillStyle = C.MINT;
+          ctx.textBaseline = "top";
+          ctx.fillText("R=+" + rewards[i].toFixed(0), xs[i], cy + rad + 8);
+        }
+      }
+
+      // caption
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "left"; ctx.textBaseline = "bottom";
+      ctx.fillText("CLICK A STATE BUTTON ABOVE · MINT = INTENDED · GREY = SLIP", 8, h - 8);
+    }
+
+    btns.forEach(function (b) {
+      b.addEventListener("click", function () {
+        btns.forEach(function (x) { x.classList.remove("on"); });
+        b.classList.add("on");
+        sel = parseInt(b.getAttribute("data-rl1-state"), 10);
+        render();
+      });
+    });
+    slipIn.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT R1.2 — Discount-factor explorer
+     Bars of gamma^k; effective horizon 1/(1-gamma);
+     return of an infinite steady +1 stream = 1/(1-gamma).
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("rl1-gamma");
+    if (!root) return;
+    var canvas = document.getElementById("rl1-gamma-canvas");
+    var gIn = document.getElementById("rl1-gamma-g");
+    var gOut = document.getElementById("rl1-gamma-g-out");
+    var effEl = document.getElementById("rl1-gamma-eff");
+    var retEl = document.getElementById("rl1-gamma-ret");
+    var w10El = document.getElementById("rl1-gamma-w10");
+    var K = 24; // number of future-step bars shown
+
+    function render() {
+      var g = +gIn.value;
+      gOut.textContent = fnum(g, 2);
+      var eff = g >= 1 ? Infinity : 1 / (1 - g);
+      var ret = g >= 1 ? Infinity : 1 / (1 - g); // sum of gamma^k * 1
+      effEl.textContent = eff === Infinity ? "∞" : fnum(eff, 1);
+      retEl.textContent = ret === Infinity ? "∞" : fnum(ret, 2);
+      w10El.textContent = fnum(Math.pow(g, 10), 3);
+
+      var c = FM.setupCanvas(canvas, 280);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      var padL = 40, padR = 14, padT = 18, padB = 30;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      ctx.clearRect(0, 0, w, h);
+
+      // frame + y gridlines (weight 0..1)
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(x0, y1, x1 - x0, y0 - y1);
+      ctx.font = C.MONO; ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      for (var gl = 0; gl <= 4; gl++) {
+        var gv = gl / 4, gy = y0 - gv * (y0 - y1);
+        ctx.strokeStyle = "rgba(47,50,52,.5)";
+        ctx.beginPath(); ctx.moveTo(x0, gy); ctx.lineTo(x1, gy); ctx.stroke();
+        ctx.fillStyle = C.MUT; ctx.fillText(gv.toFixed(2), x0 - 6, gy);
+      }
+
+      // bars: weight gamma^k for k = 0..K-1
+      var bw = (x1 - x0) / K;
+      for (var k = 0; k < K; k++) {
+        var wgt = Math.pow(g, k);
+        var bx = x0 + k * bw;
+        var bh = wgt * (y0 - y1);
+        ctx.fillStyle = k === 0 ? C.MINT : "rgba(166,242,204,.55)";
+        ctx.fillRect(bx + bw * 0.16, y0 - bh, bw * 0.68, bh);
+      }
+
+      // effective-horizon marker line
+      if (eff !== Infinity && eff < K) {
+        var hx = x0 + eff * bw;
+        ctx.strokeStyle = C.BLUE; ctx.setLineDash([4, 4]); ctx.lineWidth = 1.4;
+        ctx.beginPath(); ctx.moveTo(hx, y1); ctx.lineTo(hx, y0); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = C.BLUE; ctx.textAlign = "center"; ctx.textBaseline = "top";
+        ctx.fillText("1/(1−γ)", hx, y1 + 2);
+      }
+
+      // x labels
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText("k=0", x0, y0 + 6);
+      ctx.textAlign = "right"; ctx.fillText("steps into the future →  k=" + (K - 1), x1, y0 + 6);
+      ctx.textAlign = "left"; ctx.fillStyle = C.MINT;
+      ctx.fillText("γᵏ  WEIGHT ON FUTURE REWARD", x0 + 6, y1 + 4);
+    }
+
+    gIn.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT R1.3 — Gridworld explorer
+     Paint goals/traps/walls; solve the known MDP by value
+     iteration (synchronous sweeps); draw V shading + greedy
+     policy arrows. Deterministic moves; off-grid/wall = stay.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("rl1-grid");
+    if (!root) return;
+    var canvas = document.getElementById("rl1-grid-canvas");
+    var gIn = document.getElementById("rl1-grid-g");
+    var cIn = document.getElementById("rl1-grid-c");
+    var gOut = document.getElementById("rl1-grid-g-out");
+    var cOut = document.getElementById("rl1-grid-c-out");
+    var itersEl = document.getElementById("rl1-grid-iters");
+    var vstartEl = document.getElementById("rl1-grid-vstart");
+    var paintBtns = root.querySelectorAll("[data-rl1-paint]");
+
+    var R = 5, Cc = 6;                 // rows, cols
+    // cell types: 0 empty, 1 goal(+1), 2 trap(-1), 3 wall
+    var cell = new Array(R * Cc).fill(0);
+    var paint = "goal";
+    var startIdx = (R - 1) * Cc + 0;   // bottom-left start cell
+
+    // a sensible default world so it renders meaningfully with no interaction
+    cell[0 * Cc + (Cc - 1)] = 1;       // goal top-right
+    cell[1 * Cc + (Cc - 1)] = 2;       // trap just below goal
+    cell[2 * Cc + 3] = 3;              // a wall
+    cell[2 * Cc + 2] = 3;
+
+    var ACT = [[-1, 0], [1, 0], [0, -1], [0, 1]]; // up, down, left, right
+    var ARROW = ["↑", "↓", "←", "→"];
+
+    function idx(r, c) { return r * Cc + c; }
+
+    function solve(gamma, stepCost) {
+      var V = new Array(R * Cc).fill(0);
+      var sweeps = 0, maxSweeps = 200, delta = 1;
+      while (delta > 1e-4 && sweeps < maxSweeps) {
+        delta = 0;
+        var Vnew = V.slice();
+        for (var r = 0; r < R; r++) {
+          for (var c = 0; c < Cc; c++) {
+            var s = idx(r, c);
+            if (cell[s] === 3) { Vnew[s] = 0; continue; }       // wall: no value
+            if (cell[s] === 1) { Vnew[s] = 1; continue; }       // goal terminal
+            if (cell[s] === 2) { Vnew[s] = -1; continue; }      // trap terminal
+            var best = -Infinity;
+            for (var a = 0; a < 4; a++) {
+              var nr = r + ACT[a][0], nc = c + ACT[a][1];
+              var ns;
+              if (nr < 0 || nr >= R || nc < 0 || nc >= Cc || cell[idx(nr, nc)] === 3) {
+                ns = s;                                         // bump: stay put
+              } else {
+                ns = idx(nr, nc);
+              }
+              var q = stepCost + gamma * V[ns];
+              if (q > best) best = q;
+            }
+            Vnew[s] = best;
+            var d = Math.abs(Vnew[s] - V[s]);
+            if (d > delta) delta = d;
+          }
+        }
+        V = Vnew;
+        sweeps++;
+      }
+      // greedy policy from V
+      var pol = new Array(R * Cc).fill(-1);
+      for (var rr = 0; rr < R; rr++) {
+        for (var cc = 0; cc < Cc; cc++) {
+          var ss = idx(rr, cc);
+          if (cell[ss] !== 0) continue;
+          var bestA = 0, bestV = -Infinity;
+          for (var aa = 0; aa < 4; aa++) {
+            var n2r = rr + ACT[aa][0], n2c = cc + ACT[aa][1], n2s;
+            if (n2r < 0 || n2r >= R || n2c < 0 || n2c >= Cc || cell[idx(n2r, n2c)] === 3) {
+              n2s = ss;
+            } else { n2s = idx(n2r, n2c); }
+            var qv = stepCost + gamma * V[n2s];
+            if (qv > bestV) { bestV = qv; bestA = aa; }
+          }
+          pol[ss] = bestA;
+        }
+      }
+      return { V: V, pol: pol, sweeps: sweeps };
+    }
+
+    var lastGeom = null; // for click hit-testing
+
+    function render() {
+      var gamma = +gIn.value, stepCost = +cIn.value;
+      gOut.textContent = fnum(gamma, 2);
+      cOut.textContent = (stepCost < 0 ? "−" : "") + Math.abs(stepCost).toFixed(2);
+
+      var sol = solve(gamma, stepCost);
+      itersEl.textContent = sol.sweeps >= 200 ? "200+ (cap)" : sol.sweeps + "";
+      vstartEl.textContent = fnum(sol.V[startIdx], 2);
+
+      var c = FM.setupCanvas(canvas, 320);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      ctx.clearRect(0, 0, w, h);
+
+      var pad = 10;
+      var gw = w - pad * 2, gh = h - pad * 2;
+      var cwid = gw / Cc, chei = gh / R;
+      lastGeom = { pad: pad, cwid: cwid, chei: chei };
+
+      // value range for shading (exclude walls)
+      var vmin = Infinity, vmax = -Infinity;
+      for (var i = 0; i < R * Cc; i++) {
+        if (cell[i] === 3) continue;
+        if (sol.V[i] < vmin) vmin = sol.V[i];
+        if (sol.V[i] > vmax) vmax = sol.V[i];
+      }
+      if (!isFinite(vmin)) { vmin = 0; vmax = 1; }
+      if (vmax - vmin < 1e-6) vmax = vmin + 1e-6;
+
+      for (var r = 0; r < R; r++) {
+        for (var col = 0; col < Cc; col++) {
+          var s = idx(r, col);
+          var x = pad + col * cwid, y = pad + r * chei;
+          var t = cell[s];
+          // background fill
+          if (t === 3) {
+            ctx.fillStyle = "#2f3234";
+          } else if (t === 1) {
+            ctx.fillStyle = "rgba(166,242,204,.30)";
+          } else if (t === 2) {
+            ctx.fillStyle = "rgba(255,65,54,.22)";
+          } else {
+            var norm = (sol.V[s] - vmin) / (vmax - vmin);
+            // negative-leaning cells faintly red, positive mint
+            if (sol.V[s] >= 0) {
+              ctx.fillStyle = "rgba(166,242,204," + (0.05 + 0.30 * norm).toFixed(3) + ")";
+            } else {
+              ctx.fillStyle = "rgba(255,65,54," + (0.04 + 0.14 * (1 - norm)).toFixed(3) + ")";
+            }
+          }
+          ctx.fillRect(x + 1, y + 1, cwid - 2, chei - 2);
+          ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+          ctx.strokeRect(x + 1, y + 1, cwid - 2, chei - 2);
+
+          var cx = x + cwid / 2, cy = y + chei / 2;
+          if (t === 1) {
+            ctx.font = "12px ui-monospace, Menlo, monospace";
+            ctx.fillStyle = C.MINT; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+            ctx.fillText("+1", cx, cy);
+          } else if (t === 2) {
+            ctx.font = "12px ui-monospace, Menlo, monospace";
+            ctx.fillStyle = C.RED; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+            ctx.fillText("−1", cx, cy);
+          } else if (t === 3) {
+            // wall: nothing
+          } else {
+            // greedy arrow + small value
+            ctx.font = "15px ui-monospace, Menlo, monospace";
+            ctx.fillStyle = "rgba(255,255,255,.82)";
+            ctx.textAlign = "center"; ctx.textBaseline = "middle";
+            if (sol.pol[s] >= 0) ctx.fillText(ARROW[sol.pol[s]], cx, cy - 3);
+            ctx.font = "8.5px ui-monospace, Menlo, monospace";
+            ctx.fillStyle = C.MUT;
+            ctx.fillText(sol.V[s].toFixed(2), cx, cy + 12);
+          }
+          // mark the start cell
+          if (s === startIdx && t === 0) {
+            ctx.strokeStyle = C.BLUE; ctx.lineWidth = 1.6;
+            ctx.strokeRect(x + 3, y + 3, cwid - 6, chei - 6);
+          }
+        }
+      }
+    }
+
+    function cellFromXY(mx, my) {
+      if (!lastGeom) return -1;
+      var col = Math.floor((mx - lastGeom.pad) / lastGeom.cwid);
+      var r = Math.floor((my - lastGeom.pad) / lastGeom.chei);
+      if (r < 0 || r >= R || col < 0 || col >= Cc) return -1;
+      return idx(r, col);
+    }
+
+    canvas.addEventListener("click", function (ev) {
+      var rect = canvas.getBoundingClientRect();
+      var mx = ev.clientX - rect.left, my = ev.clientY - rect.top;
+      var s = cellFromXY(mx, my);
+      if (s < 0 || s === startIdx) return;     // protect the start cell
+      if (paint === "goal") cell[s] = 1;
+      else if (paint === "trap") cell[s] = 2;
+      else if (paint === "wall") cell[s] = 3;
+      else cell[s] = 0;
+      render();
+    });
+
+    paintBtns.forEach(function (b) {
+      b.addEventListener("click", function () {
+        paintBtns.forEach(function (x) { x.classList.remove("on"); });
+        b.classList.add("on");
+        paint = b.getAttribute("data-rl1-paint");
+      });
+    });
+    gIn.addEventListener("input", render);
+    cIn.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

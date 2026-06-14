@@ -1,0 +1,726 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Deep Learning Foundations — Init, Norm &amp; Residuals — AI Encyclopedia</title>
+<meta name="description" content="Stacking layers only works once signal can flow through depth — weight initialization, batch normalization, and residual connections are the three fixes that unlocked deep neural networks." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+<link rel="canonical" href="https://ai-encyclopedia.com/dl/01-foundations" />
+<meta property="og:url" content="https://ai-encyclopedia.com/dl/01-foundations" />
+</head>
+<body data-track="dl" data-level="core">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ DEEP LEARNING / 01 / FOUNDATIONS</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../dl/02-cnn.html">NEXT: 02 CNNs →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">DEEP LEARNING · CHAPTER 01 / 07</div>
+    <h1>Deep Learning Foundations</h1>
+    <p class="lede">A network with enough layers can in principle represent almost any function, yet for years deep stacks could not be <em>trained</em>. Activations and gradients are multiplied repeatedly as they pass through depth, so they explode or vanish geometrically. <strong>Stacking layers only works once you control how the signal flows through depth</strong>, which careful initialization, normalization, and residual connections together achieve.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 26 MIN</b></span>
+      <span>BUILDS ON<b>NEURAL NETS · ML 07–08</b></span>
+      <span>INSTRUMENTS<b>INIT · BATCHNORM · RESIDUAL</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">1.1</span>From MLP to deep networks</a>
+      <a href="#s2"><span class="n">1.2</span>Initialization — Xavier &amp; He</a>
+      <a href="#s3"><span class="n">1.3</span>Batch normalization</a>
+      <a href="#s4"><span class="n">1.4</span>Residual connections</a>
+      <a href="#s5"><span class="n">1.5</span>Regularization</a>
+      <a href="#s6"><span class="n">1.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 1.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">1.1</span><h2>From MLP to deep networks</h2></div>
+        <p>A <strong>multilayer perceptron</strong> (MLP) is an alternating stack of affine maps and pointwise nonlinearities. Each layer takes the previous activation \(h^{(\ell-1)}\), applies a learned weight matrix and bias, then a nonlinearity \(\phi\):</p>
+
+        <div class="eq"><span class="eq-tag">EQ N1.1 — A FORWARD LAYER</span>
+        $$ z^{(\ell)} = W^{(\ell)} h^{(\ell-1)} + b^{(\ell)}, \qquad h^{(\ell)} = \phi\!\big(z^{(\ell)}\big), \qquad \ell = 1, \ldots, L $$
+        <div class="eq-note">\(z^{(\ell)}\) is the <em>pre-activation</em>, \(h^{(\ell)}\) the <em>activation</em>. Stack \(L\) of these and the network composes \(L\) nonlinear maps. The <b>universal approximation theorem</b> says even a single sufficiently wide hidden layer can approximate any continuous function on a compact set — but it is silent on <em>how wide</em> and gives no recipe for finding the weights. Depth is the practical answer: deep networks build features hierarchically and represent many functions exponentially more compactly than a shallow one of equal parameter count.</div>
+        </div>
+
+        <p>The promise of depth is compositional structure: early layers learn edges, later layers learn objects; early layers learn phonemes, later layers learn meaning. The obstacle is that the same composition that builds rich features also <em>compounds</em> the scale of whatever flows through it. Consider the backward pass. Backpropagation (ML 08) sends the loss gradient through the chain rule, so the gradient at layer \(\ell\) is a product of Jacobians from the output back to \(\ell\):</p>
+
+        <div class="eq"><span class="eq-tag">EQ N1.2 — WHY DEPTH IS HARD: THE JACOBIAN PRODUCT</span>
+        $$ \frac{\partial \mathcal{L}}{\partial h^{(\ell)}} = \left(\prod_{k=\ell+1}^{L} J^{(k)}\right)^{\!\top} \frac{\partial \mathcal{L}}{\partial h^{(L)}}, \qquad J^{(k)} = \frac{\partial h^{(k)}}{\partial h^{(k-1)}} = \mathrm{diag}\!\big(\phi'(z^{(k)})\big)\, W^{(k)} $$
+        <div class="eq-note">The gradient is multiplied by one Jacobian <em>per layer</em>. If the typical singular value of these Jacobians is below 1, the product shrinks geometrically toward zero — the <b>vanishing-gradient</b> problem, which leaves early layers learning nothing. If it is above 1, the product blows up — the <b>exploding-gradient</b> problem, which makes training diverge. A network with sigmoid/tanh units is doubly cursed: \(\phi'\) saturates to near zero in the tails, so the diagonal factor alone kills the signal. The whole chapter is a campaign to keep that product near 1.</div>
+        </div>
+
+        <p>The same compounding hits the forward pass: an activation passing through many layers is repeatedly scaled, so its variance can balloon or collapse before it ever reaches the output. The first historical fix, switching from saturating sigmoids to the non-saturating <strong>ReLU</strong> \(\phi(z) = \max(0, z)\), removed the worst of the diagonal saturation. But ReLU alone does not control the <em>weight</em> factor \(W^{(k)}\), and that is where the next section begins.</p>
+
+        <div class="callout">
+          <span class="co-icon">INTUITION</span>
+          <p>Think of a deep network as a chain of amplifiers. If each amplifier has gain 0.9, then 50 of them in series have gain \(0.9^{50}\approx 0.005\) — the signal is gone. Gain 1.1 gives \(1.1^{50}\approx 117\) — it saturates. Only a chain tuned to gain \(\approx 1\) passes signal cleanly through depth. Init, normalization, and residuals are three ways to lock that gain near one.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 1.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">1.2</span><h2>Weight initialization — Xavier &amp; He</h2></div>
+        <p>Before a single gradient step, the random weights you start from already decide whether signal survives the forward pass. The goal is a <strong>variance-preserving</strong> initialization: each layer should pass activations forward without systematically growing or shrinking their variance. Treat the weights as independent zero-mean random variables and propagate variance through EQ N1.1. For a layer with \(n_{\text{in}}\) inputs, the pre-activation variance is the sum of \(n_{\text{in}}\) independent terms:</p>
+
+        <div class="eq"><span class="eq-tag">EQ N1.3 — VARIANCE PROPAGATION (LINEAR REGIME)</span>
+        $$ \mathrm{Var}\big(z^{(\ell)}\big) = n_{\text{in}}\,\mathrm{Var}\big(W^{(\ell)}\big)\,\mathrm{Var}\big(h^{(\ell-1)}\big) $$
+        <div class="eq-note">If \(n_{\text{in}}\,\mathrm{Var}(W) > 1\), variance grows layer by layer and activations explode; if it is below 1, they vanish. The fix is to choose \(\mathrm{Var}(W)\) so the factor is exactly 1. The naive default — \(W \sim \mathcal{N}(0, 1)\), variance 1 — multiplies variance by \(n_{\text{in}}\) at every layer, which for a width-256 network is a factor of 256 per layer. <b>That single bad constant is enough to make a deep net untrainable.</b></div>
+        </div>
+
+        <p>Setting the forward factor to 1 gives \(\mathrm{Var}(W) = 1/n_{\text{in}}\). The backward pass wants \(\mathrm{Var}(W) = 1/n_{\text{out}}\) for the same reason (gradients propagate through \(W^\top\)). You cannot satisfy both unless the layer is square, so <strong>Glorot (Xavier) initialization</strong> takes the harmonic compromise — the average of the two fan counts:</p>
+
+        <div class="eq"><span class="eq-tag">EQ N1.4 — XAVIER / GLOROT INITIALIZATION</span>
+        $$ \mathrm{Var}(W) = \frac{2}{n_{\text{in}} + n_{\text{out}}} \qquad\Longrightarrow\qquad W \sim \mathcal{U}\!\left[-\sqrt{\tfrac{6}{n_{\text{in}}+n_{\text{out}}}},\; \sqrt{\tfrac{6}{n_{\text{in}}+n_{\text{out}}}}\right] $$
+        <div class="eq-note">The uniform bound comes from the fact that a uniform distribution on \([-a, a]\) has variance \(a^2/3\); setting \(a^2/3 = 2/(n_{\text{in}}+n_{\text{out}})\) gives \(a = \sqrt{6/(n_{\text{in}}+n_{\text{out}})}\). Glorot &amp; Bengio derived this assuming a roughly <b>linear</b> activation around zero — true for \(\tanh\), whose slope at the origin is 1. It is the right default for symmetric, zero-centered nonlinearities.</div>
+        </div>
+
+        <p>ReLU breaks the linear assumption: it zeros out the negative half of its inputs, so on average it halves the variance of what passes through. <strong>He (Kaiming) initialization</strong> compensates by doubling the weight variance, keying off \(n_{\text{in}}\) alone since the rectifier is the dominant correction:</p>
+
+        <div class="eq"><span class="eq-tag">EQ N1.5 — HE / KAIMING INITIALIZATION (FOR ReLU)</span>
+        $$ \mathrm{Var}(W) = \frac{2}{n_{\text{in}}} \qquad\Longrightarrow\qquad \mathrm{std}(W) = \sqrt{\frac{2}{n_{\text{in}}}} $$
+        <div class="eq-note">The extra factor of 2 over the naive \(1/n_{\text{in}}\) exactly cancels ReLU's variance-halving. This is the default in essentially every modern framework for ReLU-family networks (<code>kaiming_normal_</code> in PyTorch). The lesson is general: <b>the right init depends on the nonlinearity</b>, because what you must preserve is the variance <em>after</em> the activation, not before it.</div>
+        </div>
+
+        <div class="exercise" data-answer="0.125" data-tol="0.01" data-hint="He std is the square root of 2 divided by the number of inputs.">
+          <div class="ex-q">A ReLU layer has \(n_{\text{in}} = 128\) inputs. Using He initialization (EQ N1.5), what standard deviation should you draw its weights from? (\(\sqrt{2/n_{\text{in}}}\).)</div>
+          <div class="ex-reveal-src">\(\sqrt{2/n_{\text{in}}} = \sqrt{2/128} = \sqrt{0.015625} = \) <b>0.125</b>. A width-128 ReLU layer should start with weights of standard deviation 0.125 — far below the naive \(1.0\) that would explode the forward pass.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Activation variance across depth: naive vs Xavier vs He init (ReLU net)
+import numpy as np
+rng = np.random.default_rng(0)
+
+n, depth, batch = 256, 25, 1024
+h0 = rng.standard_normal((batch, n))          # unit-variance input
+
+def run(std_fn, relu=True):
+    h, var = h0.copy(), [h0.var()]
+    for _ in range(depth):
+        W = rng.standard_normal((n, n)) * std_fn(n)
+        h = h @ W                              # EQ N1.1 (no bias)
+        if relu:
+            h = np.maximum(h, 0.0)             # ReLU halves variance
+        var.append(h.var())
+    return var
+
+naive  = run(lambda n: 1.0)                    # std = 1: explodes
+xavier = run(lambda n: np.sqrt(1.0/n))         # tuned for linear/tanh
+he     = run(lambda n: np.sqrt(2.0/n))         # tuned for ReLU
+
+print(" layer    naive        xavier        he")
+for L in (0, 5, 12, 25):
+    print(f" {L:5d} {naive[L]:11.2e} {xavier[L]:12.4f} {he[L]:9.4f}")
+print("\nnaive blows up; xavier (1/n) decays under ReLU; he (2/n) holds near 1.")
+plot_xy(list(range(depth + 1)), [min(v, 1e3) for v in he])  # He stays flat</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="dlf-init" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT N1.1 — INIT EXPLORER</span><span class="w-sub">ACTIVATION VARIANCE ACROSS DEPTH · EQ N1.3–N1.5</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>WIDTH n <output id="dlf-init-w-out">256</output></label><input type="range" id="dlf-init-w" min="32" max="512" step="32" value="256"/></div>
+              <div class="ctl"><label>DEPTH L <output id="dlf-init-d-out">30</output></label><input type="range" id="dlf-init-d" min="5" max="60" step="1" value="30"/></div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>INIT SCHEME</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost" data-dlf-init="naive">NAIVE (1)</button>
+                  <button class="w-btn ghost" data-dlf-init="xavier">XAVIER</button>
+                  <button class="w-btn ghost on" data-dlf-init="he">HE</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="dlf-init-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">VAR AT LAYER 1</div><div class="r-value" id="dlf-init-v1">—</div></div>
+              <div class="readout acc"><div class="r-label">VAR AT FINAL LAYER</div><div class="r-value" id="dlf-init-vL">—</div></div>
+              <div class="readout"><div class="r-label">VERDICT</div><div class="r-value" id="dlf-init-verdict" style="font-size:12px;">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">A ReLU network of the chosen width and depth is run forward on unit-variance input; the curve is \(\log_{10}\) of the activation variance at each layer (the dashed line is variance = 1, the target). <b>NAIVE</b> shoots off the top of the chart within a few layers — the \(256\times\) blow-up of EQ N1.3. <b>XAVIER</b> decays toward zero because under ReLU its \(1/n\) is a factor of 2 too small. <b>HE</b> tracks the dashed line: variance preserved through arbitrary depth. Drop to NAIVE and watch the verdict flip to EXPLODES.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 1.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">1.3</span><h2>Batch normalization</h2></div>
+        <p>A good initialization keeps variance under control at step zero — but weights move during training, and the distribution of each layer's inputs drifts as the layers below it update. Ioffe &amp; Szegedy named this drift <strong>internal covariate shift</strong> and proposed fixing it directly: standardize each layer's pre-activations to zero mean and unit variance, using statistics computed over the current mini-batch:</p>
+
+        <div class="eq"><span class="eq-tag">EQ N1.6 — BATCH NORMALIZATION</span>
+        $$ \hat{z}_i = \frac{z_i - \mu_{\mathcal{B}}}{\sqrt{\sigma_{\mathcal{B}}^2 + \epsilon}}, \qquad y_i = \gamma\,\hat{z}_i + \beta, \qquad \mu_{\mathcal{B}} = \frac{1}{m}\sum_{i=1}^{m} z_i,\;\; \sigma_{\mathcal{B}}^2 = \frac{1}{m}\sum_{i=1}^{m} (z_i - \mu_{\mathcal{B}})^2 $$
+        <div class="eq-note">For each feature channel, subtract the batch mean and divide by the batch standard deviation (with \(\epsilon \approx 10^{-5}\) for numerical safety), then re-scale and re-shift with <em>learned</em> parameters \(\gamma, \beta\). Those two learnable parameters are crucial: normalization alone would force every layer into the same fixed distribution, but \(\gamma, \beta\) let the network <b>recover any mean and variance it actually needs</b> — including, if \(\gamma=\sigma_{\mathcal B}\) and \(\beta=\mu_{\mathcal B}\), the identity. Normalization is a default the network can override, not a straitjacket.</div>
+        </div>
+
+        <p>The payoff is large and somewhat over-determined. BatchNorm lets you use <strong>higher learning rates</strong> without divergence, makes training far less sensitive to the choice of initialization, and acts as a mild regularizer because each example's normalization depends on the random composition of its mini-batch. The original paper credited the reduction of internal covariate shift; later work (Santurkar et al., 2018) argued the real mechanism is a <strong>smoother loss landscape</strong> — BatchNorm bounds how fast the loss and its gradients can change, so optimization steps behave more predictably. The mechanism is still debated; the empirical win is not.</p>
+
+        <p class="note"><strong>Train vs. inference — the classic footgun.</strong> At training time BatchNorm uses the live mini-batch statistics. At inference you have no batch (or want determinism), so it switches to a <em>running average</em> of mean and variance accumulated during training. Forgetting to put the model in eval mode — so it normalizes a single test example by its own degenerate statistics — produces the most common BatchNorm bug. BatchNorm also couples examples within a batch and degrades at very small batch sizes; that weakness is exactly why <strong>LayerNorm</strong> (normalize across features of one example, batch-independent) won in Transformers, where it sits inside every block (Vol II · Ch 02).</p>
+
+        <div class="exercise" data-answer="0.5" data-tol="0.01" data-hint="standardize: subtract the batch mean, then divide by the batch standard deviation.">
+          <div class="ex-q">A BatchNorm layer sees the mini-batch of pre-activations \(\{2, 2, 6, 6\}\) for one channel. Take \(\epsilon = 0\). What is the normalized value \(\hat{z}\) (EQ N1.6, before the \(\gamma,\beta\) re-scale) of an element with \(z = 5\)?</div>
+          <div class="ex-reveal-src">Mean \(\mu_{\mathcal{B}} = (2+2+6+6)/4 = 4\). Variance \(\sigma_{\mathcal{B}}^2 = \tfrac14[(2{-}4)^2+(2{-}4)^2+(6{-}4)^2+(6{-}4)^2] = \tfrac14(4+4+4+4) = 4\), so \(\sigma_{\mathcal{B}} = 2\). Then \(\hat{z} = (5-4)/2 = \) <b>0.5</b> — the element sits half a standard deviation above the batch mean.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Forward pass with & without BatchNorm; print per-layer activation stats
+import numpy as np
+rng = np.random.default_rng(0)
+
+n, depth, batch = 128, 12, 512
+x = rng.standard_normal((batch, n))
+
+def bn(z, eps=1e-5):                            # EQ N1.6, gamma=1, beta=0
+    mu = z.mean(0); var = z.var(0)
+    return (z - mu) / np.sqrt(var + eps)
+
+def forward(use_bn):
+    h = x.copy()
+    stats = []
+    for _ in range(depth):
+        W = rng.standard_normal((n, n)) * np.sqrt(2.0 / n)   # He init
+        z = h @ W
+        if use_bn:
+            z = bn(z)                            # re-center & re-scale each layer
+        h = np.maximum(z, 0.0)                   # ReLU
+        stats.append((h.mean(), h.std()))
+    return stats
+
+print(" layer   no-BN mean / std        with-BN mean / std")
+plain, normed = forward(False), forward(True)
+for L in (0, 5, 11):
+    p, q = plain[L], normed[L]
+    print(f" {L:5d}   {p[0]:+.3f} / {p[1]:6.3f}        {q[0]:+.3f} / {q[1]:6.3f}")
+print("\nBatchNorm pins each layer's distribution; without it the std drifts.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="dlf-bn" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT N1.2 — BATCHNORM &amp; TRAINING STABILITY</span><span class="w-sub">LOSS CURVES · ON vs OFF · EQ N1.6</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>LEARNING RATE η <output id="dlf-bn-lr-out">0.30</output></label><input type="range" id="dlf-bn-lr" min="0.01" max="1.2" step="0.01" value="0.30"/></div>
+              <div class="ctl"><label>DEPTH L <output id="dlf-bn-d-out">12</output></label><input type="range" id="dlf-bn-d" min="3" max="24" step="1" value="12"/></div>
+            </div>
+            <canvas class="w-canvas" id="dlf-bn-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">FINAL LOSS · NO BN</div><div class="r-value" id="dlf-bn-off">—</div></div>
+              <div class="readout acc"><div class="r-label">FINAL LOSS · WITH BN</div><div class="r-value" id="dlf-bn-on">—</div></div>
+              <div class="readout"><div class="r-label">STABLE η CEILING (NO BN)</div><div class="r-value" id="dlf-bn-ceil">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">A toy deep net is trained for 60 steps at the chosen learning rate; the <span style="color:var(--accent);">mint</span> curve normalizes activations each layer, the muted grey curve does not. Push η up: the no-BN curve diverges (spikes off the top, loss explodes), while the BatchNorm curve keeps descending — the higher-learning-rate tolerance that made BN famous. Increase depth and the gap widens, since the un-normalized net compounds instability over more layers.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 1.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">1.4</span><h2>Residual connections</h2></div>
+        <p>Init and normalization keep variance in line, but they do not remove the fundamental fragility of EQ N1.2: a gradient still has to survive a product of \(L\) Jacobians. By 2015, even well-initialized, batch-normalized networks showed a <strong>degradation problem</strong> — adding more layers made training accuracy <em>worse</em>, not just test accuracy. The deeper net could in principle copy the shallower one by setting extra layers to identity, yet optimization could not find that solution. He et al.'s answer was to make the identity the <em>default</em>, by adding a skip connection around each block:</p>
+
+        <div class="eq"><span class="eq-tag">EQ N1.7 — THE RESIDUAL BLOCK</span>
+        $$ h_{\ell+1} = h_\ell + F\big(h_\ell; \theta_\ell\big) $$
+        <div class="eq-note">The block learns a <em>residual</em> \(F\) — the correction to add to its input — rather than a fresh representation. If the optimal map is close to identity, the network just drives \(F \to 0\), which is far easier than learning identity from scratch. \(F\) is typically two or three weight layers with normalization and a nonlinearity. <b>The skip is the load-bearing idea</b>: it is what lets networks go from tens of layers to hundreds (and ResNets to over a thousand) and is structurally identical to the residual stream that runs through every Transformer block (Vol II · Ch 02).</div>
+        </div>
+
+        <p>Why does the skip rescue the gradient? Differentiate EQ N1.7. The Jacobian of a residual block is the identity <em>plus</em> the block's own Jacobian, so the backward product gains an additive shortcut at every layer:</p>
+
+        <div class="eq"><span class="eq-tag">EQ N1.8 — GRADIENT FLOW THROUGH A SKIP</span>
+        $$ \frac{\partial h_{\ell+1}}{\partial h_\ell} = I + \frac{\partial F}{\partial h_\ell} \qquad\Longrightarrow\qquad \frac{\partial \mathcal{L}}{\partial h_\ell} = \frac{\partial \mathcal{L}}{\partial h_L}\prod_{k=\ell}^{L-1}\!\Big(I + \tfrac{\partial F}{\partial h_k}\Big) $$
+        <div class="eq-note">Expand the product and one term is the bare identity \(I\): the gradient at the output reaches layer \(\ell\) <em>undiminished</em>, no matter how many layers lie between, plus higher-order corrections through the \(F\) paths. Where a plain net multiplies the gradient by something \(<1\) at every layer (vanishing), the residual net always keeps a clean copy of the downstream gradient. <b>Depth stops being a multiplicative tax on the gradient and becomes additive.</b> The standard practice puts BatchNorm (or LayerNorm) inside \(F\), so the two fixes compose.</div>
+        </div>
+
+        <div class="exercise" data-answer="true" data-tol="0" data-hint="read EQ N1.7: the block adds its function's output back to its own input.">
+          <div class="ex-q">A residual block computes its output as the block input \(h\) plus the transformation \(F\) applied to that input — that is, \(h + F(h)\), the skip connection of EQ N1.7. <b>True or false?</b> (Answer <code>true</code> or <code>false</code>.)</div>
+          <div class="ex-reveal-src">The defining equation of a residual block is exactly \(h_{\ell+1} = h_\ell + F(h_\ell)\): the input is carried forward unchanged and the block only learns the correction \(F\) to add. The statement is <b>true</b>.</div>
+        </div>
+
+        <div class="widget" id="dlf-res" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT N1.3 — RESIDUAL vs PLAIN: GRADIENT FLOW</span><span class="w-sub">‖∂L/∂h‖ BY LAYER · EQ N1.8</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>DEPTH L <output id="dlf-res-d-out">40</output></label><input type="range" id="dlf-res-d" min="8" max="80" step="1" value="40"/></div>
+              <div class="ctl"><label>BLOCK GAIN ‖∂F/∂h‖ <output id="dlf-res-g-out">0.80</output></label><input type="range" id="dlf-res-g" min="0.4" max="1.4" step="0.02" value="0.80"/></div>
+            </div>
+            <canvas class="w-canvas" id="dlf-res-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">GRAD AT LAYER 1 · PLAIN</div><div class="r-value" id="dlf-res-plain">—</div></div>
+              <div class="readout acc"><div class="r-label">GRAD AT LAYER 1 · RESIDUAL</div><div class="r-value" id="dlf-res-res">—</div></div>
+              <div class="readout"><div class="r-label">RATIO (RESIDUAL / PLAIN)</div><div class="r-value" id="dlf-res-ratio">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The gradient norm starts at 1 at the output and is propagated back to layer 1. The <span style="color:#9b9b9b;">grey</span> plain net multiplies by the block gain at every layer (EQ N1.2), so for a gain below 1 it collapses geometrically — by layer 1 the early weights see almost no signal. The <span style="color:var(--accent);">mint</span> residual net follows EQ N1.8: the \(+I\) shortcut keeps a path of magnitude 1 alive all the way down, so the gradient barely decays. Set the gain above 1 and the plain net <em>explodes</em> instead — the residual net still stays bounded.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Gradient flow: plain stack vanishes, residual stack survives (EQ N1.8)
+import numpy as np
+rng = np.random.default_rng(0)
+
+n, depth = 64, 50
+g = rng.standard_normal((depth, n, n)) * np.sqrt(0.7 / n)   # block Jacobians, gain<1
+
+grad = rng.standard_normal((1, n))            # incoming gradient at the output
+plain, res = grad.copy(), grad.copy()
+plain_norm, res_norm = [np.linalg.norm(plain)], [np.linalg.norm(res)]
+
+for k in reversed(range(depth)):
+    plain = plain @ g[k].T                     # plain: multiply by J each layer
+    res   = res @ (np.eye(n) + g[k]).T         # residual: I + J  (the skip)
+    plain_norm.append(np.linalg.norm(plain))
+    res_norm.append(np.linalg.norm(res))
+
+print(f"plain    gradient norm at input layer: {plain_norm[-1]:.3e}")
+print(f"residual gradient norm at input layer: {res_norm[-1]:.3e}")
+print(f"residual / plain ratio                : {res_norm[-1]/plain_norm[-1]:.1f}x")
+print("\nthe +I shortcut keeps the early-layer gradient alive across 50 layers.")
+plot_xy(list(range(depth + 1)), [np.log10(v + 1e-30) for v in plain_norm])</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 1.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">1.5</span><h2>Regularization — dropout &amp; weight decay</h2></div>
+        <p>The first three fixes make a deep net <em>trainable</em>; the last makes it <em>generalize</em>. A network with millions of parameters can memorize its training set outright, so we add pressure toward simpler solutions. Two techniques dominate, and they attack overfitting from opposite directions.</p>
+
+        <p><strong>Dropout</strong> randomly zeros each activation with probability \(p\) on every training step, then rescales the survivors so the expected activation is unchanged:</p>
+
+        <div class="eq"><span class="eq-tag">EQ N1.9 — DROPOUT (INVERTED, TRAINING TIME)</span>
+        $$ \tilde{h}_i = \frac{m_i}{1-p}\,h_i, \qquad m_i \sim \mathrm{Bernoulli}(1-p) $$
+        <div class="eq-note">Each forward pass trains a different random sub-network; at test time dropout is off and the full network acts as an implicit <b>ensemble</b> of all those sub-networks. The \(1/(1-p)\) factor (<em>inverted dropout</em>) keeps the expected activation constant, so no scaling is needed at inference. By preventing units from co-adapting — relying on a specific partner always being present — dropout forces redundant, robust features. Typical \(p\): 0.1–0.5 for dense layers. It is largely absent from large Transformers, where data scale and other regularizers do the work.</div>
+        </div>
+
+        <p><strong>Weight decay</strong> instead penalizes large weights, adding an \(L_2\) term to the loss that pulls every weight toward zero:</p>
+
+        <div class="eq"><span class="eq-tag">EQ N1.10 — L2 / WEIGHT DECAY</span>
+        $$ \mathcal{L}_{\text{reg}} = \mathcal{L} + \frac{\lambda}{2}\sum_j w_j^2 \qquad\Longrightarrow\qquad w_j \leftarrow w_j - \eta\Big(\frac{\partial \mathcal{L}}{\partial w_j} + \lambda\,w_j\Big) $$
+        <div class="eq-note">The penalty's gradient is just \(\lambda w_j\), so each step shrinks every weight by a constant fraction before the data-driven update — hence "decay". Smaller weights mean a smoother, lower-variance function that is harder to overfit. A subtlety that matters in practice: with adaptive optimizers like Adam, classical \(L_2\) and true weight decay are <em>not</em> the same, because Adam rescales the gradient; <b>AdamW</b> (Loshchilov &amp; Hutter, 2019) decouples the decay from the gradient step and is the modern default. \(\lambda\) typically sits in \(10^{-4}\) to \(10^{-1}\).</div>
+        </div>
+
+        <p class="note"><strong>The honest picture.</strong> The four fixes overlap and partly substitute for one another. BatchNorm already regularizes, which is why dropout and BN are often redundant together. Good initialization reduces — but does not eliminate — the need for normalization. Residual connections plus normalization are now so reliable that very deep training is routine, and the field's frontier has moved from <em>can we train it</em> to <em>can we afford it</em>. None of these is a law of nature; each is an engineering fix to the same underlying disease — signal that compounds geometrically through depth — and each will be revisited, sharpened, or replaced as architectures evolve.</p>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>Now that signal can flow through depth, the question is what structure to give the layers.</strong> Chapter 02 specializes the dense layer for images: convolutions share weights across space, pooling builds translation tolerance, and the same init/norm/residual toolkit you just met powers the ResNets that dominated computer vision.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 1.R — References ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">1.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://proceedings.mlr.press/v9/glorot10a.html" target="_blank" rel="noopener">Glorot, X. &amp; Bengio, Y. (2010). <span class="ref-venue">Understanding the difficulty of training deep feedforward neural networks</span>.</a> <span class="ref-meta">AISTATS — the variance-preserving (Xavier/Glorot) initialization of §1.2.</span></li>
+          <li><a href="https://arxiv.org/abs/1502.01852" target="_blank" rel="noopener">He, K., Zhang, X., Ren, S. &amp; Sun, J. (2015). <span class="ref-venue">Delving Deep into Rectifiers: Surpassing Human-Level Performance on ImageNet Classification</span>.</a> <span class="ref-meta">ICCV — He/Kaiming initialization for ReLU networks (EQ N1.5).</span></li>
+          <li><a href="https://arxiv.org/abs/1502.03167" target="_blank" rel="noopener">Ioffe, S. &amp; Szegedy, C. (2015). <span class="ref-venue">Batch Normalization: Accelerating Deep Network Training by Reducing Internal Covariate Shift</span>.</a> <span class="ref-meta">ICML — batch normalization (§1.3, EQ N1.6).</span></li>
+          <li><a href="https://arxiv.org/abs/1512.03385" target="_blank" rel="noopener">He, K., Zhang, X., Ren, S. &amp; Sun, J. (2016). <span class="ref-venue">Deep Residual Learning for Image Recognition</span>.</a> <span class="ref-meta">CVPR — residual connections / ResNet (§1.4, EQ N1.7–N1.8).</span></li>
+          <li><a href="https://arxiv.org/abs/1207.0580" target="_blank" rel="noopener">Srivastava, N., Hinton, G., Krizhevsky, A., Sutskever, I. &amp; Salakhutdinov, R. (2014). <span class="ref-venue">Dropout: A Simple Way to Prevent Neural Networks from Overfitting</span>.</a> <span class="ref-meta">JMLR 15 — dropout regularization (EQ N1.9).</span></li>
+          <li><a href="https://arxiv.org/abs/1711.05101" target="_blank" rel="noopener">Loshchilov, I. &amp; Hutter, F. (2019). <span class="ref-venue">Decoupled Weight Decay Regularization</span>.</a> <span class="ref-meta">ICLR — AdamW, decoupling weight decay from the adaptive step (EQ N1.10).</span></li>
+          <li><a href="https://arxiv.org/abs/1805.11604" target="_blank" rel="noopener">Santurkar, S., Tsipras, D., Ilyas, A. &amp; Mądry, A. (2018). <span class="ref-venue">How Does Batch Normalization Help Optimization?</span></a> <span class="ref-meta">NeurIPS — the loss-smoothing reinterpretation of BatchNorm cited in §1.3.</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../index.html#toc"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">§</span> INDEX</div></a>
+        <a class="next" href="../dl/02-cnn.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">02</span> CNNs</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — DEEP LEARNING · CH 01</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* ============================================================
+   Deep Learning Foundations — instruments
+   Single IIFE, no globals. Deterministic seeded RNG (FM.mulberry32)
+   so every widget renders a meaningful state with zero interaction.
+   All animation via setTimeout; all canvases re-render on resize.
+   ============================================================ */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  /* Box–Muller standard normal from a uniform RNG */
+  function gauss(rng) {
+    var u1 = rng(), u2 = rng();
+    if (u1 < 1e-12) u1 = 1e-12;
+    return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+  }
+  function fnum(x, d) { d = d === undefined ? 2 : d; return x.toFixed(d); }
+
+  /* ========================================================
+     INSTRUMENT N1.1 — Init explorer
+     Propagate activation variance through a ReLU stack for
+     naive / xavier / he init; plot log10(variance) by layer.
+     Variance recurrence (EQ N1.3): each layer multiplies the
+     activation variance by n * Var(W); ReLU then halves it.
+     ======================================================== */
+  (function () {
+    var canvas = document.getElementById("dlf-init-canvas");
+    if (!canvas) return;
+    var wEl = document.getElementById("dlf-init-w");
+    var dEl = document.getElementById("dlf-init-d");
+    var wOut = document.getElementById("dlf-init-w-out");
+    var dOut = document.getElementById("dlf-init-d-out");
+    var v1El = document.getElementById("dlf-init-v1");
+    var vLEl = document.getElementById("dlf-init-vL");
+    var verdictEl = document.getElementById("dlf-init-verdict");
+    var btns = canvas.parentElement.parentElement.querySelectorAll("[data-dlf-init]");
+    var scheme = "he";
+
+    function varW(n, s) {
+      if (s === "naive") return 1.0;
+      if (s === "xavier") return 1.0 / n;     // 1/n_in (square layer)
+      return 2.0 / n;                         // he: 2/n_in
+    }
+
+    function render() {
+      var n = +wEl.value, L = +dEl.value;
+      wOut.textContent = n; dOut.textContent = L;
+
+      /* deterministic variance recurrence, starting from unit-variance input.
+         Var(z) = n * Var(W) * Var(h_prev);  ReLU -> Var(h) ~ 0.5 * Var(z). */
+      var vw = varW(n, scheme);
+      var v = 1.0;                            // input activation variance
+      var series = [v];
+      var i;
+      for (i = 0; i < L; i++) {
+        v = n * vw * v;                       // EQ N1.3 (pre-activation)
+        v = 0.5 * v;                          // ReLU halves the variance
+        series.push(v);
+      }
+      var vFirst = series[1] || series[0];
+      var vLast = series[series.length - 1];
+
+      v1El.textContent = vFirst >= 1e4 || vFirst < 1e-3 ? vFirst.toExponential(1) : fnum(vFirst, 3);
+      vLEl.textContent = vLast >= 1e4 || vLast < 1e-3 ? vLast.toExponential(1) : fnum(vLast, 3);
+      if (vLast > 1e3) { verdictEl.textContent = "EXPLODES"; verdictEl.style.color = C.RED; }
+      else if (vLast < 1e-3) { verdictEl.textContent = "VANISHES"; verdictEl.style.color = C.SEC; }
+      else { verdictEl.textContent = "STABLE ✓"; verdictEl.style.color = C.MINT; }
+
+      var c = FM.setupCanvas(canvas, 300);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      var padL = 46, padR = 14, padT = 16, padB = 28;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      ctx.clearRect(0, 0, w, h);
+
+      /* y axis: log10(variance), clamped to a readable window */
+      var loY = -6, hiY = 6;
+      function px(layer) { return x0 + (layer / L) * (x1 - x0); }
+      function py(logv) {
+        var t = (logv - loY) / (hiY - loY);
+        if (t < 0) t = 0; if (t > 1) t = 1;
+        return y0 - t * (y0 - y1);
+      }
+
+      /* grid + labels */
+      ctx.font = C.MONO; ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      var gv;
+      for (gv = loY; gv <= hiY; gv += 3) {
+        var gy = py(gv);
+        ctx.strokeStyle = "rgba(47,50,52,.5)"; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(x0, gy); ctx.lineTo(x1, gy); ctx.stroke();
+        ctx.fillStyle = C.MUT; ctx.fillText("1e" + gv, x0 - 5, gy);
+      }
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(x0, y1, x1 - x0, y0 - y1);
+
+      /* target variance = 1 (log 0), dashed */
+      ctx.setLineDash([4, 4]); ctx.strokeStyle = C.SEC; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x0, py(0)); ctx.lineTo(x1, py(0)); ctx.stroke();
+      ctx.setLineDash([]);
+
+      /* variance curve (mint) */
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (i = 0; i < series.length; i++) {
+        var lv = Math.log(Math.max(series[i], 1e-30)) / Math.LN10;
+        var X = px(i), Y = py(lv);
+        if (i === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y);
+      }
+      ctx.stroke();
+      /* dots at each layer */
+      ctx.fillStyle = C.MINT;
+      for (i = 0; i < series.length; i++) {
+        var lv2 = Math.log(Math.max(series[i], 1e-30)) / Math.LN10;
+        ctx.beginPath(); ctx.arc(px(i), py(lv2), 1.8, 0, 2 * Math.PI); ctx.fill();
+      }
+
+      ctx.font = C.MONO; ctx.fillStyle = C.SEC;
+      ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText("log₁₀ VAR  ·  " + scheme.toUpperCase() + " INIT", x0 + 5, y1 + 4);
+      ctx.fillStyle = C.SEC; ctx.textAlign = "right"; ctx.textBaseline = "bottom";
+      ctx.fillText("-- TARGET VAR = 1", x1 - 4, py(0) - 3);
+      ctx.fillStyle = C.MUT; ctx.textAlign = "right"; ctx.textBaseline = "top";
+      ctx.fillText("layer 0 → " + L, x1 - 4, y0 + 6);
+    }
+
+    btns.forEach(function (b) {
+      b.addEventListener("click", function () {
+        scheme = b.getAttribute("data-dlf-init");
+        btns.forEach(function (o) { o.classList.toggle("on", o === b); });
+        render();
+      });
+    });
+    wEl.addEventListener("input", render);
+    dEl.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT N1.2 — BatchNorm & training stability
+     Toy model of how a deep stack's loss evolves under SGD,
+     with and without per-layer normalization. The un-normalized
+     net's effective gradient gain grows with depth and lr and
+     can exceed 1 -> divergence; BN clamps the gain near 1.
+     ======================================================== */
+  (function () {
+    var canvas = document.getElementById("dlf-bn-canvas");
+    if (!canvas) return;
+    var lrEl = document.getElementById("dlf-bn-lr");
+    var dEl = document.getElementById("dlf-bn-d");
+    var lrOut = document.getElementById("dlf-bn-lr-out");
+    var dOut = document.getElementById("dlf-bn-d-out");
+    var offEl = document.getElementById("dlf-bn-off");
+    var onEl = document.getElementById("dlf-bn-on");
+    var ceilEl = document.getElementById("dlf-bn-ceil");
+    var STEPS = 60;
+
+    /* simulate a loss trajectory.
+       model: loss_{t+1} = loss_t * (1 - lr*g_eff) + noise, with a curvature term.
+       g_eff (no BN) scales with depth (gradient compounding); BN flattens it. */
+    function trajectory(lr, depth, useBN) {
+      var rng = FM.mulberry32(useBN ? 4242 : 99);
+      var loss = 1.0, series = [loss];
+      /* effective conditioning: no-BN gets worse with depth; BN stays ~constant */
+      var cond = useBN ? 1.0 : (1.0 + 0.16 * depth);   // condition number proxy
+      var i;
+      for (i = 0; i < STEPS; i++) {
+        /* a poorly conditioned quadratic: step that overshoots when lr*cond > ~1 */
+        var step = lr * cond;
+        var contraction = 1 - step + 0.5 * step * step; // |1 - step| style bowl
+        if (contraction < 0) contraction = Math.abs(contraction) * 1.6; // overshoot grows
+        loss = loss * contraction;
+        loss += 0.0008 * (gauss(rng));                 // tiny stochastic noise
+        loss = Math.abs(loss);
+        if (loss > 1e6) loss = 1e6;
+        if (loss < 1e-4) loss = 1e-4;
+        series.push(loss);
+      }
+      return series;
+    }
+    /* find the lr at which the no-BN net first diverges, for the readout */
+    function ceiling(depth) {
+      var cond = 1.0 + 0.16 * depth;
+      /* divergence when contraction >= 1, i.e. -step + 0.5 step^2 >= 0 -> step >= 2 */
+      return 2.0 / cond;
+    }
+
+    function render() {
+      var lr = +lrEl.value, depth = +dEl.value;
+      lrOut.textContent = fnum(lr, 2); dOut.textContent = depth;
+      var off = trajectory(lr, depth, false);
+      var on = trajectory(lr, depth, true);
+      offEl.textContent = off[STEPS] >= 1e3 ? off[STEPS].toExponential(1) : fnum(off[STEPS], 4);
+      onEl.textContent = on[STEPS] >= 1e3 ? on[STEPS].toExponential(1) : fnum(on[STEPS], 4);
+      ceilEl.textContent = "η ≈ " + fnum(ceiling(depth), 2);
+
+      var c = FM.setupCanvas(canvas, 300);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      var padL = 46, padR = 14, padT = 16, padB = 28;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      ctx.clearRect(0, 0, w, h);
+
+      var loY = -4, hiY = 6;                  // log10 loss window
+      function px(t) { return x0 + (t / STEPS) * (x1 - x0); }
+      function py(logv) {
+        var u = (logv - loY) / (hiY - loY);
+        if (u < 0) u = 0; if (u > 1) u = 1;
+        return y0 - u * (y0 - y1);
+      }
+      var gv;
+      ctx.font = C.MONO; ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      for (gv = loY; gv <= hiY; gv += 2) {
+        var gy = py(gv);
+        ctx.strokeStyle = "rgba(47,50,52,.5)"; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(x0, gy); ctx.lineTo(x1, gy); ctx.stroke();
+        ctx.fillStyle = C.MUT; ctx.fillText("1e" + gv, x0 - 5, gy);
+      }
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(x0, y1, x1 - x0, y0 - y1);
+
+      function drawCurve(series, color, wd) {
+        ctx.strokeStyle = color; ctx.lineWidth = wd; ctx.beginPath();
+        for (var i = 0; i < series.length; i++) {
+          var lv = Math.log(Math.max(series[i], 1e-30)) / Math.LN10;
+          var X = px(i), Y = py(lv);
+          if (i === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y);
+        }
+        ctx.stroke();
+      }
+      drawCurve(off, "rgba(155,155,155,.85)", 1.5);   // no BN, grey
+      drawCurve(on, C.MINT, 2);                        // BN, mint
+
+      ctx.font = C.MONO; ctx.textBaseline = "top";
+      ctx.fillStyle = C.SEC; ctx.textAlign = "left";
+      ctx.fillText("log₁₀ LOSS  ·  60 STEPS @ η=" + fnum(lr, 2), x0 + 5, y1 + 4);
+      ctx.fillStyle = C.MINT; ctx.textAlign = "right";
+      ctx.fillText("— WITH BN", x1 - 4, y1 + 4);
+      ctx.fillStyle = C.SEC;
+      ctx.fillText("— NO BN", x1 - 4, y1 + 18);
+    }
+    lrEl.addEventListener("input", render);
+    dEl.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT N1.3 — Residual vs plain gradient flow
+     Propagate a gradient of norm 1 from the output back to
+     layer 1. Plain net multiplies by the block gain g each
+     layer (EQ N1.2). Residual net multiplies by |1 + (g-1)|
+     i.e. the +I shortcut keeps a magnitude-~1 path (EQ N1.8).
+     ======================================================== */
+  (function () {
+    var canvas = document.getElementById("dlf-res-canvas");
+    if (!canvas) return;
+    var dEl = document.getElementById("dlf-res-d");
+    var gEl = document.getElementById("dlf-res-g");
+    var dOut = document.getElementById("dlf-res-d-out");
+    var gOut = document.getElementById("dlf-res-g-out");
+    var plainEl = document.getElementById("dlf-res-plain");
+    var resEl = document.getElementById("dlf-res-res");
+    var ratioEl = document.getElementById("dlf-res-ratio");
+
+    function fmtG(x) {
+      if (x >= 1e4 || (x > 0 && x < 1e-3)) return x.toExponential(1);
+      return fnum(x, 3);
+    }
+
+    function render() {
+      var L = +dEl.value, g = +gEl.value;
+      dOut.textContent = L; gOut.textContent = fnum(g, 2);
+
+      /* per-layer multipliers.
+         plain: gradient *= g.
+         residual: block Jacobian is I + (F'), with ||F'|| = g; the dominant
+         singular value of (I + F') is ~ 1 + (g - 1) = g if F' aligns, but the
+         identity guarantees a floor of ~1, so we model the residual multiplier
+         as max(1, ...) blended -> sqrt(1 + (g-1)^2) keeps it near 1 for g<1
+         and bounded-linear for g>1. */
+      var plainMul = g;
+      var resMul = Math.sqrt(1 + (g - 1) * (g - 1));   // never below 1; ~1 when g≈1
+
+      var plain = [1], res = [1];                       // norm 1 at the output
+      var i, p = 1, r = 1;
+      for (i = 0; i < L; i++) {
+        p *= plainMul; r *= resMul;
+        plain.push(p); res.push(r);
+      }
+      var pFirst = plain[L], rFirst = res[L];
+      plainEl.textContent = fmtG(pFirst);
+      resEl.textContent = fmtG(rFirst);
+      ratioEl.textContent = (rFirst / Math.max(pFirst, 1e-30) >= 1e4
+        ? (rFirst / pFirst).toExponential(1) : fnum(rFirst / Math.max(pFirst, 1e-30), 1)) + "×";
+
+      var c = FM.setupCanvas(canvas, 300);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      var padL = 46, padR = 14, padT = 16, padB = 28;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      ctx.clearRect(0, 0, w, h);
+
+      var loY = -8, hiY = 8;                  // log10 gradient norm window
+      function px(layer) { return x1 - (layer / L) * (x1 - x0); } // output at right, input at left
+      function py(logv) {
+        var u = (logv - loY) / (hiY - loY);
+        if (u < 0) u = 0; if (u > 1) u = 1;
+        return y0 - u * (y0 - y1);
+      }
+      var gv;
+      ctx.font = C.MONO; ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      for (gv = loY; gv <= hiY; gv += 4) {
+        var gy = py(gv);
+        ctx.strokeStyle = "rgba(47,50,52,.5)"; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(x0, gy); ctx.lineTo(x1, gy); ctx.stroke();
+        ctx.fillStyle = C.MUT; ctx.fillText("1e" + gv, x0 - 5, gy);
+      }
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(x0, y1, x1 - x0, y0 - y1);
+      /* norm = 1 reference, dashed */
+      ctx.setLineDash([4, 4]); ctx.strokeStyle = C.SEC; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x0, py(0)); ctx.lineTo(x1, py(0)); ctx.stroke();
+      ctx.setLineDash([]);
+
+      function drawCurve(series, color, wd) {
+        ctx.strokeStyle = color; ctx.lineWidth = wd; ctx.beginPath();
+        for (var i = 0; i < series.length; i++) {
+          var lv = Math.log(Math.max(series[i], 1e-30)) / Math.LN10;
+          var X = px(i), Y = py(lv);
+          if (i === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y);
+        }
+        ctx.stroke();
+      }
+      drawCurve(plain, "rgba(155,155,155,.9)", 1.5);   // plain, grey
+      drawCurve(res, C.MINT, 2);                        // residual, mint
+
+      ctx.font = C.MONO; ctx.textBaseline = "top";
+      ctx.fillStyle = C.SEC; ctx.textAlign = "left";
+      ctx.fillText("log₁₀ ‖∂L/∂h‖", x0 + 5, y1 + 4);
+      ctx.fillStyle = C.MINT; ctx.textAlign = "right";
+      ctx.fillText("— RESIDUAL", x1 - 4, y1 + 4);
+      ctx.fillStyle = C.SEC;
+      ctx.fillText("— PLAIN", x1 - 4, y1 + 18);
+      ctx.fillStyle = C.MUT; ctx.textAlign = "left"; ctx.textBaseline = "bottom";
+      ctx.fillText("input (layer 1)", x0 + 4, y0 - 2);
+      ctx.textAlign = "right";
+      ctx.fillText("output (layer L)", x1 - 4, y0 - 2);
+    }
+    dEl.addEventListener("input", render);
+    gEl.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

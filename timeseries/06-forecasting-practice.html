@@ -1,0 +1,794 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Forecasting in Practice — AI Encyclopedia</title>
+<meta name="description" content="Backtesting and walk-forward validation, forecast-accuracy metrics from MAPE to MASE and sMAPE, prediction intervals and their coverage, the ML/DL forecasting stack — Prophet, DeepAR, TFT — and the leakage, look-ahead and drift pitfalls that quietly inflate every offline score." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+<link rel="canonical" href="https://ai-encyclopedia.com/timeseries/06-forecasting-practice" />
+<meta property="og:url" content="https://ai-encyclopedia.com/timeseries/06-forecasting-practice" />
+</head>
+<body data-track="timeseries" data-level="core">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ TIME SERIES / 06 / FORECASTING</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../quant/01-stochastic-processes.html">NEXT: QUANT · 01 STOCHASTIC PROCESSES →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">TIME SERIES &amp; ECONOMETRICS · CHAPTER 06 / 06</div>
+    <h1>Forecasting in Practice</h1>
+    <p class="lede">Every earlier chapter showed you how to <em>fit</em> a model to a time series. This one covers how to judge whether it is any good, evaluated on data it has not seen and scored against a benchmark chosen to be hard to beat. <strong>An unbacktested forecast is only a guess, and the naive forecast is the benchmark that most models fail to outperform.</strong></p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 28 MIN</b></span>
+      <span>BUILDS ON<b>TIME SERIES 01–05 · MLOPS 01</b></span>
+      <span>INSTRUMENTS<b>WALK-FORWARD · MASE · COVERAGE</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">6.1</span>Backtesting &amp; walk-forward</a>
+      <a href="#s2"><span class="n">6.2</span>Accuracy — MAPE, MASE, sMAPE</a>
+      <a href="#s3"><span class="n">6.3</span>Prediction intervals</a>
+      <a href="#s4"><span class="n">6.4</span>ML &amp; DL — Prophet, DeepAR, TFT</a>
+      <a href="#s5"><span class="n">6.5</span>Pitfalls — leakage &amp; drift</a>
+      <a href="#s6"><span class="n">6.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 6.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">6.1</span><h2>Backtesting &amp; walk-forward validation</h2></div>
+        <p>The cross-validation you learned for tabular data — shuffle the rows, hold out a random fold — is <em>poison</em> for a time series. Shuffling lets the model train on Thursday to predict Wednesday; random folds leak the future into the past. Temporal order is the whole point of the data, so the evaluation must respect it: <strong>train only on the past, test only on the future, never the reverse.</strong></p>
+
+        <p>The disciplined way to do this is <strong>walk-forward validation</strong> (also called rolling-origin or time-series cross-validation). Fix a forecast horizon \(h\). Train on data up to some origin \(t\), forecast the next \(h\) steps, score them against what actually happened, then slide the origin forward and repeat. You end up with many out-of-sample forecasts at many origins — a far more honest estimate of live performance than a single train/test split, which can be lucky or unlucky depending on where you happened to cut.</p>
+
+        <div class="eq"><span class="eq-tag">EQ T6.1 — ROLLING-ORIGIN BACKTEST ERROR</span>
+        $$ \mathrm{CV}(h) \;=\; \frac{1}{|\mathcal{O}|}\sum_{t\in\mathcal{O}}\; \frac{1}{h}\sum_{k=1}^{h}\; \ell\!\big(\,y_{t+k},\;\hat{y}_{t+k\mid t}\,\big) $$
+        <div class="eq-note">\(\mathcal{O}\) is the set of forecast <b>origins</b>; at each origin \(t\) the model is fit on \(y_{1:t}\) only and emits \(h\)-step forecasts \(\hat{y}_{t+k\mid t}\). \(\ell\) is any per-point loss (absolute error, squared error, pinball). Two flavours of the window matter: an <b>expanding</b> window keeps all history (\(y_{1:t}\) grows) — right when the process is stationary and more data always helps; a <b>sliding</b> window of fixed length forgets old data — right when the process drifts and stale history is actively misleading. <b>The forecast at origin \(t\) may use nothing dated after \(t\).</b> Break that rule anywhere — feature engineering, scaling, hyper-parameter choice — and the score is fiction (§6.5).</div>
+        </div>
+
+        <p>Two practical refinements separate a toy backtest from a trustworthy one. First, leave a <strong>gap</strong> between train and test when your features embed a look-back or your labels arrive late, so information cannot bleed across the seam (this is the idea behind <em>purged</em> and <em>embargoed</em> cross-validation in finance). Second, refit the model at every origin if you can afford it — a model re-estimated as the window slides mimics what you would actually do in production, whereas freezing the parameters at the first origin quietly over-states stability.</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Walk-forward backtest: naive vs AR(1), scored by MASE (EQ T6.1 + T6.3).
+import numpy as np
+rng = np.random.default_rng(0)
+
+# A trending, noisy AR(1)-ish series of 120 points.
+n = 120
+y = np.zeros(n)
+for t in range(1, n):
+    y[t] = 0.6 * y[t - 1] + 0.05 * t + rng.normal(0, 1.0)
+
+H = 1                                   # one-step-ahead horizon
+start = 60                              # first forecast origin
+abs_naive, abs_ar = [], []
+for t in range(start, n - H):
+    train = y[:t + 1]                   # ONLY the past -- no leakage
+    naive = train[-1]                   # last value carried forward
+    # AR(1) fit by least squares on the training window
+    a = np.vstack([train[:-1], np.ones(t)]).T
+    phi, c = np.linalg.lstsq(a, train[1:], rcond=None)[0]
+    ar = phi * train[-1] + c
+    actual = y[t + H]
+    abs_naive.append(abs(actual - naive))
+    abs_ar.append(abs(actual - ar))
+
+# MASE = mean(|model error|) / mean(|naive one-step error in-sample|)
+scale = np.mean(np.abs(np.diff(y[:start])))     # the naive yardstick
+mase_naive = np.mean(abs_naive) / scale
+mase_ar    = np.mean(abs_ar)    / scale
+print(f"in-sample naive scale (mean |y_t - y_t-1|): {scale:.3f}")
+print(f"MASE  naive forecast : {mase_naive:.3f}")
+print(f"MASE  AR(1) forecast : {mase_ar:.3f}")
+print("AR(1) beats naive out-of-sample:" , mase_ar &lt; mase_naive)</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="fc-wf-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT T6.1 — WALK-FORWARD BACKTEST</span><span class="w-sub">ROLLING ORIGIN · EXPANDING vs SLIDING · EQ T6.1</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>FORECAST HORIZON h <output id="fc-wf-h-out">6</output></label><input type="range" id="fc-wf-h" min="1" max="18" step="1" value="6"/></div>
+              <div class="ctl"><label>ORIGIN STEP <output id="fc-wf-step-out">6</output></label><input type="range" id="fc-wf-step" min="3" max="18" step="3" value="6"/></div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>WINDOW</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-fc-wf-mode="expanding">EXPANDING</button>
+                  <button class="w-btn ghost" data-fc-wf-mode="sliding">SLIDING</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="fc-wf-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">FOLDS (ORIGINS)</div><div class="r-value" id="fc-wf-folds">—</div></div>
+              <div class="readout acc"><div class="r-label">MEAN ABS ERROR (CV)</div><div class="r-value" id="fc-wf-mae">—</div></div>
+              <div class="readout"><div class="r-label">WORST FOLD</div><div class="r-value" id="fc-wf-worst">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Each <span style="color:var(--blue);">blue</span> bracket is one fold: a training span on the left, an <span style="color:var(--accent);">h-step test</span> on the right, with the forecast drawn against the truth. Slide <b>HORIZON</b> up and watch error climb — longer horizons are simply harder. Switch to <b>SLIDING</b> to drop old history; on this drifting series the expanding window wins because every point of the past still helps. The CV error is EQ T6.1 averaged over every fold, not a single lucky split.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 6.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">6.2</span><h2>Forecast accuracy — MAPE, MASE, sMAPE</h2></div>
+        <p>A backtest gives you errors; a metric turns them into one comparable number. The choice is not cosmetic — each metric has a failure mode, and picking the wrong one for your data is how people ship models that look great offline and disappoint in production.</p>
+
+        <p>The intuitive starting point is the <strong>Mean Absolute Percentage Error</strong>: average the absolute error as a fraction of the actual value, so a forecast that is off by 10 on a quantity of 100 scores the same 10% as a forecast off by 1 on a quantity of 10.</p>
+
+        <div class="eq"><span class="eq-tag">EQ T6.2 — MAPE</span>
+        $$ \mathrm{MAPE} \;=\; \frac{100\%}{n}\sum_{t=1}^{n}\left|\frac{y_t - \hat{y}_t}{y_t}\right| $$
+        <div class="eq-note">\(y_t\) is the actual, \(\hat{y}_t\) the forecast. Scale-free and instantly interpretable to a business audience — "we're 8% off on average." But it has three real defects: it <b>explodes when \(y_t\) is near zero</b> (intermittent demand, anything that can be empty), it is <b>undefined when \(y_t = 0\)</b>, and it is <b>asymmetric</b> — it penalizes over-forecasts more heavily than under-forecasts, so a model can game it by systematically under-predicting. Use it for strictly positive, well-away-from-zero series; reach for MASE everywhere else.</div>
+        </div>
+
+        <div class="exercise" data-answer="10" data-tol="0.001" data-unit="%" data-hint="MAPE for a single point is 100·|actual − forecast| / actual.">
+          <div class="ex-q">A single forecast predicts \( \hat{y} = 90 \) when the actual value turns out to be \( y = 100 \). Using EQ T6.2 on this one point, what is the MAPE, in percent?</div>
+          <div class="ex-reveal-src">\( \left|\dfrac{y-\hat{y}}{y}\right| = \dfrac{|100-90|}{100} = \dfrac{10}{100} = 0.10 \); times 100% gives <b>10</b>%. Note the asymmetry: had the forecast been 110 (also off by 10) the MAPE would still read 10% here, but on a series where actuals vary, over- and under-forecasts of equal size do not score equally — that is the bias MASE was built to escape.</div>
+        </div>
+
+        <p>The fix for MAPE's pathologies is the <strong>Mean Absolute Scaled Error</strong> of Hyndman &amp; Koehler (2006). Instead of dividing by the actual value, divide the model's mean absolute error by the mean absolute error of a dirt-simple benchmark — the <strong>naive forecast</strong>, which just carries the last observed value forward. The scaling makes MASE unitless, defined even when \(y_t = 0\), symmetric, and — its whole point — readable as a comparison against the benchmark that any model must beat to justify its existence.</p>
+
+        <div class="eq"><span class="eq-tag">EQ T6.3 — MASE</span>
+        $$ \mathrm{MASE} \;=\; \frac{\frac{1}{n}\sum_{t=1}^{n}\bigl|\,y_t - \hat{y}_t\,\bigr|}{\frac{1}{T-1}\sum_{i=2}^{T}\bigl|\,y_i - y_{i-1}\,\bigr|} $$
+        <div class="eq-note">Numerator: the model's mean absolute error on the test set. Denominator: the in-sample mean absolute error of the <b>one-step naive forecast</b> (\(\hat{y}_i = y_{i-1}\)) computed on the <em>training</em> data — the yardstick. The ratio is the headline: <b>\(\mathrm{MASE} &lt; 1\) means the model beats the naive forecast; \(\mathrm{MASE} &gt; 1\) means it loses to copy-the-last-value</b>, an embarrassing but common verdict. For seasonal data use the seasonal-naive denominator \(\lvert y_i - y_{i-m}\rvert\) (one season back, period \(m\)). MASE was the M-competition organisers' metric of choice precisely because it averages sanely across series of wildly different scales.</div>
+        </div>
+
+        <div class="exercise" data-answer="true" data-tol="0" data-unit="" data-hint="MASE divides the model's MAE by the naive forecast's MAE; what does a ratio below 1 imply?">
+          <div class="ex-q">A model scores \( \mathrm{MASE} = 0.7 \) on a held-out period. Does this mean the model <b>beats</b> the naive (last-value) forecast on that period? (Answer <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">MASE is the model's mean absolute error divided by the naive forecast's mean absolute error. A value below 1 means the model's error is smaller than the naive benchmark's, so \( \mathrm{MASE} = 0.7 &lt; 1 \) means the model is roughly 30% more accurate than copy-the-last-value: it <b>beats</b> the naive forecast. Hence <b>true</b>. (A MASE above 1 would be the humbling case — your model loses to a one-line baseline.)</div>
+        </div>
+
+        <p>A third metric, the <strong>symmetric MAPE</strong>, was introduced to tame MAPE's over-/under-forecast asymmetry by putting both the actual and the forecast in the denominator. It is bounded and was used in the M3 and M4 competitions, but "symmetric" is a misnomer — it is still not perfectly even-handed, and it too misbehaves when both values approach zero. Know it because you will meet it in benchmark tables; prefer MASE when you get to choose.</p>
+
+        <div class="eq"><span class="eq-tag">EQ T6.4 — sMAPE (MAKRIDAKIS FORM)</span>
+        $$ \mathrm{sMAPE} \;=\; \frac{100\%}{n}\sum_{t=1}^{n}\frac{\bigl|\,y_t - \hat{y}_t\,\bigr|}{\bigl(\lvert y_t\rvert + \lvert \hat{y}_t\rvert\bigr)/2} $$
+        <div class="eq-note">Dividing by the <em>average</em> of actual and forecast bounds each term in \([0,200\%]\) (some authors drop the factor of two and cap at 100%, a common source of table-to-table confusion). It is gentler than MAPE on small actuals and less one-sided, but it still has no defined value at \(y_t = \hat{y}_t = 0\) and remains mildly biased — the M4 organisers ultimately paired it with a MASE-style measure rather than trusting it alone. <b>Always state which sMAPE convention you used.</b></div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># MAPE, MASE and sMAPE side by side, in plain numpy (EQ T6.2-T6.4).
+import numpy as np
+
+# A short held-out test set + the model's forecasts for it.
+y_train = np.array([100, 102, 101, 105, 110, 108, 112, 115], float)  # history
+y_test  = np.array([118, 120, 119, 125], float)                      # truth
+y_hat   = np.array([116, 121, 122, 123], float)                      # forecast
+
+abs_err = np.abs(y_test - y_hat)
+
+mape  = 100 * np.mean(abs_err / np.abs(y_test))
+smape = 100 * np.mean(abs_err / ((np.abs(y_test) + np.abs(y_hat)) / 2))
+scale = np.mean(np.abs(np.diff(y_train)))      # naive one-step MAE on TRAIN
+mase  = np.mean(abs_err) / scale
+
+# What the naive (last-value) forecast would have scored, for contrast.
+naive_hat = np.full_like(y_test, y_train[-1])
+mase_naive = np.mean(np.abs(y_test - naive_hat)) / scale
+
+print(f"MAPE   : {mape:6.2f} %")
+print(f"sMAPE  : {smape:6.2f} %")
+print(f"MASE   : {mase:6.3f}   (model)")
+print(f"MASE   : {mase_naive:6.3f}   (naive baseline -- always &gt;= ~1 by design)")
+print("model beats naive:", mase &lt; mase_naive)</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="fc-mase-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT T6.2 — NAIVE vs MODEL · MASE</span><span class="w-sub">CAN YOUR MODEL BEAT COPY-THE-LAST-VALUE? · EQ T6.3</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>MODEL SKILL (shrink toward truth) <output id="fc-mase-skill-out">0.55</output></label><input type="range" id="fc-mase-skill" min="0" max="1" step="0.05" value="0.55"/></div>
+              <div class="ctl"><label>TREND STRENGTH <output id="fc-mase-trend-out">0.40</output></label><input type="range" id="fc-mase-trend" min="0" max="1.2" step="0.05" value="0.4"/></div>
+              <div class="ctl"><label>NOISE σ <output id="fc-mase-noise-out">1.0</output></label><input type="range" id="fc-mase-noise" min="0.2" max="3" step="0.1" value="1"/></div>
+            </div>
+            <canvas class="w-canvas" id="fc-mase-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">NAIVE MASE</div><div class="r-value" id="fc-mase-naive">—</div></div>
+              <div class="readout acc"><div class="r-label">MODEL MASE</div><div class="r-value" id="fc-mase-model">—</div></div>
+              <div class="readout"><div class="r-label">VERDICT</div><div class="r-value" id="fc-mase-verdict" style="font-size:13px;">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The <span style="color:var(--secondary);">grey</span> line is the truth; the <span style="color:var(--blue);">blue</span> dashed line is the naive (last-value) forecast; the <span style="color:var(--accent);">mint</span> line is your model, which is pulled toward the truth by MODEL SKILL. Push SKILL toward 1 and the model MASE drops below 1 — it beats naive. Add TREND and watch the naive forecast suffer (it always lags a trend by one step), which is exactly when a real model earns its keep. Crank SKILL to 0 and the model is no better than guessing the mean: MASE climbs above 1 and the verdict turns red.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 6.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">6.3</span><h2>Prediction intervals</h2></div>
+        <p>A single number — the point forecast — is a lie of omission. The honest output of a forecaster is a <strong>distribution</strong>, or at least an interval: "demand next week is 1,200 ± 300 with 90% confidence." Decisions are made on the interval, not the point — safety stock, capital buffers, staffing all hinge on the <em>downside</em>, not the median. And here is the uncomfortable truth of applied forecasting: <strong>point forecasts are often decent and the intervals are usually too narrow.</strong></p>
+
+        <p>For a model that assumes Gaussian errors with standard deviation \(\sigma_h\) at horizon \(h\), the symmetric prediction interval is the familiar \(z\)-band around the point forecast:</p>
+
+        <div class="eq"><span class="eq-tag">EQ T6.5 — GAUSSIAN PREDICTION INTERVAL</span>
+        $$ \hat{y}_{t+h} \;\pm\; z_{1-\alpha/2}\,\sigma_h, \qquad z_{0.975} \approx 1.96 \ \text{(95\%)}, \quad z_{0.95} \approx 1.645 \ \text{(90\%)} $$
+        <div class="eq-note">\(\sigma_h\) is the forecast standard deviation at horizon \(h\) — and crucially it <b>grows with \(h\)</b>: predicting tomorrow is tighter than predicting next month, because uncertainty compounds. For a random walk \(\sigma_h = \sigma\sqrt{h}\); for most models it widens too, and a flat band across horizons is a red flag. The catch is that \(\sigma_h\) is itself <em>estimated</em>, usually from in-sample residuals that under-state real uncertainty (the model fit those points), so the nominal 95% band routinely covers fewer than 95% of future outcomes. <b>The interval's only honest test is its empirical coverage.</b></div>
+        </div>
+
+        <p>That last sentence is the whole discipline. A 90% prediction interval is <em>calibrated</em> if, over many forecasts, the truth falls inside it close to 90% of the time. Measure it directly:</p>
+
+        <div class="eq"><span class="eq-tag">EQ T6.6 — EMPIRICAL COVERAGE</span>
+        $$ \mathrm{Coverage} \;=\; \frac{1}{n}\sum_{t=1}^{n}\mathbf{1}\!\left[\,\ell_t \le y_t \le u_t\,\right] $$
+        <div class="eq-note">\([\ell_t, u_t]\) is the predicted interval, \(y_t\) the realized value, \(\mathbf{1}[\cdot]\) the indicator. Compare coverage to the nominal level: <b>coverage well below nominal means over-confident intervals</b> (the common case — your bands are too tight and you will be blindsided); coverage above nominal means needlessly wide bands that waste capital on slack. Two robust ways to get calibrated intervals without trusting a Gaussian assumption: take empirical <b>quantiles of backtest residuals</b>, or use <b>conformal prediction</b>, which wraps any point forecaster in finite-sample coverage guarantees under an exchangeability assumption. Pinball (quantile) loss is the proper scoring rule for the bands themselves.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Interval coverage: a model that mis-estimates sigma is mis-calibrated (T6.5/6.6).
+import numpy as np
+rng = np.random.default_rng(3)
+
+n = 4000
+true_sigma  = 1.0                       # the real one-step error scale
+model_sigma = 0.7                       # the model THINKS errors are smaller
+z95 = 1.96
+
+errors = rng.normal(0, true_sigma, n)   # realized forecast errors
+half   = z95 * model_sigma              # the model's 95% half-width
+inside = np.abs(errors) &lt;= half         # did truth land in the band?
+emp_cov = inside.mean()
+
+# Analytic check: coverage = 2*Phi(1.96*model_sigma/true_sigma) - 1
+def Phi(x):                             # normal CDF via erf-free approximation
+    t = 1 / (1 + 0.2316419 * abs(x))
+    d = 0.3989423 * np.exp(-x * x / 2)
+    p = d * t * (0.3193815 + t*(-0.3565638 + t*(1.781478
+        + t*(-1.821256 + t*1.330274))))
+    return 1 - p if x &gt;= 0 else p
+analytic = 2 * Phi(z95 * model_sigma / true_sigma) - 1
+
+print(f"nominal coverage      : 95.0 %")
+print(f"empirical coverage    : {100*emp_cov:5.1f} %")
+print(f"analytic coverage     : {100*analytic:5.1f} %")
+print("under-estimating sigma -> OVER-CONFIDENT, real coverage &lt; nominal:",
+      emp_cov &lt; 0.95)</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="fc-cov-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT T6.3 — PREDICTION-INTERVAL COVERAGE</span><span class="w-sub">NOMINAL vs EMPIRICAL · EQ T6.5 / T6.6</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>NOMINAL LEVEL <output id="fc-cov-level-out">95%</output></label><input type="range" id="fc-cov-level" min="80" max="99" step="1" value="95"/></div>
+              <div class="ctl"><label>MODEL σ̂ / TRUE σ <output id="fc-cov-ratio-out">0.70</output></label><input type="range" id="fc-cov-ratio" min="0.4" max="1.8" step="0.05" value="0.7"/></div>
+            </div>
+            <canvas class="w-canvas" id="fc-cov-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">NOMINAL</div><div class="r-value" id="fc-cov-nominal">—</div></div>
+              <div class="readout acc"><div class="r-label">EMPIRICAL COVERAGE</div><div class="r-value" id="fc-cov-emp">—</div></div>
+              <div class="readout"><div class="r-label">CALIBRATION</div><div class="r-value" id="fc-cov-verdict" style="font-size:13px;">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The <span style="color:var(--accent);">mint</span> band is the model's prediction interval at the NOMINAL level; each dot is a realized outcome — <span style="color:var(--secondary);">grey</span> inside the band, <span style="color:var(--danger);">red</span> outside. The ratio σ̂/σ is how badly the model mis-estimates its own uncertainty: at 0.70 the band is too tight and empirical coverage falls below nominal (over-confident — the usual disease). Slide the ratio to 1.0 to recover calibration, and past 1.0 to see needlessly wide bands over-cover. A point forecast hides all of this; only coverage exposes it.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 6.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">6.4</span><h2>ML &amp; DL for time series — Prophet, DeepAR, TFT</h2></div>
+        <p>Classical methods (Vol II's ARIMA and exponential smoothing) are still astonishingly hard to beat on a <em>single</em> series — the M-competitions have shown this for decades, and a tuned ETS or ARIMA remains a serious baseline. The case for machine learning grows with the number of related series: when you have thousands of products, stores, or sensors, a single <strong>global model</strong> trained across all of them shares statistical strength, handles cold-start items, and ingests covariates that classical per-series models cannot. Three landmarks define the modern stack.</p>
+
+        <h3>Prophet — structured, interpretable, robust</h3>
+        <p><strong>Prophet</strong> (Taylor &amp; Letham, 2018) is not deep learning at all; it is a decomposable additive model — trend + seasonality + holidays — fit in a Bayesian framework. Its appeal is operational: it is robust to missing data and outliers, exposes human-tunable knobs (changepoint flexibility, seasonality strength, named holidays), and gives analysts who are not forecasting specialists a sane default. The cost is that it bakes in a structural assumption; when the series does not decompose that way, Prophet is mediocre, and it should be treated as a strong, legible baseline rather than a state-of-the-art engine.</p>
+
+        <div class="eq"><span class="eq-tag">EQ T6.7 — PROPHET'S ADDITIVE DECOMPOSITION</span>
+        $$ y(t) \;=\; g(t) \;+\; s(t) \;+\; h(t) \;+\; \varepsilon_t $$
+        <div class="eq-note">\(g(t)\) is the trend (piecewise-linear or logistic-growth, with automatically placed changepoints), \(s(t)\) the seasonality (a Fourier series, so multiple periods stack), \(h(t)\) the effect of holidays and special events, and \(\varepsilon_t\) the noise. The decomposition is the feature, not a bug: a practitioner can read the fitted \(g\), \(s\), and \(h\) and argue with each one. A multiplicative variant — \(y(t)=g(t)\cdot(1+s(t))\) — handles seasonality that scales with the level.</div>
+        </div>
+
+        <h3>DeepAR — global autoregressive RNN, probabilistic by design</h3>
+        <p><strong>DeepAR</strong> (Salinas et al., 2020) trains one autoregressive RNN across <em>all</em> series in a dataset and, critically, outputs the <em>parameters of a probability distribution</em> at each step (e.g. the mean and variance of a Gaussian, or a negative binomial for counts) rather than a point. Forecasts are generated by sampling forward, yielding full predictive distributions — prediction intervals for free, and well-calibrated ones when trained properly. It was the result that made deep probabilistic forecasting credible at scale, and the architecture under many production demand-forecasting systems.</p>
+
+        <h3>TFT — attention, covariates, and interpretability</h3>
+        <p>The <strong>Temporal Fusion Transformer</strong> (Lim et al., 2021) is the attention-era synthesis: it cleanly separates static metadata, known-future covariates (holidays, promotions you have already scheduled), and observed-past inputs; uses variable-selection networks to weight features; and applies interpretable multi-head attention so you can read <em>which past time steps and which variables</em> drove a forecast. It outputs quantiles directly via pinball loss, so calibrated intervals are native. On rich multi-horizon, multi-covariate benchmarks it set the bar — at the cost of being heavier to train and tune than everything above it.</p>
+
+        <table class="data">
+          <thead><tr><th>Method</th><th>Family</th><th>Probabilistic?</th><th>Best when…</th></tr></thead>
+          <tbody>
+            <tr><td><strong>ARIMA / ETS</strong></td><td class="m">classical, per-series</td><td class="m">via residual σ</td><td>one or few series; strong baseline; full interpretability</td></tr>
+            <tr><td><strong>Prophet</strong></td><td class="m">additive decomposition</td><td class="m">Bayesian intervals</td><td class="hl">analyst-friendly trend+seasonality+holidays</td></tr>
+            <tr><td><strong>DeepAR</strong></td><td class="m">global autoregressive RNN</td><td class="hl">yes — samples a distribution</td><td>many related series; counts; cold-start items</td></tr>
+            <tr><td><strong>TFT</strong></td><td class="m">attention transformer</td><td class="hl">yes — quantile outputs</td><td>rich covariates; multi-horizon; need interpretability</td></tr>
+          </tbody>
+        </table>
+        <p class="note"><strong>The honest caveat.</strong> Deep models are not free wins. The M4 competition was won by a <em>hybrid</em> of exponential smoothing and an RNN, and M5 by gradient-boosted trees (LightGBM) over engineered features — not by a pure transformer. The 2023–2025 wave of "foundation" time-series models (TimeGPT, Chronos, Moirai, TimesFM) brings zero-shot forecasting and is genuinely useful, but whether they consistently beat a well-tuned local model on <em>your</em> data is still contested. Backtest them against a naive and an ARIMA baseline before you believe the leaderboard.</p>
+      </section>
+
+      <!-- ====================== 6.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">6.5</span><h2>Pitfalls — leakage, look-ahead &amp; drift</h2></div>
+        <p>Almost every forecasting disaster traces to the same root cause: <strong>the offline score was computed on information the model would not have had in production.</strong> The model looks brilliant in the notebook and falls apart on day one. The leaks are subtle, which is why they survive code review.</p>
+
+        <p><strong>Look-ahead bias / data leakage.</strong> The cardinal sin is letting any post-origin information into a pre-origin decision. The classic offenders:</p>
+        <ul>
+          <li><strong>Scaling on the full series.</strong> Computing a mean/std (or min/max) over <em>all</em> data and then splitting bakes future statistics into the training features. Fit the scaler on the training window only, inside each fold.</li>
+          <li><strong>Global imputation and feature engineering.</strong> Forward-filling, interpolating, or computing rolling features across the train/test seam smears the future backward. Every transform must be causal — computed from the past alone.</li>
+          <li><strong>Target leakage from late-arriving data.</strong> A feature that is only known <em>after</em> the target is realized (a revised figure, a settled outcome) is not available at forecast time. Use the value as it stood at the origin, not its final restatement.</li>
+          <li><strong>Tuning on the test set.</strong> Choosing hyper-parameters or a model by peeking at the same period you report — the slowest leak, because it hides in your workflow rather than your code. Use a separate validation split or nested walk-forward.</li>
+        </ul>
+
+        <div class="callout warn">
+          <span class="co-icon">PITFALLS</span>
+          <p><strong>The four forecasting illusions:</strong> (1) <em>random-split CV</em> — shuffled folds train on the future to predict the past; always split by time. (2) <em>leaked preprocessing</em> — scalers, imputers and rolling features fit across the seam; everything must be fit inside the fold on past data only. (3) <em>over-confident intervals</em> — in-sample σ under-states real uncertainty, so nominal 95% bands cover far less; check empirical coverage (§6.3). (4) <em>silent drift</em> — the world moves after you froze the model, so yesterday's backtest stops describing today; monitor and re-backtest on a rolling basis (MLOPS 05).</p>
+        </div>
+
+        <p><strong>Drift makes a backtest perishable.</strong> Even a leakage-free backtest is a statement about the past. Time series live in non-stationary worlds — regimes change, seasonality evolves, a pandemic rewrites every demand curve overnight — so a model validated last quarter can quietly decay (covariate and concept drift, MLOPS 05). Two defences: monitor forecast error in production against the live naive benchmark, and re-run walk-forward validation on a rolling basis so your reported accuracy always reflects the recent world, not a frozen snapshot.</p>
+
+        <p class="note"><strong>The one rule that prevents most of this:</strong> simulate production exactly. At every forecast origin, ask "what did I actually know at this instant?" and forbid the pipeline from touching anything else. A backtest that obeys that question — and that always reports MASE against the naive forecast — is the difference between a number you can stake a decision on and a guess wearing a lab coat.</p>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>You can now forecast a series, score it honestly, and quantify what you don't know.</strong> But the deepest uncertainty is not measurement noise — it is that the process itself is random. The Quant volume opens by building time series from the ground up as <em>stochastic processes</em>: random walks, Brownian motion, martingales, and the Itō calculus that turns "the future is a distribution" into a rigorous mathematical object. Quant · Chapter 01: Stochastic Processes.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 6.R — References ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">6.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://doi.org/10.1016/j.ijforecast.2006.03.001" target="_blank" rel="noopener">Hyndman, R. J. &amp; Koehler, A. B. (2006). <span class="ref-venue">Another look at measures of forecast accuracy</span>.</a> <span class="ref-meta">International Journal of Forecasting 22(4) — introduces MASE and dissects MAPE/sMAPE (§6.2, EQ T6.3).</span></li>
+          <li><a href="https://doi.org/10.1080/00031305.2017.1380080" target="_blank" rel="noopener">Taylor, S. J. &amp; Letham, B. (2018). <span class="ref-venue">Forecasting at Scale (Prophet)</span>.</a> <span class="ref-meta">The American Statistician 72(1) — the decomposable trend + seasonality + holidays model of §6.4 (EQ T6.7).</span></li>
+          <li><a href="https://doi.org/10.1016/j.ijforecast.2021.03.012" target="_blank" rel="noopener">Lim, B., Arık, S. Ö., Loeff, N. &amp; Pfister, T. (2021). <span class="ref-venue">Temporal Fusion Transformers for interpretable multi-horizon time series forecasting</span>.</a> <span class="ref-meta">International Journal of Forecasting 37(4) — attention, variable selection and quantile outputs (§6.4).</span></li>
+          <li><a href="https://doi.org/10.1016/j.ijforecast.2019.07.001" target="_blank" rel="noopener">Salinas, D., Flunkert, V., Gasthaus, J. &amp; Januschowski, T. (2020). <span class="ref-venue">DeepAR: Probabilistic forecasting with autoregressive recurrent networks</span>.</a> <span class="ref-meta">International Journal of Forecasting 36(3) — the global probabilistic RNN of §6.4.</span></li>
+          <li><a href="https://doi.org/10.1016/j.ijforecast.2021.11.013" target="_blank" rel="noopener">Makridakis, S., Spiliotis, E. &amp; Assimakopoulos, V. (2022). <span class="ref-venue">The M5 competition: Background, organization, and implementation</span>.</a> <span class="ref-meta">International Journal of Forecasting 38(4) — why gradient-boosted trees, not transformers, won (§6.4 caveat).</span></li>
+          <li><a href="https://otexts.com/fpp3/" target="_blank" rel="noopener">Hyndman, R. J. &amp; Athanasopoulos, G. (2021). <span class="ref-venue">Forecasting: Principles and Practice (3rd ed.)</span>.</a> <span class="ref-meta">OTexts — the standard open text on time-series cross-validation, accuracy metrics and prediction intervals (§6.1–6.3).</span></li>
+          <li><a href="https://jmlr.org/papers/v9/shafer08a.html" target="_blank" rel="noopener">Shafer, G. &amp; Vovk, V. (2008). <span class="ref-venue">A tutorial on conformal prediction</span>.</a> <span class="ref-meta">JMLR 9 — distribution-free prediction intervals with finite-sample coverage (§6.3, EQ T6.6).</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../timeseries/05-multivariate.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">05</span> Multivariate</div></a>
+        <a class="next" href="../quant/01-stochastic-processes.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">01</span> Quant · Stochastic Processes</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — TIME SERIES &amp; ECONOMETRICS · CH 06</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* ============================================================
+   Forecasting in Practice — chapter instruments
+   Single IIFE, no globals. Deterministic mulberry32 RNG keeps
+   every render reproducible; setTimeout (never rAF) is used for
+   resize re-renders so background tabs stay quiet. Each widget
+   is guarded by element existence and renders a meaningful
+   initial state with zero interaction.
+   ============================================================ */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
+  function mean(a) { var s = 0, i; for (i = 0; i < a.length; i++) s += a[i]; return a.length ? s / a.length : 0; }
+
+  /* standard-normal sample via Box-Muller on a mulberry32 stream */
+  function gauss(rng) {
+    var u1 = Math.max(rng(), 1e-9), u2 = rng();
+    return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+  }
+
+  /* analytic normal CDF (Abramowitz & Stegun 7.1.26) */
+  function ncdf(x) {
+    var z = x / Math.SQRT2;
+    var t = 1 / (1 + 0.3275911 * Math.abs(z));
+    var y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t
+              - 0.284496736) * t + 0.254829592) * t * Math.exp(-z * z);
+    var erf = z >= 0 ? y : -y;
+    return 0.5 * (1 + erf);
+  }
+
+  /* ========================================================
+     INSTRUMENT T6.1 — Walk-forward backtest
+     A deterministic trending AR-ish series of N points. Folds
+     start at FIRST and step by ORIGIN STEP; each fold trains on
+     past data (expanding or sliding) and forecasts h steps with
+     a simple last-value-plus-local-trend forecaster. CV error is
+     the mean absolute error over every fold (EQ T6.1).
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("fc-wf-demo");
+    if (!root) return;
+    var canvas = document.getElementById("fc-wf-canvas");
+    var hEl = document.getElementById("fc-wf-h");
+    var stepEl = document.getElementById("fc-wf-step");
+    var hOut = document.getElementById("fc-wf-h-out");
+    var stepOut = document.getElementById("fc-wf-step-out");
+    var foldsOut = document.getElementById("fc-wf-folds");
+    var maeOut = document.getElementById("fc-wf-mae");
+    var worstOut = document.getElementById("fc-wf-worst");
+    var modeBtns = root.querySelectorAll("[data-fc-wf-mode]");
+
+    var N = 96, FIRST = 36, SLIDE_LEN = 30, SEED = 7;
+    var mode = "expanding";
+
+    /* deterministic series: trend + AR(1) + noise, built once */
+    function buildSeries() {
+      var rng = FM.mulberry32(SEED);
+      var y = [0], i, prev = 0;
+      for (i = 1; i < N; i++) {
+        prev = 0.55 * prev + 0.10 * i + 1.1 * gauss(rng);
+        y.push(prev);
+      }
+      return y;
+    }
+    var Y = buildSeries();
+
+    /* forecast h steps from origin t using a local last-value + slope model */
+    function forecast(y, t, h, sliding) {
+      var lo = sliding ? Math.max(0, t - SLIDE_LEN + 1) : 0;
+      var win = y.slice(lo, t + 1);
+      var L = win.length;
+      /* slope = average first difference over the window */
+      var slope = L > 1 ? (win[L - 1] - win[0]) / (L - 1) : 0;
+      var last = win[L - 1], out = [], k;
+      for (k = 1; k <= h; k++) out.push(last + slope * k);
+      return out;
+    }
+
+    function compute(h, step, sliding) {
+      var folds = [], t, errs = [], worst = 0;
+      for (t = FIRST; t + h < N; t += step) {
+        var fc = forecast(Y, t, h, sliding);
+        var fe = [], k, ferr = 0;
+        for (k = 1; k <= h; k++) {
+          var e = Math.abs(Y[t + k] - fc[k - 1]);
+          fe.push(e); ferr += e;
+        }
+        ferr /= h;
+        worst = Math.max(worst, ferr);
+        errs.push(ferr);
+        folds.push({ origin: t, fc: fc, lo: sliding ? Math.max(0, t - SLIDE_LEN + 1) : 0 });
+      }
+      return { folds: folds, mae: mean(errs), worst: worst };
+    }
+
+    function render() {
+      var h = +hEl.value, step = +stepEl.value, sliding = mode === "sliding";
+      hOut.textContent = h;
+      stepOut.textContent = step;
+
+      var r = compute(h, step, sliding);
+
+      var c = FM.setupCanvas(canvas, 320);
+      var ctx = c.ctx, w = c.w, ht = c.h;
+      ctx.clearRect(0, 0, w, ht);
+
+      var padL = 16, padR = 16, padT = 16, padB = 26;
+      var plotW = w - padL - padR, plotH = ht - padT - padB;
+      var lo = Math.min.apply(null, Y), hi = Math.max.apply(null, Y);
+      var pad = (hi - lo) * 0.08; lo -= pad; hi += pad;
+      function px(i) { return padL + (i / (N - 1)) * plotW; }
+      function py(v) { return padT + (1 - (v - lo) / (hi - lo)) * plotH; }
+
+      /* zero grid line */
+      ctx.strokeStyle = "rgba(47,50,52,.7)"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(padL, py(0)); ctx.lineTo(w - padR, py(0)); ctx.stroke();
+
+      /* the truth series (grey) */
+      ctx.strokeStyle = C.SEC; ctx.lineWidth = 1.4; ctx.beginPath();
+      var i;
+      for (i = 0; i < N; i++) { var X = px(i), Yv = py(Y[i]); if (i === 0) ctx.moveTo(X, Yv); else ctx.lineTo(X, Yv); }
+      ctx.stroke();
+
+      /* fold brackets + forecasts */
+      var f, k;
+      for (f = 0; f < r.folds.length; f++) {
+        var fold = r.folds[f], t = fold.origin;
+        /* train span underline (blue, faint) */
+        ctx.strokeStyle = "rgba(78,138,247,.30)"; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.moveTo(px(fold.lo), ht - padB + 6); ctx.lineTo(px(t), ht - padB + 6); ctx.stroke();
+        /* origin tick */
+        ctx.strokeStyle = "rgba(78,138,247,.45)"; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(px(t), padT); ctx.lineTo(px(t), padT + plotH); ctx.stroke();
+        /* forecast path (mint, dashed) over the test window */
+        ctx.strokeStyle = C.MINT; ctx.lineWidth = 1.6; ctx.setLineDash([3, 3]);
+        ctx.beginPath(); ctx.moveTo(px(t), py(Y[t]));
+        for (k = 1; k <= h; k++) ctx.lineTo(px(t + k), py(fold.fc[k - 1]));
+        ctx.stroke(); ctx.setLineDash([]);
+      }
+
+      /* x ticks */
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT; ctx.textAlign = "center"; ctx.textBaseline = "top";
+      var tk;
+      for (tk = 0; tk < N; tk += 24) ctx.fillText(String(tk), px(tk), padT + plotH + 8);
+
+      /* legend */
+      ctx.textAlign = "left"; ctx.textBaseline = "middle";
+      ctx.strokeStyle = C.SEC; ctx.lineWidth = 1.4;
+      ctx.beginPath(); ctx.moveTo(padL, padT + 4); ctx.lineTo(padL + 16, padT + 4); ctx.stroke();
+      ctx.fillStyle = C.SEC; ctx.fillText("TRUTH", padL + 22, padT + 5);
+      ctx.strokeStyle = C.MINT; ctx.setLineDash([3, 3]);
+      ctx.beginPath(); ctx.moveTo(padL + 70, padT + 4); ctx.lineTo(padL + 86, padT + 4); ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillStyle = C.MINT; ctx.fillText("FORECAST", padL + 92, padT + 5);
+
+      /* readouts */
+      foldsOut.textContent = String(r.folds.length);
+      maeOut.textContent = r.mae.toFixed(2);
+      worstOut.textContent = r.worst.toFixed(2);
+    }
+
+    modeBtns.forEach(function (b) {
+      b.addEventListener("click", function () {
+        mode = b.getAttribute("data-fc-wf-mode");
+        modeBtns.forEach(function (x) { x.classList.remove("on"); });
+        b.classList.add("on");
+        render();
+      });
+    });
+    hEl.addEventListener("input", render);
+    stepEl.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();   /* meaningful initial state with zero interaction */
+  })();
+
+  /* ========================================================
+     INSTRUMENT T6.2 — Naive vs model, MASE
+     A deterministic series (trend + noise). The naive forecast
+     carries the last value forward; the model forecast is the
+     truth shrunk toward by SKILL (skill=1 -> perfect, 0 -> mean).
+     MASE = test MAE / in-sample naive one-step MAE (EQ T6.3).
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("fc-mase-demo");
+    if (!root) return;
+    var canvas = document.getElementById("fc-mase-canvas");
+    var skillEl = document.getElementById("fc-mase-skill");
+    var trendEl = document.getElementById("fc-mase-trend");
+    var noiseEl = document.getElementById("fc-mase-noise");
+    var skillOut = document.getElementById("fc-mase-skill-out");
+    var trendOut = document.getElementById("fc-mase-trend-out");
+    var noiseOut = document.getElementById("fc-mase-noise-out");
+    var naiveOut = document.getElementById("fc-mase-naive");
+    var modelOut = document.getElementById("fc-mase-model");
+    var verdictOut = document.getElementById("fc-mase-verdict");
+
+    var N = 64, SPLIT = 40, SEED = 1234;
+
+    function render() {
+      var skill = +skillEl.value, trend = +trendEl.value, noise = +noiseEl.value;
+      skillOut.textContent = skill.toFixed(2);
+      trendOut.textContent = trend.toFixed(2);
+      noiseOut.textContent = noise.toFixed(1);
+
+      /* deterministic truth: trend + AR noise */
+      var rng = FM.mulberry32(SEED);
+      var y = [], i, prev = 10;
+      for (i = 0; i < N; i++) {
+        prev = prev + trend + noise * gauss(rng);
+        y.push(prev);
+      }
+
+      /* in-sample naive scale on the training portion */
+      var scale = 0, cnt = 0;
+      for (i = 1; i < SPLIT; i++) { scale += Math.abs(y[i] - y[i - 1]); cnt++; }
+      scale = cnt ? scale / cnt : 1;
+      if (scale < 1e-9) scale = 1e-9;
+
+      /* training mean, used as the "no-skill" anchor for the model */
+      var trainMean = 0; for (i = 0; i < SPLIT; i++) trainMean += y[i]; trainMean /= SPLIT;
+
+      /* forecasts over the test region */
+      var naiveFc = [], modelFc = [], eN = 0, eM = 0, k = 0;
+      for (i = SPLIT; i < N; i++) {
+        var nf = y[i - 1];                              /* naive: last value */
+        /* model: shrink the truth toward it by skill, away toward the mean */
+        var mf = skill * y[i] + (1 - skill) * trainMean;
+        naiveFc.push(nf); modelFc.push(mf);
+        eN += Math.abs(y[i] - nf); eM += Math.abs(y[i] - mf); k++;
+      }
+      var maseNaive = (eN / k) / scale;
+      var maseModel = (eM / k) / scale;
+
+      var c = FM.setupCanvas(canvas, 300);
+      var ctx = c.ctx, w = c.w, ht = c.h;
+      ctx.clearRect(0, 0, w, ht);
+
+      var padL = 16, padR = 16, padT = 16, padB = 26;
+      var plotW = w - padL - padR, plotH = ht - padT - padB;
+      var lo = Math.min.apply(null, y), hi = Math.max.apply(null, y);
+      var pad = (hi - lo) * 0.1 || 1; lo -= pad; hi += pad;
+      function px(i) { return padL + (i / (N - 1)) * plotW; }
+      function py(v) { return padT + (1 - (v - lo) / (hi - lo)) * plotH; }
+
+      /* split line */
+      ctx.strokeStyle = "rgba(47,50,52,.9)"; ctx.setLineDash([4, 4]); ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(px(SPLIT), padT); ctx.lineTo(px(SPLIT), padT + plotH); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT; ctx.textBaseline = "top"; ctx.textAlign = "left";
+      ctx.fillText("TRAIN | TEST", px(SPLIT) + 4, padT + 2);
+
+      /* truth (grey) */
+      ctx.strokeStyle = C.SEC; ctx.lineWidth = 1.4; ctx.beginPath();
+      for (i = 0; i < N; i++) { var X = px(i), Yv = py(y[i]); if (i === 0) ctx.moveTo(X, Yv); else ctx.lineTo(X, Yv); }
+      ctx.stroke();
+
+      /* naive forecast over test (blue dashed) */
+      ctx.strokeStyle = C.BLUE; ctx.lineWidth = 1.4; ctx.setLineDash([4, 3]); ctx.beginPath();
+      for (i = SPLIT; i < N; i++) {
+        var X2 = px(i), Y2 = py(naiveFc[i - SPLIT]);
+        if (i === SPLIT) ctx.moveTo(X2, Y2); else ctx.lineTo(X2, Y2);
+      }
+      ctx.stroke(); ctx.setLineDash([]);
+
+      /* model forecast over test (mint) */
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 1.8; ctx.beginPath();
+      for (i = SPLIT; i < N; i++) {
+        var X3 = px(i), Y3 = py(modelFc[i - SPLIT]);
+        if (i === SPLIT) ctx.moveTo(X3, Y3); else ctx.lineTo(X3, Y3);
+      }
+      ctx.stroke();
+
+      /* legend */
+      ctx.textAlign = "left"; ctx.textBaseline = "middle";
+      ctx.strokeStyle = C.BLUE; ctx.setLineDash([4, 3]);
+      ctx.beginPath(); ctx.moveTo(padL, padT + 5); ctx.lineTo(padL + 16, padT + 5); ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillStyle = C.BLUE; ctx.fillText("NAIVE", padL + 22, padT + 6);
+      ctx.strokeStyle = C.MINT;
+      ctx.beginPath(); ctx.moveTo(padL + 66, padT + 5); ctx.lineTo(padL + 82, padT + 5); ctx.stroke();
+      ctx.fillStyle = C.MINT; ctx.fillText("MODEL", padL + 88, padT + 6);
+
+      /* readouts */
+      naiveOut.textContent = maseNaive.toFixed(3);
+      modelOut.textContent = maseModel.toFixed(3);
+      var beats = maseModel < 1 && maseModel < maseNaive;
+      verdictOut.textContent = maseModel < 1 ? "BEATS NAIVE" : "LOSES TO NAIVE";
+      verdictOut.style.color = maseModel < 1 ? C.MINT : C.RED;
+      modelOut.style.color = maseModel < 1 ? C.MINT : C.RED;
+    }
+
+    skillEl.addEventListener("input", render);
+    trendEl.addEventListener("input", render);
+    noiseEl.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();   /* meaningful initial state with zero interaction */
+  })();
+
+  /* ========================================================
+     INSTRUMENT T6.3 — Prediction-interval coverage
+     A deterministic cloud of realized errors ~ N(0, 1). The model
+     builds a z-band at the NOMINAL level using its own sigma-hat
+     = RATIO * true sigma. Coverage (EQ T6.6) = fraction of points
+     inside the band; analytic = 2*Phi(z*ratio) - 1. Dots inside
+     are grey, outside red.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("fc-cov-demo");
+    if (!root) return;
+    var canvas = document.getElementById("fc-cov-canvas");
+    var levelEl = document.getElementById("fc-cov-level");
+    var ratioEl = document.getElementById("fc-cov-ratio");
+    var levelOut = document.getElementById("fc-cov-level-out");
+    var ratioOut = document.getElementById("fc-cov-ratio-out");
+    var nominalOut = document.getElementById("fc-cov-nominal");
+    var empOut = document.getElementById("fc-cov-emp");
+    var verdictOut = document.getElementById("fc-cov-verdict");
+
+    var N = 160, SEED = 2025, TRUE_SIGMA = 1;
+
+    /* inverse normal CDF (Acklam approximation) -> z for a given level */
+    function zFor(p) {
+      var a = [-3.969683028665376e+01, 2.209460984245205e+02, -2.759285104469687e+02,
+               1.383577518672690e+02, -3.066479806614716e+01, 2.506628277459239e+00];
+      var b = [-5.447609879822406e+01, 1.615858368580409e+02, -1.556989798598866e+02,
+               6.680131188771972e+01, -1.328068155288572e+01];
+      var cc = [-7.784894002430293e-03, -3.223964580411365e-01, -2.400758277161838e+00,
+               -2.549732539343734e+00, 4.374664141464968e+00, 2.938163982698783e+00];
+      var dd = [7.784695709041462e-03, 3.224671290700398e-01, 2.445134137142996e+00,
+               3.754408661907416e+00];
+      var plow = 0.02425, phigh = 1 - plow, q, r;
+      if (p < plow) { q = Math.sqrt(-2 * Math.log(p)); return (((((cc[0]*q+cc[1])*q+cc[2])*q+cc[3])*q+cc[4])*q+cc[5]) / ((((dd[0]*q+dd[1])*q+dd[2])*q+dd[3])*q+1); }
+      if (p <= phigh) { q = p - 0.5; r = q*q; return (((((a[0]*r+a[1])*r+a[2])*r+a[3])*r+a[4])*r+a[5])*q / (((((b[0]*r+b[1])*r+b[2])*r+b[3])*r+b[4])*r+1); }
+      q = Math.sqrt(-2 * Math.log(1 - p)); return -(((((cc[0]*q+cc[1])*q+cc[2])*q+cc[3])*q+cc[4])*q+cc[5]) / ((((dd[0]*q+dd[1])*q+dd[2])*q+dd[3])*q+1);
+    }
+
+    /* fixed cloud of realized errors, built once */
+    function buildErrors() {
+      var rng = FM.mulberry32(SEED), e = [], i;
+      for (i = 0; i < N; i++) e.push(TRUE_SIGMA * gauss(rng));
+      return e;
+    }
+    var ERR = buildErrors();
+
+    function render() {
+      var level = +levelEl.value, ratio = +ratioEl.value;
+      levelOut.textContent = level + "%";
+      ratioOut.textContent = ratio.toFixed(2);
+
+      var p = level / 100;
+      var z = zFor(1 - (1 - p) / 2);             /* two-sided z for the level */
+      var half = z * ratio * TRUE_SIGMA;          /* model's half-width */
+
+      var inside = 0, i;
+      for (i = 0; i < N; i++) if (Math.abs(ERR[i]) <= half) inside++;
+      var emp = inside / N;
+      var analytic = 2 * ncdf(z * ratio) - 1;
+
+      var c = FM.setupCanvas(canvas, 300);
+      var ctx = c.ctx, w = c.w, ht = c.h;
+      ctx.clearRect(0, 0, w, ht);
+
+      var padL = 16, padR = 16, padT = 16, padB = 26;
+      var plotW = w - padL - padR, plotH = ht - padT - padB;
+      var lim = 3.6 * TRUE_SIGMA;
+      function px(i) { return padL + (i / (N - 1)) * plotW; }
+      function py(v) { return padT + (1 - (v + lim) / (2 * lim)) * plotH; }
+
+      /* zero line */
+      ctx.strokeStyle = "rgba(47,50,52,.8)"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(padL, py(0)); ctx.lineTo(w - padR, py(0)); ctx.stroke();
+
+      /* prediction band (mint, filled) */
+      ctx.fillStyle = "rgba(166,242,204,.14)";
+      ctx.fillRect(padL, py(half), plotW, py(-half) - py(half));
+      ctx.strokeStyle = "rgba(166,242,204,.6)"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(padL, py(half)); ctx.lineTo(w - padR, py(half)); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(padL, py(-half)); ctx.lineTo(w - padR, py(-half)); ctx.stroke();
+
+      /* realized outcomes: grey inside, red outside */
+      for (i = 0; i < N; i++) {
+        var out = Math.abs(ERR[i]) > half;
+        ctx.fillStyle = out ? "rgba(255,65,54,.85)" : "rgba(155,155,155,.55)";
+        ctx.beginPath(); ctx.arc(px(i), py(clamp(ERR[i], -lim, lim)), out ? 2.4 : 1.8, 0, 2 * Math.PI); ctx.fill();
+      }
+
+      /* band label */
+      ctx.font = C.MONO; ctx.fillStyle = C.MINT; ctx.textAlign = "left"; ctx.textBaseline = "bottom";
+      ctx.fillText(level + "% INTERVAL  (±" + half.toFixed(2) + "σ)", padL + 4, py(half) - 3);
+
+      /* readouts */
+      nominalOut.textContent = level + "%";
+      empOut.textContent = (100 * emp).toFixed(1) + "%";
+      var gap = emp - p;
+      var verdict, col;
+      if (gap < -0.03) { verdict = "OVER-CONFIDENT"; col = C.RED; }
+      else if (gap > 0.03) { verdict = "TOO WIDE"; col = C.BLUE; }
+      else { verdict = "CALIBRATED"; col = C.MINT; }
+      verdictOut.textContent = verdict; verdictOut.style.color = col;
+      empOut.style.color = col;
+    }
+
+    levelEl.addEventListener("input", render);
+    ratioEl.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();   /* meaningful initial state with zero interaction */
+  })();
+
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

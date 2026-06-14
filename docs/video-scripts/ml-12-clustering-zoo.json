@@ -1,0 +1,163 @@
+[
+  {
+    "id": "ml-12-clustering-zoo-s1",
+    "chapter": "ml/12-clustering-zoo",
+    "section": "s1",
+    "title": "What k-means cannot see (recap)",
+    "eyebrow": "MACHINE LEARNING",
+    "beats": [
+      {
+        "text": "k-means optimizes one objective, the within-cluster sum of squared distances, and that single choice bakes in three silent assumptions.",
+        "visual": { "type": "title", "text": "What k-means cannot see", "sub": "One objective, three hidden assumptions" }
+      },
+      {
+        "text": "The inertia objective sums squared Euclidean distances from each point to its assigned centre, so distance-to-a-centre is the only shape information available.",
+        "visual": { "type": "equation", "tex": "J = \\sum_{i=1}^{n}\\lVert x_i - \\mu_{c_i}\\rVert^{2}", "note": "Squared distance to a single centre is all k-means knows" }
+      },
+      {
+        "text": "From that formula fall three consequences: clusters are implicitly spherical, equal-sized, and exhaustive, so every point must join some cluster.",
+        "visual": { "type": "bars", "values": [3, 3, 3], "labels": ["Spherical", "Equal-sized", "Exhaustive"] }
+      },
+      {
+        "text": "Each assumption has a counterexample: interleaving crescents, stretched ellipses, and a few outliers that drag a centroid across the plane.",
+        "visual": { "type": "plot", "ys": [1, 0.4, 0.1, 0.4, 1], "mark": true, "xlabel": "two crescents k-means slices crosswise" }
+      },
+      {
+        "text": "There is no universally correct clustering, so each method optimizes a proxy and the right method is the one whose proxy matches your purpose.",
+        "visual": { "type": "lattice" }
+      }
+    ]
+  },
+  {
+    "id": "ml-12-clustering-zoo-s2",
+    "chapter": "ml/12-clustering-zoo",
+    "section": "s2",
+    "title": "Hierarchical clustering & dendrograms",
+    "eyebrow": "MACHINE LEARNING",
+    "beats": [
+      {
+        "text": "Agglomerative hierarchical clustering refuses to commit to k, building the whole family of clusterings from n singletons up to one cluster.",
+        "visual": { "type": "title", "text": "Hierarchical clustering", "sub": "Merge the two closest clusters, repeat" }
+      },
+      {
+        "text": "Everything turns on the linkage: single uses the nearest pair, complete uses the farthest pair, and Ward merges the pair that raises within-cluster error least.",
+        "visual": { "type": "equation", "tex": "(A^\\star, B^\\star) = \\arg\\min_{A \\neq B} D(A, B)", "note": "Single, complete, and Ward give genuinely different trees" }
+      },
+      {
+        "text": "Each merge reduces the cluster count by exactly one, so n points always produce exactly n minus one merges and that many internal nodes.",
+        "visual": { "type": "stat", "value": 49, "label": "merges for n = 50 points", "unit": "merges" }
+      },
+      {
+        "text": "A dendrogram draws every merge at a height equal to its linkage distance, and cutting at a height h reads off a flat partition.",
+        "visual": { "type": "plot", "ys": [0.4, 0.9, 1.1, 1.2, 2.8], "dot": true, "xlabel": "merge heights", "ylabel": "linkage distance" }
+      },
+      {
+        "text": "A cut at height one point zero keeps the merges below it and undoes the three above it, leaving four clusters from six leaves.",
+        "visual": { "type": "stat", "value": 4, "label": "clusters from a cut at h = 1.0", "unit": "clusters" }
+      },
+      {
+        "text": "The naive algorithm is order n cubed time and holds the full distance matrix, and its merges are greedy and irrevocable.",
+        "visual": { "type": "bars", "values": [1, 1000, 1000000], "labels": ["n=1", "n=100", "n=10k"], "highlight": 2 }
+      }
+    ]
+  },
+  {
+    "id": "ml-12-clustering-zoo-s3",
+    "chapter": "ml/12-clustering-zoo",
+    "section": "s3",
+    "title": "DBSCAN — density-based clustering",
+    "eyebrow": "MACHINE LEARNING",
+    "beats": [
+      {
+        "text": "DBSCAN treats a cluster as a connected region of high point density of any shape, surrounded by regions of low density.",
+        "visual": { "type": "title", "text": "DBSCAN", "sub": "Density, not distance to a centre" }
+      },
+      {
+        "text": "A point is a core point when its epsilon-ball holds at least minPts neighbours, including itself, marking it as sitting in a crowd.",
+        "visual": { "type": "equation", "tex": "p \\text{ is core} \\iff \\lvert N_\\varepsilon(p) \\rvert \\ge \\texttt{minPts}", "note": "N_epsilon(p) is the set of points within radius epsilon" }
+      },
+      {
+        "text": "Three point types follow: core points in a crowd, border points on the fringe, and noise points that belong to no cluster.",
+        "visual": { "type": "bars", "values": [3, 2, 1], "labels": ["Core", "Border", "Noise"], "highlight": 2 }
+      },
+      {
+        "text": "The noise label is the quiet superpower, since every other method here forces every point into some cluster while DBSCAN refuses.",
+        "visual": { "type": "plot", "ys": [0.2, 0.9, 1, 0.95, 0.15], "mark": true, "xlabel": "dense crowd with isolated noise at the edges" }
+      },
+      {
+        "text": "minPts is roughly twice the dimensionality, so about four for two-dimensional data, and epsilon is read from the k-distance elbow.",
+        "visual": { "type": "stat", "value": 4, "label": "typical minPts for 2-D data", "unit": "neighbours" }
+      },
+      {
+        "text": "One global epsilon struggles when densities differ, so HDBSCAN removes the knob and is the default density clusterer today.",
+        "visual": { "type": "equation", "tex": "N_\\varepsilon(p) = \\{\\, q : \\lVert p - q \\rVert \\le \\varepsilon \\,\\}", "note": "A single global radius is the main DBSCAN limitation" }
+      }
+    ]
+  },
+  {
+    "id": "ml-12-clustering-zoo-s4",
+    "chapter": "ml/12-clustering-zoo",
+    "section": "s4",
+    "title": "Gaussian Mixture Models & EM",
+    "eyebrow": "MACHINE LEARNING",
+    "beats": [
+      {
+        "text": "A Gaussian mixture model softens both of k-means' hard commitments by modelling data as k blended Gaussians with soft membership.",
+        "visual": { "type": "title", "text": "Gaussian mixtures & EM", "sub": "Soft assignment, full covariance" }
+      },
+      {
+        "text": "The density of any point is the weighted sum over all components, with mixing weights that are non-negative and sum to one.",
+        "visual": { "type": "equation", "tex": "p(x) = \\sum_{j=1}^{k} \\pi_j\\, \\mathcal{N}(x \\mid \\mu_j, \\Sigma_j)", "note": "A full covariance frees the model from k-means' circles" }
+      },
+      {
+        "text": "EM alternates an E-step that computes every responsibility and an M-step that re-estimates weights, means, and covariances.",
+        "visual": { "type": "equation", "tex": "\\gamma_{ij} = \\frac{\\pi_j\\,\\mathcal{N}(x_i \\mid \\mu_j, \\Sigma_j)}{\\sum_{l}\\pi_l\\,\\mathcal{N}(x_i \\mid \\mu_l, \\Sigma_l)}", "note": "E-step: a soft assignment, M-step: a soft update" }
+      },
+      {
+        "text": "Each full iteration increases the data log-likelihood or leaves it unchanged, climbing monotonically toward a local maximum.",
+        "visual": { "type": "plot", "ys": [-820, -640, -540, -495, -480, -478], "dot": true, "xlabel": "EM iteration", "ylabel": "log-likelihood" }
+      },
+      {
+        "text": "Counting only means, a two-dimensional model with five components has two numbers per mean, so ten mean parameters in total.",
+        "visual": { "type": "stat", "value": 10, "label": "mean parameters for k = 5 in 2-D", "unit": "params" }
+      },
+      {
+        "text": "k-means is the limiting case of a GMM with equal weights, shared spherical covariance, and variance driven to zero.",
+        "visual": { "type": "bars", "values": [70, 30], "labels": ["cluster A", "cluster B"], "highlight": 0 }
+      }
+    ]
+  },
+  {
+    "id": "ml-12-clustering-zoo-s5",
+    "chapter": "ml/12-clustering-zoo",
+    "section": "s5",
+    "title": "Choosing k & validating clusters",
+    "eyebrow": "MACHINE LEARNING",
+    "beats": [
+      {
+        "text": "Without labels there is no accuracy to optimize, so validation splits into internal geometric checks and the better external downstream answer.",
+        "visual": { "type": "title", "text": "Choosing k & validating", "sub": "Internal checks vs the downstream task" }
+      },
+      {
+        "text": "The elbow method plots inertia against k, but inertia falls monotonically all the way to zero, so often there is no clean elbow.",
+        "visual": { "type": "plot", "ys": [100, 55, 32, 22, 17, 14, 12], "dot": true, "xlabel": "number of clusters k", "ylabel": "inertia J" }
+      },
+      {
+        "text": "The silhouette compares cohesion within a point's own cluster against separation from the nearest rival, landing between minus one and one.",
+        "visual": { "type": "equation", "tex": "s(i) = \\frac{b(i) - a(i)}{\\max(a(i), b(i))} \\in [-1, 1]", "note": "a is cohesion, b is separation from the nearest other cluster" }
+      },
+      {
+        "text": "The Bayesian Information Criterion subtracts a penalty for every parameter, trading fit against parsimony, and lower is better.",
+        "visual": { "type": "equation", "tex": "\\text{BIC} = m\\,\\ln(n) - 2\\,\\ln \\hat{L}", "note": "The m ln(n) term punishes every extra parameter" }
+      },
+      {
+        "text": "Silhouette and inertia favour convex blobs, so they will rank a wrong k-means clustering above a correct DBSCAN one.",
+        "visual": { "type": "bars", "values": [4, 1], "labels": ["four traps", "honest answer"], "highlight": 0 }
+      },
+      {
+        "text": "Every algorithm returns clusters even on pure noise, so before trusting a partition ask whether structure exists at all.",
+        "visual": { "type": "stat", "value": 0, "label": "Adjusted Rand Index for a random clustering", "decimals": 0 }
+      }
+    ]
+  }
+]

@@ -1,0 +1,169 @@
+{
+  "concepts": [
+    {
+      "id": "ml-11-distances-similarity-s1",
+      "chapter": "ml/11-distances-similarity",
+      "section": "s1",
+      "title": "Why the distance defines the model",
+      "eyebrow": "MACHINE LEARNING",
+      "beats": [
+        {
+          "text": "k-NN, k-means, DBSCAN, and every vector index are not really algorithms over data; each is an algorithm over a distance.",
+          "visual": { "type": "title", "text": "The distance is the model", "sub": "Change the distance, change everything" }
+        },
+        {
+          "text": "A function counts as a true metric only if it satisfies four properties, and breaking any one makes geometric intuition untrustworthy.",
+          "visual": { "type": "equation", "tex": "d(\\mathbf{x},\\mathbf{y}) \\ge 0,\\quad d(\\mathbf{x},\\mathbf{y})=0 \\iff \\mathbf{x}=\\mathbf{y},\\quad d(\\mathbf{x},\\mathbf{y})=d(\\mathbf{y},\\mathbf{x}),\\quad d(\\mathbf{x},\\mathbf{z}) \\le d(\\mathbf{x},\\mathbf{y})+d(\\mathbf{y},\\mathbf{z})", "note": "Non-negativity, identity, symmetry, triangle inequality" }
+        },
+        {
+          "text": "Euclidean, Manhattan, and Mahalanobis satisfy all four axioms, while cosine and squared-Euclidean distance break the triangle inequality.",
+          "visual": { "type": "bars", "values": [4, 4, 4, 3, 3], "labels": ["Euclid", "Manhat", "Mahal", "Cosine", "SqEuc"], "highlight": 3 }
+        },
+        {
+          "text": "A distance combines coordinates, so it implicitly weights them; a feature in kilometres silently dominates one in millimetres.",
+          "visual": { "type": "plot", "ys": [1, 4, 9, 25, 80, 220, 600], "dot": 6, "xlabel": "raw scale", "ylabel": "axis influence" }
+        },
+        {
+          "text": "Before any distance is computed you z-score each column to mean zero and variance one, or min-max scale to the unit interval.",
+          "visual": { "type": "stat", "value": 0, "label": "target mean per feature after z-scoring", "decimals": 0 }
+        },
+        {
+          "text": "Trees are the exception that proves the rule, caring only about the order of values within a column, so they never need rescaling.",
+          "visual": { "type": "title", "text": "The distance is the inductive bias", "sub": "Scaling first is not optional" }
+        }
+      ]
+    },
+    {
+      "id": "ml-11-distances-similarity-s2",
+      "chapter": "ml/11-distances-similarity",
+      "section": "s2",
+      "title": "The Minkowski family — Euclidean & Manhattan",
+      "eyebrow": "MACHINE LEARNING",
+      "beats": [
+        {
+          "text": "The workhorse distances are a single formula with one dial, the order p, that reshapes what counts as near.",
+          "visual": { "type": "title", "text": "The Minkowski family", "sub": "One formula, one knob p" }
+        },
+        {
+          "text": "Minkowski distance raises each coordinate gap to the power p, sums them, and takes the p-th root.",
+          "visual": { "type": "equation", "tex": "d_p(\\mathbf{x},\\mathbf{y}) = \\left( \\sum_{i=1}^{n} \\lvert x_i - y_i \\rvert^{\\,p} \\right)^{1/p}, \\qquad p \\ge 1", "note": "p=1 Manhattan, p=2 Euclidean, p to infinity Chebyshev" }
+        },
+        {
+          "text": "For points (1,1) and (4,5) the gaps are 3 and 4, giving Manhattan 7, Euclidean 5, and Chebyshev 4.",
+          "visual": { "type": "bars", "values": [7, 5, 4], "labels": ["Manhattan p=1", "Euclidean p=2", "Chebyshev p=inf"], "highlight": 1 }
+        },
+        {
+          "text": "Higher p always gives a smaller or equal distance, so the three readings fall in a fixed order.",
+          "visual": { "type": "plot", "ys": [7, 5.5, 5, 4.6, 4.3, 4.1, 4], "dot": 0, "xlabel": "order p", "ylabel": "distance", "mark": 2 }
+        },
+        {
+          "text": "The unit ball, the set of points at distance one, becomes a diamond for Manhattan, a circle for Euclidean, and a square for Chebyshev.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "Because two points equidistant under one p need not be under another, the nearest neighbour itself can change with p.",
+          "visual": { "type": "stat", "value": 5, "label": "Euclidean distance from (1,1) to (4,5)", "decimals": 0 }
+        }
+      ]
+    },
+    {
+      "id": "ml-11-distances-similarity-s3",
+      "chapter": "ml/11-distances-similarity",
+      "section": "s3",
+      "title": "Mahalanobis distance — correcting for covariance",
+      "eyebrow": "MACHINE LEARNING",
+      "beats": [
+        {
+          "text": "Euclidean distance treats every direction as equal and every feature as independent, but real data rarely obliges.",
+          "visual": { "type": "title", "text": "Mahalanobis distance", "sub": "Measuring in units of the data's own spread" }
+        },
+        {
+          "text": "Mahalanobis distance uses the inverse covariance to deflate high-variance directions and inflate low-variance ones.",
+          "visual": { "type": "equation", "tex": "d_M(\\mathbf{x},\\boldsymbol{\\mu}) = \\sqrt{(\\mathbf{x}-\\boldsymbol{\\mu})^{\\top}\\, \\Sigma^{-1}\\, (\\mathbf{x}-\\boldsymbol{\\mu})}", "note": "Sigma is the covariance; Sigma inverse is the precision matrix" }
+        },
+        {
+          "text": "When the covariance is the identity, with uncorrelated unit-variance features, Mahalanobis collapses back to plain Euclidean distance.",
+          "visual": { "type": "bars", "values": [1, 1], "labels": ["Mahalanobis (Sigma=I)", "Euclidean"], "highlight": 0 }
+        },
+        {
+          "text": "It is just Euclidean distance computed after whitening, applying the transform that decorrelates features and rescales each to unit variance.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "With variances 9 and 16 and a gap of (9,16), the squared distance is 9 plus 16, so d-M equals the square root of 25.",
+          "visual": { "type": "stat", "value": 5, "label": "Mahalanobis distance in sigma-units", "decimals": 0 }
+        },
+        {
+          "text": "For Gaussian data the squared distance follows a chi-square law, giving a principled threshold for outlier and anomaly detection.",
+          "visual": { "type": "plot", "ys": [2, 8, 14, 12, 8, 5, 3, 2, 1], "dot": 6, "xlabel": "d_M squared", "ylabel": "density", "mark": 6 }
+        }
+      ]
+    },
+    {
+      "id": "ml-11-distances-similarity-s4",
+      "chapter": "ml/11-distances-similarity",
+      "section": "s4",
+      "title": "Cosine & Jaccard similarity",
+      "eyebrow": "MACHINE LEARNING",
+      "beats": [
+        {
+          "text": "Sometimes magnitude is noise and only direction carries meaning, so two documents in the same proportions are about the same thing.",
+          "visual": { "type": "title", "text": "Cosine & Jaccard similarity", "sub": "Direction and overlap, not length" }
+        },
+        {
+          "text": "Cosine similarity normalizes both vectors to unit length and takes their dot product, the cosine of the angle between them.",
+          "visual": { "type": "equation", "tex": "\\cos\\theta = \\frac{\\mathbf{x}\\cdot\\mathbf{y}}{\\lVert\\mathbf{x}\\rVert\\,\\lVert\\mathbf{y}\\rVert} = \\frac{\\sum_i x_i y_i}{\\sqrt{\\sum_i x_i^2}\\,\\sqrt{\\sum_i y_i^2}} \\in [-1, 1]", "note": "1 same direction, 0 orthogonal, -1 opposite" }
+        },
+        {
+          "text": "On L2-normalized vectors squared Euclidean distance equals two times one minus cosine, so cosine ranking equals Euclidean ranking.",
+          "visual": { "type": "equation", "tex": "\\lVert\\mathbf{x}-\\mathbf{y}\\rVert^2 = 2\\,(1 - \\cos\\theta)", "note": "Why embedding pipelines normalize before storing" }
+        },
+        {
+          "text": "Jaccard similarity measures set overlap, the size of the intersection over the size of the union of two sets.",
+          "visual": { "type": "equation", "tex": "J(A,B) = \\frac{\\lvert A \\cap B \\rvert}{\\lvert A \\cup B \\rvert}, \\qquad d_J(A,B) = 1 - J(A,B)", "note": "1 identical, 0 disjoint; the 1 minus J distance is a true metric" }
+        },
+        {
+          "text": "For A equals 1,2,3 and B equals 2,3,4 the intersection has size 2 and the union has size 4, so Jaccard is one half.",
+          "visual": { "type": "stat", "value": 0.5, "label": "Jaccard similarity of {1,2,3} and {2,3,4}", "decimals": 1 }
+        },
+        {
+          "text": "Of these five measures only cosine fails the metric test, while Euclidean, Manhattan, Mahalanobis, and one minus Jaccard are true metrics.",
+          "visual": { "type": "bars", "values": [1, 1, 1, 0, 1], "labels": ["Euclid", "Manhat", "Mahal", "Cosine", "Jaccard"], "highlight": 3 }
+        }
+      ]
+    },
+    {
+      "id": "ml-11-distances-similarity-s5",
+      "chapter": "ml/11-distances-similarity",
+      "section": "s5",
+      "title": "The curse of dimensionality",
+      "eyebrow": "MACHINE LEARNING",
+      "beats": [
+        {
+          "text": "Everything rests on a quiet assumption, that nearest is meaningfully different from farthest, which quietly fails as dimensions grow.",
+          "visual": { "type": "title", "text": "The curse of dimensionality", "sub": "When near and far become the same" }
+        },
+        {
+          "text": "For independent coordinates the relative contrast between the farthest and nearest points of a query vanishes as dimension grows.",
+          "visual": { "type": "equation", "tex": "\\lim_{n \\to \\infty} \\mathbb{E}\\!\\left[ \\frac{\\mathrm{dist}_{\\max}(n) - \\mathrm{dist}_{\\min}(n)}{\\mathrm{dist}_{\\min}(n)} \\right] \\to 0", "note": "i.i.d. features; Beyer et al., 1999" }
+        },
+        {
+          "text": "Each new coordinate adds roughly equal independent noise, so all distances pile up around the same mean and their relative spread collapses.",
+          "visual": { "type": "plot", "ys": [10, 6, 3.5, 2, 1, 0.5, 0.25, 0.12], "dot": 7, "xlabel": "dimension n", "ylabel": "relative contrast" }
+        },
+        {
+          "text": "In a 100-dimensional unit cube a sub-cube holding just one percent of the volume needs edge length about 0.955.",
+          "visual": { "type": "stat", "value": 0.955, "label": "edge length to capture 1% of points at d=100", "decimals": 3 }
+        },
+        {
+          "text": "Lower p concentrates more slowly, so Manhattan is often the better choice than Euclidean in high dimensions.",
+          "visual": { "type": "bars", "values": [3.5, 1.8], "labels": ["Euclidean p=2", "Manhattan p=1"], "highlight": 0 }
+        },
+        {
+          "text": "Real data escapes the curse by living near a low-dimensional manifold, which is why k-NN on a learned embedding still works.",
+          "visual": { "type": "title", "text": "The manifold hypothesis", "sub": "Intrinsic dimension stays small" }
+        }
+      ]
+    }
+  ]
+}

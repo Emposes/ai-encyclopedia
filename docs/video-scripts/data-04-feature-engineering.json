@@ -1,0 +1,165 @@
+{
+  "concepts": [
+    {
+      "id": "data-04-feature-engineering-s1",
+      "chapter": "data/04-feature-engineering",
+      "section": "s1",
+      "title": "Creating features: interactions, ratios, polynomials",
+      "eyebrow": "DATA",
+      "beats": [
+        {
+          "text": "A model can only learn relationships its inputs make expressible, so feature engineering changes the hypothesis class by changing the inputs.",
+          "visual": { "type": "title", "text": "Creating Features", "sub": "Interactions, ratios, polynomials" }
+        },
+        {
+          "text": "The XOR pattern is perfectly determined yet inseparable by any line, since each class fills opposite quadrants of the plane.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "Add the single product feature x1 times x2 and the problem collapses to one threshold a linear model solves exactly.",
+          "visual": { "type": "equation", "tex": "\\hat{y} = \\operatorname{sign}\\big(w\\,(x_1 x_2)\\big)", "note": "Exact on XOR; raw linear cannot exceed 50%" }
+        },
+        {
+          "text": "A degree-2 polynomial on two inputs adds three squared-plus-interaction terms: the squares and the single cross product.",
+          "visual": { "type": "stat", "value": 3, "label": "new degree-2 features for two inputs", "decimals": 0 }
+        },
+        {
+          "text": "Term count grows combinatorially: a hundred inputs at degree two already yields thousands of features.",
+          "visual": { "type": "bars", "values": [6, 65, 5151], "labels": ["n=2", "n=10", "n=100"], "highlight": 2 }
+        },
+        {
+          "text": "Engineered features are not free, so create generously in the lab and ship parsimoniously after hard pruning.",
+          "visual": { "type": "equation", "tex": "\\#\\text{terms} = \\binom{n + d}{d}", "note": "Curvature is cheap; the dimensionality it buys is not" }
+        }
+      ]
+    },
+    {
+      "id": "data-04-feature-engineering-s2",
+      "chapter": "data/04-feature-engineering",
+      "section": "s2",
+      "title": "Datetime, text & aggregation features",
+      "eyebrow": "DATA",
+      "beats": [
+        {
+          "text": "Most real signal arrives as timestamps, free text, and one-to-many table relationships, each needing its own transform family.",
+          "visual": { "type": "title", "text": "Datetime, Text & Aggregation", "sub": "Where domain knowledge pays off most" }
+        },
+        {
+          "text": "A raw timestamp only expresses later, so the information lives in its components like hour, weekday, and month.",
+          "visual": { "type": "plot", "ys": [0, 1, 2, 3, 4, 5, 6, 7], "xlabel": "raw integer time", "ylabel": "value", "mark": "monotone" }
+        },
+        {
+          "text": "Cyclical times need a sine and cosine pair so hour 23 sits adjacent to hour 0 on a unit circle.",
+          "visual": { "type": "equation", "tex": "x_{\\sin} = \\sin\\!\\left(\\frac{2\\pi t}{P}\\right),\\quad x_{\\cos} = \\cos\\!\\left(\\frac{2\\pi t}{P}\\right)", "note": "One number cannot encode a cycle without a discontinuity; two can" }
+        },
+        {
+          "text": "TF-IDF turns text into features by counting terms then down-weighting words common across many documents.",
+          "visual": { "type": "equation", "tex": "\\text{tfidf}(t,d) = \\text{tf}(t,d)\\times\\log\\frac{N}{1+\\text{df}(t)}", "note": "Common words near zero; rare distinctive words weighted high" }
+        },
+        {
+          "text": "Aggregation rolls many rows into one unit: counts, means, recency, and ratios over time windows for churn and fraud.",
+          "visual": { "type": "bars", "values": [12, 30, 6], "labels": ["count", "30d mean", "merchants"], "highlight": 1 }
+        },
+        {
+          "text": "Aggregation and time features are the richest sources of leakage, so every window must use only data before the prediction moment.",
+          "visual": { "type": "stat", "value": 1, "label": "most common reason notebook models collapse on deploy", "decimals": 0 }
+        }
+      ]
+    },
+    {
+      "id": "data-04-feature-engineering-s3",
+      "chapter": "data/04-feature-engineering",
+      "section": "s3",
+      "title": "Feature selection: filter, wrapper, embedded",
+      "eyebrow": "DATA",
+      "beats": [
+        {
+          "text": "Section 4.1 generates features by the hundred, and selection throws most of them away for less overfitting and readable models.",
+          "visual": { "type": "title", "text": "Feature Selection", "sub": "Filter, wrapper, embedded" }
+        },
+        {
+          "text": "Filter methods score each feature against the target alone, blisteringly fast but blind to interactions and redundancy.",
+          "visual": { "type": "bars", "values": [1, 8, 4], "labels": ["filter", "wrapper", "embedded"], "highlight": 0 }
+        },
+        {
+          "text": "Recursive feature elimination fits the model, drops the lowest-importance feature, then refits, judging features in combination.",
+          "visual": { "type": "equation", "tex": "S_{t+1} = S_t \\setminus \\{j^\\star\\},\\quad j^\\star = \\arg\\min_{j \\in S_t} \\text{importance}_j", "note": "O(p) fits versus 2^p for exhaustive search" }
+        },
+        {
+          "text": "The Lasso adds an L1 penalty whose cornered geometry drives many coefficients to exactly zero during the fit.",
+          "visual": { "type": "equation", "tex": "\\hat{\\beta} = \\arg\\min_{\\beta}\\ \\tfrac{1}{2n}\\lVert y - X\\beta \\rVert_2^2 + \\lambda \\sum_{j} \\lvert \\beta_j \\rvert", "note": "L1 selects; L2 only shrinks" }
+        },
+        {
+          "text": "As noise rises and signal falls, the univariate filter degrades first while model-aware RFE and L1 hold on longer.",
+          "visual": { "type": "plot", "ys": [5, 5, 4, 3, 2, 1], "dot": 5, "xlabel": "noise features", "ylabel": "filter recall (of 5)" }
+        }
+      ]
+    },
+    {
+      "id": "data-04-feature-engineering-s4",
+      "chapter": "data/04-feature-engineering",
+      "section": "s4",
+      "title": "Importance & redundancy: MI, correlation, VIF",
+      "eyebrow": "DATA",
+      "beats": [
+        {
+          "text": "Usefulness splits into two questions: importance about the target, and redundancy already told by the other features.",
+          "visual": { "type": "title", "text": "Importance & Redundancy", "sub": "MI, correlation, VIF" }
+        },
+        {
+          "text": "Correlation is cheap but sees only linear association, so a perfect quadratic relationship can have correlation zero.",
+          "visual": { "type": "plot", "ys": [4, 1, 0, 0, 1, 4], "xlabel": "feature", "ylabel": "target (quadratic)" }
+        },
+        {
+          "text": "Mutual information measures any statistical dependence, linear or not, as the bits a feature buys about the target.",
+          "visual": { "type": "equation", "tex": "I(X;Y) = H(Y) - H(Y \\mid X)", "note": "Zero if and only if X and Y are independent" }
+        },
+        {
+          "text": "The variance inflation factor quantifies redundancy by how well the other features explain feature j.",
+          "visual": { "type": "equation", "tex": "\\text{VIF}_j = \\frac{1}{1 - R_j^2}", "note": "R_j squared from regressing x_j on all other features" }
+        },
+        {
+          "text": "At an R-squared of 0.8 the variance inflation factor is exactly 5, the conventional warrants-a-look threshold.",
+          "visual": { "type": "stat", "value": 5, "label": "VIF at R-squared = 0.8", "decimals": 0 }
+        },
+        {
+          "text": "Rules of thumb: a VIF above 5 warrants a look and above 10 signals serious collinearity in the coefficients.",
+          "visual": { "type": "bars", "values": [1, 2.8, 5, 10], "labels": ["rho=0", "0.8", "0.89", "0.95"], "highlight": 2 }
+        }
+      ]
+    },
+    {
+      "id": "data-04-feature-engineering-s5",
+      "chapter": "data/04-feature-engineering",
+      "section": "s5",
+      "title": "Selection bias & nested cross-validation",
+      "eyebrow": "DATA",
+      "beats": [
+        {
+          "text": "The most expensive mistake in applied machine learning is selecting features on all data, then cross-validating only those.",
+          "visual": { "type": "title", "text": "Selection Bias", "sub": "And nested cross-validation" }
+        },
+        {
+          "text": "With 10,000 features and 200 samples, picking the best on the full set lets test folds influence which features survive.",
+          "visual": { "type": "stat", "value": 50, "label": "features per sample in the leakage trap", "unit": "x", "decimals": 0 }
+        },
+        {
+          "text": "Selection is part of model fitting, so done on all data the biased estimate runs far above the honest one.",
+          "visual": { "type": "equation", "tex": "\\widehat{\\text{acc}}_{\\text{biased}} \\gg \\widehat{\\text{acc}}_{\\text{honest}}", "note": "Test-fold labels leaked into the choice" }
+        },
+        {
+          "text": "On pure coin-flip labels the biased pipeline fakes accuracy well above chance while the honest one returns to one half.",
+          "visual": { "type": "bars", "values": [0.50, 0.72], "labels": ["honest", "biased"], "highlight": 1 }
+        },
+        {
+          "text": "The fix puts selection inside each fold, and when tuning too, nested cross-validation estimates the whole procedure.",
+          "visual": { "type": "plot", "ys": [0.72, 0.66, 0.60, 0.55, 0.50], "dot": 4, "xlabel": "honesty added", "ylabel": "reported accuracy" }
+        },
+        {
+          "text": "The rule is absolute: anything you learn from the data is part of the model and must be cross-validated as a unit.",
+          "visual": { "type": "lattice" }
+        }
+      ]
+    }
+  ]
+}

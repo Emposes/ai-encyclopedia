@@ -1,0 +1,169 @@
+{
+  "concepts": [
+    {
+      "id": "dl-07-training-deep-nets-s1",
+      "chapter": "dl/07-training-deep-nets",
+      "section": "s1",
+      "title": "Optimizers — SGD, momentum, Adam, AdamW",
+      "eyebrow": "DEEP LEARNING",
+      "beats": [
+        {
+          "text": "Every optimizer answers one question: given the gradient, how far and in what direction should the parameters step.",
+          "visual": { "type": "title", "text": "Optimizers", "sub": "SGD · momentum · Adam · AdamW" }
+        },
+        {
+          "text": "Plain stochastic gradient descent steps downhill by a fixed multiple of the gradient on a random mini-batch.",
+          "visual": { "type": "equation", "tex": "\\theta_{t+1} = \\theta_t - \\eta\\, g_t", "note": "one scalar learning rate for every parameter" }
+        },
+        {
+          "text": "Momentum accumulates a decaying average of past gradients, so for a steady gradient at mu equals 0.9 the step grows tenfold.",
+          "visual": { "type": "stat", "value": 10, "label": "step amplification at mu = 0.9", "unit": "x" }
+        },
+        {
+          "text": "Adam gives each parameter its own rate using a first and second moment, with bias correction at the start.",
+          "visual": { "type": "equation", "tex": "\\theta_{t+1} = \\theta_t - \\eta\\, \\frac{\\hat m_t}{\\sqrt{\\hat v_t} + \\epsilon}", "note": "beta1 = 0.9, beta2 = 0.999, epsilon = 1e-8" }
+        },
+        {
+          "text": "AdamW decouples weight decay, applying it directly to the weights outside the adaptive step, and generalizes better.",
+          "visual": { "type": "equation", "tex": "\\theta_{t+1} = \\theta_t - \\eta\\left( \\frac{\\hat m_t}{\\sqrt{\\hat v_t} + \\epsilon} + \\lambda\\, \\theta_t \\right)", "note": "typical lambda 0.01 to 0.1" }
+        },
+        {
+          "text": "Adam holds two extra moments per parameter, adding eight bytes on top of the weight and gradient, the sixteen-bytes rule.",
+          "visual": { "type": "bars", "values": [4, 4, 8], "labels": ["weight", "grad", "Adam state"], "highlight": 2 }
+        }
+      ]
+    },
+    {
+      "id": "dl-07-training-deep-nets-s2",
+      "chapter": "dl/07-training-deep-nets",
+      "section": "s2",
+      "title": "Learning-rate schedules — warmup, cosine, cyclical",
+      "eyebrow": "DEEP LEARNING",
+      "beats": [
+        {
+          "text": "The learning rate is the most consequential hyperparameter, and the best value is not constant over a run.",
+          "visual": { "type": "title", "text": "Learning-rate schedules", "sub": "warmup · cosine · cyclical" }
+        },
+        {
+          "text": "The modern default ramps the rate up linearly during warmup, then eases it down along a half cosine.",
+          "visual": { "type": "plot", "ys": [0, 0.5, 1, 0.95, 0.75, 0.45, 0.15, 0.02], "dot": 2, "xlabel": "step", "ylabel": "learning rate", "mark": "warmup peak" }
+        },
+        {
+          "text": "Warmup gives the optimizer's adaptive statistics and a transformer's fragile early layers time to stabilize.",
+          "visual": { "type": "equation", "tex": "\\eta(t) = \\eta_{\\max}\\,\\frac{t}{T_w}, \\quad t \\le T_w", "note": "linear warmup, commonly 1 to 5 percent of total steps" }
+        },
+        {
+          "text": "Cosine decay is gentle at first, steepest in the middle, and flattens to the floor at the end of training.",
+          "visual": { "type": "equation", "tex": "\\eta_{\\min} + \\tfrac{1}{2}(\\eta_{\\max} - \\eta_{\\min})\\left(1 + \\cos\\frac{\\pi(t - T_w)}{T - T_w}\\right)", "note": "joins the warmup phase continuously" }
+        },
+        {
+          "text": "For a ten thousand step run with three percent warmup, the linear phase lasts three hundred steps.",
+          "visual": { "type": "stat", "value": 300, "label": "warmup steps at 3 percent of 10000", "unit": "steps" }
+        },
+        {
+          "text": "Warm restarts reset the schedule periodically, but with a good cosine they rarely help frontier single-run pretraining.",
+          "visual": { "type": "plot", "ys": [0.1, 1, 0.5, 0.1, 1, 0.5, 0.1, 1], "xlabel": "step", "ylabel": "learning rate", "mark": "restart" }
+        }
+      ]
+    },
+    {
+      "id": "dl-07-training-deep-nets-s3",
+      "chapter": "dl/07-training-deep-nets",
+      "section": "s3",
+      "title": "Regularization & early stopping",
+      "eyebrow": "DEEP LEARNING",
+      "beats": [
+        {
+          "text": "A network with millions of parameters can memorize its training set, so regularization pushes it to generalize instead.",
+          "visual": { "type": "title", "text": "Regularization & early stopping", "sub": "fit the signal, not the noise" }
+        },
+        {
+          "text": "Dropout zeros each activation with probability p during training and rescales the survivors so the expectation is unchanged.",
+          "visual": { "type": "equation", "tex": "\\tilde a_i = \\frac{r_i}{1-p}\\, a_i, \\quad r_i \\sim \\mathrm{Bernoulli}(1-p)", "note": "inference needs no rescaling, dropout is simply disabled" }
+        },
+        {
+          "text": "A scale factor of 1.25 at train time corresponds to a keep probability of 0.8, dropping one activation in five.",
+          "visual": { "type": "stat", "value": 0.8, "label": "keep probability when scale is 1.25", "decimals": 2 }
+        },
+        {
+          "text": "The toolkit is small: weight decay, dropout, data augmentation, label smoothing, and early stopping.",
+          "visual": { "type": "bars", "values": [5, 4, 3, 2, 1], "labels": ["aug", "decay", "dropout", "smooth", "stop"] }
+        },
+        {
+          "text": "Overfitting shows as a validation loss that bottoms out and rises while the training loss keeps falling.",
+          "visual": { "type": "plot", "ys": [1, 0.7, 0.5, 0.42, 0.5, 0.65, 0.85, 1.05], "dot": 3, "xlabel": "epoch", "ylabel": "validation loss", "mark": "early stop" }
+        },
+        {
+          "text": "Underfitting is the opposite: both losses sit high and flat because the model lacks capacity or training.",
+          "visual": { "type": "plot", "ys": [1.6, 1.5, 1.45, 1.43, 1.42, 1.42, 1.41, 1.41], "xlabel": "epoch", "ylabel": "loss" }
+        }
+      ]
+    },
+    {
+      "id": "dl-07-training-deep-nets-s4",
+      "chapter": "dl/07-training-deep-nets",
+      "section": "s4",
+      "title": "Mixed precision & numerical stability",
+      "eyebrow": "DEEP LEARNING",
+      "beats": [
+        {
+          "text": "Modern GPUs run far faster in sixteen-bit and halve memory, so mixed precision keeps fp32 only where it is required.",
+          "visual": { "type": "title", "text": "Mixed precision & numerics", "sub": "speed and memory, kept safe" }
+        },
+        {
+          "text": "The float16 format has only about five exponent bits, so its largest finite value is 65504 and small gradients underflow.",
+          "visual": { "type": "stat", "value": 65504, "label": "float16 overflow ceiling" }
+        },
+        {
+          "text": "Loss scaling multiplies the loss by a large factor before backprop, then unscales the gradients before the step.",
+          "visual": { "type": "equation", "tex": "\\mathcal{L}_{\\text{scaled}} = S \\cdot \\mathcal{L} \\;\\Rightarrow\\; g_{\\text{scaled}} = S \\cdot g", "note": "S often 2^15; same math, range borrowed" }
+        },
+        {
+          "text": "Three practices keep it safe: an fp32 master copy of weights, fp32 reductions, and bfloat16 where the hardware has it.",
+          "visual": { "type": "bars", "values": [3, 2, 1], "labels": ["fp32 master", "fp32 reduce", "prefer bf16"], "highlight": 2 }
+        },
+        {
+          "text": "bfloat16 keeps fp32's eight exponent bits and a range near ten to the thirty-eighth, so it rarely needs loss scaling.",
+          "visual": { "type": "bars", "values": [5, 8, 8], "labels": ["fp16 exp", "bf16 exp", "fp32 exp"], "highlight": 1 }
+        },
+        {
+          "text": "Most NaN failures are numeric, so gradient clipping that holds the norm at one is cheap standard insurance.",
+          "visual": { "type": "equation", "tex": "\\lVert g\\rVert \\le c, \\quad c = 1.0", "note": "global-norm clipping against spiky batches" }
+        }
+      ]
+    },
+    {
+      "id": "dl-07-training-deep-nets-s5",
+      "chapter": "dl/07-training-deep-nets",
+      "section": "s5",
+      "title": "A practical recipe & debugging",
+      "eyebrow": "DEEP LEARNING",
+      "beats": [
+        {
+          "text": "Theory converges, but in practice the failures are mundane and repetitive, so start from a default that survives reality.",
+          "visual": { "type": "title", "text": "A recipe & debugging", "sub": "defaults plus a diagnostic ladder" }
+        },
+        {
+          "text": "The sane default is AdamW with weight decay 0.1, a learning rate near 3e-4, and a warmup-then-cosine schedule.",
+          "visual": { "type": "equation", "tex": "\\eta_{\\max} \\approx 3\\times 10^{-4}, \\quad \\lambda = 0.1", "note": "bf16 if available, global-norm clip at 1.0" }
+        },
+        {
+          "text": "Overfit one mini-batch first; if the loss cannot reach near zero, the bug is in the model, loss, or data pipeline.",
+          "visual": { "type": "plot", "ys": [2.3, 1.4, 0.7, 0.3, 0.1, 0.03, 0.01, 0.003], "xlabel": "step", "ylabel": "single-batch loss", "mark": "should hit zero" }
+        },
+        {
+          "text": "Sanity-check the start: a ten-class classifier with random weights should begin near the natural log of ten.",
+          "visual": { "type": "stat", "value": 2.302, "label": "expected initial cross-entropy, ln K for K = 10", "decimals": 3 }
+        },
+        {
+          "text": "Work the ladder cheapest first: overfit a batch, check initial loss, read the curve, sweep the learning rate, watch norms.",
+          "visual": { "type": "bars", "values": [1, 2, 3, 4, 5], "labels": ["batch", "init loss", "curve", "LR sweep", "norms"], "highlight": 3 }
+        },
+        {
+          "text": "The learning rate dominates every other knob, so sweep it across orders of magnitude before touching architecture.",
+          "visual": { "type": "plot", "ys": [1.5, 0.9, 0.5, 0.3, 0.45, 0.9, 1.8], "dot": 3, "xlabel": "learning rate (log)", "ylabel": "loss", "mark": "best LR" }
+        }
+      ]
+    }
+  ]
+}

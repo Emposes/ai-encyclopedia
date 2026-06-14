@@ -1,0 +1,779 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Training Deep Networks in Practice — AI Encyclopedia</title>
+<meta name="description" content="The architecture is half the battle — optimizer, learning-rate schedule, regularization, and numerics decide whether a deep network ever converges. SGD to AdamW, warmup-and-cosine schedules, mixed precision, and a debugging recipe." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+<link rel="canonical" href="https://ai-encyclopedia.com/dl/07-training-deep-nets" />
+<meta property="og:url" content="https://ai-encyclopedia.com/dl/07-training-deep-nets" />
+</head>
+<body data-track="dl" data-level="core">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ DEEP LEARNING / 07 / TRAINING</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../rl/01-the-rl-problem.html">NEXT: RL · 01 THE RL PROBLEM →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">DEEP LEARNING · CHAPTER 07 / 07</div>
+    <h1>Training Deep Networks in Practice</h1>
+    <p class="lede">A network's architecture decides what it <em>can</em> represent; training decides whether it gets there. <strong>The optimizer, the learning-rate schedule, and the numerics determine whether a model actually converges.</strong> This chapter covers that side of the work: from plain SGD to AdamW, from warmup-and-cosine schedules to mixed precision and loss scaling, ending in a recipe and a diagnostic loop for reading a loss curve.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 26 MIN</b></span>
+      <span>BUILDS ON<b>DL 01–02 · backprop &amp; SGD</b></span>
+      <span>INSTRUMENTS<b>OPTIMIZER RACE · LR DESIGNER · LOSS DIAGNOSER</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">7.1</span>Optimizers</a>
+      <a href="#s2"><span class="n">7.2</span>Learning-rate schedules</a>
+      <a href="#s3"><span class="n">7.3</span>Regularization &amp; early stopping</a>
+      <a href="#s4"><span class="n">7.4</span>Mixed precision &amp; numerics</a>
+      <a href="#s5"><span class="n">7.5</span>A recipe &amp; debugging</a>
+      <a href="#s6"><span class="n">7.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 7.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">7.1</span><h2>Optimizers — SGD, momentum, Adam, AdamW</h2></div>
+        <p>Every optimizer answers one question: given the gradient \(g_t = \nabla_\theta \mathcal{L}\) at the current parameters, how far and in what direction do we step? The answers form a short, important lineage. <strong>Stochastic gradient descent</strong> is the bare minimum — step downhill by a fixed multiple of the gradient on a mini-batch:</p>
+
+        <div class="eq"><span class="eq-tag">EQ N7.1 — SGD UPDATE</span>
+        $$ \theta_{t+1} \;=\; \theta_t - \eta\, g_t, \qquad g_t = \nabla_\theta\, \mathcal{L}\!\left(\theta_t;\, \mathcal{B}_t\right) $$
+        <div class="eq-note">\(\eta\) is the learning rate; \(\mathcal{B}_t\) a random mini-batch. The mini-batch makes \(g_t\) a noisy estimate of the true gradient — the "stochastic" in SGD — and that noise is not purely a nuisance: it helps the optimizer escape sharp, brittle minima. SGD's flaw is that <b>one scalar \(\eta\) must serve every parameter and every direction of curvature</b>, so it crawls along flat directions and oscillates across steep ones.</div>
+        </div>
+
+        <p>The first fix is <strong>momentum</strong>: accumulate an exponentially-decaying running average of past gradients (a velocity \(v_t\)) and step along that instead. Consistent directions reinforce; oscillating ones cancel.</p>
+
+        <div class="eq"><span class="eq-tag">EQ N7.2 — SGD WITH MOMENTUM</span>
+        $$ v_{t} = \mu\, v_{t-1} + g_t, \qquad \theta_{t+1} = \theta_t - \eta\, v_{t}, \qquad 0 \le \mu &lt; 1 $$
+        <div class="eq-note">\(\mu\) (typically \(0.9\)) is the momentum coefficient. For a <em>steady</em> gradient \(g\), the velocity converges to a geometric series, \(v_\infty = g/(1-\mu)\), so the effective step grows by \(1/(1-\mu)\). At \(\mu = 0.9\) that is a <b>10× amplification</b> along persistent directions — the source of momentum's speed, and the reason it can overshoot. Nesterov's variant evaluates the gradient at the look-ahead point \(\theta_t - \eta\mu v_{t-1}\) for a slightly better-anticipated correction.</div>
+        </div>
+
+        <div class="exercise" data-answer="10" data-tol="0.001" data-hint="For a constant gradient the velocity converges to g/(1−μ); the amplification factor is 1/(1−μ).">
+          <div class="ex-q">SGD with momentum \(\mu = 0.9\) is fed the <em>same</em> gradient \(g\) every step. At steady state, by what factor is the effective step size larger than plain SGD's \(\eta g\)? (Use \(v_\infty = g/(1-\mu)\).)</div>
+          <div class="ex-reveal-src">The steady-state velocity is \(v_\infty = \dfrac{g}{1-\mu} = \dfrac{g}{1-0.9} = \dfrac{g}{0.1} = 10\,g\). The effective step is \(\eta v_\infty = 10\,\eta g\), so the amplification factor is <b>10</b>. This is exactly why a momentum run often needs a smaller \(\eta\) than a plain-SGD run at the same stability.</div>
+        </div>
+
+        <p>The second fix is <strong>adaptivity</strong>: give each parameter its own effective learning rate, scaled down where gradients have been large. <strong>Adam</strong> combines this with momentum. It maintains a first moment \(m_t\) (the momentum-like mean of gradients) and a second moment \(v_t\) (a mean of squared gradients), bias-corrects both, and divides the step by the root of the second moment:</p>
+
+        <div class="eq"><span class="eq-tag">EQ N7.3 — ADAM</span>
+        $$ m_t = \beta_1 m_{t-1} + (1-\beta_1)\,g_t, \quad v_t = \beta_2 v_{t-1} + (1-\beta_2)\,g_t^2 $$
+        $$ \hat m_t = \frac{m_t}{1-\beta_1^{\,t}}, \quad \hat v_t = \frac{v_t}{1-\beta_2^{\,t}}, \qquad \theta_{t+1} = \theta_t - \eta\, \frac{\hat m_t}{\sqrt{\hat v_t} + \epsilon} $$
+        <div class="eq-note">Defaults: \(\beta_1 = 0.9,\ \beta_2 = 0.999,\ \epsilon = 10^{-8}\). The bias correction matters most at the <em>start</em>: with \(m_0 = v_0 = 0\), the raw \(m_t\) is biased toward zero, and dividing by \(1 - \beta_1^{\,t}\) undoes it. The \(\hat m_t / \sqrt{\hat v_t}\) ratio makes <b>each coordinate's step roughly scale-invariant</b> — large, noisy gradients are damped, tiny consistent ones are amplified — which is why Adam "just works" across wildly different layers and is the default for transformers and most modern deep nets.</div>
+        </div>
+
+        <div class="exercise" data-answer="1" data-tol="0.001" data-hint="With m0=0 and one step at gradient g, m1 = (1−β1)g; bias-correct by dividing by (1−β1^1).">
+          <div class="ex-q">Adam with \(\beta_1 = 0.9\), starting from \(m_0 = 0\), takes <em>one</em> step with gradient \(g = 1\). What is the <b>bias-corrected</b> first moment \(\hat m_1\)? (Compute \(m_1 = (1-\beta_1)g\), then \(\hat m_1 = m_1 / (1 - \beta_1^{\,1})\).)</div>
+          <div class="ex-reveal-src">\(m_1 = (1 - 0.9)\times 1 = 0.1\). Bias correction: \(\hat m_1 = \dfrac{m_1}{1 - 0.9^{1}} = \dfrac{0.1}{0.1} = \) <b>1</b>. The correction exactly cancels the cold-start shrinkage, so the very first effective gradient estimate equals \(g\) — without it, Adam would take vanishingly small steps for the first dozen updates.</div>
+        </div>
+
+        <p><strong>AdamW</strong> is the variant you should actually reach for. The issue it fixes is subtle: classical weight decay was implemented as an L2 penalty added to the loss, so its gradient \(\lambda\theta\) flows through Adam's adaptive denominator and gets rescaled per-parameter — coupling the regularization strength to each coordinate's gradient history. Loshchilov &amp; Hutter showed that <em>decoupling</em> the decay — applying it directly to the weights, outside the adaptive step — restores the intended behavior and consistently generalizes better:</p>
+
+        <div class="eq"><span class="eq-tag">EQ N7.4 — ADAMW: DECOUPLED WEIGHT DECAY</span>
+        $$ \theta_{t+1} = \theta_t - \eta\left( \frac{\hat m_t}{\sqrt{\hat v_t} + \epsilon} \;+\; \lambda\, \theta_t \right) $$
+        <div class="eq-note">The decay term \(\lambda\theta_t\) is added <em>after</em> the adaptive rescaling, so it shrinks every weight by the same relative amount \(\eta\lambda\) each step — true weight decay, not an adaptive-gradient L2 term. <b>This decoupling is now the default in essentially every transformer training recipe</b> (typical \(\lambda \approx 0.01\!-\!0.1\)). Bias and normalization-scale parameters are conventionally <em>excluded</em> from decay.</div>
+        </div>
+
+        <table class="data">
+          <thead><tr><th>Optimizer</th><th>State per parameter</th><th>Strength</th><th>Weakness</th></tr></thead>
+          <tbody>
+            <tr><td><strong>SGD</strong></td><td class="m">none</td><td>Cheapest; flat minima; strong final accuracy on vision with a good schedule</td><td>Slow on ill-conditioned loss surfaces; very LR-sensitive</td></tr>
+            <tr><td><strong>SGD + momentum</strong></td><td class="m">1 (velocity)</td><td>Accelerates persistent directions, damps oscillation; the CNN workhorse</td><td>Can overshoot; still one global \(\eta\)</td></tr>
+            <tr><td><strong>Adam</strong></td><td class="m">2 (\(m\), \(v\))</td><td>Per-parameter adaptive; robust across layer types; fast early progress</td><td>2× optimizer memory; L2 decay misbehaves</td></tr>
+            <tr><td><strong>AdamW</strong></td><td class="hl">2 (\(m\), \(v\))</td><td>Adam with <em>correct</em> weight decay; default for transformers</td><td>Same memory cost; still needs a schedule</td></tr>
+          </tbody>
+        </table>
+
+        <p class="note">Adam's two extra moments cost real memory: at fp32 they add 8 bytes per parameter on top of the 4-byte weight and 4-byte gradient — the "16 bytes/param" rule that sizes training clusters (and the reason 8-bit optimizers and ZeRO sharding exist). The contested point worth flagging: on some vision benchmarks well-tuned SGD+momentum still <em>generalizes</em> slightly better than Adam, so "Adam always wins" is folklore, not law — it wins on convenience and on transformers, where SGD struggles.</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># SGD vs momentum vs Adam on an ill-conditioned 2D quadratic
+# Loss = 0.5*(a*x^2 + b*y^2); steep in x (a=20), flat in y (b=1).
+import numpy as np
+
+a, b = 20.0, 1.0
+def grad(p): return np.array([a*p[0], b*p[1]])    # gradient of the quadratic
+def loss(p): return 0.5*(a*p[0]**2 + b*p[1]**2)
+
+def run(kind, lr, steps=300):
+    p = np.array([1.0, 1.0]); m = np.zeros(2); v = np.zeros(2)
+    for t in range(1, steps+1):
+        g = grad(p)
+        if kind == "sgd":
+            p = p - lr*g
+        elif kind == "mom":
+            m = 0.9*m + g;  p = p - lr*m
+        else:  # adam
+            m = 0.9*m + 0.1*g;  v = 0.999*v + 0.001*g*g
+            mh = m/(1-0.9**t); vh = v/(1-0.999**t)
+            p = p - lr*mh/(np.sqrt(vh)+1e-8)
+    return loss(p)
+
+# Each optimizer gets its own near-best stable lr (the fair way to compare them)
+for kind, lr in [("sgd", 0.04), ("mom", 0.02), ("adam", 0.20)]:
+    print(f"{kind:5s} (lr={lr:.2f}) final loss after 300 steps: {run(kind, lr):.2e}")
+
+print("\nAdam reaches the lowest loss: it scales x and y independently, so the")
+print("steep x-direction and flat y-direction converge at the same rate -- the")
+print("single global step size that hobbles SGD on this surface is gone.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="train-opt-race" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT N7.1 — OPTIMIZER RACE</span><span class="w-sub">SGD vs MOMENTUM vs ADAM ON A LOSS SURFACE · EQ N7.1–N7.3</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>CONDITION NUMBER (steepness ratio) <output id="train-opt-cond-out">20</output></label><input type="range" id="train-opt-cond" min="3" max="50" step="1" value="20"/></div>
+              <div class="ctl"><label>LEARNING RATE η <output id="train-opt-lr-out">0.030</output></label><input type="range" id="train-opt-lr" min="0.005" max="0.09" step="0.005" value="0.03"/></div>
+            </div>
+            <canvas class="w-canvas" id="train-opt-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">SGD FINAL LOSS</div><div class="r-value" id="train-opt-sgd">—</div></div>
+              <div class="readout acc"><div class="r-label">MOMENTUM FINAL LOSS</div><div class="r-value" id="train-opt-mom">—</div></div>
+              <div class="readout acc"><div class="r-label">ADAM FINAL LOSS</div><div class="r-value" id="train-opt-adam">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Elliptical contours of an ill-conditioned quadratic — the canonical hard case. Three trajectories race from the same start: <span style="color:var(--text-secondary);">SGD</span> zig-zags across the steep axis, <span style="color:var(--accent);">momentum</span> rolls through it faster, and <span style="color:var(--blue);">Adam</span> rescales each axis and heads almost straight for the minimum. Crank the <b>condition number</b> up and watch SGD stall while Adam barely notices; push the <b>learning rate</b> too high and momentum overshoots into divergence first.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 7.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">7.2</span><h2>Learning-rate schedules — warmup, cosine, cyclical</h2></div>
+        <p>The single learning rate \(\eta\) is the most consequential hyperparameter in deep learning, and the best value is not constant over a run. Two facts shape the schedule: early on, weights are random and gradients are large and chaotic, so a big step can blow up; late on, you want small steps to settle into a minimum. The modern default answers both with a <strong>warmup</strong> followed by a <strong>cosine decay</strong>.</p>
+
+        <div class="eq"><span class="eq-tag">EQ N7.5 — WARMUP + COSINE SCHEDULE</span>
+        $$ \eta(t) = \begin{cases} \eta_{\max}\,\dfrac{t}{T_w} & t \le T_w \quad\text{(linear warmup)} \\[1.2em] \eta_{\min} + \tfrac{1}{2}\!\left(\eta_{\max} - \eta_{\min}\right)\!\left(1 + \cos\!\dfrac{\pi\,(t - T_w)}{T - T_w}\right) & t &gt; T_w \quad\text{(cosine decay)} \end{cases} $$
+        <div class="eq-note">\(T_w\) is the warmup length (commonly 1–5% of total steps \(T\)); \(\eta_{\min}\) is often \(0\) or a small floor. <b>Warmup</b> ramps the rate linearly from \(0\) to \(\eta_{\max}\), giving the optimizer's adaptive statistics (and a transformer's fragile early layers) time to stabilize before full-size steps. <b>Cosine decay</b> then eases the rate down a half-cosine: gentle at first, steepest in the middle, flattening to \(\eta_{\min}\) at the end. At \(t = T_w\), \(\cos 0 = 1 \Rightarrow \eta = \eta_{\max}\); at \(t = T\), \(\cos \pi = -1 \Rightarrow \eta = \eta_{\min}\) — the curve joins the two phases continuously.</div>
+        </div>
+
+        <p>Why a cosine rather than a straight line or exponential? Empirically the cosine's slow start (it lingers near \(\eta_{\max}\)) buys more exploration before annealing, and its slow finish lets the model fine-settle — and it consistently beats step decay on large language and vision models. The <strong>cyclical / warm-restart</strong> family (SGDR) takes the idea further, resetting the schedule periodically so the rate jumps back up; each restart can knock the model out of a mediocre basin into a better one, and the snapshots make a cheap ensemble. The contested part: with a good cosine, restarts rarely help large single-run pretraining, so they have fallen out of fashion for frontier models while remaining useful for smaller budgets.</p>
+
+        <div class="exercise" data-answer="true" data-tol="0" data-hint="Read EQ N7.5: in the second phase the rate follows ½(η_max−η_min)(1+cos(...)) — literally a cosine curve.">
+          <div class="ex-q">True or false: after warmup, a cosine schedule decays the learning rate along a cosine curve — from \(\eta_{\max}\) down to \(\eta_{\min}\) as \(t\) goes from \(T_w\) to \(T\). (Answer <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">By EQ N7.5, the decay phase is \(\eta_{\min} + \tfrac12(\eta_{\max}-\eta_{\min})(1+\cos\frac{\pi(t-T_w)}{T-T_w})\) — exactly a half-period of a cosine, starting at \(\eta_{\max}\) (where \(\cos 0 = 1\)) and ending at \(\eta_{\min}\) (where \(\cos\pi = -1\)). The statement is <b>true</b>.</div>
+        </div>
+
+        <div class="exercise" data-answer="300" data-tol="0.001" data-hint="Warmup steps = warmup fraction × total steps.">
+          <div class="ex-q">You train for \(T = 10{,}000\) steps and set warmup to <b>3%</b> of the run. How many steps \(T_w\) does the linear warmup phase last?</div>
+          <div class="ex-reveal-src">\(T_w = 0.03 \times 10{,}000 = \) <b>300</b> steps. Over those 300 steps the rate climbs linearly from \(0\) to \(\eta_{\max}\); the remaining 9,700 steps follow the cosine decay down toward \(\eta_{\min}\).</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Warmup + cosine learning-rate schedule (EQ N7.5): build and inspect it
+import numpy as np
+
+T, Tw = 1000, 50          # total steps, warmup steps (5%)
+eta_max, eta_min = 1e-3, 0.0
+
+def lr_at(t):
+    if t &lt; Tw:                                   # linear warmup
+        return eta_max * t / Tw
+    prog = (t - Tw) / (T - Tw)                   # 0..1 through the decay
+    return eta_min + 0.5*(eta_max - eta_min)*(1 + np.cos(np.pi*prog))
+
+ts  = np.arange(T)
+eta = np.array([lr_at(t) for t in ts])
+
+print("step    0:", f"{lr_at(0):.2e}   (warmup starts at 0)")
+print("step   50:", f"{lr_at(50):.2e}   (peak = eta_max at end of warmup)")
+print("step  525:", f"{lr_at(525):.2e}   (~midpoint of decay, steepest part)")
+print("step  999:", f"{lr_at(999):.2e}   (decayed to eta_min)")
+print(f"\npeak step is {ts[eta.argmax()]} -> rate peaks exactly at warmup's end")
+plot_xy(ts, eta)          # the classic ramp-then-cosine shape</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="train-lr-designer" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT N7.2 — LR-SCHEDULE DESIGNER</span><span class="w-sub">WARMUP + COSINE · EQ N7.5</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>PEAK RATE η_max <output id="train-lr-max-out">1.0e-3</output></label><input type="range" id="train-lr-max" min="-4" max="-2" step="0.1" value="-3"/></div>
+              <div class="ctl"><label>WARMUP (% of run) <output id="train-lr-warm-out">5%</output></label><input type="range" id="train-lr-warm" min="0" max="20" step="1" value="5"/></div>
+              <div class="ctl"><label>MIN RATE FLOOR (× peak) <output id="train-lr-floor-out">0%</output></label><input type="range" id="train-lr-floor" min="0" max="50" step="5" value="0"/></div>
+            </div>
+            <canvas class="w-canvas" id="train-lr-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">WARMUP STEPS</div><div class="r-value" id="train-lr-warmsteps">—</div></div>
+              <div class="readout"><div class="r-label">PEAK RATE</div><div class="r-value" id="train-lr-peak">—</div></div>
+              <div class="readout"><div class="r-label">FINAL RATE</div><div class="r-value" id="train-lr-final">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The full schedule over a 10,000-step run: a linear <span style="color:var(--accent);">warmup</span> ramp into a <span style="color:var(--blue);">cosine</span> descent. Drag <b>warmup</b> to 0% and the curve starts at full rate — fine for a fine-tune, often unstable for from-scratch transformer pretraining. Raise the <b>min-rate floor</b> and the decay flattens above zero, which keeps the model learning if you plan to train longer than \(T\). The peak always lands exactly at the end of warmup.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 7.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">7.3</span><h2>Regularization &amp; early stopping</h2></div>
+        <p>A network with millions of parameters can memorize its training set outright. Regularization is the set of pressures that push it to <em>generalize</em> instead — to fit the signal, not the noise. The deep-learning toolkit is small and well-understood.</p>
+        <ul>
+          <li><strong>Weight decay</strong> (the \(\lambda\theta\) term of EQ N7.4). Shrinks weights toward zero each step, favoring simpler, smaller-norm solutions. Use the <em>decoupled</em> form via AdamW; exclude biases and norm scales.</li>
+          <li><strong>Dropout.</strong> During training, zero each activation independently with probability \(p\) and rescale the survivors by \(1/(1-p)\) (so the expected activation is unchanged). This prevents co-adaptation — no neuron can rely on any specific other — and approximates training an ensemble of subnetworks. At inference, dropout is off. Transformers use light dropout (\(p \approx 0.0\!-\!0.1\)); large-data pretraining often sets it to zero.</li>
+          <li><strong>Data augmentation.</strong> The cheapest regularizer: expand the effective dataset with label-preserving transforms (crops, flips, mixup/cutmix for vision; token masking for text). More data beats every other trick.</li>
+          <li><strong>Label smoothing.</strong> Replace one-hot targets with \((1-\varepsilon)\) on the true class and \(\varepsilon/K\) elsewhere, discouraging the model from becoming over-confident and improving calibration.</li>
+          <li><strong>Early stopping.</strong> Track a held-out validation loss; keep the checkpoint at its minimum and stop once it has stopped improving for a patience window. It is regularization by <em>when you quit</em>.</li>
+        </ul>
+
+        <div class="eq"><span class="eq-tag">EQ N7.6 — DROPOUT (TRAIN-TIME, INVERTED)</span>
+        $$ \tilde a_i = \frac{r_i}{1-p}\, a_i, \qquad r_i \sim \mathrm{Bernoulli}(1-p), \qquad \mathbb{E}[\tilde a_i] = a_i $$
+        <div class="eq-note">Each activation \(a_i\) survives with probability \(1-p\) and is scaled up by \(1/(1-p)\). The expectation \(\mathbb{E}[\tilde a_i] = (1-p)\cdot \frac{a_i}{1-p} = a_i\) is preserved, so <b>inference needs no rescaling</b> — you simply disable dropout. The randomness forces redundant, robust representations; the rescaling keeps the forward pass's scale honest between train and test.</div>
+        </div>
+
+        <p>The signature of <strong>overfitting</strong> is a validation loss that bottoms out and then rises while the training loss keeps falling — the model is now learning the training set's idiosyncrasies. <strong>Underfitting</strong> is the opposite: both losses sit high and flat, the model lacks the capacity, the right features, or enough training. Early stopping catches the first; more capacity, better features, or longer training fixes the second.</p>
+
+        <div class="exercise" data-answer="0.8" data-tol="0.001" data-hint="Inverted dropout scales survivors by 1/(1−p), so the keep probability 1−p is the reciprocal of that factor.">
+          <div class="ex-q">A dropout layer scales the surviving activations by \(1/(1-p) = 1.25\) at train time (EQ N7.6). What is the <b>keep probability</b> \(1-p\)?</div>
+          <div class="ex-reveal-src">The scale factor is \(1/(1-p) = 1.25\), so the keep probability is \(1-p = 1/1.25 = \) <b>0.8</b>. That means \(p = 0.2\): one activation in five is dropped each step, and the rest are boosted by 25% to keep the expected signal unchanged.</div>
+        </div>
+
+        <div class="widget" id="train-loss-diag" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT N7.3 — LOSS-CURVE DIAGNOSER</span><span class="w-sub">TRAIN vs VALIDATION · UNDERFIT / OVERFIT / LR-TOO-HIGH</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl" style="flex:1 1 100%;">
+                <label>FAILURE MODE</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-train-diag="healthy">HEALTHY</button>
+                  <button class="w-btn ghost" data-train-diag="underfit">UNDERFIT</button>
+                  <button class="w-btn ghost" data-train-diag="overfit">OVERFIT</button>
+                  <button class="w-btn ghost" data-train-diag="lrhigh">LR TOO HIGH</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="train-diag-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">DIAGNOSIS</div><div class="r-value" id="train-diag-name" style="font-size:13px;">—</div></div>
+              <div class="readout"><div class="r-label">FINAL TRAIN / VAL</div><div class="r-value" id="train-diag-vals">—</div></div>
+              <div class="readout acc"><div class="r-label">FIX</div><div class="r-value" id="train-diag-fix" style="font-size:11.5px;line-height:1.5;">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Each button paints the canonical shape of a real training pathology — <span style="color:var(--accent);">train loss</span> and <span style="color:var(--blue);">validation loss</span> over epochs, with an early-stopping marker where validation bottoms out. <b>OVERFIT</b>: train keeps dropping, val turns back up (the classic divergence). <b>UNDERFIT</b>: both stay high and flat. <b>LR TOO HIGH</b>: loss spikes and oscillates, often blowing up. Learn the silhouettes here and you will diagnose a run from across the room.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 7.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">7.4</span><h2>Mixed precision &amp; numerical stability</h2></div>
+        <p>Modern GPUs run dramatically faster in 16-bit than in 32-bit, and 16-bit tensors halve memory. <strong>Mixed-precision training</strong> captures both wins while keeping fp32 where precision is non-negotiable. The catch is dynamic range: the older <code>float16</code> format has only ~5 exponent bits, so its largest representable value is about \(65{,}504\) and small gradients underflow to zero. The fix is <strong>loss scaling</strong>.</p>
+
+        <div class="eq"><span class="eq-tag">EQ N7.7 — LOSS SCALING</span>
+        $$ \mathcal{L}_{\text{scaled}} = S \cdot \mathcal{L} \;\Rightarrow\; g_{\text{scaled}} = S \cdot g, \qquad g \;=\; \frac{1}{S}\, g_{\text{scaled}} \;\text{(unscale before the optimizer step)} $$
+        <div class="eq-note">Multiply the loss by a large factor \(S\) (e.g. \(2^{15}\)) <em>before</em> backprop. By the chain rule every gradient is multiplied by the same \(S\), lifting tiny values out of fp16's underflow region. The gradients are then divided by \(S\) before the weight update, so the math is unchanged — only the representable range was borrowed. <b>Dynamic loss scaling</b> automates \(S\): raise it while gradients stay finite, and halve it (skipping that step) whenever an <code>inf</code>/<code>NaN</code> appears.</div>
+        </div>
+
+        <p>Three practices keep mixed precision numerically safe:</p>
+        <ul>
+          <li><strong>Keep an fp32 master copy of the weights.</strong> Updates are tiny relative to the weights; adding a small fp16 step to an fp16 weight rounds to nothing. The optimizer updates the fp32 master, then casts to fp16 for the next forward pass.</li>
+          <li><strong>Run reductions in fp32.</strong> Softmax, layer-norm statistics, and loss accumulation sum many terms; do them in fp32 to avoid catastrophic cancellation, even when the matmuls run in 16-bit.</li>
+          <li><strong>Prefer <code>bfloat16</code> when the hardware has it.</strong> bf16 keeps fp32's 8 exponent bits (same ~\(10^{38}\) range) at the cost of mantissa precision, so it almost never overflows and usually needs <em>no</em> loss scaling — the reason it is the default for large-model training on recent accelerators. fp8 pushes further still and is now used for the heaviest matmuls, with per-tensor scaling.</li>
+        </ul>
+
+        <div class="callout warn">
+          <span class="co-icon">THE NUMERICS THAT BITE</span>
+          <p><strong>Most "my loss went to NaN" failures are numeric, not algorithmic.</strong> The usual suspects: fp16 gradient overflow (use loss scaling or switch to bf16); a learning rate high enough to send weights to <code>inf</code> in a few steps; \(\log(0)\) or \(0/0\) in a hand-written loss (add an \(\epsilon\), use the log-sum-exp trick); and un-clipped gradients on a spiky batch. <strong>Gradient clipping</strong> — rescale the gradient so \(\lVert g\rVert \le c\) (typically \(c = 1.0\)) — is cheap insurance against the last one and is standard in transformer recipes.</p>
+        </div>
+
+        <div class="exercise" data-answer="65504" data-tol="0.001" data-hint="float16 has 5 exponent bits; its maximum finite value is 65504 — the number gradients must stay below to avoid overflow.">
+          <div class="ex-q">The <code>float16</code> format's largest representable finite value — the overflow ceiling that motivates loss scaling — is which number? (It is \((2 - 2^{-10})\times 2^{15}\).)</div>
+          <div class="ex-reveal-src">\((2 - 2^{-10})\times 2^{15} = (2 - 0.0009765625)\times 32768 = 1.9990234375 \times 32768 = \) <b>65504</b>. Any gradient (or activation) above this overflows to <code>inf</code> in fp16, which is exactly why loss scaling — and, better, bf16's fp32-sized exponent — exist.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Why loss scaling exists: fp16 underflow, and how scaling rescues gradients
+import numpy as np
+
+FP16_MAX = 65504.0     # largest finite fp16; above this -> inf (overflow)
+
+# A batch of tiny gradients, the kind deep nets produce late in training.
+# fp16's smallest positive value is ~6e-8, so anything well below that vanishes.
+g = np.array([1e-3, 2e-5, 5e-7, 4e-8, 9e-9])
+
+# Cast to fp16 with NO scaling -> the smallest entries flush to zero (underflow)
+g_fp16 = g.astype(np.float16)
+lost = int(np.sum((g != 0) & (g_fp16 == 0)))
+print("raw gradients          :", g)
+print("naive fp16             :", g_fp16.astype(np.float32))
+print(f"-> {lost} of {g.size} gradients underflowed to exactly 0\n")
+
+# Loss scaling: multiply by S before fp16, divide back after (EQ N7.7)
+S = 2**15
+scaled    = g * S
+g_scaled  = scaled.astype(np.float16).astype(np.float32) / S
+recovered = int(np.sum((g_fp16 == 0) & (g_scaled != 0)))
+overflow  = bool(np.any(np.abs(scaled) > FP16_MAX))
+print(f"with loss scale S={S}:", g_scaled)
+print(f"-> {recovered} previously-lost gradient(s) recovered; overflow? {overflow}")
+print("\nScaling lifts tiny gradients above fp16's underflow floor, then")
+print("unscales them after backprop -- same math, full dynamic range recovered.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 7.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">7.5</span><h2>A practical recipe &amp; debugging</h2></div>
+        <p>Theory converges; in practice the failures are mundane and repetitive. Here is a default that survives contact with reality for most supervised deep-learning tasks, followed by the debugging loop that finds the bug when it does not.</p>
+
+        <pre><code><span class="c"># Defaults that work for most from-scratch deep-net training</span>
+<span class="k">optimizer</span>:   AdamW · β1=0.9 · β2=0.999 (0.95 for big transformers) · ε=1e-8
+<span class="k">weight_decay</span>: 0.1 on weights · 0.0 on biases &amp; norm/scale params
+<span class="k">lr</span>:          tune η_max first (it dominates); 3e-4 is a sane transformer start
+<span class="k">schedule</span>:    linear warmup 1–5% of steps → cosine decay to ~0
+<span class="k">batch</span>:       as large as memory allows; raise lr with batch (lin/sqrt rule)
+<span class="k">precision</span>:   bf16 if available (no loss scaling); else fp16 + dynamic scaling
+<span class="k">grad_clip</span>:   global-norm clip at 1.0 — cheap insurance against spikes
+<span class="k">regularize</span>:  dropout 0.0–0.1 · augmentation · early-stop on val loss
+<span class="k">init</span>:        scaled init (He/Xavier or per-arch); verify activations don't explode</code></pre>
+
+        <p>When a run misbehaves, work the ladder from cheapest check to most expensive — most bugs are caught in the first three rungs:</p>
+        <ol>
+          <li><strong>Overfit one batch.</strong> Before anything else, train on a single mini-batch until the loss hits (near) zero. If it cannot, the bug is in the model, the loss, or the data pipeline — not the hyperparameters. This one test catches a remarkable fraction of failures.</li>
+          <li><strong>Sanity-check the initial loss.</strong> For \(K\)-class classification with random weights, cross-entropy should start near \(\ln K\). If it starts far off, your labels, logits, or loss are wired wrong.</li>
+          <li><strong>Read the loss curve (Instrument N7.3).</strong> NaN/spike → lower LR, clip gradients, check for fp16 overflow. Flat-and-high → underfit: more capacity/LR/steps. Val turns up → overfit: regularize or early-stop.</li>
+          <li><strong>Do an LR sweep.</strong> The learning rate dominates every other knob. Sweep it over a few orders of magnitude (or use an LR-range test) <em>before</em> touching architecture.</li>
+          <li><strong>Watch gradient and activation norms.</strong> Exploding norms → clip, lower LR, check init/normalization. Vanishing norms → check residual connections, normalization placement, and activation functions.</li>
+        </ol>
+
+        <div class="exercise" data-answer="2.302" data-tol="0.01" data-hint="Random-init cross-entropy for K balanced classes starts at ln(K); here K = 10.">
+          <div class="ex-q">A 10-class classifier with random initial weights predicts roughly uniform probabilities. What initial cross-entropy loss should you expect — the sanity-check value \(\ln K\) for \(K = 10\)?</div>
+          <div class="ex-reveal-src">A uniform prediction assigns probability \(1/K\) to the true class, so the loss is \(-\ln(1/K) = \ln K = \ln 10 \approx \) <b>2.302</b>. If your run starts at, say, 6.0 instead, something is wrong with the labels, the logit scale, or the loss reduction — fix that before tuning anything else.</div>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>You can now train a network that fits a fixed dataset; the next volume removes the dataset.</strong> Reinforcement learning replaces "minimize a loss on labeled examples" with "maximize a reward signal an agent must <em>discover</em> by acting" — a setting where the data is generated by the very policy you are optimizing. RL · 01 opens with the formalism that makes that tractable: the Markov decision process, states, actions, rewards, and the discounting that ties a future payoff to a present choice.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 7.R References ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">7.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://arxiv.org/abs/1412.6980" target="_blank" rel="noopener">Kingma, D. P. &amp; Ba, J. (2014). <span class="ref-venue">Adam: A Method for Stochastic Optimization</span>.</a> <span class="ref-meta">ICLR 2015 — the first/second-moment adaptive optimizer with bias correction (EQ N7.3).</span></li>
+          <li><a href="https://arxiv.org/abs/1711.05101" target="_blank" rel="noopener">Loshchilov, I. &amp; Hutter, F. (2017). <span class="ref-venue">Decoupled Weight Decay Regularization</span>.</a> <span class="ref-meta">ICLR 2019 — AdamW; why decoupling weight decay from the adaptive step generalizes better (EQ N7.4).</span></li>
+          <li><a href="https://arxiv.org/abs/1710.03740" target="_blank" rel="noopener">Micikevicius, P. et al. (2017). <span class="ref-venue">Mixed Precision Training</span>.</a> <span class="ref-meta">ICLR 2018 — fp16 training, the fp32 master copy, and loss scaling (EQ N7.7).</span></li>
+          <li><a href="https://arxiv.org/abs/1608.03983" target="_blank" rel="noopener">Loshchilov, I. &amp; Hutter, F. (2016). <span class="ref-venue">SGDR: Stochastic Gradient Descent with Warm Restarts</span>.</a> <span class="ref-meta">ICLR 2017 — cosine annealing and cyclical warm restarts (EQ N7.5).</span></li>
+          <li><a href="https://www.jmlr.org/papers/v15/srivastava14a.html" target="_blank" rel="noopener">Srivastava, N. et al. (2014). <span class="ref-venue">Dropout: A Simple Way to Prevent Neural Networks from Overfitting</span>.</a> <span class="ref-meta">JMLR 15 — the dropout regularizer and inverted-dropout scaling (EQ N7.6).</span></li>
+          <li><a href="https://arxiv.org/abs/1609.04836" target="_blank" rel="noopener">Keskar, N. S. et al. (2016). <span class="ref-venue">On Large-Batch Training for Deep Learning: Generalization Gap and Sharp Minima</span>.</a> <span class="ref-meta">ICLR 2017 — batch size, flat vs. sharp minima, and the generalization debate.</span></li>
+          <li><a href="https://www.deeplearningbook.org/" target="_blank" rel="noopener">Goodfellow, I., Bengio, Y. &amp; Courville, A. (2016). <span class="ref-venue">Deep Learning</span></a> <span class="ref-meta">MIT Press — Ch. 8 (optimization) and Ch. 7 (regularization), the standard textbook treatment.</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../dl/06-gans.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">06</span> GANs</div></a>
+        <a class="next" href="../rl/01-the-rl-problem.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">01</span> The RL Problem</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — DEEP LEARNING · CH 07</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* ============================================================
+   Training Deep Networks in Practice — chapter instruments.
+   Single IIFE, no globals. setTimeout (never rAF) for any
+   multi-step animation; every widget guarded by element check
+   and renders a meaningful state with zero interaction.
+   ============================================================ */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  function fmtLoss(x) {
+    if (!isFinite(x)) return "diverged";
+    if (x >= 100) return x.toExponential(1);
+    if (x >= 1) return x.toFixed(2);
+    if (x >= 1e-3) return x.toFixed(4);
+    return x.toExponential(1);
+  }
+
+  /* ========================================================
+     INSTRUMENT N7.1 — Optimizer race on a loss surface
+     Ill-conditioned quadratic L = 0.5(a x^2 + b y^2).
+     SGD, momentum, Adam descend from a fixed start; contours
+     + trajectories drawn; final losses reported. Deterministic.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("train-opt-race");
+    if (!root) return;
+    var canvas = document.getElementById("train-opt-canvas");
+    var condIn = document.getElementById("train-opt-cond");
+    var lrIn = document.getElementById("train-opt-lr");
+    var condOut = document.getElementById("train-opt-cond-out");
+    var lrOut = document.getElementById("train-opt-lr-out");
+    var sgdEl = document.getElementById("train-opt-sgd");
+    var momEl = document.getElementById("train-opt-mom");
+    var adamEl = document.getElementById("train-opt-adam");
+    var STEPS = 140;
+    var START = [0.92, 0.92];   // fixed start in normalized [-1,1] box
+
+    function lossOf(p, a, b) { return 0.5 * (a * p[0] * p[0] + b * p[1] * p[1]); }
+
+    function trajectory(kind, a, b, lr) {
+      var p = START.slice(), m = [0, 0], v = [0, 0], pts = [p.slice()], t;
+      for (t = 1; t <= STEPS; t++) {
+        var g = [a * p[0], b * p[1]];
+        if (kind === "sgd") {
+          p = [p[0] - lr * g[0], p[1] - lr * g[1]];
+        } else if (kind === "mom") {
+          m = [0.9 * m[0] + g[0], 0.9 * m[1] + g[1]];
+          p = [p[0] - lr * m[0], p[1] - lr * m[1]];
+        } else { // adam
+          m = [0.9 * m[0] + 0.1 * g[0], 0.9 * m[1] + 0.1 * g[1]];
+          v = [0.999 * v[0] + 0.001 * g[0] * g[0], 0.999 * v[1] + 0.001 * g[1] * g[1]];
+          var bc1 = 1 - Math.pow(0.9, t), bc2 = 1 - Math.pow(0.999, t);
+          // per-axis adaptive step
+          var mh0 = m[0] / bc1, mh1 = m[1] / bc1;
+          var vh0 = v[0] / bc2, vh1 = v[1] / bc2;
+          p = [p[0] - lr * mh0 / (Math.sqrt(vh0) + 1e-8),
+               p[1] - lr * mh1 / (Math.sqrt(vh1) + 1e-8)];
+        }
+        // clamp to a sane box so divergence still draws
+        p = [Math.max(-3, Math.min(3, p[0])), Math.max(-3, Math.min(3, p[1]))];
+        pts.push(p.slice());
+        if (!isFinite(p[0]) || !isFinite(p[1])) break;
+      }
+      return pts;
+    }
+
+    function render() {
+      var cond = +condIn.value, lr = +lrIn.value;
+      var a = cond, b = 1;                 // x steep, y flat → condition number = a/b
+      condOut.textContent = cond;
+      lrOut.textContent = lr.toFixed(3);
+
+      var c = FM.setupCanvas(canvas, 320);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      var pad = 24;
+      var x0 = pad, x1 = w - pad, y0 = h - pad, y1 = pad;
+      ctx.clearRect(0, 0, w, h);
+      // map model coords [-1.05,1.05] → canvas
+      var R = 1.05;
+      function px(x) { return x0 + (x + R) / (2 * R) * (x1 - x0); }
+      function py(y) { return y1 + (y + R) / (2 * R) * (y0 - y1); }
+
+      // elliptical contours of the quadratic
+      ctx.lineWidth = 1;
+      var levels = [0.04, 0.12, 0.28, 0.5, 0.8];
+      levels.forEach(function (L) {
+        ctx.strokeStyle = C.HAIR;
+        ctx.beginPath();
+        var first = true;
+        for (var th = 0; th <= 360; th += 4) {
+          var rad = th * Math.PI / 180;
+          // a x^2 + b y^2 = 2L  →  ellipse semi-axes sqrt(2L/a), sqrt(2L/b)
+          var ex = Math.sqrt(2 * L / a) * Math.cos(rad);
+          var ey = Math.sqrt(2 * L / b) * Math.sin(rad);
+          var X = px(ex), Y = py(ey);
+          if (first) { ctx.moveTo(X, Y); first = false; } else ctx.lineTo(X, Y);
+        }
+        ctx.closePath(); ctx.stroke();
+      });
+
+      // axes through the minimum
+      ctx.strokeStyle = "rgba(99,99,99,0.5)"; ctx.setLineDash([2, 3]);
+      ctx.beginPath(); ctx.moveTo(px(0), y1); ctx.lineTo(px(0), y0);
+      ctx.moveTo(x0, py(0)); ctx.lineTo(x1, py(0)); ctx.stroke();
+      ctx.setLineDash([]);
+      // minimum marker
+      ctx.fillStyle = C.MUT; ctx.beginPath();
+      ctx.arc(px(0), py(0), 3, 0, 2 * Math.PI); ctx.fill();
+
+      var runs = [
+        { kind: "sgd", color: C.SEC, el: sgdEl, lw: 1.4 },
+        { kind: "mom", color: C.MINT, el: momEl, lw: 1.8 },
+        { kind: "adam", color: C.BLUE, el: adamEl, lw: 1.8 }
+      ];
+      runs.forEach(function (r) {
+        var pts = trajectory(r.kind, a, b, lr);
+        ctx.strokeStyle = r.color; ctx.lineWidth = r.lw;
+        ctx.beginPath();
+        for (var i = 0; i < pts.length; i++) {
+          var X = px(pts[i][0]), Y = py(pts[i][1]);
+          if (i === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y);
+        }
+        ctx.stroke();
+        var last = pts[pts.length - 1];
+        ctx.fillStyle = r.color; ctx.beginPath();
+        ctx.arc(px(last[0]), py(last[1]), 3, 0, 2 * Math.PI); ctx.fill();
+        r.el.textContent = fmtLoss(lossOf(last, a, b));
+      });
+
+      // start marker + legend
+      ctx.fillStyle = C.BRIGHT; ctx.beginPath();
+      ctx.arc(px(START[0]), py(START[1]), 3.5, 0, 2 * Math.PI); ctx.fill();
+      ctx.font = C.MONO; ctx.textBaseline = "top";
+      ctx.textAlign = "left"; ctx.fillStyle = C.MUT;
+      ctx.fillText("START", px(START[0]) - 34, py(START[1]) - 12);
+      ctx.fillStyle = C.SEC; ctx.fillText("SGD", x0 + 4, y1);
+      ctx.fillStyle = C.MINT; ctx.fillText("MOMENTUM", x0 + 4, y1 + 12);
+      ctx.fillStyle = C.BLUE; ctx.fillText("ADAM", x0 + 4, y1 + 24);
+    }
+    [condIn, lrIn].forEach(function (el) { el.addEventListener("input", render); });
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT N7.2 — LR-schedule designer
+     Warmup + cosine over a 10,000-step run (EQ N7.5).
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("train-lr-designer");
+    if (!root) return;
+    var canvas = document.getElementById("train-lr-canvas");
+    var maxIn = document.getElementById("train-lr-max");
+    var warmIn = document.getElementById("train-lr-warm");
+    var floorIn = document.getElementById("train-lr-floor");
+    var maxOut = document.getElementById("train-lr-max-out");
+    var warmOut = document.getElementById("train-lr-warm-out");
+    var floorOut = document.getElementById("train-lr-floor-out");
+    var wsEl = document.getElementById("train-lr-warmsteps");
+    var peakEl = document.getElementById("train-lr-peak");
+    var finalEl = document.getElementById("train-lr-final");
+    var T = 10000;
+
+    function lrAt(t, etaMax, Tw, etaMin) {
+      if (Tw > 0 && t < Tw) return etaMax * t / Tw;
+      var denom = Math.max(1, T - Tw);
+      var prog = (t - Tw) / denom;
+      return etaMin + 0.5 * (etaMax - etaMin) * (1 + Math.cos(Math.PI * prog));
+    }
+    function sci(x) {
+      if (x <= 0) return "0";
+      var e = Math.floor(Math.log10(x));
+      var m = x / Math.pow(10, e);
+      return m.toFixed(1) + "e" + e;
+    }
+
+    function render() {
+      var etaMax = Math.pow(10, +maxIn.value);
+      var warmPct = +warmIn.value;
+      var floorPct = +floorIn.value;
+      var Tw = Math.round(warmPct / 100 * T);
+      var etaMin = floorPct / 100 * etaMax;
+      maxOut.textContent = sci(etaMax);
+      warmOut.textContent = warmPct + "%";
+      floorOut.textContent = floorPct + "%";
+      wsEl.textContent = Tw.toLocaleString();
+      peakEl.textContent = sci(etaMax);
+      finalEl.textContent = sci(lrAt(T - 1, etaMax, Tw, etaMin));
+
+      var c = FM.setupCanvas(canvas, 300);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      var padL = 18, padR = 16, padT = 18, padB = 30;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      ctx.clearRect(0, 0, w, h);
+
+      function px(t) { return x0 + t / (T - 1) * (x1 - x0); }
+      function py(eta) { return y0 - eta / etaMax * (y0 - y1) * 0.92; }
+
+      // baseline + peak gridline
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y0); ctx.stroke();
+      ctx.setLineDash([2, 3]); ctx.strokeStyle = "rgba(99,99,99,0.5)";
+      ctx.beginPath(); ctx.moveTo(x0, py(etaMax)); ctx.lineTo(x1, py(etaMax)); ctx.stroke();
+      ctx.setLineDash([]);
+
+      // warmup portion (mint) then cosine (blue)
+      var i, T0 = Math.max(1, Tw);
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (i = 0; i <= T0; i += Math.max(1, Math.floor(T / 600))) {
+        var e = lrAt(i, etaMax, Tw, etaMin);
+        if (i === 0) ctx.moveTo(px(i), py(e)); else ctx.lineTo(px(i), py(e));
+      }
+      ctx.lineTo(px(Tw), py(lrAt(Tw, etaMax, Tw, etaMin)));
+      ctx.stroke();
+
+      ctx.strokeStyle = C.BLUE; ctx.lineWidth = 2;
+      ctx.beginPath();
+      var started = false;
+      for (i = Tw; i < T; i += Math.max(1, Math.floor(T / 600))) {
+        var ee = lrAt(i, etaMax, Tw, etaMin);
+        if (!started) { ctx.moveTo(px(i), py(ee)); started = true; }
+        else ctx.lineTo(px(i), py(ee));
+      }
+      ctx.lineTo(px(T - 1), py(lrAt(T - 1, etaMax, Tw, etaMin)));
+      ctx.stroke();
+
+      // warmup boundary marker
+      if (Tw > 0) {
+        ctx.setLineDash([3, 3]); ctx.strokeStyle = C.MUT;
+        ctx.beginPath(); ctx.moveTo(px(Tw), y1); ctx.lineTo(px(Tw), y0); ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textBaseline = "bottom"; ctx.textAlign = "right";
+      ctx.fillText("η_max", x1 - 2, py(etaMax) - 2);
+      ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillStyle = C.MINT; ctx.fillText("WARMUP", x0 + 4, y1);
+      ctx.fillStyle = C.BLUE; ctx.fillText("COSINE DECAY", x0 + 4, y1 + 12);
+      ctx.fillStyle = C.MUT; ctx.textAlign = "right"; ctx.textBaseline = "top";
+      ctx.fillText("step " + T.toLocaleString(), x1, y0 + 6);
+    }
+    [maxIn, warmIn, floorIn].forEach(function (el) { el.addEventListener("input", render); });
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT N7.3 — Loss-curve diagnoser
+     Canonical train/val curves for four regimes. Deterministic
+     shapes; an early-stop marker where val bottoms out.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("train-loss-diag");
+    if (!root) return;
+    var canvas = document.getElementById("train-diag-canvas");
+    var nameEl = document.getElementById("train-diag-name");
+    var valsEl = document.getElementById("train-diag-vals");
+    var fixEl = document.getElementById("train-diag-fix");
+    var btns = root.querySelectorAll("[data-train-diag]");
+    var EP = 60;            // epochs
+    var mode = "healthy";
+
+    var META = {
+      healthy:  { name: "HEALTHY",      fix: "Nothing — train & val track down together to a low gap." },
+      underfit: { name: "UNDERFIT",     fix: "More capacity / higher LR / longer training / better features." },
+      overfit:  { name: "OVERFIT",      fix: "Regularize (decay, dropout, augment) or early-stop at the dip." },
+      lrhigh:   { name: "LR TOO HIGH",  fix: "Lower the learning rate; clip gradients; check fp16 overflow." }
+    };
+
+    // deterministic curves in loss units; returns {train:[], val:[], stop:int}
+    function curves(m) {
+      var tr = [], va = [], e, stop = EP - 1;
+      for (e = 0; e < EP; e++) {
+        var x = e / (EP - 1);             // 0..1
+        var t, v;
+        if (m === "healthy") {
+          t = 0.25 + 1.85 * Math.exp(-3.2 * x);
+          v = 0.40 + 1.75 * Math.exp(-3.0 * x);
+        } else if (m === "underfit") {
+          t = 1.55 - 0.18 * x;            // both high & nearly flat
+          v = 1.68 - 0.15 * x;
+        } else if (m === "overfit") {
+          t = 0.10 + 1.95 * Math.exp(-3.4 * x);            // keeps falling
+          v = 0.42 + 1.70 * Math.exp(-3.6 * x) + 1.25 * x * x; // U-shape: rises late
+        } else { // lrhigh — oscillating, partly diverging
+          var base = 1.3 + 0.55 * Math.sin(x * 22) * Math.exp(-1.0 * x);
+          t = base + 0.9 * Math.exp(3.0 * (x - 1));         // climbs at the end
+          v = base + 0.20 + 1.1 * Math.exp(3.2 * (x - 1));
+        }
+        tr.push(t); va.push(v);
+      }
+      // early-stop = argmin of val
+      var best = Infinity;
+      for (e = 0; e < EP; e++) { if (va[e] < best) { best = va[e]; stop = e; } }
+      return { train: tr, val: va, stop: stop };
+    }
+
+    function render() {
+      var d = curves(mode);
+      var meta = META[mode];
+      nameEl.textContent = meta.name;
+      fixEl.textContent = meta.fix;
+      var ft = d.train[EP - 1], fv = d.val[EP - 1];
+      valsEl.textContent = fmtLoss(ft) + " / " + fmtLoss(fv);
+
+      var c = FM.setupCanvas(canvas, 300);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      var padL = 20, padR = 16, padT = 18, padB = 30;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      ctx.clearRect(0, 0, w, h);
+
+      var maxY = 0, i;
+      for (i = 0; i < EP; i++) { maxY = Math.max(maxY, d.train[i], d.val[i]); }
+      maxY = Math.min(maxY, 4.2) * 1.05;     // cap so spikes don't flatten the rest
+
+      function px(e) { return x0 + e / (EP - 1) * (x1 - x0); }
+      function py(L) { return y0 - Math.min(L, maxY) / maxY * (y0 - y1); }
+
+      // baseline
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y0); ctx.stroke();
+
+      // early-stop marker (where val bottoms out), skip for diverging lrhigh
+      if (mode !== "lrhigh") {
+        ctx.setLineDash([3, 3]); ctx.strokeStyle = C.MUT;
+        ctx.beginPath(); ctx.moveTo(px(d.stop), y1); ctx.lineTo(px(d.stop), y0); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.font = C.MONO; ctx.fillStyle = C.MUT; ctx.textAlign = "center";
+        ctx.textBaseline = "top"; ctx.fillText("EARLY STOP", px(d.stop), y1);
+      }
+
+      // train (mint), val (blue)
+      function drawCurve(arr, color, lw) {
+        ctx.strokeStyle = color; ctx.lineWidth = lw; ctx.beginPath();
+        for (var e = 0; e < EP; e++) {
+          var X = px(e), Y = py(arr[e]);
+          if (e === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y);
+        }
+        ctx.stroke();
+      }
+      drawCurve(d.train, C.MINT, 1.8);
+      drawCurve(d.val, C.BLUE, 1.8);
+
+      ctx.font = C.MONO; ctx.textBaseline = "top"; ctx.textAlign = "left";
+      ctx.fillStyle = C.MINT; ctx.fillText("TRAIN LOSS", x0 + 4, y1 + 14);
+      ctx.fillStyle = C.BLUE; ctx.fillText("VAL LOSS", x0 + 4, y1 + 26);
+      ctx.fillStyle = C.MUT; ctx.textAlign = "right";
+      ctx.fillText("epochs →", x1, y0 + 6);
+    }
+
+    btns.forEach(function (b) {
+      b.addEventListener("click", function () {
+        btns.forEach(function (o) { o.classList.remove("on"); });
+        b.classList.add("on");
+        mode = b.getAttribute("data-train-diag");
+        render();
+      });
+    });
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

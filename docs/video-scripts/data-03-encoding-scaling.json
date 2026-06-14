@@ -1,0 +1,169 @@
+{
+  "concepts": [
+    {
+      "id": "data-03-encoding-scaling-s1",
+      "chapter": "data/03-encoding-scaling",
+      "section": "s1",
+      "title": "Categorical encoding: one-hot, ordinal, frequency",
+      "eyebrow": "DATA",
+      "beats": [
+        {
+          "text": "Real datasets arrive with columns that are not numbers, and a model cannot multiply a weight by the string Berlin.",
+          "visual": { "type": "title", "text": "Categorical Encoding", "sub": "One-hot, ordinal, frequency" }
+        },
+        {
+          "text": "One-hot turns a column with K levels into K binary indicator columns, exactly one of which is hot per row.",
+          "visual": { "type": "equation", "tex": "\\text{onehot}(x_i)_j = \\mathbb{1}[\\, x_i = c_j \\,], \\quad \\sum_{j=1}^{K} \\text{onehot}(x_i)_j = 1", "note": "Every row becomes a unit vector pointing at its category" }
+        },
+        {
+          "text": "A column with four distinct categories therefore adds exactly four indicator columns under plain one-hot encoding.",
+          "visual": { "type": "stat", "value": 4, "label": "indicator columns from K=4 categories", "decimals": 0 }
+        },
+        {
+          "text": "Ordinal encoding maps ranked levels to ascending integers, but applied to nominal data it invents an order the data never had.",
+          "visual": { "type": "bars", "values": [0, 1, 2], "labels": ["small", "medium", "large"], "highlight": 2 }
+        },
+        {
+          "text": "One-hot is honest but scales with cardinality; a fifty-state column becomes fifty columns and a ZIP column tens of thousands.",
+          "visual": { "type": "plot", "ys": [2, 6, 12, 26, 40], "xlabel": "distinct levels K", "ylabel": "columns added", "mark": "line" }
+        },
+        {
+          "text": "Frequency encoding collapses K levels into one number, the count or share of each category, suiting high-cardinality columns and trees.",
+          "visual": { "type": "bars", "values": [4, 2, 2], "labels": ["red", "green", "blue"], "highlight": 0 }
+        }
+      ]
+    },
+    {
+      "id": "data-03-encoding-scaling-s2",
+      "chapter": "data/03-encoding-scaling",
+      "section": "s2",
+      "title": "Target & WOE encoding — and how to keep them leakage-safe",
+      "eyebrow": "DATA",
+      "beats": [
+        {
+          "text": "Target encoding replaces each category with the average target value for that category, one informative column regardless of cardinality.",
+          "visual": { "type": "title", "text": "Target & WOE Encoding", "sub": "One column, leakage-safe" }
+        },
+        {
+          "text": "Smoothing blends the category mean with the global prior, weighted by how often the category was actually seen.",
+          "visual": { "type": "equation", "tex": "\\hat{t}(c) = \\frac{n_c\\,\\bar{y}_c + m\\,\\bar{y}}{n_c + m}", "note": "n_c rows in category c, m is smoothing strength" }
+        },
+        {
+          "text": "With n_c equal to m equal to four, a rate of 0.75 and a prior of 0.5 blend exactly halfway to 0.6.",
+          "visual": { "type": "stat", "value": 0.6, "label": "smoothed encoded value at n_c = m = 4", "decimals": 1 }
+        },
+        {
+          "text": "Weight of evidence replaces each category with the log-ratio of its positive share to its negative share.",
+          "visual": { "type": "equation", "tex": "\\mathrm{WOE}(c) = \\ln\\!\\left( \\frac{\\Pr(x = c \\mid y = 1)}{\\Pr(x = c \\mid y = 0)} \\right)", "note": "Lives on the log-odds scale logistic regression already speaks" }
+        },
+        {
+          "text": "Fitting the encoding on the same rows you train on lets every row peek at its own answer, inflating scores that collapse in production.",
+          "visual": { "type": "bars", "values": [0.04, 0.31], "labels": ["out-of-fold", "naive (leak)"], "highlight": 1 }
+        },
+        {
+          "text": "Out-of-fold encoding computes each fold's category means from the other folds, so no row contributes to its own value.",
+          "visual": { "type": "plot", "ys": [0.30, 0.20, 0.10, 0.04, 0.01], "xlabel": "folds held out", "ylabel": "phantom correlation", "mark": "line" }
+        }
+      ]
+    },
+    {
+      "id": "data-03-encoding-scaling-s3",
+      "chapter": "data/03-encoding-scaling",
+      "section": "s3",
+      "title": "Scaling: standardize, min-max, robust",
+      "eyebrow": "DATA",
+      "beats": [
+        {
+          "text": "Numeric columns still live on wildly different scales, so any distance or weighted-sum method lets large-magnitude columns dominate by accident.",
+          "visual": { "type": "title", "text": "Feature Scaling", "sub": "Standardize, min-max, robust" }
+        },
+        {
+          "text": "Standardization subtracts the mean and divides by the standard deviation, centering each column at zero with unit variance.",
+          "visual": { "type": "equation", "tex": "z = \\frac{x - \\mu}{\\sigma}", "note": "Number of standard deviations x sits from the mean" }
+        },
+        {
+          "text": "Standardizing x equals eight with mean five and standard deviation three gives a z-score of exactly one.",
+          "visual": { "type": "stat", "value": 1.0, "label": "z-score for x=8, mu=5, sigma=3", "decimals": 1 }
+        },
+        {
+          "text": "Min-max linearly squeezes the column into the unit interval, mapping the minimum to zero and the maximum to one.",
+          "visual": { "type": "equation", "tex": "x' = \\frac{x - x_{\\min}}{x_{\\max} - x_{\\min}} \\in [0, 1]", "note": "Defined by the extremes, so one outlier crushes everyone" }
+        },
+        {
+          "text": "Robust scaling centers on the median and divides by the interquartile range, so extreme values barely move either statistic.",
+          "visual": { "type": "equation", "tex": "x'' = \\frac{x - \\mathrm{median}(x)}{\\mathrm{IQR}(x)}, \\quad \\mathrm{IQR}(x) = Q_3 - Q_1", "note": "The median has a 50% breakdown point" }
+        },
+        {
+          "text": "Trees split on thresholds within one feature, so scaling is wasted on them but is mandatory for k-NN, SVM, and neural nets.",
+          "visual": { "type": "bars", "values": [3, 3, 3, 0], "labels": ["k-NN", "SVM/PCA", "linear", "trees"], "highlight": 3 }
+        }
+      ]
+    },
+    {
+      "id": "data-03-encoding-scaling-s4",
+      "chapter": "data/03-encoding-scaling",
+      "section": "s4",
+      "title": "Distribution transforms: log, Box-Cox, Yeo-Johnson",
+      "eyebrow": "DATA",
+      "beats": [
+        {
+          "text": "Scaling moves and stretches a column but never changes its shape, so badly skewed features still fight many estimators.",
+          "visual": { "type": "title", "text": "Distribution Transforms", "sub": "Log, Box-Cox, Yeo-Johnson" }
+        },
+        {
+          "text": "The log transform compresses large values far more than small ones, taming the multiplicative spread of strictly positive data.",
+          "visual": { "type": "plot", "ys": [0, 0.69, 1.10, 1.39, 1.61, 1.79], "xlabel": "x", "ylabel": "ln(x)", "mark": "line" }
+        },
+        {
+          "text": "Box-Cox generalizes the log into a one-parameter family and lets maximum likelihood choose the exponent lambda.",
+          "visual": { "type": "equation", "tex": "x^{(\\lambda)} = \\begin{cases} \\dfrac{x^{\\lambda} - 1}{\\lambda} & \\lambda \\neq 0 \\\\ \\ln x & \\lambda = 0 \\end{cases}", "note": "Requires strictly positive inputs" }
+        },
+        {
+          "text": "At lambda equals one the transform reduces to x minus one, so applied to x equals two it returns exactly one.",
+          "visual": { "type": "stat", "value": 1.0, "label": "Box-Cox of x=2 at lambda=1", "decimals": 1 }
+        },
+        {
+          "text": "Yeo-Johnson mirrors the power transform on each side of zero, extending the idea to the whole real line.",
+          "visual": { "type": "equation", "tex": "x^{(\\lambda)} = \\begin{cases} \\dfrac{(x+1)^{\\lambda} - 1}{\\lambda} & x \\ge 0,\\ \\lambda \\neq 0 \\\\ -\\dfrac{(-x+1)^{2-\\lambda} - 1}{2 - \\lambda} & x < 0,\\ \\lambda \\neq 2 \\end{cases}", "note": "No positivity constraint, no plus-constant hacks" }
+        },
+        {
+          "text": "Choosing lambda by minimizing skewness traces a U-shaped curve whose bottom marks the most-Gaussian transform.",
+          "visual": { "type": "plot", "ys": [1.4, 0.7, 0.2, 0.05, 0.4, 1.1], "dot": 3, "xlabel": "lambda", "ylabel": "absolute skew", "mark": "line" }
+        }
+      ]
+    },
+    {
+      "id": "data-03-encoding-scaling-s5",
+      "chapter": "data/03-encoding-scaling",
+      "section": "s5",
+      "title": "Binning & discretization",
+      "eyebrow": "DATA",
+      "beats": [
+        {
+          "text": "Binning chops a continuous variable into a few discrete intervals, trading resolution for robustness and interpretable score bands.",
+          "visual": { "type": "title", "text": "Binning & Discretization", "sub": "Equal-width vs equal-frequency" }
+        },
+        {
+          "text": "Equal-width cuts the value axis into k equal pieces, while equal-frequency cuts the data into k equally populated quantile piles.",
+          "visual": { "type": "equation", "tex": "e_j = x_{\\min} + j\\,\\frac{x_{\\max} - x_{\\min}}{k}; \\quad e_j = Q_{j/k}(x)", "note": "Equal width versus equal frequency edges" }
+        },
+        {
+          "text": "On skewed data, equal-width piles most points into one or two bins and leaves the rest nearly empty.",
+          "visual": { "type": "bars", "values": [62, 24, 9, 4, 1], "labels": ["b1", "b2", "b3", "b4", "b5"], "highlight": 0 }
+        },
+        {
+          "text": "Equal-frequency keeps every bin equally populated, the safer default for skewed real-world columns.",
+          "visual": { "type": "bars", "values": [20, 20, 20, 20, 20], "labels": ["b1", "b2", "b3", "b4", "b5"] }
+        },
+        {
+          "text": "Binning discards information and plants artificial discontinuities, so prefer splines or trees and reserve it for interpretability or regulation.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "Four silent failures recur: leaking by fitting on full data, ordinal-coding nominal data, min-max with outliers, and unseen categories.",
+          "visual": { "type": "stat", "value": 4, "label": "ways encoding and scaling break a model", "decimals": 0 }
+        }
+      ]
+    }
+  ]
+}

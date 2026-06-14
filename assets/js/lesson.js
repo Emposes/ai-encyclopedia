@@ -72,12 +72,12 @@
         vpane.className = "lv-pane lv-pane-media";
         vpane.innerHTML = "<div class='lv-video-wrap'><video class='lv-video' controls preload='metadata' " +
           "playsinline src='" + vid + "'></video></div>";
-        tabs.push({ kind: "video", label: "▶ Watch", pane: vpane });
+        tabs.push({ kind: "video", label: "Watch", pane: vpane });
       }
-      collect(sec, ".widget", "demo", "◈ Play", tabs);
-      collect(sec, ".exercise", "exercise", "✎ Try it", tabs);
-      collect(sec, ".figure", "figure", "◳ Diagram", tabs);
-      collect(sec, ".pycell", "code", "λ Code", tabs);
+      collect(sec, ".widget", "demo", "Demo", tabs);
+      collect(sec, ".exercise", "exercise", "Exercise", tabs);
+      collect(sec, ".figure", "figure", "Diagram", tabs);
+      collect(sec, ".pycell", "code", "Code", tabs);
 
       if (!tabs.length) {
         var card = document.createElement("div");
@@ -85,7 +85,7 @@
         card.innerHTML = "<div class='lv-video-pending'><span class='vp-dot'></span>" +
           "<span class='vp-t'>" + esc(title) + "</span>" +
           "<span class='vp-t' style='color:var(--text-muted)'>concept film in production</span></div>";
-        tabs.push({ kind: "card", label: "◷ Overview", pane: card });
+        tabs.push({ kind: "card", label: "Overview", pane: card });
       }
       return { title: title, secId: secId, tabs: tabs, panel: sec };  // sec is now text-only
     });
@@ -99,14 +99,14 @@
     view.className = "lesson-view";
     view.innerHTML =
       "<div class='lv-top'><span class='le' id='lv-eyebrow'></span><span class='lt' id='lv-ctx'></span>" +
-      "<span class='spacer'></span><button class='view-toggle' id='lv-read'>⇄ Read as one page</button></div>" +
+      "<span class='spacer'></span><button class='view-toggle' id='lv-read'>Read as one page</button></div>" +
       "<div class='lv-split'><div class='lv-stage'><div class='lv-stage-tabs' id='lv-tabs'></div>" +
       "<div class='lv-stage-hint' id='lv-stagehint'></div>" +
       "<div class='lv-stage-body' id='lv-stagebody'></div>" +
       "<div class='lv-stage-foot' id='lv-stagefoot'></div></div>" +
       "<div class='lv-panel' id='lv-panel'></div></div>" +
-      "<div class='lv-rail'><button class='nav' id='lv-prev'>‹ Prev</button>" +
-      "<div class='dots' id='lv-dots'></div><button class='nav next' id='lv-next'>Next ›</button></div>";
+      "<div class='lv-rail'><button class='nav' id='lv-prev'>Prev</button>" +
+      "<div class='dots' id='lv-dots'></div><button class='nav next' id='lv-next'>Next</button></div>";
     var shell = main.closest(".shell") || main.parentNode;
     shell.parentNode.insertBefore(view, shell.nextSibling);
 
@@ -137,12 +137,8 @@
       l._visited = {};
       var CORE = { video: 1, demo: 1, exercise: 1 };
       l.tabs.forEach(function (t, ti) {
-        if (ti > 0 && CORE[t.kind] && CORE[l.tabs[ti - 1].kind]) {
-          var arr = document.createElement("span"); arr.className = "lv-tab-arrow"; arr.textContent = "›";
-          tabsEl.appendChild(arr);
-        }
         var b = document.createElement("button");
-        b.innerHTML = "<span class='lv-tab-check'>✓</span>" + esc(t.label);
+        b.textContent = t.label;
         b.addEventListener("click", function () { activate(l, ti); });
         tabsEl.appendChild(b);
         bodyEl.appendChild(t.pane);
@@ -151,7 +147,7 @@
       var coreCount = l.tabs.filter(function (t) { return CORE[t.kind]; }).length;
       var hintEl = view.querySelector("#lv-stagehint");
       hintEl.style.display = coreCount >= 2 ? "block" : "none";
-      hintEl.textContent = "Watch it, play with it, then prove it — switch any time.";
+      hintEl.textContent = "Use the tabs to switch between the video, demo, and exercise.";
       activate(l, 0);
       /* text panel */
       panelEl.innerHTML = "";
@@ -162,7 +158,7 @@
         d.classList.toggle("done", di < i);
       });
       prevB.disabled = i === 0;
-      nextB.textContent = i === lessons.length - 1 ? "Finish ✓" : "Next ›";
+      nextB.textContent = i === lessons.length - 1 ? "Finish" : "Next";
       markProgress(i, lessons.length);
       /* canvases re-fit to the stage width; let the DOM settle first */
       setTimeout(function () { window.dispatchEvent(new Event("resize")); }, 30);
@@ -183,15 +179,15 @@
       var foot = view.querySelector("#lv-stagefoot");
       var nextTab = ti + 1 < l.tabs.length ? l.tabs[ti + 1] : null;
       if (nextTab && nextTab._btn && !l._visited[ti + 1]) nextTab._btn.classList.add("lv-next");
-      var verb = { video: "Watch", demo: "Play with it", exercise: "Try the exercise", figure: "See the diagram", code: "Read the code" };
+      var verb = { video: "Video", demo: "Demo", exercise: "Exercise", figure: "Diagram", code: "Code" };
       if (nextTab) {
-        foot.innerHTML = "<button class='lv-nextstep'>Next: " + esc(verb[nextTab.kind] || nextTab.label) + " ▸</button>";
+        foot.innerHTML = "<button class='lv-nextstep'>Next: " + esc(verb[nextTab.kind] || nextTab.label) + "</button>";
         foot.querySelector(".lv-nextstep").addEventListener("click", function () { activate(l, ti + 1); });
       } else if (cur < lessons.length - 1) {
-        foot.innerHTML = "<button class='lv-nextstep'>Next lesson: " + esc(lessons[cur + 1].title.slice(0, 32)) + " ›</button>";
+        foot.innerHTML = "<button class='lv-nextstep'>Next lesson: " + esc(lessons[cur + 1].title.slice(0, 32)) + "</button>";
         foot.querySelector(".lv-nextstep").addEventListener("click", function () { show(cur + 1); });
       } else {
-        foot.innerHTML = "<button class='lv-nextstep'>Finish chapter ✓</button>";
+        foot.innerHTML = "<button class='lv-nextstep'>Finish chapter</button>";
         foot.querySelector(".lv-nextstep").addEventListener("click", function () { setView("read"); location.reload(); });
       }
       setTimeout(function () { window.dispatchEvent(new Event("resize")); }, 30);

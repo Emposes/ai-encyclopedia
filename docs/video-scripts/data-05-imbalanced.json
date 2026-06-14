@@ -1,0 +1,167 @@
+[
+  {
+    "id": "data-05-imbalanced-s1",
+    "chapter": "data/05-imbalanced",
+    "section": "s1",
+    "title": "Why imbalance breaks training & metrics",
+    "eyebrow": "DATA",
+    "beats": [
+      {
+        "text": "A dataset is imbalanced when one class vastly outnumbers another, and the rare class is usually the one you care about.",
+        "visual": { "type": "title", "text": "Why Imbalance Breaks Training", "sub": "Fraud, disease, default: 1 in 1000" }
+      },
+      {
+        "text": "Fraud runs near 1 transaction in 1000, so the minority prevalence pi can be as small as one tenth of one percent.",
+        "visual": { "type": "stat", "value": 0.001, "label": "Minority prevalence (fraud)", "unit": "pi", "decimals": 3 }
+      },
+      {
+        "text": "Majority-class accuracy equals one minus pi, so a constant predictor that detects nothing still scores almost perfectly.",
+        "visual": { "type": "equation", "tex": "\\text{Acc}_{\\text{maj}} = \\frac{N_{\\text{maj}}}{N} = 1 - \\pi", "note": "EQ D5.1 — the accuracy trap" }
+      },
+      {
+        "text": "On 100000 transactions with 100 frauds, always predicting legitimate reads 99.9 percent accurate while catching zero cases.",
+        "visual": { "type": "stat", "value": 99.9, "label": "Accuracy of always-legit predictor", "unit": "%", "decimals": 1 }
+      },
+      {
+        "text": "As you dial the minority share down, accuracy climbs toward 100 percent while recall on the rare class collapses.",
+        "visual": { "type": "plot", "ys": [80, 90, 95, 98, 99.5, 99.9], "dot": 5, "xlabel": "minority share down", "ylabel": "accuracy %", "mark": "accuracy rises" }
+      },
+      {
+        "text": "Average-loss training lets the easy majority dominate the gradient, pushing the boundary into the minority region as an optimization bias.",
+        "visual": { "type": "bars", "values": [999, 1], "labels": ["majority", "minority"], "highlight": 1 }
+      }
+    ]
+  },
+  {
+    "id": "data-05-imbalanced-s2",
+    "chapter": "data/05-imbalanced",
+    "section": "s2",
+    "title": "Resampling — random over- and under-sampling",
+    "eyebrow": "DATA",
+    "beats": [
+      {
+        "text": "The simplest cure changes the data itself, altering class proportions so the loss can no longer ignore the minority.",
+        "visual": { "type": "title", "text": "Resampling", "sub": "Random over- and under-sampling" }
+      },
+      {
+        "text": "Random over-sampling duplicates minority examples until the classes match, keeping all data but inviting overfitting to exact copies.",
+        "visual": { "type": "bars", "values": [950, 50, 950], "labels": ["majority", "minority before", "minority after"], "highlight": 2 }
+      },
+      {
+        "text": "Random under-sampling discards majority examples until balanced, which is fast and light but throws away useful majority data.",
+        "visual": { "type": "bars", "values": [950, 50, 50], "labels": ["majority before", "majority after", "minority"], "highlight": 1 }
+      },
+      {
+        "text": "To reach a target minority share rho, grow the minority to rho over one minus rho times the majority count.",
+        "visual": { "type": "equation", "tex": "N_{\\text{min}}^{\\text{target}} = \\frac{\\rho}{1-\\rho}\\, N_{\\text{maj}}", "note": "EQ D5.2 — rho = 1/2 gives a 1:1 balance" }
+      },
+      {
+        "text": "Over-sampling 50 minority up to 950 against 950 majority moves the minority share from 0.05 to exactly 0.5.",
+        "visual": { "type": "stat", "value": 0.5, "label": "Minority share after balancing", "unit": "rho", "decimals": 2 }
+      },
+      {
+        "text": "Resampling adds no information; the cardinal rule is to resample the training fold only and keep test data at real prevalence.",
+        "visual": { "type": "lattice" }
+      }
+    ]
+  },
+  {
+    "id": "data-05-imbalanced-s3",
+    "chapter": "data/05-imbalanced",
+    "section": "s3",
+    "title": "SMOTE & variants",
+    "eyebrow": "DATA",
+    "beats": [
+      {
+        "text": "Random over-sampling copies points; SMOTE invents them by interpolating along the segment between a minority example and a neighbor.",
+        "visual": { "type": "title", "text": "SMOTE & Variants", "sub": "Synthetic Minority Over-sampling" }
+      },
+      {
+        "text": "A new point is x_i plus lambda times the gap to a near neighbor, with lambda drawn uniformly between zero and one.",
+        "visual": { "type": "equation", "tex": "x_{\\text{new}} = x_i + \\lambda\\,(x_{nn} - x_i),\\quad \\lambda \\sim \\mathcal{U}(0,1)", "note": "EQ D5.3 — SMOTE interpolation" }
+      },
+      {
+        "text": "With x_i at 2, a neighbor at 6, and lambda 0.25, the synthetic point lands a quarter of the way along at 3.",
+        "visual": { "type": "stat", "value": 3, "label": "Synthetic point at lambda = 0.25", "decimals": 0 }
+      },
+      {
+        "text": "Every synthetic point lives inside the convex hull of the minority class, never extrapolating beyond the real examples.",
+        "visual": { "type": "plot", "ys": [2.0, 2.5, 3.0, 4.0, 5.0, 6.0], "dot": 2, "xlabel": "lambda from 0 to 1", "ylabel": "x_new", "mark": "interpolated points" }
+      },
+      {
+        "text": "Borderline-SMOTE synthesizes only near the decision boundary, while ADASYN pours more synthetic mass where the minority is most outnumbered.",
+        "visual": { "type": "bars", "values": [1, 2, 3], "labels": ["SMOTE", "Borderline", "ADASYN"], "highlight": 2 }
+      },
+      {
+        "text": "SMOTE is a sharp tool, not a magic wand: it can amplify noise and blurs the boundary where classes overlap.",
+        "visual": { "type": "lattice" }
+      }
+    ]
+  },
+  {
+    "id": "data-05-imbalanced-s4",
+    "chapter": "data/05-imbalanced",
+    "section": "s4",
+    "title": "Algorithm-level fixes — class weights, focal loss, threshold moving",
+    "eyebrow": "DATA",
+    "beats": [
+      {
+        "text": "Instead of rewriting the data, leave it alone and rewrite the objective with three loss- and decision-level levers.",
+        "visual": { "type": "title", "text": "Algorithm-Level Fixes", "sub": "Class weights, focal loss, threshold" }
+      },
+      {
+        "text": "Weighted cross-entropy scales each class by N over C times its count, so rarer classes get proportionally louder gradients.",
+        "visual": { "type": "equation", "tex": "\\mathcal{L} = -\\frac{1}{N}\\sum_i w_{y_i}\\log p_{i,y_i},\\quad w_c = \\frac{N}{C\\,N_c}", "note": "EQ D5.4 — weighted cross-entropy" }
+      },
+      {
+        "text": "For 1000 examples with 50 minority across two classes, balanced weighting gives the minority class a weight of 10.",
+        "visual": { "type": "stat", "value": 10, "label": "Minority class weight", "decimals": 0 }
+      },
+      {
+        "text": "Focal loss multiplies cross-entropy by one minus p_t to the gamma, deleting the gradient of easy, already-correct examples.",
+        "visual": { "type": "equation", "tex": "\\mathrm{FL}(p_t) = -\\alpha_t\\,(1 - p_t)^{\\gamma}\\,\\log p_t", "note": "EQ D5.5 — focal loss, paper used gamma = 2" }
+      },
+      {
+        "text": "An easy example at p_t 0.9 with gamma 2 keeps only 0.01 of its loss, so the gradient flows to hard cases.",
+        "visual": { "type": "stat", "value": 0.01, "label": "Modulating factor at p_t = 0.9", "decimals": 2 }
+      },
+      {
+        "text": "Threshold moving needs no retraining: when a miss costs 9 times a false alarm, the optimal cut drops to 0.1.",
+        "visual": { "type": "plot", "ys": [0.5, 0.33, 0.25, 0.2, 0.1, 0.05], "dot": 4, "xlabel": "miss cost rising", "ylabel": "optimal tau", "mark": "tau* falls" }
+      }
+    ]
+  },
+  {
+    "id": "data-05-imbalanced-s5",
+    "chapter": "data/05-imbalanced",
+    "section": "s5",
+    "title": "Evaluating under imbalance — PR curves, the right metric",
+    "eyebrow": "DATA",
+    "beats": [
+      {
+        "text": "Every prediction falls into one of four confusion-matrix cells, and every honest metric is built from them.",
+        "visual": { "type": "title", "text": "Evaluating Under Imbalance", "sub": "PR curves and the right metric" }
+      },
+      {
+        "text": "Precision asks how many alarms were real, recall asks how many real cases you caught, and neither uses true negatives.",
+        "visual": { "type": "equation", "tex": "\\text{P} = \\frac{\\mathrm{TP}}{\\mathrm{TP}+\\mathrm{FP}},\\quad \\text{R} = \\frac{\\mathrm{TP}}{\\mathrm{TP}+\\mathrm{FN}}", "note": "EQ D5.7 — precision and recall ignore TN" }
+      },
+      {
+        "text": "Catching all 10 positives but raising 90 false alarms gives perfect recall yet a precision of just 0.1.",
+        "visual": { "type": "stat", "value": 0.1, "label": "Precision: 10 of 100 alarms real", "decimals": 1 }
+      },
+      {
+        "text": "Screening 10000 people at 1 percent prevalence with 90 percent recall and 8 percent false-positive rate yields 792 false alarms.",
+        "visual": { "type": "bars", "values": [90, 792], "labels": ["true positives", "false positives"], "highlight": 1 }
+      },
+      {
+        "text": "That base-rate ambush drops precision to about 10 percent, and no amount of resampling can fix the prevalence speaking.",
+        "visual": { "type": "stat", "value": 10.2, "label": "Precision under base-rate ambush", "unit": "%", "decimals": 1 }
+      },
+      {
+        "text": "ROC-AUC stays flattering because false positives barely dent FPR, so on imbalanced problems prefer PR-AUC instead.",
+        "visual": { "type": "plot", "ys": [1.0, 0.6, 0.4, 0.25, 0.15, 0.1], "dot": 5, "xlabel": "recall rising", "ylabel": "precision", "mark": "PR curve" }
+      }
+    ]
+  }
+]

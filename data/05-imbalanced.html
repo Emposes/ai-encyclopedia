@@ -1,0 +1,799 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Imbalanced Data — Resampling &amp; SMOTE — AI Encyclopedia</title>
+<meta name="description" content="When 1 in 1000 is the case that matters — fraud, disease, default — accuracy lies. Resampling, SMOTE and its variants, class weights, focal loss, threshold moving, and PR-based evaluation." />
+<link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
+<meta name="theme-color" content="#000000" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+<link rel="canonical" href="https://ai-encyclopedia.com/data/05-imbalanced" />
+<meta property="og:url" content="https://ai-encyclopedia.com/data/05-imbalanced" />
+</head>
+<body data-track="data" data-level="core">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ DATA / 05 / IMBALANCED DATA</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../ml/01-learning-from-data.html">NEXT: LEARNING FROM DATA →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">DATA &amp; FEATURE ENGINEERING · CHAPTER 05 / 05</div>
+    <h1>Imbalanced Data — Resampling &amp; SMOTE</h1>
+    <p class="lede">When 1 case in 1000 is the one that matters, as with fraud, disease, or default, accuracy stops being informative. <strong>Accuracy misleads under imbalance, and the rebalancing method you choose determines what the model learns.</strong> This chapter moves from the failure of naive training through resampling, SMOTE and its descendants, loss-level fixes such as class weights and focal loss, and the metrics that remain meaningful at a 99:1 split.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 26 MIN</b></span>
+      <span>BUILDS ON<b>DATA 04 · ML 03</b></span>
+      <span>INSTRUMENTS<b>IMBALANCE · SMOTE · THRESHOLD</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">5.1</span>Why imbalance breaks training</a>
+      <a href="#s2"><span class="n">5.2</span>Resampling</a>
+      <a href="#s3"><span class="n">5.3</span>SMOTE &amp; variants</a>
+      <a href="#s4"><span class="n">5.4</span>Algorithm-level fixes</a>
+      <a href="#s5"><span class="n">5.5</span>Evaluating under imbalance</a>
+      <a href="#s6"><span class="n">5.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 5.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">5.1</span><h2>Why imbalance breaks training &amp; metrics</h2></div>
+        <p>A dataset is <strong>imbalanced</strong> when one class vastly outnumbers another. The ratio is not a curiosity — it is the whole problem. Credit-card fraud runs near 1 transaction in 1,000; a screening test for a rare cancer might see 1 case in 10,000; a churn flag fires for a few percent of users. In every case the class you actually care about is the rare one, and the loss function — left to its own devices — barely notices it exists.</p>
+
+        <p>Start with the metric everyone reaches for. <strong>Accuracy</strong> is the fraction of predictions that are correct, and on imbalanced data it is worse than useless — it is actively misleading. Consider the <em>majority-class baseline</em>: a "model" that ignores its input and always predicts the common class.</p>
+
+        <div class="eq"><span class="eq-tag">EQ D5.1 — THE ACCURACY TRAP</span>
+        $$ \text{Acc}_{\text{majority}} \;=\; \frac{N_{\text{maj}}}{N_{\text{maj}} + N_{\text{min}}} \;=\; 1 - \pi, \qquad \pi \;=\; \frac{N_{\text{min}}}{N} $$
+        <div class="eq-note">\(\pi\) is the <b>minority prevalence</b> — the base rate of the positive class. A constant predictor that always says "majority" scores \(1-\pi\) accuracy <b>while detecting nothing</b>. At \(\pi = 0.001\) it reads 99.9% accurate; at \(\pi = 0.05\), 95%. The number is real and the model is useless — accuracy measures the imbalance, not the model. The honest signals are <b>recall</b> (of the real positives, how many did you catch?) and <b>precision</b> (of your alarms, how many were real?), defined in §5.5.</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><div>A fraud set: \(N = 100{,}000\) transactions, of which \(N_{\text{min}} = 100\) are fraudulent. So \(\pi = 100 / 100{,}000 = 0.001\).</div></div>
+          <div class="x-step"><span class="x-n">02</span><div>The always-legitimate predictor is correct on all 99,900 legit rows and wrong on all 100 frauds: accuracy \(= 99{,}900 / 100{,}000 = 0.999\).</div></div>
+          <div class="x-step"><span class="x-n">03</span><div>Its recall on fraud is \(0/100 = 0\): it has never caught a single case. Precision is undefined (no positive predictions). Accuracy applauds; the bank is robbed.</div></div>
+          <div class="x-step"><span class="x-n">04</span><div>To <em>beat</em> 99.9% accuracy a real model must make almost no false alarms — yet catching frauds inevitably costs some. This is why accuracy is the wrong objective here: it punishes the very behavior you want.</div></div>
+          <span class="x-result">RESULT: 99.9% accurate, 0% recall — the trap in one line</span>
+        </div></div>
+        </div>
+
+        <div class="exercise" data-answer="0.95" data-tol="0.001" data-hint="majority-class accuracy is just the majority fraction, 1 − π">
+          <div class="ex-q">A dataset has a 95:5 class split (95% negative, 5% positive). A model that always predicts the majority (negative) class achieves what accuracy? (Give a decimal.)</div>
+          <div class="ex-reveal-src">By EQ D5.1, accuracy \(= N_{\text{maj}}/N = 95/100 = \) <b>0.95</b>. The constant predictor scores 95% while catching zero positives — which is exactly why accuracy cannot be trusted under imbalance.</div>
+        </div>
+
+        <p>The damage runs deeper than the scorecard. Most classifiers are trained by minimizing an <em>average</em> loss over examples (cross-entropy, Vol I · EQ M3.3). With 999 majority examples for every minority one, the gradient is dominated by the easy majority: the model can drive total loss down by becoming an excellent detector of the common class and a blind one for the rare class. The decision boundary is pushed <em>into</em> the minority region — the cheapest way to shave the average loss is to misclassify the few. Imbalance is therefore not just an evaluation headache; it is an <strong>optimization bias</strong> baked into the objective.</p>
+
+        <p>The instrument below makes this concrete. Dial the minority ratio down and watch accuracy march toward 100% while recall on the rare class collapses — the model has stopped learning the thing you built it for.</p>
+
+        <div class="widget" id="imb-play" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT D5.1 — IMBALANCE PLAYGROUND</span><span class="w-sub">TWO GAUSSIAN CLOUDS · LOGISTIC FIT · EQ D5.1</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>MINORITY SHARE π <output id="imb-play-ratio-out">5.0%</output></label><input type="range" id="imb-play-ratio" min="0.5" max="50" step="0.5" value="5"/></div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>TRAINING DATA</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-imb-mode="raw">AS-IS</button>
+                  <button class="w-btn ghost" data-imb-mode="over">OVERSAMPLE</button>
+                  <button class="w-btn ghost" data-imb-mode="under">UNDERSAMPLE</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="imb-play-canvas" height="330"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">ACCURACY</div><div class="r-value" id="imb-play-acc">—</div></div>
+              <div class="readout acc"><div class="r-label">RECALL (MINORITY)</div><div class="r-value" id="imb-play-rec">—</div></div>
+              <div class="readout"><div class="r-label">MAJORITY BASELINE ACC</div><div class="r-value" id="imb-play-base">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Mint = minority (the class that matters), blue = majority; the white line is the fitted boundary. Drag π toward 0.5%: accuracy climbs past 99% as the boundary swallows the minority cloud and recall craters — the model is acing the wrong test. Now switch to OVERSAMPLE or UNDERSAMPLE and watch the boundary swing back to bisect the clouds: accuracy dips, recall jumps. Rebalancing trades a meaningless metric for a meaningful one.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 5.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">5.2</span><h2>Resampling — random over- and under-sampling</h2></div>
+        <p>The simplest cure operates on the <em>data</em>, before any model sees it: change the class proportions so the loss can no longer ignore the minority. Two opposite moves achieve the same balanced ratio.</p>
+
+        <ul>
+          <li><strong>Random over-sampling (ROS).</strong> Duplicate minority examples (sampling with replacement) until the classes match. Keeps all majority information, but the copies are exact — the model can <em>memorize</em> them, inflating training scores and inviting overfitting to the few real minority points.</li>
+          <li><strong>Random under-sampling (RUS).</strong> Discard majority examples until the classes match. Fast, light, and a strong baseline — but it throws away potentially useful majority data, which hurts when the majority class is itself varied or the dataset is small.</li>
+        </ul>
+
+        <p>To reach a target minority share \(\rho\) (with \(\rho = 0.5\) meaning a balanced 1:1 set) by over-sampling, the minority class must be grown to match. The arithmetic is worth internalizing because every resampling library is doing exactly this under the hood:</p>
+
+        <div class="eq"><span class="eq-tag">EQ D5.2 — RESAMPLING TO A TARGET RATIO</span>
+        $$ N_{\text{min}}^{\text{target}} \;=\; \frac{\rho}{1-\rho}\, N_{\text{maj}}, \qquad \text{(1:1 balance)} \;\;\rho = \tfrac12 \;\Rightarrow\; N_{\text{min}}^{\text{target}} = N_{\text{maj}} $$
+        <div class="eq-note">\(\rho\) is the <b>desired</b> minority fraction of the resampled set. Over-sampling duplicates the minority up to \(N_{\text{min}}^{\text{target}}\) (total grows); under-sampling instead cuts the majority down to \(\frac{1-\rho}{\rho} N_{\text{min}}\) (total shrinks). <b>Cardinal rule: resample the training fold only.</b> Touching validation or test data — or resampling before the train/test split — leaks information and manufactures fictional scores. The held-out set must keep the real-world prevalence \(\pi\), because that is the distribution your model will actually face.</div>
+        </div>
+
+        <div class="exercise" data-answer="0.5" data-tol="0.001" data-hint="oversampling duplicates the minority up to the majority count; recompute its share of the new total">
+          <div class="ex-q">A training fold has 50 minority and 950 majority examples. You over-sample the minority up to 950 (a 1:1 balance). What is the minority's <b>share of the resampled set</b>? (Give a decimal.)</div>
+          <div class="ex-reveal-src">After over-sampling, minority \(= 950\) and majority \(= 950\), so the new total is \(950 + 950 = 1900\). Minority share \(= 950 / 1900 = \) <b>0.5</b>. Note the original prevalence was \(50/1000 = 0.05\); over-sampling to 1:1 has moved it to exactly one half — by construction (EQ D5.2 with \(\rho = \tfrac12\)).</div>
+        </div>
+
+        <p class="note"><strong>Resampling does not add information.</strong> Duplicating a point tells the model nothing it did not already know; it only reweights how loudly that point speaks in the loss — which is mathematically close to the class-weighting of §5.4. The honest framing: resampling and reweighting both move the <em>effective</em> prevalence the optimizer sees, nudging the decision threshold without changing the underlying separability of the classes. That realization is what motivates SMOTE — a way to add genuinely new minority points instead of mere copies.</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># EQ D5.2: random over- vs under-sampling to a 1:1 balance
+import numpy as np
+rng = np.random.default_rng(0)
+
+# a 95:5 training fold: 950 majority (label 0), 50 minority (label 1)
+maj = rng.normal(0.0, 1.0, (950, 2))
+mn  = rng.normal(2.4, 1.0, (50,  2))
+X = np.vstack([maj, mn]); y = np.array([0]*950 + [1]*50)
+print(f"before      : maj={np.sum(y==0):4d}  min={np.sum(y==1):4d}  "
+      f"min-share={np.mean(y==1):.3f}")
+
+# random OVER-sampling: duplicate minority (with replacement) up to majority count
+idx_min = np.where(y == 1)[0]
+extra   = rng.choice(idx_min, size=950 - 50, replace=True)   # 900 duplicates
+Xo, yo  = np.vstack([X, X[extra]]), np.concatenate([y, y[extra]])
+print(f"oversampled : maj={np.sum(yo==0):4d}  min={np.sum(yo==1):4d}  "
+      f"min-share={np.mean(yo==1):.3f}  (rho=0.5, EQ D5.2)")
+
+# random UNDER-sampling: keep all 50 minority, randomly keep 50 majority
+keep_maj = rng.choice(np.where(y == 0)[0], size=50, replace=False)
+Xu = np.vstack([X[keep_maj], X[idx_min]]); yu = np.array([0]*50 + [1]*50)
+print(f"undersampled: maj={np.sum(yu==0):4d}  min={np.sum(yu==1):4d}  "
+      f"min-share={np.mean(yu==1):.3f}  (kept only 100 of 1000 rows)")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — try a different rho by changing the target counts</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 5.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">5.3</span><h2>SMOTE &amp; variants</h2></div>
+        <p>Random over-sampling copies points; <strong>SMOTE</strong> — Synthetic Minority Over-sampling Technique (Chawla et al., 2002) — <em>invents</em> them. Instead of duplicating a minority example, it draws a brand-new point along the line segment connecting that example to one of its minority near neighbors. The result is a denser, smoother minority region rather than a stack of identical copies, which forces the classifier to carve out broader minority territory instead of memorizing isolated dots.</p>
+
+        <div class="eq"><span class="eq-tag">EQ D5.3 — SMOTE INTERPOLATION</span>
+        $$ x_{\text{new}} \;=\; x_i \;+\; \lambda \,\bigl(x_{nn} - x_i\bigr), \qquad \lambda \sim \mathcal{U}(0,1), \qquad x_{nn} \in \text{kNN}_{\text{min}}(x_i) $$
+        <div class="eq-note">\(x_i\) is a minority example; \(x_{nn}\) is one of its \(k\) nearest <b>minority</b> neighbors (typically \(k = 5\)), chosen at random; \(\lambda\) is a uniform random step along the segment between them. \(\lambda = 0\) returns \(x_i\); \(\lambda = 1\) lands on the neighbor; in between you get a convex blend — a new, plausible minority point. <b>The synthetic point lives inside the convex hull of the minority class</b>, never extrapolating outside it. Caveat: in regions where minority and majority overlap, SMOTE happily interpolates across the gap and plants synthetic points in majority territory — which is exactly what the Borderline and ADASYN variants try to fix.</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><div>Two 1-D minority points: \(x_i = 2\), and a chosen neighbor \(x_{nn} = 6\). The gap is \(x_{nn} - x_i = 4\).</div></div>
+          <div class="x-step"><span class="x-n">02</span><div>Draw \(\lambda = 0.25\). The synthetic point is \(x_{\text{new}} = 2 + 0.25 \times 4 = 2 + 1 = 3\).</div></div>
+          <div class="x-step"><span class="x-n">03</span><div>Draw \(\lambda = 0.75\) instead: \(x_{\text{new}} = 2 + 0.75 \times 4 = 5\). Every \(\lambda\) yields a different point on the segment \([2, 6]\) — never outside it.</div></div>
+          <div class="x-step"><span class="x-n">04</span><div>In 2-D the same formula runs componentwise: with \(x_i = (2, 1)\), \(x_{nn} = (6, 5)\), \(\lambda = 0.25\) gives \((3, 2)\). The new point sits a quarter of the way along the connecting line.</div></div>
+          <span class="x-result">RESULT: λ = 0.25 between 2 and 6 → x_new = 3</span>
+        </div></div>
+        </div>
+
+        <div class="exercise" data-answer="3" data-tol="0.001" data-hint="x_new = x_i + λ(x_nn − x_i); plug in 2, 6, and 0.25">
+          <div class="ex-q">SMOTE picks a minority point \(x_i = 2\), a neighbor \(x_{nn} = 6\), and draws \(\lambda = 0.25\). By EQ D5.3, what is the synthetic point \(x_{\text{new}}\)?</div>
+          <div class="ex-reveal-src">\(x_{\text{new}} = x_i + \lambda(x_{nn} - x_i) = 2 + 0.25\,(6 - 2) = 2 + 0.25\times 4 = 2 + 1 = \) <b>3</b>. The new point lies a quarter of the way from \(x_i\) toward its neighbor — inside the segment, never beyond it.</div>
+        </div>
+
+        <p>Plain SMOTE treats every minority point equally. Its two most-used descendants spend their synthetic budget where it helps most — near the decision boundary, where errors actually happen:</p>
+
+        <table class="data">
+          <thead><tr><th>Variant</th><th>Where it synthesizes</th><th>Intuition</th></tr></thead>
+          <tbody>
+            <tr><td><strong>SMOTE</strong></td><td class="m">uniformly across all minority points</td><td>Densifies the whole minority region; simple, strong default.</td></tr>
+            <tr><td><strong>Borderline-SMOTE</strong></td><td class="m">only from minority points <em>near</em> the boundary</td><td>A point is "in danger" if most of its neighbors are majority; reinforce exactly those frontier cases.</td></tr>
+            <tr><td><strong>ADASYN</strong></td><td class="hl">more for minority points that are <em>harder</em> to learn</td><td>Generate inversely to local density — pour synthetic mass where the minority is most outnumbered.</td></tr>
+          </tbody>
+        </table>
+
+        <p class="note"><strong>Honest caveats.</strong> SMOTE assumes the space between two minority neighbors is itself minority — true for smooth, continuous features, false for categorical ones (use SMOTE-NC) and shaky in high dimensions, where "near neighbor" loses meaning and interpolation can land in nonsense regions. It can amplify noise (a mislabeled minority point spawns a cluster of synthetic noise) and, by design, blurs the boundary in overlapping classes. Modern practice often pairs it with a cleaning step — SMOTE-Tomek or SMOTE-ENN remove the majority points SMOTE's new neighbors now contradict. And on large deep-learning problems, loss-level fixes (§5.4) frequently beat resampling outright. SMOTE is a sharp tool, not a magic wand.</p>
+
+        <div class="widget" id="imb-smote" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT D5.2 — SMOTE VISUALIZER</span><span class="w-sub">EQ D5.3 · k-NN INTERPOLATION · SEEDED MINORITY</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>NEIGHBORS k <output id="imb-smote-k-out">5</output></label><input type="range" id="imb-smote-k" min="1" max="8" step="1" value="5"/></div>
+              <div class="ctl"><label>SYNTHETIC POINTS <output id="imb-smote-n-out">60</output></label><input type="range" id="imb-smote-n" min="0" max="160" step="10" value="60"/></div>
+            </div>
+            <canvas class="w-canvas" id="imb-smote-canvas" height="330"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">REAL MINORITY</div><div class="r-value" id="imb-smote-real">—</div></div>
+              <div class="readout acc"><div class="r-label">SYNTHETIC (SMOTE)</div><div class="r-value" id="imb-smote-syn">—</div></div>
+              <div class="readout"><div class="r-label">EFFECTIVE MIN-SHARE</div><div class="r-value" id="imb-smote-share">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Solid mint dots are the 14 real minority examples; faint blue dots are majority; hollow mint dots are synthetic points, each drawn on a segment between a real minority point and one of its k neighbors (the thin connecting line shows the parent pair). Raise k and the synthetic cloud reaches farther between sub-clusters; raise the count and the minority region fills in. Watch the effective minority share climb toward balance — without a single duplicated point.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># SMOTE in pure numpy: interpolate between minority k-NN (EQ D5.3)
+import numpy as np
+rng = np.random.default_rng(1)
+
+# a 90:10 fold: 90 majority, 10 minority, 2 features
+maj = rng.normal(0.0, 1.0, (90, 2))
+mn  = rng.normal(2.6, 0.7, (10, 2))
+X, y = np.vstack([maj, mn]), np.array([0]*90 + [1]*10)
+P = X[y == 1]                                   # minority points only
+
+def smote(P, n_new, k=5):
+    out = []
+    D = np.sqrt(((P[:, None] - P[None]) ** 2).sum(-1))   # pairwise distances
+    for _ in range(n_new):
+        i  = rng.integers(len(P))                # a random minority point
+        nn = np.argsort(D[i])[1:k+1]             # its k nearest minority neighbors
+        j  = nn[rng.integers(len(nn))]           # pick one neighbor
+        lam = rng.random()                       # lambda ~ U(0,1)
+        out.append(P[i] + lam * (P[j] - P[i]))   # the interpolated synthetic point
+    return np.array(out)
+
+S = smote(P, n_new=80, k=5)
+before = y.mean()
+after  = (y.sum() + len(S)) / (len(y) + len(S))
+print(f"minority before SMOTE : {y.sum():2d} / {len(y)}  = {before:.3f}")
+print(f"synthetic generated   : {len(S)}")
+print(f"minority after SMOTE  : {y.sum()+len(S):2d} / {len(y)+len(S)} = {after:.3f}")
+inside = bool((S.min(0) &gt;= P.min(0)).all() and (S.max(0) &lt;= P.max(0)).all())
+print("every synthetic point sits inside the real-minority box:", inside)
+plot_scatter(np.r_[X[:,0], S[:,0]], np.r_[X[:,1], S[:,1]],
+             np.r_[y, np.full(len(S), 2)])      # 0 maj, 1 real-min, 2 synthetic</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — set k=1 (nearest only) or push n_new to 200</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 5.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">5.4</span><h2>Algorithm-level fixes — class weights, focal loss, threshold moving</h2></div>
+        <p>Resampling rewrites the data; the alternative is to leave the data alone and rewrite the <em>objective</em>. Three loss- and decision-level levers do this without touching a single row.</p>
+
+        <h3>Class weights (cost-sensitive learning)</h3>
+        <p>Scale each example's contribution to the loss by a class-dependent weight, so a minority mistake costs more than a majority one. The standard inverse-frequency weighting gives each class influence proportional to its rarity:</p>
+
+        <div class="eq"><span class="eq-tag">EQ D5.4 — WEIGHTED CROSS-ENTROPY</span>
+        $$ \mathcal{L} \;=\; -\frac{1}{N}\sum_{i=1}^{N} w_{y_i}\,\log p_{i,\,y_i}, \qquad w_c \;=\; \frac{N}{C\,N_c} $$
+        <div class="eq-note">\(w_c\) is the weight for class \(c\), \(N_c\) its count, \(C\) the number of classes; the formula (scikit-learn's <code>class_weight="balanced"</code>) makes each class contribute equally to the total loss in expectation. A class \(10\times\) rarer gets \(\sim\!10\times\) the per-example weight. This is the loss-level twin of over-sampling — both inflate the minority's voice in the gradient — but it adds no rows and no duplicates, so it is cheaper and overfits less. <b>It moves the effective decision threshold toward the minority class</b>, trading precision for recall.</div>
+        </div>
+
+        <div class="exercise" data-answer="10" data-tol="0.001" data-hint="w_c = N / (C · N_c); here C = 2, N = 1000, and the minority count is 50">
+          <div class="ex-q">A binary problem has \(N = 1000\) examples: 950 majority and 50 minority (\(C = 2\) classes). Using balanced weighting \(w_c = N/(C\,N_c)\), what weight does the <b>minority</b> class receive?</div>
+          <div class="ex-reveal-src">\(w_{\text{min}} = \dfrac{N}{C\,N_{\text{min}}} = \dfrac{1000}{2 \times 50} = \dfrac{1000}{100} = \) <b>10</b>. Each minority example counts ten times as heavily in the loss as it would unweighted — and the majority gets \(1000/(2\times 950) \approx 0.53\), so the two classes contribute equally overall.</div>
+        </div>
+
+        <h3>Focal loss</h3>
+        <p>Class weights up-weight a whole class; <strong>focal loss</strong> (Lin et al., 2017, for dense object detection) up-weights the <em>hard</em> examples within it — the ones the model still gets wrong — and lets the easy, already-correct majority examples fade from the gradient automatically:</p>
+
+        <div class="eq"><span class="eq-tag">EQ D5.5 — FOCAL LOSS</span>
+        $$ \mathrm{FL}(p_t) \;=\; -\,\alpha_t\,(1 - p_t)^{\gamma}\,\log p_t, \qquad p_t \;=\; \begin{cases} p &amp; y = 1 \\ 1 - p &amp; y = 0 \end{cases} $$
+        <div class="eq-note">\(p_t\) is the probability assigned to the <em>true</em> class; \(\alpha_t\) is an optional class weight as in EQ D5.4; \(\gamma \ge 0\) is the <b>focusing parameter</b>. The modulating factor \((1-p_t)^{\gamma}\) is the whole idea: for a well-classified example (\(p_t \to 1\)) it \(\to 0\), nearly deleting that example's gradient; for a hard one (\(p_t\) small) it stays near 1. At \(\gamma = 0\) focal loss is exactly cross-entropy; the paper used \(\gamma = 2\). The effect: a flood of easy majority examples no longer drowns out the rare, hard minority ones — <b>imbalance is handled inside the loss, no resampling required</b>.</div>
+        </div>
+
+        <div class="exercise" data-answer="0.01" data-tol="0.001" data-hint="the modulating factor is (1 − p_t)^γ; here p_t = 0.9 and γ = 2, so compute 0.1 squared">
+          <div class="ex-q">An easy example is classified with \(p_t = 0.9\). Using focal loss with \(\gamma = 2\), what is the modulating factor \((1 - p_t)^{\gamma}\) that scales its loss?</div>
+          <div class="ex-reveal-src">\((1 - p_t)^{\gamma} = (1 - 0.9)^2 = (0.1)^2 = \) <b>0.01</b>. This easy example's contribution to the loss is cut to 1% of its cross-entropy value — so the gradient budget flows to the hard cases instead. A hard example at \(p_t = 0.1\) keeps a factor of \((0.9)^2 = 0.81\), almost untouched.</div>
+        </div>
+
+        <h3>Threshold moving</h3>
+        <p>The cheapest fix of all changes nothing about training. A probabilistic classifier outputs \(p = P(y=1 \mid x)\); the default rule "predict positive if \(p > 0.5\)" is a <em>convention</em>, not a law. Under imbalance — or under asymmetric costs, where a missed fraud dwarfs a false alarm — the optimal cut sits elsewhere. Sweep the threshold \(\tau\) and you trace the entire precision/recall trade-off from a single trained model:</p>
+
+        <div class="eq"><span class="eq-tag">EQ D5.6 — COST-OPTIMAL THRESHOLD</span>
+        $$ \hat{y} = \mathbb{1}\!\left[\,p > \tau\,\right], \qquad \tau^{\star} \;=\; \frac{C_{\text{FP}}}{C_{\text{FP}} + C_{\text{FN}}} \quad \text{(Bayes-optimal cut for costs } C_{\text{FP}},\, C_{\text{FN}}) $$
+        <div class="eq-note">Lower \(\tau\) below 0.5 to catch more positives (recall ↑, precision ↓); raise it to flag only the confident ones (precision ↑, recall ↓). The Bayes-optimal \(\tau^{\star}\) depends only on the <b>relative cost</b> of a false positive versus a false negative: if missing a fraud is 9× costlier than a false alarm (\(C_{\text{FN}} = 9, C_{\text{FP}} = 1\)), then \(\tau^{\star} = 1/(1+9) = 0.1\) — flag anything over 10% probability. Threshold moving and proper probability calibration together often recover most of what resampling promised, with none of its risks.</div>
+        </div>
+
+        <div class="widget" id="imb-thr" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT D5.3 — THRESHOLD &amp; COST EXPLORER</span><span class="w-sub">EQ D5.6 · 1000 SCORED CASES · 95:5 PREVALENCE</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>THRESHOLD τ <output id="imb-thr-t-out">0.50</output></label><input type="range" id="imb-thr-t" min="0.02" max="0.98" step="0.01" value="0.5"/></div>
+              <div class="ctl"><label>COST OF A MISS (FN) <output id="imb-thr-c-out">10×</output></label><input type="range" id="imb-thr-c" min="1" max="50" step="1" value="10"/></div>
+            </div>
+            <canvas class="w-canvas" id="imb-thr-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">PRECISION</div><div class="r-value" id="imb-thr-prec">—</div></div>
+              <div class="readout acc"><div class="r-label">RECALL</div><div class="r-value" id="imb-thr-rec">—</div></div>
+              <div class="readout"><div class="r-label">TOTAL COST (FP + c·FN)</div><div class="r-value" id="imb-thr-cost">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The two curves are precision (mint) and recall (blue) as the threshold sweeps; the white line is your current τ. The dashed mint marker is the cost-optimal cut \(\tau^{\star} = 1/(1 + c)\) from EQ D5.6. Slide τ left and recall rises while precision falls; raise the miss-cost c and watch \(\tau^{\star}\) march left — when a miss costs 10× a false alarm, the optimal threshold drops to 0.09. The "TOTAL COST" readout is minimized near that marker, not at 0.5.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Accuracy lies; recall/precision trade off as the threshold moves (99:1)
+import numpy as np
+rng = np.random.default_rng(3)
+
+n = 10000; n_pos = 100                            # 1% prevalence -> 99:1
+# simulate calibrated scores: positives skew high, negatives skew low
+s_pos = np.clip(rng.beta(5, 2, n_pos),     0, 1) # true positives, score-ish high
+s_neg = np.clip(rng.beta(2, 6, n-n_pos),   0, 1) # true negatives, score-ish low
+score = np.r_[s_pos, s_neg]
+y     = np.r_[np.ones(n_pos), np.zeros(n-n_pos)].astype(int)
+
+def report(tau):
+    yhat = (score > tau).astype(int)
+    tp = int(((yhat==1)&(y==1)).sum()); fp = int(((yhat==1)&(y==0)).sum())
+    fn = int(((yhat==0)&(y==1)).sum()); tn = int(((yhat==0)&(y==0)).sum())
+    acc  = (tp+tn)/n
+    prec = tp/(tp+fp) if tp+fp else float('nan')
+    rec  = tp/(tp+fn) if tp+fn else 0.0
+    return acc, prec, rec, tp, fp, fn
+
+print(" tau    acc    prec   recall   TP   FP   FN")
+for tau in (0.5, 0.3, 0.1):
+    acc, prec, rec, tp, fp, fn = report(tau)
+    print(f"{tau:.2f}  {acc:.4f}  {prec:.3f}  {rec:.3f}  {tp:4d} {fp:4d} {fn:4d}")
+print("\nalways-predict-negative: acc =", round((n-n_pos)/n, 4),
+      "  recall = 0.0  (caught nothing)")
+print("dropping tau 0.5 -> 0.1 trades precision for the recall you actually need.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — add tau=0.05, or change n_pos to make it 99.9:0.1</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 5.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">5.5</span><h2>Evaluating under imbalance — PR curves, the right metric</h2></div>
+        <p>Every prediction lands in one of four cells of the <strong>confusion matrix</strong>, and every honest metric is built from them:</p>
+
+        <table class="data">
+          <thead><tr><th>CONFUSION MATRIX</th><th>PREDICTED + (alarm)</th><th>PREDICTED − (clear)</th></tr></thead>
+          <tbody>
+            <tr><td><strong>ACTUAL + (rare)</strong></td><td class="hl">TP · caught it</td><td class="m">FN · a miss</td></tr>
+            <tr><td><strong>ACTUAL − (common)</strong></td><td class="m">FP · false alarm</td><td class="hl">TN · correct all-clear</td></tr>
+          </tbody>
+        </table>
+
+        <p>From these, two questions — and they are genuinely different questions:</p>
+
+        <div class="eq"><span class="eq-tag">EQ D5.7 — PRECISION, RECALL, F1</span>
+        $$ \text{Precision} = \frac{\mathrm{TP}}{\mathrm{TP}+\mathrm{FP}}, \qquad \text{Recall} = \frac{\mathrm{TP}}{\mathrm{TP}+\mathrm{FN}}, \qquad F_1 = \frac{2\,\text{P}\,\text{R}}{\text{P}+\text{R}} $$
+        <div class="eq-note"><b>Precision</b> = of everything you flagged, how much was real (the false-alarm tax). <b>Recall</b> = of everything real, how much you caught (the miss rate's complement). Crucially, <b>neither uses TN</b> — so the giant pile of easy true negatives that inflates accuracy simply cannot rig these numbers. \(F_1\) is their harmonic mean, harsh on any large gap between the two. When false-negative and false-positive costs differ, use the weighted \(F_\beta\) (β &gt; 1 favors recall) instead of \(F_1\).</div>
+        </div>
+
+        <div class="exercise" data-answer="0.1" data-tol="0.01" data-hint="precision = TP/(TP+FP); the model caught all 10 positives but raised 90 false alarms">
+          <div class="ex-q">On a 1000-row test set with 10 true positives, a model flags all 10 (\(\mathrm{TP}=10\), \(\mathrm{FN}=0\)) plus 90 negatives by mistake (\(\mathrm{FP}=90\)). What is its <b>precision</b>?</div>
+          <div class="ex-reveal-src">Precision \(= \dfrac{\mathrm{TP}}{\mathrm{TP}+\mathrm{FP}} = \dfrac{10}{10 + 90} = \dfrac{10}{100} = \) <b>0.1</b>. Recall is a perfect \(10/10 = 1.0\), yet 9 of every 10 alarms are false — the classic rare-event ambush, and exactly the trade-off the threshold of §5.4 controls.</div>
+        </div>
+
+        <p>Sweeping the threshold turns these point metrics into curves. Two summaries dominate, and the choice between them is the single most important evaluation decision under imbalance:</p>
+
+        <ul>
+          <li><strong>ROC curve</strong> (TPR vs. FPR) and its area, <strong>ROC-AUC</strong>. Because FPR = FP/(FP+TN) has the huge TN count in its denominator, ROC is <em>insensitive to prevalence</em> — which sounds like a virtue but is the opposite here. On a 99:1 problem a model can post a flattering 0.95 ROC-AUC while its precision is dismal, because thousands of false positives barely dent the FPR.</li>
+          <li><strong>Precision–Recall curve</strong> and its area, <strong>PR-AUC</strong> (a.k.a. average precision). Precision <em>does</em> feel every false positive directly, so the PR curve exposes exactly the failure ROC hides. <strong>On imbalanced problems, prefer PR-AUC.</strong></li>
+        </ul>
+
+        <p class="note"><strong>The base-rate ambush, in numbers.</strong> Screen 10,000 people for a condition with 1% prevalence (100 positives). A genuinely good test — 90% recall, 8% false-positive rate — catches 90 of the 100 cases but also flags 8% of 9,900 healthy people = 792 false alarms. Precision is \(90 / (90 + 792) \approx 10.2\%\): nine of every ten alarms are wrong, even though the test is "90% accurate" by recall. No amount of resampling fixes this — it is the prevalence speaking. The defenses are honest metrics (PR-AUC, precision at fixed recall), explicit cost modeling, and a calibrated threshold.</p>
+
+        <div class="spec-grid" data-reveal-stagger>
+          <div class="spec-cell"><div class="s-label">SCREENED</div><div class="s-value">10,000</div><div class="s-sub">prevalence 1% → 100 actually positive</div></div>
+          <div class="spec-cell"><div class="s-label">RECALL 90%</div><div class="s-value">90 TP</div><div class="s-sub">10 real cases slip through (FN)</div></div>
+          <div class="spec-cell"><div class="s-label">FP RATE 8%</div><div class="s-value">792 FP</div><div class="s-sub">8% of 9,900 healthy people flagged</div></div>
+          <div class="spec-cell"><div class="s-label">PRECISION</div><div class="s-value">10.2<em>%</em></div><div class="s-sub">90 / 882 alarms are real</div></div>
+        </div>
+
+        <p>Beyond curves, two more metrics earn their place: <strong>balanced accuracy</strong> (the mean of recall on each class — the right "accuracy" when you must report one number) and <strong>Matthews correlation coefficient (MCC)</strong>, a single value in \([-1, 1]\) that uses all four confusion cells and stays honest across any prevalence. Whatever you choose, the iron rule from §5.2 holds: <em>measure on data at the real prevalence</em>. Resample to train; never resample to evaluate.</p>
+
+        <div class="callout warn">
+          <span class="co-icon">PITFALLS</span>
+          <p><strong>The four classic imbalance mistakes:</strong> (1) reporting accuracy — it grades the base rate, not the model; (2) resampling <em>before</em> the train/test split, leaking synthetic minority points into the test fold and inventing scores; (3) trusting ROC-AUC on a 99:1 problem while precision quietly collapses; (4) shipping the default \(\tau = 0.5\) when your costs are asymmetric — the threshold is a free dial you forgot to turn.</p>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>You now know how to prepare and weigh data so a model learns what matters.</strong> The Machine Learning volume opens by stepping back to first principles — what it even means to <em>learn</em> from data, the bias–variance decomposition, and why every technique in this volume is ultimately a bet about generalization. Volume I · Chapter 01: Learning from Data.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 5.R — REFERENCES ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">5.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://doi.org/10.1613/jair.953" target="_blank" rel="noopener">Chawla, N. V., Bowyer, K. W., Hall, L. O. &amp; Kegelmeyer, W. P. (2002). <span class="ref-venue">SMOTE: Synthetic Minority Over-sampling Technique</span>.</a> <span class="ref-meta">Journal of Artificial Intelligence Research 16 — the interpolation method of EQ D5.3.</span></li>
+          <li><a href="https://doi.org/10.1109/TKDE.2008.239" target="_blank" rel="noopener">He, H. &amp; Garcia, E. A. (2009). <span class="ref-venue">Learning from Imbalanced Data</span>.</a> <span class="ref-meta">IEEE Transactions on Knowledge and Data Engineering 21(9) — the canonical survey of resampling, cost-sensitive learning, and evaluation.</span></li>
+          <li><a href="https://arxiv.org/abs/1708.02002" target="_blank" rel="noopener">Lin, T.-Y., Goyal, P., Girshick, R., He, K. &amp; Dollár, P. (2017). <span class="ref-venue">Focal Loss for Dense Object Detection</span>.</a> <span class="ref-meta">ICCV 2017 (RetinaNet) — focal loss, EQ D5.5.</span></li>
+          <li><a href="https://doi.org/10.1007/11538059_91" target="_blank" rel="noopener">Han, H., Wang, W.-Y. &amp; Mao, B.-H. (2005). <span class="ref-venue">Borderline-SMOTE: A New Over-Sampling Method in Imbalanced Data Sets Learning</span>.</a> <span class="ref-meta">ICIC 2005 — synthesizing only near the decision boundary (§5.3).</span></li>
+          <li><a href="https://doi.org/10.1109/IJCNN.2008.4633969" target="_blank" rel="noopener">He, H., Bai, Y., Garcia, E. A. &amp; Li, S. (2008). <span class="ref-venue">ADASYN: Adaptive Synthetic Sampling Approach for Imbalanced Learning</span>.</a> <span class="ref-meta">IJCNN 2008 — density-adaptive synthetic generation (§5.3).</span></li>
+          <li><a href="https://doi.org/10.1145/1143844.1143874" target="_blank" rel="noopener">Davis, J. &amp; Goadrich, M. (2006). <span class="ref-venue">The Relationship Between Precision-Recall and ROC Curves</span>.</a> <span class="ref-meta">ICML 2006 — why PR-AUC, not ROC-AUC, is the metric to trust under imbalance (§5.5).</span></li>
+          <li><a href="https://doi.org/10.1186/s12864-019-6413-7" target="_blank" rel="noopener">Chicco, D. &amp; Jurman, G. (2020). <span class="ref-venue">The Advantages of the Matthews Correlation Coefficient (MCC) over F1 and Accuracy</span>.</a> <span class="ref-meta">BMC Genomics 21 — the case for MCC on imbalanced binary problems (§5.5).</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../data/04-feature-engineering.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">04</span> Feature Engineering</div></a>
+        <a class="next" href="../ml/01-learning-from-data.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">01</span> Machine Learning · Learning from Data</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — DATA &amp; FEATURE ENGINEERING · CH 05</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* chapter instruments — single IIFE, no globals */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+
+  function sigmoid(z) { return 1 / (1 + Math.exp(-z)); }
+
+  /* ============ INSTRUMENT D5.1 — IMBALANCE PLAYGROUND ============ */
+  (function imbalancePlayground() {
+    var root = document.getElementById("imb-play");
+    if (!root) return;
+    var canvas = document.getElementById("imb-play-canvas");
+    var sRatio = document.getElementById("imb-play-ratio");
+    var oRatio = document.getElementById("imb-play-ratio-out");
+    var accEl = document.getElementById("imb-play-acc");
+    var recEl = document.getElementById("imb-play-rec");
+    var baseEl = document.getElementById("imb-play-base");
+    var btns = root.querySelectorAll("[data-imb-mode]");
+    var mode = "raw";
+
+    /* seeded gaussian draws (Box–Muller over mulberry32) */
+    var rng = FM.mulberry32(90210);
+    function gauss() {
+      var u = Math.max(1 - rng(), 1e-12), v = rng();
+      return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+    }
+    /* a fixed pool: 600 majority + 120 minority, two separated clouds */
+    var MAJ = [], MIN = [], i;
+    for (i = 0; i < 600; i++) MAJ.push({ x: -1.4 + 1.05 * gauss(), y: -0.7 + 1.05 * gauss() });
+    for (i = 0; i < 120; i++) MIN.push({ x:  1.6 + 1.05 * gauss(), y:  0.9 + 1.05 * gauss() });
+
+    var XMIN = -5, XMAX = 5, YMIN = -4.2, YMAX = 4.2, CH = 330;
+
+    /* fit logistic regression by gradient descent on a (possibly resampled) set */
+    function fit(maj, min) {
+      var w1 = 0, w2 = 0, b = 0, lr = 0.4, step, k;
+      var n = maj.length + min.length;
+      for (step = 0; step < 250; step++) {
+        var g1 = 0, g2 = 0, gb = 0;
+        for (k = 0; k < maj.length; k++) {
+          var p0 = sigmoid(w1 * maj[k].x + w2 * maj[k].y + b);
+          g1 += p0 * maj[k].x; g2 += p0 * maj[k].y; gb += p0;
+        }
+        for (k = 0; k < min.length; k++) {
+          var p1 = sigmoid(w1 * min[k].x + w2 * min[k].y + b) - 1;
+          g1 += p1 * min[k].x; g2 += p1 * min[k].y; gb += p1;
+        }
+        w1 -= lr * g1 / n; w2 -= lr * g2 / n; b -= lr * gb / n;
+      }
+      return { w1: w1, w2: w2, b: b };
+    }
+
+    function render() {
+      var pct = +sRatio.value;                 /* minority share, percent */
+      oRatio.textContent = pct.toFixed(1) + "%";
+      /* derive class counts at this prevalence (cap by available pool) */
+      var nMaj = 600;
+      var nMin = Math.max(3, Math.round(nMaj * pct / (100 - pct)));
+      if (nMin > MIN.length) { nMin = MIN.length; nMaj = Math.round(nMin * (100 - pct) / pct); }
+      var majAll = MAJ.slice(0, nMaj), minAll = MIN.slice(0, nMin);
+
+      /* build the TRAINING set per mode (eval is always majAll + minAll) */
+      var trMaj = majAll, trMin = minAll, j;
+      if (mode === "over") {
+        trMin = [];
+        for (j = 0; j < nMaj; j++) trMin.push(minAll[j % nMin]);   /* duplicate up to majority */
+      } else if (mode === "under") {
+        trMaj = majAll.slice(0, nMin);                              /* cut majority down to minority */
+      }
+      var model = fit(trMaj, trMin);
+      var w1 = model.w1, w2 = model.w2, b = model.b;
+
+      /* evaluate on the real-prevalence pool */
+      var tp = 0, fn = 0, correct = 0, k;
+      for (k = 0; k < majAll.length; k++) {
+        if (sigmoid(w1 * majAll[k].x + w2 * majAll[k].y + b) < 0.5) correct++;
+      }
+      for (k = 0; k < minAll.length; k++) {
+        if (sigmoid(w1 * minAll[k].x + w2 * minAll[k].y + b) >= 0.5) { tp++; correct++; } else fn++;
+      }
+      var total = majAll.length + minAll.length;
+      var acc = correct / total;
+      var rec = (tp + fn) > 0 ? tp / (tp + fn) : 0;
+      var base = majAll.length / total;
+      accEl.textContent = (100 * acc).toFixed(1) + "%";
+      recEl.textContent = (100 * rec).toFixed(1) + "%";
+      baseEl.textContent = (100 * base).toFixed(1) + "%";
+
+      /* draw */
+      var sc = FM.setupCanvas(canvas, CH), ctx = sc.ctx, W = sc.w;
+      ctx.clearRect(0, 0, W, CH);
+      function PX(x) { return (x - XMIN) / (XMAX - XMIN) * W; }
+      function PY(y) { return (1 - (y - YMIN) / (YMAX - YMIN)) * CH; }
+
+      /* faint probability wash */
+      var cell = 16, gx, gy, dx, dy, pw;
+      for (gx = 0; gx < W; gx += cell) {
+        for (gy = 0; gy < CH; gy += cell) {
+          dx = XMIN + (gx + cell / 2) / W * (XMAX - XMIN);
+          dy = YMAX - (gy + cell / 2) / CH * (YMAX - YMIN);
+          pw = sigmoid(w1 * dx + w2 * dy + b);
+          ctx.fillStyle = pw >= 0.5
+            ? "rgba(166,242,204," + (0.10 * (2 * pw - 1)).toFixed(3) + ")"
+            : "rgba(78,138,247," + (0.10 * (1 - 2 * pw)).toFixed(3) + ")";
+          ctx.fillRect(gx, gy, cell, cell);
+        }
+      }
+      ctx.strokeStyle = FM.C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(0.5, 0.5, W - 1, CH - 1);
+
+      /* points: majority first (blue), then minority (mint) on top */
+      ctx.globalAlpha = 0.55;
+      ctx.fillStyle = FM.C.BLUE;
+      for (k = 0; k < majAll.length; k++) {
+        ctx.beginPath(); ctx.arc(PX(majAll[k].x), PY(majAll[k].y), 2.4, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.globalAlpha = 0.95;
+      ctx.fillStyle = FM.C.MINT;
+      for (k = 0; k < minAll.length; k++) {
+        ctx.beginPath(); ctx.arc(PX(minAll[k].x), PY(minAll[k].y), 3.0, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+
+      /* decision boundary */
+      var nrm = Math.hypot(w1, w2);
+      if (nrm > 1e-4) {
+        var px0 = -b * w1 / (nrm * nrm), py0 = -b * w2 / (nrm * nrm);
+        var dxn = -w2 / nrm, dyn = w1 / nrm, L = 40;
+        ctx.save();
+        ctx.beginPath(); ctx.rect(0, 0, W, CH); ctx.clip();
+        ctx.strokeStyle = FM.C.BRIGHT; ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(PX(px0 - dxn * L), PY(py0 - dyn * L));
+        ctx.lineTo(PX(px0 + dxn * L), PY(py0 + dyn * L));
+        ctx.stroke();
+        ctx.restore();
+      }
+      /* legend */
+      ctx.font = FM.C.MONO; ctx.textAlign = "left";
+      ctx.fillStyle = FM.C.MINT; ctx.fillText("● MINORITY (" + minAll.length + ")", 8, 16);
+      ctx.fillStyle = FM.C.BLUE; ctx.fillText("● MAJORITY (" + majAll.length + ")", 8, 30);
+    }
+
+    btns.forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        btns.forEach(function (b2) { b2.classList.remove("on"); });
+        btn.classList.add("on");
+        mode = btn.getAttribute("data-imb-mode");
+        render();
+      });
+    });
+    sRatio.addEventListener("input", render);
+    window.addEventListener("resize", render);
+    render();
+  })();
+
+  /* ============ INSTRUMENT D5.2 — SMOTE VISUALIZER ============ */
+  (function smoteVisualizer() {
+    var root = document.getElementById("imb-smote");
+    if (!root) return;
+    var canvas = document.getElementById("imb-smote-canvas");
+    var sK = document.getElementById("imb-smote-k"), oK = document.getElementById("imb-smote-k-out");
+    var sN = document.getElementById("imb-smote-n"), oN = document.getElementById("imb-smote-n-out");
+    var realEl = document.getElementById("imb-smote-real");
+    var synEl = document.getElementById("imb-smote-syn");
+    var shareEl = document.getElementById("imb-smote-share");
+
+    var rng = FM.mulberry32(1234);
+    function gauss() {
+      var u = Math.max(1 - rng(), 1e-12), v = rng();
+      return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+    }
+    /* majority backdrop + two small minority sub-clusters (14 real points) */
+    var MAJ = [], MIN = [], i;
+    for (i = 0; i < 120; i++) MAJ.push({ x: -0.6 + 1.5 * gauss(), y: -0.3 + 1.5 * gauss() });
+    for (i = 0; i < 8; i++) MIN.push({ x: 2.0 + 0.45 * gauss(), y: 1.4 + 0.45 * gauss() });
+    for (i = 0; i < 6; i++) MIN.push({ x: 1.2 + 0.40 * gauss(), y: 2.4 + 0.40 * gauss() });
+
+    var XMIN = -4.5, XMAX = 4.5, YMIN = -3.5, YMAX = 4.5, CH = 330;
+
+    /* deterministic SMOTE: returns synthetic points + their parent pairs */
+    function smote(nNew, k) {
+      var out = [], pairs = [], rg = FM.mulberry32(555), a, b, lam, t, m, d, order, neigh;
+      var dist = function (p, q) { var dx = p.x - q.x, dy = p.y - q.y; return dx * dx + dy * dy; };
+      for (t = 0; t < nNew; t++) {
+        a = Math.floor(rg() * MIN.length);
+        /* k nearest minority neighbors of a (exclude self) */
+        order = [];
+        for (m = 0; m < MIN.length; m++) if (m !== a) order.push({ idx: m, d: dist(MIN[a], MIN[m]) });
+        order.sort(function (p, q) { return p.d - q.d; });
+        neigh = order.slice(0, Math.min(k, order.length));
+        b = neigh[Math.floor(rg() * neigh.length)].idx;
+        lam = rg();
+        out.push({ x: MIN[a].x + lam * (MIN[b].x - MIN[a].x),
+                   y: MIN[a].y + lam * (MIN[b].y - MIN[a].y) });
+        pairs.push({ ax: MIN[a].x, ay: MIN[a].y, bx: MIN[b].x, by: MIN[b].y });
+      }
+      return { pts: out, pairs: pairs };
+    }
+
+    function render() {
+      var k = +sK.value, nNew = +sN.value;
+      oK.textContent = k;
+      oN.textContent = nNew;
+      var res = smote(nNew, k);
+
+      var sc = FM.setupCanvas(canvas, CH), ctx = sc.ctx, W = sc.w;
+      ctx.clearRect(0, 0, W, CH);
+      function PX(x) { return (x - XMIN) / (XMAX - XMIN) * W; }
+      function PY(y) { return (1 - (y - YMIN) / (YMAX - YMIN)) * CH; }
+      ctx.strokeStyle = FM.C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(0.5, 0.5, W - 1, CH - 1);
+
+      /* majority backdrop */
+      ctx.globalAlpha = 0.4; ctx.fillStyle = FM.C.BLUE;
+      var k2;
+      for (k2 = 0; k2 < MAJ.length; k2++) {
+        ctx.beginPath(); ctx.arc(PX(MAJ[k2].x), PY(MAJ[k2].y), 2.2, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+
+      /* parent-pair connectors (faint) */
+      ctx.strokeStyle = "rgba(166,242,204,.18)"; ctx.lineWidth = 1;
+      for (k2 = 0; k2 < res.pairs.length; k2++) {
+        var pr = res.pairs[k2];
+        ctx.beginPath(); ctx.moveTo(PX(pr.ax), PY(pr.ay)); ctx.lineTo(PX(pr.bx), PY(pr.by)); ctx.stroke();
+      }
+
+      /* synthetic points (hollow mint) */
+      ctx.strokeStyle = FM.C.MINT; ctx.lineWidth = 1.2;
+      for (k2 = 0; k2 < res.pts.length; k2++) {
+        ctx.beginPath(); ctx.arc(PX(res.pts[k2].x), PY(res.pts[k2].y), 2.6, 0, Math.PI * 2); ctx.stroke();
+      }
+      /* real minority (solid mint) on top */
+      ctx.fillStyle = FM.C.MINT;
+      for (k2 = 0; k2 < MIN.length; k2++) {
+        ctx.beginPath(); ctx.arc(PX(MIN[k2].x), PY(MIN[k2].y), 3.6, 0, Math.PI * 2); ctx.fill();
+      }
+
+      ctx.font = FM.C.MONO; ctx.textAlign = "left";
+      ctx.fillStyle = FM.C.MINT; ctx.fillText("● REAL  ○ SYNTHETIC", 8, 16);
+      ctx.fillStyle = FM.C.BLUE; ctx.fillText("● MAJORITY", 8, 30);
+
+      var minTotal = MIN.length + res.pts.length;
+      var share = minTotal / (MAJ.length + minTotal);
+      realEl.textContent = String(MIN.length);
+      synEl.textContent = "+" + res.pts.length;
+      shareEl.textContent = (100 * share).toFixed(1) + "%";
+    }
+
+    sK.addEventListener("input", render);
+    sN.addEventListener("input", render);
+    window.addEventListener("resize", render);
+    render();
+  })();
+
+  /* ============ INSTRUMENT D5.3 — THRESHOLD & COST EXPLORER ============ */
+  (function thresholdExplorer() {
+    var root = document.getElementById("imb-thr");
+    if (!root) return;
+    var canvas = document.getElementById("imb-thr-canvas");
+    var sT = document.getElementById("imb-thr-t"), oT = document.getElementById("imb-thr-t-out");
+    var sC = document.getElementById("imb-thr-c"), oC = document.getElementById("imb-thr-c-out");
+    var precEl = document.getElementById("imb-thr-prec");
+    var recEl = document.getElementById("imb-thr-rec");
+    var costEl = document.getElementById("imb-thr-cost");
+
+    /* 1000 scored cases at 95:5 prevalence, seeded scores */
+    var rng = FM.mulberry32(424242);
+    function gauss() {
+      var u = Math.max(1 - rng(), 1e-12), v = rng();
+      return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+    }
+    function clamp01(x) { return Math.min(0.999, Math.max(0.001, x)); }
+    var DATA = [], i;                         /* {s: score, y: label} */
+    for (i = 0; i < 950; i++) DATA.push({ s: clamp01(0.30 + 0.16 * gauss()), y: 0 });
+    for (i = 0; i < 50;  i++) DATA.push({ s: clamp01(0.68 + 0.16 * gauss()), y: 1 });
+
+    function confusion(tau) {
+      var tp = 0, fp = 0, fn = 0, tn = 0, k;
+      for (k = 0; k < DATA.length; k++) {
+        var pos = DATA[k].s > tau;
+        if (DATA[k].y === 1) { if (pos) tp++; else fn++; }
+        else { if (pos) fp++; else tn++; }
+      }
+      return { tp: tp, fp: fp, fn: fn, tn: tn };
+    }
+    function prAt(tau) {
+      var c = confusion(tau);
+      var prec = (c.tp + c.fp) > 0 ? c.tp / (c.tp + c.fp) : 1;
+      var rec = (c.tp + c.fn) > 0 ? c.tp / (c.tp + c.fn) : 0;
+      return { prec: prec, rec: rec, c: c };
+    }
+
+    var CH = 300, padL = 38, padR = 14, padT = 14, padB = 28;
+
+    function render() {
+      var tau = +sT.value, cost = +sC.value;
+      oT.textContent = tau.toFixed(2);
+      oC.textContent = cost + "×";
+      var tauStar = 1 / (1 + cost);            /* EQ D5.6 with C_FP = 1, C_FN = cost */
+
+      var here = prAt(tau);
+      precEl.textContent = (100 * here.prec).toFixed(1) + "%";
+      recEl.textContent = (100 * here.rec).toFixed(1) + "%";
+      var totalCost = here.c.fp * 1 + here.c.fn * cost;
+      costEl.textContent = String(Math.round(totalCost));
+
+      var sc = FM.setupCanvas(canvas, CH), ctx = sc.ctx;
+      var W = sc.w - padL - padR, H = CH - padT - padB;
+      ctx.clearRect(0, 0, sc.w, CH);
+      function X(t) { return padL + t * W; }
+      function Y(p) { return padT + (1 - p) * H; }
+
+      ctx.strokeStyle = FM.C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(padL, padT, W, H);
+      ctx.font = FM.C.MONO; ctx.fillStyle = FM.C.MUT;
+      ctx.textAlign = "center";
+      var g;
+      for (g = 0; g <= 1.0001; g += 0.25) ctx.fillText(g.toFixed(2), X(g), padT + H + 16);
+      ctx.fillText("threshold τ", padL + W / 2, padT + H + 26);
+      ctx.textAlign = "right";
+      [0, 0.5, 1].forEach(function (p) { ctx.fillText(p.toFixed(1), padL - 6, Y(p) + 3); });
+
+      /* precision (mint) and recall (blue) curves across τ */
+      function curve(color, key) {
+        ctx.strokeStyle = color; ctx.lineWidth = 1.8;
+        ctx.beginPath();
+        var first = true, t, pr;
+        for (t = 0.02; t <= 0.98; t += 0.01) {
+          pr = prAt(t);
+          var yv = pr[key];
+          if (first) { ctx.moveTo(X(t), Y(yv)); first = false; } else ctx.lineTo(X(t), Y(yv));
+        }
+        ctx.stroke();
+      }
+      curve(FM.C.MINT, "prec");
+      curve(FM.C.BLUE, "rec");
+
+      /* cost-optimal marker tau* (dashed mint vertical) */
+      ctx.setLineDash([4, 4]);
+      ctx.strokeStyle = "rgba(166,242,204,.6)"; ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.moveTo(X(tauStar), padT); ctx.lineTo(X(tauStar), padT + H); ctx.stroke();
+      ctx.setLineDash([]);
+
+      /* current τ (solid white vertical) */
+      ctx.strokeStyle = FM.C.BRIGHT; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(X(tau), padT); ctx.lineTo(X(tau), padT + H); ctx.stroke();
+
+      /* labels */
+      ctx.font = FM.C.MONO; ctx.textAlign = "left";
+      ctx.fillStyle = FM.C.MINT; ctx.fillText("PRECISION", padL + 6, padT + 14);
+      ctx.fillStyle = FM.C.BLUE; ctx.fillText("RECALL", padL + 6, padT + 27);
+      ctx.fillStyle = FM.C.SEC;
+      ctx.fillText("τ* = " + tauStar.toFixed(2), Math.min(X(tauStar) + 5, padL + W - 60), padT + H - 8);
+    }
+
+    sT.addEventListener("input", render);
+    sC.addEventListener("input", render);
+    window.addEventListener("resize", render);
+    render();
+  })();
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

@@ -1,0 +1,811 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Training Techniques in Practice — AI Encyclopedia</title>
+<meta name="description" content="The training decisions most tutorials skip: dataset curation and tagging, freezing and unfreezing blocks, continued pre-training, curriculum and data mixing, and the catastrophic-forgetting mitigations that keep a model from losing what it already knew." />
+<link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
+<meta name="theme-color" content="#000000" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+<link rel="canonical" href="https://ai-encyclopedia.com/openmodels/04-training-techniques" />
+<meta property="og:url" content="https://ai-encyclopedia.com/openmodels/04-training-techniques" />
+</head>
+<body data-track="openmodels" data-level="advanced">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ OPEN MODELS / 04 / TRAINING TECHNIQUES</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../openmodels/05-red-teaming.html">NEXT: RED-TEAMING &amp; SAFETY →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">OPEN MODELS &amp; PRACTICE · CHAPTER 04 / 05</div>
+    <h1>Training Techniques in Practice</h1>
+    <p class="lede">Anyone can run a fine-tune. Making it learn without forgetting is harder. <strong>The difference between a model that learns your domain and one that forgets everything comes down to a handful of training decisions most tutorials skip:</strong> how you curate and tag the data, which blocks you let move, whether you adapt the base before you specialize it, the order you feed examples in, and how you guard the general skills you are not trying to change.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>ADVANCED</b></span>
+      <span>READING TIME<b>≈ 26 MIN</b></span>
+      <span>BUILDS ON<b>OPEN MODELS · 03 · Vol II · CH 04, 06</b></span>
+      <span>INSTRUMENTS<b>LAYER FREEZE · DATA MIX · FORGETTING</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">4.1</span>Dataset curation &amp; tagging</a>
+      <a href="#s2"><span class="n">4.2</span>Freezing &amp; unfreezing blocks</a>
+      <a href="#s3"><span class="n">4.3</span>Continued pre-training</a>
+      <a href="#s4"><span class="n">4.4</span>Curriculum &amp; data mixing</a>
+      <a href="#s5"><span class="n">4.5</span>Catastrophic forgetting</a>
+      <a href="#s6"><span class="n">4.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 4.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">4.1</span><h2>Dataset curation &amp; tagging</h2></div>
+        <p>The most common reason a fine-tune disappoints is not the algorithm — it is the data. A base model has already seen trillions of tokens of generic text; your few thousand examples can only nudge it, so every one of them must <em>earn its place</em>. The job before training is curation: assemble examples that are correct, on-distribution for what you will actually ask at inference, free of duplicates, and not contaminated by your evaluation set.</p>
+
+        <p>Four checks do most of the work, in this order:</p>
+        <table class="data">
+          <thead><tr><th>Step</th><th>What it removes</th><th>Why it matters</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Dedup</strong></td><td class="m">near-identical examples</td><td>Repeats inflate apparent dataset size and let the model memorize a handful of strings instead of learning the pattern.</td></tr>
+            <tr><td><strong>Decontaminate</strong></td><td class="m">eval/test leakage</td><td>If your benchmark questions sit in the training data, your numbers are fiction (Vol II · §6.5).</td></tr>
+            <tr><td><strong>Quality filter</strong></td><td class="m">wrong, toxic, off-format</td><td>One mislabeled example teaches the wrong thing far more efficiently than ten right ones correct it.</td></tr>
+            <tr><td><strong>Balance</strong></td><td class="m">skew toward easy/common cases</td><td>An imbalanced set makes the model fluent on the majority slice and blind to the tail you care about.</td></tr>
+          </tbody>
+        </table>
+
+        <p><strong>Tagging</strong> is the second half of curation, and it is what turns a flat pile of text into a steerable signal. Every example carries metadata — its source, domain, language, difficulty, quality score, license — and those tags are used in two distinct ways. <em>Offline</em>, they drive filtering and the mixing ratios of §4.4. <em>Inline</em>, special tokens written into the sequence itself let the model condition on provenance: a leading <code>&lt;quality:high&gt;</code> or domain marker that the model learns to associate with the behavior you want, and that you can then assert at inference. This is the idea behind <strong>conditional pre-training</strong> and quality-tag prefixes — keep the noisy data in the corpus for breadth, but <em>label</em> it so the model can be told to imitate only the good parts.</p>
+
+        <div class="callout">
+          <span class="co-icon">CONTROL TOKENS</span>
+          <p>The format your tags take is not free decoration — they must be <strong>reserved tokens</strong> the tokenizer treats atomically, not strings the model could also emit as ordinary text. A domain tag spelled as plain words can be hallucinated mid-generation; a true control token cannot, because it lives outside the natural-language vocabulary. Reuse the base model's existing special-token slots where you can.</p>
+        </div>
+
+        <p>Curation also has a quantitative side: not every example contributes equally to the loss, and a corpus's effective size after dedup is smaller than its raw count. A simple, honest way to measure the diversity you actually have is the <strong>effective number of distinct items</strong> — the exponential of the entropy of the source mixture, which collapses toward 1 as one source dominates and rises toward the source count when the mixture is uniform.</p>
+
+        <div class="eq"><span class="eq-tag">EQ OM4.1 — EFFECTIVE DATASET DIVERSITY</span>
+        $$ H = -\sum_{i} p_i \log p_i, \qquad N_{\text{eff}} = e^{H} = \exp\!\Big(\!-\!\sum_i p_i \log p_i\Big) $$
+        <div class="eq-note">\(p_i\) is the fraction of tokens from source \(i\) after dedup. \(N_{\text{eff}}\) is the <b>perplexity of the source distribution</b>: a corpus that is 90% one source and 10% another has \(N_{\text{eff}} \approx 1.38\) — barely more diverse than a single source, no matter how many sources are nominally present. <b>The number that matters is not how many sources you collected, but how evenly the tokens are spread across them.</b> This same quantity reappears as the lever in the data-mixing instrument of §4.4.</div>
+        </div>
+
+        <div class="exercise" data-answer="2" data-tol="0.02" data-hint="Two sources at 50/50: H = ln 2, and N_eff = exp(H) = 2.">
+          <div class="ex-q">A deduplicated corpus draws tokens from two sources in equal proportion, \( p = (0.5,\ 0.5) \). Using EQ OM4.1 with natural logs, what is the effective number of sources \( N_{\text{eff}} = e^{H} \)?</div>
+          <div class="ex-reveal-src">\( H = -(0.5\ln 0.5 + 0.5\ln 0.5) = -\ln 0.5 = \ln 2 \). Then \( N_{\text{eff}} = e^{\ln 2} = \) <b>2</b> — a perfectly even two-source mix is worth exactly two sources, the maximum for two parts.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># EQ OM4.1: effective dataset diversity = exp(entropy of the source mix)
+import numpy as np
+
+def n_eff(p):
+    p = np.asarray(p, float); p = p / p.sum()      # normalize to a distribution
+    p = p[p &gt; 0]                                    # 0*log0 = 0, skip empty sources
+    H = -(p * np.log(p)).sum()                      # Shannon entropy (nats)
+    return np.exp(H)                                # perplexity of the mixture
+
+mixes = {
+    "uniform 4-way   ": [1, 1, 1, 1],
+    "skewed 90/10     ": [0.9, 0.1],
+    "near single src  ": [0.97, 0.01, 0.01, 0.01],
+    "balanced 3-way   ": [1, 1, 1],
+}
+for name, p in mixes.items():
+    print(f"{name}: N_eff = {n_eff(p):.3f}  (raw sources = {len(p)})")
+
+print("\nN_eff collapses toward 1 as one source dominates -- collecting more")
+print("sources buys nothing if 90% of your tokens still come from one of them.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <p class="note"><strong>A blunt heuristic that holds up:</strong> read fifty of your own examples by hand before you train on any of them. Tools find duplicates and contamination; only a human notices that the "answers" were scraped from a forum where half of them are wrong, or that the format drifts every few hundred rows. Quality dominates quantity in fine-tuning, and the cheapest quality filter is a pair of eyes.</p>
+      </section>
+
+      <!-- ====================== 4.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">4.2</span><h2>Freezing &amp; unfreezing blocks</h2></div>
+        <p>Full fine-tuning lets every weight move. But a transformer's layers do not all do the same job: the lower blocks encode generic, broadly useful features (tokens, syntax, low-level semantics), while the upper blocks specialize toward the output distribution. <strong>Freezing</strong> a block means excluding its parameters from the optimizer — they keep their pre-trained values, receive no gradient update, and need no optimizer state. The choice of <em>where</em> to draw the freeze line is one of the highest-leverage knobs you have, and it trades three things at once.</p>
+
+        <table class="data">
+          <thead><tr><th>You freeze more →</th><th>Trainable params</th><th>Compute &amp; memory</th><th>Forgetting risk</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Freeze nothing (full FT)</strong></td><td class="m">100%</td><td class="m">highest</td><td class="m">highest</td></tr>
+            <tr><td><strong>Freeze lower blocks</strong></td><td class="m">fewer</td><td class="m">lower</td><td class="hl">lower</td></tr>
+            <tr><td><strong>Freeze all but the head</strong></td><td class="m">tiny</td><td class="m">lowest</td><td class="hl">lowest (but least capacity)</td></tr>
+          </tbody>
+        </table>
+
+        <p>The mechanics are simple but worth stating exactly. For a model whose backbone is \(L\) identical transformer blocks of \(P_b\) parameters each, plus an embedding table \(P_e\) and an output head \(P_h\), freezing the first \(k\) blocks (and the embeddings, the usual default) leaves a trainable count and fraction of:</p>
+
+        <div class="eq"><span class="eq-tag">EQ OM4.2 — TRAINABLE FRACTION UNDER FREEZING</span>
+        $$ P_{\text{train}} = (L-k)\,P_b + P_h, \qquad f = \frac{P_{\text{train}}}{P_e + L\,P_b + P_h} $$
+        <div class="eq-note">\(k\) is the number of frozen lower blocks. Because optimizer state (with AdamW, two moments) and activation gradients are only kept for trainable parameters, halving \(P_{\text{train}}\) roughly halves the training memory beyond the frozen forward pass — <b>and it directly limits how far the weights can drift from the pre-trained solution, which is exactly the forgetting lever of §4.5.</b> Frozen layers still run on the forward pass, so they cost compute for activations; what you save is the backward pass and the optimizer.</div>
+        </div>
+
+        <p><strong>Gradual unfreezing</strong>, introduced with ULMFiT, sequences these choices over time rather than fixing one. You begin with everything frozen but the head, train for a bit, then unfreeze the topmost block, then the next, and so on toward the input — each newly thawed layer also given a smaller learning rate than the one above it (<em>discriminative</em> fine-tuning). The intuition: let the task-specific top adapt first on stable lower features, then carefully relax the deeper, more general representations only once the top has found its footing. This was a central recipe for transfer learning before LoRA (Vol II · §6.2) made low-rank adapters the default, and it remains the right mental model for what freezing buys you.</p>
+
+        <div class="exercise" data-answer="0.25" data-tol="0.02" data-hint="With equal-size blocks and a negligible head, the trainable fraction is just (L - k) / L.">
+          <div class="ex-q">A model has \( L = 32 \) equal-size transformer blocks (treat the embedding and head as negligible). You freeze the first \( k = 24 \) blocks. Using EQ OM4.2, what fraction \( f \) of the blocks remains trainable?</div>
+          <div class="ex-reveal-src">With equal blocks and a negligible head, \( f = \dfrac{L-k}{L} = \dfrac{32-24}{32} = \dfrac{8}{32} = \) <b>0.25</b>. Freezing three-quarters of the backbone leaves one quarter of the parameters to learn the task — and roughly quarters the optimizer memory they require.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># EQ OM4.2: freeze the first k of L blocks, get the trainable fraction
+import numpy as np
+
+L      = 32           # transformer blocks
+P_b    = 200e6        # params per block (200M, ~6.4B backbone)
+P_emb  = 525e6        # embedding table (frozen with the lower blocks)
+P_head = 525e6        # output head (always trainable here)
+total  = P_emb + L * P_b + P_head
+
+print(f"{'frozen k':>9} {'trainable params':>18} {'fraction':>10}")
+for k in (0, 8, 16, 24, 31):
+    p_train = (L - k) * P_b + P_head            # head stays trainable
+    frac = p_train / total
+    print(f"{k:>9} {p_train/1e9:>16.3f}B {frac:>10.3f}")
+
+# optimizer (AdamW: 2 moments) + grads ~ 12 bytes/trainable param, fp32-ish
+k = 24
+p_train = (L - k) * P_b + P_head
+opt_gb = p_train * 12 / 1e9
+print(f"\nfreeze {k}: ~{opt_gb:.1f} GB of optimizer+grad state, vs "
+      f"{(total*12/1e9):.1f} GB for full FT -- the memory you buy back.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="traintech-freeze" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT OM4.1 — LAYER-FREEZING EXPLORER</span><span class="w-sub">EQ OM4.2 · WHICH BLOCKS TRAIN</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>BACKBONE BLOCKS L <output id="traintech-freeze-L-out">32</output></label><input type="range" id="traintech-freeze-L" min="8" max="48" step="2" value="32"/></div>
+              <div class="ctl"><label>FROZEN LOWER BLOCKS k <output id="traintech-freeze-k-out">24</output></label><input type="range" id="traintech-freeze-k" min="0" max="48" step="1" value="24"/></div>
+            </div>
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>EMBEDDINGS</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-traintech-emb="frozen">FROZEN</button>
+                  <button class="w-btn ghost" data-traintech-emb="train">TRAIN</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="traintech-freeze-canvas" height="220"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">TRAINABLE BLOCKS</div><div class="r-value" id="traintech-freeze-blocks">—</div></div>
+              <div class="readout acc"><div class="r-label">TRAINABLE PARAMS</div><div class="r-value" id="traintech-freeze-params">—</div></div>
+              <div class="readout acc"><div class="r-label">TRAINABLE FRACTION</div><div class="r-value" id="traintech-freeze-frac">—</div></div>
+              <div class="readout"><div class="r-label">OPTIM + GRAD MEMORY</div><div class="r-value" id="traintech-freeze-mem">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Each cell is one block; mint = trainable, deep-green = frozen. The head is always trainable; toggle whether the embedding table thaws too. Drag <code>k</code> up from 0 (full fine-tune) toward L and watch trainable params — and the optimizer memory they demand — fall away. The bottom blocks you freeze are the generic features you most want to <em>protect</em>; the top blocks you leave trainable are where task-specific behavior lives.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 4.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">4.3</span><h2>Continued pre-training &amp; domain adaptation</h2></div>
+        <p>Instruction fine-tuning teaches a model <em>how to behave</em>; it does not, by itself, teach it a new <em>domain</em>. If your target is legal contracts, clinical notes, a low-resource language, or an internal codebase whose idioms never appeared at scale on the open web, the base model lacks the underlying language model of that domain — and no amount of supervised examples will install vocabulary and distributional knowledge that the pre-training never built. The fix is <strong>continued pre-training</strong> (also called domain-adaptive pre-training, or DAPT): take the base model and keep running the original self-supervised objective — next-token prediction — but now on a large corpus of <em>in-domain</em> raw text, before you do any task fine-tuning.</p>
+
+        <div class="eq"><span class="eq-tag">EQ OM4.3 — THE TWO-STAGE OBJECTIVE</span>
+        $$ \theta_0 \;\xrightarrow[\text{DAPT}]{\;\mathcal{L}_{\text{LM}}(\mathcal{D}_{\text{domain}})\;} \theta_1 \;\xrightarrow[\text{SFT}]{\;\mathcal{L}_{\text{task}}(\mathcal{D}_{\text{task}})\;} \theta_2, \qquad \mathcal{L}_{\text{LM}} = -\!\sum_t \log p_\theta(x_t \mid x_{&lt;t}) $$
+        <div class="eq-note">Start from the pre-trained \(\theta_0\); first minimize the <b>same</b> language-modeling loss on domain text to reach \(\theta_1\); only then fine-tune on labeled task data to reach \(\theta_2\). The first arrow moves the model's distribution onto your domain; the second teaches the skill. <b>Continued pre-training adapts a base model to a new domain <em>before</em> fine-tuning — it is the step that builds the foundation the task fine-tune then stands on.</b> Gururangan et al. showed this two-stage recipe beats task fine-tuning alone across domains, and that a cheaper <em>task</em>-adaptive variant (TAPT, pre-training on the unlabeled task data itself) helps even when a domain corpus is unavailable.</div>
+        </div>
+
+        <p>Three engineering points separate a continued-pre-training run that helps from one that quietly damages the model:</p>
+        <ul>
+          <li><strong>Learning rate.</strong> Use a <em>fraction</em> of the original pre-training peak — too high and you overwrite general knowledge (forgetting, §4.5); too low and the domain never sinks in. A short warmup and cosine decay over one to a few epochs of domain text is the standard shape.</li>
+          <li><strong>Tokenizer fit.</strong> If your domain uses tokens the base tokenizer shatters into fragments (chemical formulae, code, a new script), continued pre-training on top of a bad tokenization is fighting uphill. Vocabulary extension is sometimes warranted — but new embedding rows start untrained and need their own warmup.</li>
+          <li><strong>Replay.</strong> Mix a slice of general-domain text back into the domain corpus (§4.4). Pure in-domain continued pre-training is the fastest route to a model that aces your jargon and has forgotten how to hold a normal conversation.</li>
+        </ul>
+
+        <p class="note"><strong>When to reach for it.</strong> Continued pre-training is expensive relative to LoRA fine-tuning and is the wrong tool for <em>behavioral</em> gaps (format, style, tool protocols) — those are §4.2 / Vol II · Ch 06 territory. It earns its cost when the gap is genuinely <em>knowledge or language</em>: the model would need to have <em>read</em> more of your world to do the task at all. A useful tell is perplexity — if the base model's perplexity on a held-out sample of your domain is high, DAPT has room to work; if it is already low, you mostly need task data, not more pre-training.</p>
+      </section>
+
+      <!-- ====================== 4.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">4.4</span><h2>Curriculum &amp; data mixing</h2></div>
+        <p>Once you have curated, tagged, and possibly domain-adapted, two questions about <em>order and proportion</em> remain. <strong>Curriculum learning</strong> asks: in what sequence should examples be presented? <strong>Data mixing</strong> asks: in what ratio should different sources be combined? Both are about shaping the distribution the optimizer sees over the course of training, and both can move final quality more than another epoch ever would.</p>
+
+        <h3>Curriculum</h3>
+        <p>The original curriculum-learning result (Bengio et al., 2009) is that presenting examples in order of increasing difficulty — easy first, hard later — can speed convergence and reach better optima than uniform random shuffling, much as a syllabus does for a student. In LLM training the effect is real but contested: it helps most when there is a clear, reliable difficulty signal (sequence length, a grader's score, a reasoning-step count) and matters less when data is already abundant and diverse. The honest summary in 2026 is that curriculum is a useful lever for reasoning and code fine-tunes with measurable difficulty, and an over-engineered one for generic chat data where good shuffling is hard to beat.</p>
+
+        <h3>Data mixing &amp; replay</h3>
+        <p>Mixing is the more universally important of the two. When you fine-tune or continue-pre-train, you choose how to weight your sources — and crucially, how much <strong>replay</strong> (a fraction of the model's original, general-domain data) to fold back in. Replay is the single most reliable defense against forgetting: by keeping the old distribution partly present, you keep its gradients partly alive. The trade-off is direct — more replay protects old capability at the cost of slower adaptation to the new domain.</p>
+
+        <div class="eq"><span class="eq-tag">EQ OM4.4 — A MIXED OBJECTIVE WITH REPLAY</span>
+        $$ \mathcal{L}_{\text{mix}} = (1-r)\,\mathbb{E}_{x\sim\mathcal{D}_{\text{new}}}\!\big[\ell(x)\big] \;+\; r\,\mathbb{E}_{x\sim\mathcal{D}_{\text{old}}}\!\big[\ell(x)\big], \qquad r \in [0, 1] $$
+        <div class="eq-note">\(r\) is the replay fraction — the share of each batch drawn from the original general corpus rather than the new domain. \(r = 0\) is pure adaptation (fastest learning, fastest forgetting); \(r = 1\) is no adaptation at all. <b>Empirically a small replay fraction — often 1–10% — recovers most of the retained capability for a small slowdown in adaptation</b>, which is why "mix a little of the old data back in" is the most repeated piece of fine-tuning advice that actually works. The same effective-diversity logic of EQ OM4.1 governs how the <em>non-replay</em> portion is itself blended across domains.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Data mixing with replay: how batch composition shifts effective gradients.
+# A simple two-domain model: expected per-step movement toward each domain
+# is proportional to that domain's share of the batch (EQ OM4.4).
+import numpy as np
+
+new_share = lambda r: 1 - r           # fraction of batch from the new domain
+old_share = lambda r: r               # replay fraction from the old domain
+
+print(f"{'replay r':>9} {'new-domain pull':>16} {'old-domain pull':>16}")
+for r in (0.0, 0.01, 0.05, 0.1, 0.25, 0.5):
+    print(f"{r:>9.2f} {new_share(r):>16.2f} {old_share(r):>16.2f}")
+
+# break-even: replay you need so old-domain pull >= a target retention budget
+target = 0.05                          # want >= 5% of gradient mass on old data
+need = target                          # since old_share(r) = r
+print(f"\nTo keep >= {target:.0%} of the gradient on old data, set r >= {need:.2f}.")
+print("Even 5% replay keeps the old distribution alive while 95% of each")
+print("batch still drives adaptation -- the standard anti-forgetting trick.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="traintech-mix" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT OM4.2 — DATA-MIXING RATIO SIMULATOR</span><span class="w-sub">EQ OM4.4 · NEW vs OLD vs DIVERSITY</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>REPLAY FRACTION r <output id="traintech-mix-r-out">0.05</output></label><input type="range" id="traintech-mix-r" min="0" max="0.6" step="0.01" value="0.05"/></div>
+              <div class="ctl"><label>NEW-DOMAIN SOURCES <output id="traintech-mix-k-out">3</output></label><input type="range" id="traintech-mix-k" min="1" max="6" step="1" value="3"/></div>
+            </div>
+            <div class="ctl-row">
+              <div class="ctl"><label>SKEW OF NEW MIX <output id="traintech-mix-skew-out">1.0</output></label><input type="range" id="traintech-mix-skew" min="0" max="4" step="0.2" value="1"/></div>
+            </div>
+            <canvas class="w-canvas" id="traintech-mix-canvas" height="230"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">ADAPTATION SPEED</div><div class="r-value" id="traintech-mix-adapt">—</div></div>
+              <div class="readout acc"><div class="r-label">OLD CAPABILITY RETAINED</div><div class="r-value" id="traintech-mix-retain">—</div></div>
+              <div class="readout"><div class="r-label">EFFECTIVE SOURCES Nₑff</div><div class="r-value" id="traintech-mix-neff">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The bar splits each batch into replay (deep-green, old domain) and new-domain sources (mint, one band per source). Raise <code>r</code> and retained capability climbs while adaptation speed falls — the §4.5 trade-off made visible. Raise the skew and watch the new-domain mix collapse toward a single source: effective diversity \(N_{\text{eff}}\) (EQ OM4.1) drops even though the source count is unchanged.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 4.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">4.5</span><h2>Catastrophic forgetting &amp; mitigations</h2></div>
+        <p>Every technique in this chapter circles one failure mode. <strong>Catastrophic forgetting</strong> is the tendency of a neural network, trained sequentially on task B, to overwrite the weights that encoded task A — sometimes destroying a capability it had moments earlier. It is not a bug in the optimizer; it is a direct consequence of how gradient descent works. The loss on B says nothing about A, so the update is free to move into any direction that lowers B's loss, including directions that wreck A. The first careful study of it in modern nets is McCloskey &amp; Cohen (1989); it is the central obstacle to <em>continual learning</em>, and it is exactly what a domain fine-tune risks doing to a model's general skills.</p>
+
+        <p>The cleanest way to feel it: fit a linear model to task A, record its error, then keep training on task B alone, and watch A's error climb as the shared weights are pulled toward B.</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Catastrophic forgetting in miniature: fit task A, then train on B,
+# and measure how much task-A performance drops (no replay).
+import numpy as np
+rng = np.random.default_rng(0)
+
+d = 8
+wA = rng.normal(0, 1, d)                     # task A's true weights
+wB = rng.normal(0, 1, d)                     # task B: a DIFFERENT relationship
+XA = rng.normal(0, 1, (200, d)); yA = XA @ wA
+XB = rng.normal(0, 1, (200, d)); yB = XB @ wB
+
+w = np.linalg.lstsq(XA, yA, rcond=None)[0]   # learn task A
+mseA_before = float(np.mean((XA @ w - yA) ** 2))
+
+lr = 0.02                                     # now train ONLY on B (SGD)
+for _ in range(300):
+    grad = XB.T @ (XB @ w - yB) / len(XB)
+    w -= lr * grad
+mseA_after = float(np.mean((XA @ w - yA) ** 2))
+
+print(f"task A MSE before training on B : {mseA_before:.4f}")
+print(f"task A MSE after  training on B : {mseA_after:.4f}")
+print(f"forgetting (MSE increase)       : {mseA_after - mseA_before:.4f}")
+print("\nA was solved exactly; fitting B with no replay overwrites the shared")
+print("weights and A's error explodes. This is catastrophic forgetting.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <p>Forgetting is usually reported as a drop in a held-out metric on the original capability — a <strong>forgetting probe</strong> run at every checkpoint. The quantity to track is the gap between the model's score on the old task before and after adapting to the new one:</p>
+
+        <div class="eq"><span class="eq-tag">EQ OM4.5 — FORGETTING &amp; RETENTION</span>
+        $$ F = a^{\text{old}}_{\text{before}} - a^{\text{old}}_{\text{after}}, \qquad R = \frac{a^{\text{old}}_{\text{after}}}{a^{\text{old}}_{\text{before}}} $$
+        <div class="eq-note">\(a^{\text{old}}\) is accuracy (or any score, higher-is-better) on the original task; \(F\) is the absolute forgetting, \(R\) the retention ratio. A clean adaptation pushes the new-task score up while keeping \(F\) near zero. <b>You cannot manage what you do not measure: if your only eval is the target task, a model can ace it while silently losing half its general ability — the "silent capability regression" that the fine-tuning recipe in Vol II · §6.5 warns about.</b></div>
+        </div>
+
+        <p>The mitigations, in rough order of cost and effectiveness:</p>
+        <table class="data">
+          <thead><tr><th>Mitigation</th><th>How it fights forgetting</th><th>Cost</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Replay / rehearsal</strong> (§4.4)</td><td>keep old-distribution gradients alive in every batch</td><td class="m">a slice of old data; small slowdown</td></tr>
+            <tr><td><strong>Parameter-efficient FT</strong> (LoRA, §4.2)</td><td>freeze the base; learn a small add-on that can be removed</td><td class="m">very low; near-zero forgetting of the frozen base</td></tr>
+            <tr><td><strong>Lower LR / fewer epochs</strong></td><td>limit how far weights drift from \(\theta_0\)</td><td class="m">free; trades adaptation for safety</td></tr>
+            <tr><td><strong>EWC &amp; regularizers</strong></td><td>penalize moving weights important to the old task</td><td class="m">a Fisher-information pass; extra hyperparameter</td></tr>
+          </tbody>
+        </table>
+
+        <p><strong>Elastic Weight Consolidation</strong> (Kirkpatrick et al., 2017) is the canonical regularizer. It estimates how important each weight was to the old task — using the diagonal of the Fisher information matrix, \(F_i\), as a proxy for curvature — and adds a quadratic penalty that makes important weights stiff and unimportant ones free to move:</p>
+
+        <div class="eq"><span class="eq-tag">EQ OM4.6 — ELASTIC WEIGHT CONSOLIDATION</span>
+        $$ \mathcal{L}_{\text{EWC}}(\theta) = \mathcal{L}_{\text{new}}(\theta) + \frac{\lambda}{2}\sum_i F_i\,\big(\theta_i - \theta^{\star}_i\big)^2 $$
+        <div class="eq-note">\(\theta^\star\) are the old-task weights; \(F_i\) the Fisher importance of weight \(i\); \(\lambda\) the consolidation strength. The penalty is an anchored spring whose stiffness is \(F_i\) — weights the old task relied on are pulled hard back toward \(\theta^\star\), while irrelevant weights are left free to specialize. <b>It approximates training on both tasks at once without retaining the old data</b>, which is its appeal when the old corpus is gone. In practice, for LLMs, plain replay plus PEFT usually matches or beats EWC at lower complexity — EWC matters most when you genuinely cannot revisit old data.</div>
+        </div>
+
+        <div class="exercise" data-answer="0.35" data-tol="0.02" data-hint="Forgetting F is just accuracy-before minus accuracy-after.">
+          <div class="ex-q">A model scores \( a^{\text{old}}_{\text{before}} = 0.90 \) on a general benchmark. After a domain fine-tune with no replay, it scores \( a^{\text{old}}_{\text{after}} = 0.55 \). Using EQ OM4.5, what is the absolute forgetting \( F \)?</div>
+          <div class="ex-reveal-src">\( F = a^{\text{old}}_{\text{before}} - a^{\text{old}}_{\text{after}} = 0.90 - 0.55 = \) <b>0.35</b> — the model lost 35 accuracy points on what it already knew. The retention ratio \( R = 0.55/0.90 \approx 0.61 \): nearly two-fifths of the old capability is gone.</div>
+        </div>
+
+        <div class="widget" id="traintech-forget" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT OM4.3 — FORGETTING CURVE</span><span class="w-sub">EQ OM4.5 · OLD TASK vs NEW TASK OVER TRAINING</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>REPLAY FRACTION r <output id="traintech-forget-r-out">0.05</output></label><input type="range" id="traintech-forget-r" min="0" max="0.5" step="0.01" value="0.05"/></div>
+              <div class="ctl"><label>LEARNING RATE <output id="traintech-forget-lr-out">1.0×</output></label><input type="range" id="traintech-forget-lr" min="0.2" max="3" step="0.1" value="1"/></div>
+            </div>
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>METHOD</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-traintech-method="full">FULL FT</button>
+                  <button class="w-btn ghost" data-traintech-method="lora">LoRA / FROZEN BASE</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="traintech-forget-canvas" height="280"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">NEW-TASK ACCURACY</div><div class="r-value" id="traintech-forget-new">—</div></div>
+              <div class="readout"><div class="r-label">OLD-TASK ACCURACY</div><div class="r-value" id="traintech-forget-old">—</div></div>
+              <div class="readout acc"><div class="r-label">FORGETTING F</div><div class="r-value" id="traintech-forget-F">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The mint curve is accuracy on the <b>new</b> task (rising); the blue curve is the <b>old</b> task (falling — forgetting). With full FT at high learning rate and zero replay, the old curve collapses. Add a few percent replay, or switch to a frozen-base method, and the old curve flattens while the new one barely suffers — the whole point of the chapter in one picture. Defaults already show the safe regime: 5% replay, normal LR.</div>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>You can now train a model that learns your domain without forgetting the world — the hard half of the open-model craft.</strong> Chapter 05 turns from making models capable to making them <em>safe</em>: red-teaming, adversarial probing, jailbreak taxonomies, and the evaluation discipline that decides whether a fine-tuned open model is fit to ship.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 4.R ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">4.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://arxiv.org/abs/2004.10964" target="_blank" rel="noopener">Gururangan, S., Marasović, A., Swayamdipta, S. et&nbsp;al. (2020). <span class="ref-venue">Don't Stop Pretraining: Adapt Language Models to Domains and Tasks</span>.</a> <span class="ref-meta">ACL 2020 — domain- and task-adaptive continued pre-training (DAPT / TAPT).</span></li>
+          <li><a href="https://arxiv.org/abs/1612.00796" target="_blank" rel="noopener">Kirkpatrick, J., Pascanu, R., Rabinowitz, N. et&nbsp;al. (2017). <span class="ref-venue">Overcoming Catastrophic Forgetting in Neural Networks</span>.</a> <span class="ref-meta">PNAS 2017 — Elastic Weight Consolidation (EQ OM4.6).</span></li>
+          <li><a href="https://arxiv.org/abs/1801.06146" target="_blank" rel="noopener">Howard, J. &amp; Ruder, S. (2018). <span class="ref-venue">Universal Language Model Fine-tuning for Text Classification (ULMFiT)</span>.</a> <span class="ref-meta">ACL 2018 — gradual unfreezing and discriminative fine-tuning (§4.2).</span></li>
+          <li><a href="https://dl.acm.org/doi/10.1145/1553374.1553380" target="_blank" rel="noopener">Bengio, Y., Louradour, J., Collobert, R. &amp; Weston, J. (2009). <span class="ref-venue">Curriculum Learning</span>.</a> <span class="ref-meta">ICML 2009 — easy-to-hard example ordering (§4.4).</span></li>
+          <li><a href="https://www.sciencedirect.com/science/article/abs/pii/S0079742108605368" target="_blank" rel="noopener">McCloskey, M. &amp; Cohen, N. J. (1989). <span class="ref-venue">Catastrophic Interference in Connectionist Networks: The Sequential Learning Problem</span>.</a> <span class="ref-meta">Psychology of Learning and Motivation — the original diagnosis of forgetting.</span></li>
+          <li><a href="https://arxiv.org/abs/1810.11910" target="_blank" rel="noopener">Chaudhry, A., Ranzato, M., Rohrbach, M. &amp; Elhoseiny, M. (2019). <span class="ref-venue">Efficient Lifelong Learning with A-GEM</span>.</a> <span class="ref-meta">ICLR 2019 — gradient-episodic-memory replay for continual learning (§4.4).</span></li>
+          <li><a href="https://arxiv.org/abs/2308.08747" target="_blank" rel="noopener">Luo, Y., Yang, Z., Meng, F. et&nbsp;al. (2023). <span class="ref-venue">An Empirical Study of Catastrophic Forgetting in LLMs During Continual Fine-tuning</span>.</a> <span class="ref-meta">Measures forgetting of general ability across instruction fine-tunes (§4.5).</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../openmodels/03-finetuning-open.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">03</span> Fine-tuning Open</div></a>
+        <a class="next" href="../openmodels/05-red-teaming.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">05</span> Red-teaming &amp; Safety</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — OPEN MODELS · CH 04</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* chapter instruments — single IIFE, no globals */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  var C = (FM && FM.C) || {
+    MINT: "#a6f2cc", DEEP: "#2b5945", BLUE: "#4e8af7", RED: "#ff4136",
+    HAIR: "#2f3234", MUT: "#636363", SEC: "#9b9b9b", BRIGHT: "#ffffff",
+    MONO: "10px ui-monospace, SF Mono, Menlo, monospace"
+  };
+  var MONO = C.MONO || "10px ui-monospace, SF Mono, Menlo, monospace";
+
+  function fmtParams(n) {
+    if (FM && FM.siFormat) return FM.siFormat(n, n >= 1e9 ? 2 : 1);
+    return String(Math.round(n));
+  }
+  function fmtGB(gb) {
+    if (gb >= 100) return gb.toFixed(0) + " GB";
+    if (gb >= 10) return gb.toFixed(1) + " GB";
+    if (gb >= 1) return gb.toFixed(2) + " GB";
+    return (gb * 1024).toFixed(0) + " MB";
+  }
+
+  /* ============================================================
+     INSTRUMENT OM4.1 — LAYER-FREEZING EXPLORER
+     P_train = (L - k) * P_b + P_head (+ P_emb if embeddings train)
+     f = P_train / (P_emb + L*P_b + P_head)         (EQ OM4.2)
+     Optimizer + grad state ~ 12 bytes / trainable param.
+     ============================================================ */
+  (function freezeExplorer() {
+    var root = document.getElementById("traintech-freeze");
+    if (!root) return;
+    var canvas = document.getElementById("traintech-freeze-canvas");
+    if (!canvas) return;
+    var LEl = document.getElementById("traintech-freeze-L");
+    var kEl = document.getElementById("traintech-freeze-k");
+    var LOut = document.getElementById("traintech-freeze-L-out");
+    var kOut = document.getElementById("traintech-freeze-k-out");
+    var blocksEl = document.getElementById("traintech-freeze-blocks");
+    var paramsEl = document.getElementById("traintech-freeze-params");
+    var fracEl = document.getElementById("traintech-freeze-frac");
+    var memEl = document.getElementById("traintech-freeze-mem");
+    var embBtns = root.querySelectorAll("[data-traintech-emb]");
+
+    var P_b = 200e6;       // params per block
+    var P_emb = 525e6;     // embedding table
+    var P_head = 525e6;    // output head (always trainable)
+    var embTrains = false; // default: embeddings frozen
+
+    function render() {
+      var L = parseInt(LEl.value, 10);
+      kEl.max = String(L);
+      var k = parseInt(kEl.value, 10);
+      if (k > L) { k = L; kEl.value = String(L); }
+      LOut.textContent = String(L);
+      kOut.textContent = String(k);
+
+      var total = P_emb + L * P_b + P_head;
+      var trainBlocks = L - k;
+      var pTrain = trainBlocks * P_b + P_head + (embTrains ? P_emb : 0);
+      var frac = pTrain / total;
+      var memGB = pTrain * 12 / 1e9; // AdamW 2 moments + grad, ~fp32
+
+      blocksEl.textContent = trainBlocks + " / " + L;
+      paramsEl.textContent = fmtParams(pTrain);
+      fracEl.textContent = (frac * 100).toFixed(1) + " %";
+      memEl.textContent = fmtGB(memGB);
+
+      var s = FM.setupCanvas(canvas, 220);
+      var ctx = s.ctx, w = s.w, h = s.h;
+      ctx.clearRect(0, 0, w, h);
+      var padL = 14, padR = 14, padT = 40, padB = 30;
+      var rowY = padT, rowH = h - padT - padB;
+      var gap = 3;
+      var cols = L + 1; // +1 for the head cell on the right
+      var cellW = (w - padL - padR - gap * (cols - 1)) / cols;
+
+      // title row labels
+      ctx.font = MONO; ctx.textAlign = "left";
+      ctx.fillStyle = C.MUT;
+      ctx.fillText("INPUT ↓  BLOCKS (bottom = generic features, top = task)  ↑ OUTPUT", padL, 20);
+
+      // blocks: index 0 = bottom/input. Freeze the first k (bottom).
+      var i, x;
+      for (i = 0; i < L; i++) {
+        x = padL + i * (cellW + gap);
+        var frozen = i < k;
+        ctx.fillStyle = frozen ? C.DEEP : C.MINT;
+        ctx.fillRect(x, rowY, cellW, rowH);
+        if (!frozen) {
+          ctx.strokeStyle = "rgba(166,242,204,.55)";
+          ctx.lineWidth = 1;
+          ctx.strokeRect(x + 0.5, rowY + 0.5, cellW - 1, rowH - 1);
+        }
+      }
+      // head cell
+      x = padL + L * (cellW + gap);
+      ctx.fillStyle = C.BLUE;
+      ctx.fillRect(x, rowY, cellW, rowH);
+      ctx.fillStyle = C.BRIGHT; ctx.font = MONO; ctx.textAlign = "center";
+      ctx.save();
+      ctx.translate(x + cellW / 2, rowY + rowH / 2);
+      ctx.rotate(-Math.PI / 2);
+      ctx.fillText("HEAD", 0, 3);
+      ctx.restore();
+
+      // freeze line marker
+      if (k > 0 && k < L) {
+        var lineX = padL + k * (cellW + gap) - gap / 2;
+        ctx.strokeStyle = "rgba(229,229,229,.5)";
+        ctx.setLineDash([3, 3]); ctx.lineWidth = 1.2;
+        ctx.beginPath(); ctx.moveTo(lineX, rowY - 6); ctx.lineTo(lineX, rowY + rowH + 6); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = C.SEC; ctx.font = MONO; ctx.textAlign = "left";
+        ctx.fillText("freeze line k=" + k, lineX + 4, rowY + rowH + 22);
+      }
+
+      // legend
+      ctx.font = MONO; ctx.textAlign = "left";
+      ctx.fillStyle = C.MINT; ctx.fillRect(padL, h - 12, 9, 9);
+      ctx.fillStyle = C.SEC; ctx.fillText("trainable", padL + 13, h - 4);
+      ctx.fillStyle = C.DEEP; ctx.fillRect(padL + 78, h - 12, 9, 9);
+      ctx.fillStyle = C.SEC; ctx.fillText("frozen", padL + 91, h - 4);
+      ctx.fillStyle = C.BLUE; ctx.fillRect(padL + 150, h - 12, 9, 9);
+      ctx.fillStyle = C.SEC; ctx.fillText("head (always trains)", padL + 163, h - 4);
+    }
+
+    for (var b = 0; b < embBtns.length; b++) {
+      (function (btn) {
+        btn.addEventListener("click", function () {
+          for (var j = 0; j < embBtns.length; j++) embBtns[j].classList.remove("on");
+          btn.classList.add("on");
+          embTrains = btn.getAttribute("data-traintech-emb") === "train";
+          render();
+        });
+      })(embBtns[b]);
+    }
+    LEl.addEventListener("input", render);
+    kEl.addEventListener("input", render);
+    window.addEventListener("resize", render);
+    render();
+  })();
+
+  /* ============================================================
+     INSTRUMENT OM4.2 — DATA-MIXING RATIO SIMULATOR
+     Batch = replay r (old domain) + (1-r) split across k new sources.
+     New-mix weights skewed by an exponent; N_eff over the new sources.
+     Adaptation speed ~ (1-r); retention ~ saturating in r.
+     ============================================================ */
+  (function mixSimulator() {
+    var root = document.getElementById("traintech-mix");
+    if (!root) return;
+    var canvas = document.getElementById("traintech-mix-canvas");
+    if (!canvas) return;
+    var rEl = document.getElementById("traintech-mix-r");
+    var kEl = document.getElementById("traintech-mix-k");
+    var skewEl = document.getElementById("traintech-mix-skew");
+    var rOut = document.getElementById("traintech-mix-r-out");
+    var kOut = document.getElementById("traintech-mix-k-out");
+    var skewOut = document.getElementById("traintech-mix-skew-out");
+    var adaptEl = document.getElementById("traintech-mix-adapt");
+    var retainEl = document.getElementById("traintech-mix-retain");
+    var neffEl = document.getElementById("traintech-mix-neff");
+
+    function newMixWeights(k, skew) {
+      // weight source j by exp(-skew * j), then normalize → skewed mix
+      var raw = [], i, sum = 0;
+      for (i = 0; i < k; i++) { var v = Math.exp(-skew * i); raw.push(v); sum += v; }
+      for (i = 0; i < k; i++) raw[i] /= sum;
+      return raw;
+    }
+    function nEff(p) {
+      var H = 0, i;
+      for (i = 0; i < p.length; i++) if (p[i] > 0) H -= p[i] * Math.log(p[i]);
+      return Math.exp(H);
+    }
+
+    function render() {
+      var r = parseFloat(rEl.value);
+      var k = parseInt(kEl.value, 10);
+      var skew = parseFloat(skewEl.value);
+      rOut.textContent = r.toFixed(2);
+      kOut.textContent = String(k);
+      skewOut.textContent = skew.toFixed(1);
+
+      var mix = newMixWeights(k, skew);     // proportions WITHIN new domain
+      var neff = nEff(mix);
+      // adaptation speed proportional to new-domain share (1-r)
+      var adapt = (1 - r);
+      // retention saturates: small replay recovers most old capability
+      var retain = 1 - Math.exp(-r / 0.06); // ~0.57 at r=0.05, ~0.81 at r=0.1
+      // floor a touch above 0 so r=0 reads as catastrophic, not exactly 0
+      retain = 0.05 + 0.95 * retain;
+
+      adaptEl.textContent = (adapt * 100).toFixed(0) + " %";
+      retainEl.textContent = (retain * 100).toFixed(0) + " %";
+      neffEl.textContent = neff.toFixed(2) + " / " + k;
+
+      var s = FM.setupCanvas(canvas, 230);
+      var ctx = s.ctx, w = s.w, h = s.h;
+      ctx.clearRect(0, 0, w, h);
+      var padL = 14, padR = 14, padT = 34, padB = 56;
+      var barY = padT, barH = h - padT - padB;
+      var fullW = w - padL - padR;
+
+      ctx.font = MONO; ctx.textAlign = "left"; ctx.fillStyle = C.MUT;
+      ctx.fillText("ONE TRAINING BATCH (left = replay / old · right = new domain)", padL, 20);
+
+      // replay segment (old domain)
+      var x = padL;
+      var rw = r * fullW;
+      ctx.fillStyle = C.DEEP;
+      ctx.fillRect(x, barY, rw, barH);
+      ctx.strokeStyle = "rgba(166,242,204,.25)"; ctx.lineWidth = 1;
+      if (rw > 1) ctx.strokeRect(x + 0.5, barY + 0.5, rw - 1, barH - 1);
+
+      // new-domain segments
+      var nx = x + rw;
+      var newW = (1 - r) * fullW;
+      var j;
+      for (j = 0; j < k; j++) {
+        var seg = mix[j] * newW;
+        // alternate mint shades by index for readability
+        var alpha = 0.95 - (j % 2) * 0.30;
+        ctx.fillStyle = "rgba(166,242,204," + alpha.toFixed(2) + ")";
+        ctx.fillRect(nx, barY, seg, barH);
+        ctx.strokeStyle = "rgba(0,0,0,.6)"; ctx.lineWidth = 1;
+        ctx.strokeRect(nx + 0.5, barY + 0.5, Math.max(0, seg - 1), barH - 1);
+        nx += seg;
+      }
+
+      // replay boundary marker
+      if (r > 0 && r < 1) {
+        ctx.strokeStyle = "rgba(229,229,229,.5)";
+        ctx.setLineDash([3, 3]); ctx.lineWidth = 1.2;
+        ctx.beginPath(); ctx.moveTo(x + rw, barY - 5); ctx.lineTo(x + rw, barY + barH + 5); ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      // labels under the bar
+      ctx.font = MONO; ctx.textAlign = "center"; ctx.fillStyle = C.SEC;
+      if (rw > 30) ctx.fillText("replay " + (r * 100).toFixed(0) + "%", x + rw / 2, barY + barH + 18);
+      ctx.fillText("new domain " + ((1 - r) * 100).toFixed(0) + "%", x + rw + newW / 2, barY + barH + 18);
+
+      // legend
+      ctx.textAlign = "left";
+      ctx.fillStyle = C.DEEP; ctx.fillRect(padL, h - 14, 9, 9);
+      ctx.fillStyle = C.SEC; ctx.fillText("old / replay", padL + 13, h - 6);
+      ctx.fillStyle = C.MINT; ctx.fillRect(padL + 96, h - 14, 9, 9);
+      ctx.fillStyle = C.SEC; ctx.fillText("new-domain sources (Nₑff = " + neff.toFixed(2) + ")", padL + 109, h - 6);
+    }
+    rEl.addEventListener("input", render);
+    kEl.addEventListener("input", render);
+    skewEl.addEventListener("input", render);
+    window.addEventListener("resize", render);
+    render();
+  })();
+
+  /* ============================================================
+     INSTRUMENT OM4.3 — FORGETTING CURVE
+     New-task acc rises (saturating); old-task acc decays with the
+     amount of drift. Drift ~ lr * (1 - r); LoRA / frozen base
+     caps drift hard (near-zero forgetting). F = old0 - old_final.
+     ============================================================ */
+  (function forgettingCurve() {
+    var root = document.getElementById("traintech-forget");
+    if (!root) return;
+    var canvas = document.getElementById("traintech-forget-canvas");
+    if (!canvas) return;
+    var rEl = document.getElementById("traintech-forget-r");
+    var lrEl = document.getElementById("traintech-forget-lr");
+    var rOut = document.getElementById("traintech-forget-r-out");
+    var lrOut = document.getElementById("traintech-forget-lr-out");
+    var newEl = document.getElementById("traintech-forget-new");
+    var oldEl = document.getElementById("traintech-forget-old");
+    var FEl = document.getElementById("traintech-forget-F");
+    var methodBtns = root.querySelectorAll("[data-traintech-method]");
+
+    var STEPS = 40;
+    var OLD0 = 0.90;       // starting old-task accuracy
+    var method = "full";
+
+    function newAcc(step, lr) {
+      // saturating learning curve toward ~0.95, faster with higher lr
+      var t = step / STEPS;
+      return 0.30 + 0.65 * (1 - Math.exp(-3.2 * lr * t));
+    }
+    function oldAcc(step, lr, r) {
+      var t = step / STEPS;
+      // drift that erodes old task; replay and frozen base suppress it
+      var driftRate = lr * (1 - r);
+      if (method === "lora") driftRate *= 0.12; // frozen base barely drifts
+      var floor = method === "lora" ? 0.82 : 0.25;
+      var decayed = OLD0 * Math.exp(-driftRate * 1.1 * t);
+      return Math.max(floor * OLD0 / 0.90 * 0.90, decayed, floor);
+    }
+
+    function render() {
+      var r = parseFloat(rEl.value);
+      var lr = parseFloat(lrEl.value);
+      rOut.textContent = r.toFixed(2);
+      lrOut.textContent = lr.toFixed(1) + "×";
+
+      var newFinal = newAcc(STEPS, lr);
+      var oldFinal = oldAcc(STEPS, lr, r);
+      var F = OLD0 - oldFinal;
+      newEl.textContent = (newFinal * 100).toFixed(0) + " %";
+      oldEl.textContent = (oldFinal * 100).toFixed(0) + " %";
+      FEl.textContent = F.toFixed(2);
+      FEl.style.color = F <= 0.05 ? C.MINT : (F <= 0.2 ? C.BLUE : C.RED);
+
+      var s = FM.setupCanvas(canvas, 280);
+      var ctx = s.ctx, w = s.w, h = s.h;
+      ctx.clearRect(0, 0, w, h);
+      var padL = 44, padR = 16, padT = 18, padB = 34;
+      var plotW = w - padL - padR, plotH = h - padT - padB;
+
+      function xOf(step) { return padL + (step / STEPS) * plotW; }
+      function yOf(acc) { return padT + plotH - acc * plotH; }
+
+      // axes + gridlines at 0.25/0.5/0.75/1.0
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(padL, padT); ctx.lineTo(padL, padT + plotH); ctx.lineTo(padL + plotW, padT + plotH);
+      ctx.stroke();
+      ctx.fillStyle = C.MUT; ctx.font = MONO; ctx.textAlign = "right";
+      var gl;
+      for (gl = 0.25; gl <= 1.001; gl += 0.25) {
+        var gy = yOf(gl);
+        ctx.strokeStyle = "rgba(47,50,52,.6)";
+        ctx.beginPath(); ctx.moveTo(padL, gy); ctx.lineTo(padL + plotW, gy); ctx.stroke();
+        ctx.fillText(gl.toFixed(2), padL - 6, gy + 3);
+      }
+
+      // old-task curve (blue, falling)
+      ctx.strokeStyle = C.BLUE; ctx.lineWidth = 1.8; ctx.beginPath();
+      var step;
+      for (step = 0; step <= STEPS; step++) {
+        var x = xOf(step), y = yOf(oldAcc(step, lr, r));
+        if (step === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+
+      // new-task curve (mint, rising)
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 2; ctx.beginPath();
+      for (step = 0; step <= STEPS; step++) {
+        var x2 = xOf(step), y2 = yOf(newAcc(step, lr));
+        if (step === 0) ctx.moveTo(x2, y2); else ctx.lineTo(x2, y2);
+      }
+      ctx.stroke();
+
+      // endpoints
+      ctx.fillStyle = C.MINT;
+      ctx.beginPath(); ctx.arc(xOf(STEPS), yOf(newFinal), 3.5, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = C.BLUE;
+      ctx.beginPath(); ctx.arc(xOf(STEPS), yOf(oldFinal), 3.5, 0, Math.PI * 2); ctx.fill();
+
+      // forgetting gap bracket at the right edge
+      ctx.strokeStyle = "rgba(255,65,54,.6)"; ctx.lineWidth = 1.2;
+      ctx.setLineDash([2, 3]);
+      ctx.beginPath();
+      ctx.moveTo(xOf(STEPS) + 2, yOf(OLD0)); ctx.lineTo(xOf(STEPS) + 2, yOf(oldFinal));
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // labels
+      ctx.font = MONO; ctx.textAlign = "left";
+      ctx.fillStyle = C.MINT; ctx.fillText("new task ↑", padL + 6, padT + 12);
+      ctx.fillStyle = C.BLUE; ctx.fillText("old task ↓ (forgetting)", padL + 6, padT + 26);
+      ctx.fillStyle = C.MUT; ctx.textAlign = "center";
+      ctx.fillText("training steps →", padL + plotW / 2, h - 8);
+    }
+
+    for (var m = 0; m < methodBtns.length; m++) {
+      (function (btn) {
+        btn.addEventListener("click", function () {
+          for (var j = 0; j < methodBtns.length; j++) methodBtns[j].classList.remove("on");
+          btn.classList.add("on");
+          method = btn.getAttribute("data-traintech-method");
+          render();
+        });
+      })(methodBtns[m]);
+    }
+    rEl.addEventListener("input", render);
+    lrEl.addEventListener("input", render);
+    window.addEventListener("resize", render);
+    render();
+  })();
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

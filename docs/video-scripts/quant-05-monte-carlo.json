@@ -1,0 +1,169 @@
+{
+  "concepts": [
+    {
+      "id": "quant-05-monte-carlo-s1",
+      "chapter": "quant/05-monte-carlo",
+      "section": "s1",
+      "title": "Monte Carlo for pricing — the idea",
+      "eyebrow": "QUANTITATIVE FINANCE",
+      "beats": [
+        {
+          "text": "An option's price today is the discounted expectation of its future payoff under the risk-neutral measure.",
+          "visual": { "type": "title", "text": "Monte Carlo for Pricing", "sub": "A price is an expectation you can estimate by averaging" }
+        },
+        {
+          "text": "When the payoff depends on the whole path or on many assets, the integral becomes high-dimensional and no formula survives.",
+          "visual": { "type": "equation", "tex": "V_0 = e^{-rT}\\,\\mathbb{E}^{\\mathbb{Q}}[\\,\\text{payoff}\\,]", "note": "Discounted risk-neutral expectation" }
+        },
+        {
+          "text": "The estimator discounts the average of many simulated payoffs, and by the law of large numbers it converges to the true price.",
+          "visual": { "type": "equation", "tex": "\\hat{V}_N = e^{-rT}\\,\\frac{1}{N}\\sum_{i=1}^{N}\\text{payoff}\\big(S^{(i)}\\big)", "note": "Unbiased: its expectation equals V0 for any N" }
+        },
+        {
+          "text": "The standard error falls only as one over the square root of N, so halving the error costs four times the paths.",
+          "visual": { "type": "plot", "ys": [12.0, 8.49, 6.0, 4.24, 3.0, 2.12, 1.5], "xlabel": "paths N", "ylabel": "standard error", "mark": "1/sqrt(N)" }
+        },
+        {
+          "text": "Adding one decimal digit of accuracy requires a hundred times more paths, which is why every later section reduces variance instead.",
+          "visual": { "type": "stat", "value": 100, "label": "more paths for one extra digit", "unit": "x" }
+        },
+        {
+          "text": "Grids and trees suffer the curse of dimensionality, but Monte Carlo error is independent of dimension.",
+          "visual": { "type": "bars", "values": [100000, 100000], "labels": ["1-asset call", "50-asset basket"], "highlight": 1 }
+        }
+      ]
+    },
+    {
+      "id": "quant-05-monte-carlo-s2",
+      "chapter": "quant/05-monte-carlo",
+      "section": "s2",
+      "title": "Simulating payoffs under the risk-neutral measure",
+      "eyebrow": "QUANTITATIVE FINANCE",
+      "beats": [
+        {
+          "text": "Scenarios must be drawn under the risk-neutral measure, where the underlying drifts at the riskless rate rather than its real-world rate.",
+          "visual": { "type": "title", "text": "Simulating Payoffs", "sub": "Generate futures under the measure Q" }
+        },
+        {
+          "text": "For a European payoff one terminal price needs exactly one Gaussian draw, because the geometric Brownian motion solution is known exactly.",
+          "visual": { "type": "equation", "tex": "S_T = S_0 \\exp\\!\\Big[\\big(r - \\tfrac{1}{2}\\sigma^2\\big)T + \\sigma\\sqrt{T}\\,Z\\Big]", "note": "Z ~ N(0,1); the Ito term makes E[S_T] = S0 e^{rT}" }
+        },
+        {
+          "text": "When you need the whole path, you discretize the SDE over a time grid and step the log-price one Gaussian at a time.",
+          "visual": { "type": "equation", "tex": "S_{t_{k+1}} = S_{t_k}\\exp\\!\\Big[\\big(r - \\tfrac{1}{2}\\sigma^2\\big)\\Delta t + \\sigma\\sqrt{\\Delta t}\\,Z_{k+1}\\Big]", "note": "Log-Euler stays exact for GBM at any step size" }
+        },
+        {
+          "text": "Stepping in log price keeps the scheme exact and the price strictly positive, so the only error is statistical.",
+          "visual": { "type": "plot", "ys": [100, 103, 99, 105, 108, 104, 110], "xlabel": "time step", "ylabel": "price", "mark": "one simulated path" }
+        },
+        {
+          "text": "A run of two hundred thousand paths prices a call within a tight confidence interval that matches the closed form.",
+          "visual": { "type": "stat", "value": 200000, "label": "paths in the Python cell", "unit": " paths" }
+        },
+        {
+          "text": "On log-log axes the standard error is a straight line of slope minus one half, and raising the payoff spread lifts the whole line.",
+          "visual": { "type": "plot", "ys": [3.79, 1.2, 0.379, 0.12, 0.0379, 0.012, 0.0038], "xlabel": "log N", "ylabel": "log SE", "mark": "slope -1/2" }
+        }
+      ]
+    },
+    {
+      "id": "quant-05-monte-carlo-s3",
+      "chapter": "quant/05-monte-carlo",
+      "section": "s3",
+      "title": "Variance reduction — antithetic & control variates",
+      "eyebrow": "QUANTITATIVE FINANCE",
+      "beats": [
+        {
+          "text": "Since the error is the payoff spread over root N, you either run more paths or shrink the spread itself.",
+          "visual": { "type": "title", "text": "Variance Reduction", "sub": "Shrink sigma_Y instead of growing N" }
+        },
+        {
+          "text": "Antithetic variates pair every path driven by Z with a mirror path driven by minus Z and average the two payoffs.",
+          "visual": { "type": "equation", "tex": "\\mathrm{Var}\\big(\\hat{V}_{\\text{anti}}\\big) = \\frac{\\sigma_Y^2}{N}\\big(1 + \\rho\\big),\\quad \\rho = \\mathrm{Corr}(Y,\\tilde Y)", "note": "Negative rho means variance drops" }
+        },
+        {
+          "text": "For any payoff monotone in the shock the correlation is provably negative, so antithetics always help a vanilla call.",
+          "visual": { "type": "bars", "values": [1.0, 0.5], "labels": ["plain", "antithetic"], "highlight": 1 }
+        },
+        {
+          "text": "Control variates subtract a correlated quantity whose mean you already know, scaling the variance by one minus rho squared.",
+          "visual": { "type": "equation", "tex": "\\mathrm{Var}(Y_{\\text{cv}}) = \\sigma_Y^2\\,\\big(1-\\rho_{XY}^2\\big),\\quad c^\\star = \\frac{\\mathrm{Cov}(Y,X)}{\\mathrm{Var}(X)}", "note": "The optimal coefficient is a regression slope" }
+        },
+        {
+          "text": "A control correlated 0.99 with the payoff cuts the variance about fiftyfold, the single most powerful trick in the chapter.",
+          "visual": { "type": "stat", "value": 50, "label": "variance cut at rho = 0.99", "unit": "x" }
+        },
+        {
+          "text": "Production pricers stack antithetics, a strong control, and quasi-random Sobol sequences that sweep the cube evenly.",
+          "visual": { "type": "plot", "ys": [8.2, 7.6, 7.9, 7.55, 7.7, 7.58, 7.6], "xlabel": "trials", "ylabel": "estimate", "mark": "stacked methods tighten" }
+        }
+      ]
+    },
+    {
+      "id": "quant-05-monte-carlo-s4",
+      "chapter": "quant/05-monte-carlo",
+      "section": "s4",
+      "title": "Path-dependent options — Asian & barrier",
+      "eyebrow": "QUANTITATIVE FINANCE",
+      "beats": [
+        {
+          "text": "Monte Carlo earns its keep where closed forms stop, on payoffs that depend on the whole trajectory the price took.",
+          "visual": { "type": "title", "text": "Path-Dependent Options", "sub": "Asian averages and barrier knock-outs" }
+        },
+        {
+          "text": "An Asian option pays on the average price over the monitoring dates, which damps both volatility and last-minute manipulation.",
+          "visual": { "type": "equation", "tex": "\\text{payoff} = \\max(\\bar{S} - K,\\ 0),\\quad \\bar{S} = \\frac{1}{m}\\sum_{k=1}^{m} S_{t_k}", "note": "A sum of lognormals has no closed form" }
+        },
+        {
+          "text": "The geometric-average Asian does price in closed form and sits about 0.99 correlated with the arithmetic one, the textbook control.",
+          "visual": { "type": "stat", "value": 0.99, "label": "correlation of geometric control", "unit": "", "decimals": 2 }
+        },
+        {
+          "text": "A down-and-out call pays the usual amount unless the running minimum ever touches the barrier B, in which case it is worthless.",
+          "visual": { "type": "equation", "tex": "\\text{payoff} = \\max(S_T - K,\\ 0)\\,\\cdot\\,\\mathbf{1}\\!\\left\\{\\min_{0\\le t\\le T} S_t > B\\right\\}", "note": "The indicator zeroes the payoff on a breach" }
+        },
+        {
+          "text": "Checking the barrier only at grid points misses intra-step crossings, so a coarse path systematically over-prices a knock-out.",
+          "visual": { "type": "plot", "ys": [100, 96, 92, 89, 91, 88, 90], "xlabel": "time step", "ylabel": "price", "mark": "barrier B crossed between checks" }
+        },
+        {
+          "text": "Lookbacks, cliquets, autocallables, and worst-of baskets all use the same loop, only the payoff code changes.",
+          "visual": { "type": "lattice" }
+        }
+      ]
+    },
+    {
+      "id": "quant-05-monte-carlo-s5",
+      "chapter": "quant/05-monte-carlo",
+      "section": "s5",
+      "title": "Greeks via Monte Carlo",
+      "eyebrow": "QUANTITATIVE FINANCE",
+      "beats": [
+        {
+          "text": "A price is only half the job, because desks hedge with the Greeks and those derivatives must come out of the same simulation.",
+          "visual": { "type": "title", "text": "Greeks via Monte Carlo", "sub": "Sensitivities from the same paths" }
+        },
+        {
+          "text": "Bump-and-revalue reprices at two shifted spots and takes the slope, the universal but treacherous central difference.",
+          "visual": { "type": "equation", "tex": "\\hat\\Delta = \\frac{\\hat V(S_0 + h) - \\hat V(S_0 - h)}{2h}", "note": "A central difference of two MC prices" }
+        },
+        {
+          "text": "Too large a bump biases the estimate and too small a bump lets Monte Carlo noise blow up the variance like one over h squared.",
+          "visual": { "type": "plot", "ys": [9.0, 4.0, 1.5, 0.8, 1.4, 3.6, 8.5], "xlabel": "bump size h", "ylabel": "total error", "mark": "bias-variance trap" }
+        },
+        {
+          "text": "The pathwise estimator differentiates the payoff for an unbiased delta in one pass whenever the payoff is Lipschitz.",
+          "visual": { "type": "equation", "tex": "\\partial_{S_0}\\max(S_T-K,0) = \\mathbf{1}\\{S_T>K\\}\\,\\frac{S_T}{S_0}", "note": "Fails at the kink of a digital" }
+        },
+        {
+          "text": "Adjoint algorithmic differentiation computes all Greeks in one reverse pass, the same trick that powers backpropagation.",
+          "visual": { "type": "bars", "values": [20, 1], "labels": ["bump per Greek", "AAD one pass"], "highlight": 1 }
+        },
+        {
+          "text": "The common-seed rule fixes the most frequent bug: reuse the same random numbers across every revaluation so noise cancels.",
+          "visual": { "type": "stat", "value": 1, "label": "seed shared across both legs", "unit": "" }
+        }
+      ]
+    }
+  ]
+}

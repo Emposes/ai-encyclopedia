@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Black–Scholes &amp; the Greeks — AI Encyclopedia</title>
+<meta name="description" content="A single no-arbitrage argument turns a stock's volatility into the exact price of an option — and its derivatives, the Greeks, become a trader's risk dashboard." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+<link rel="canonical" href="https://ai-encyclopedia.com/quant/03-black-scholes" />
+<meta property="og:url" content="https://ai-encyclopedia.com/quant/03-black-scholes" />
+</head>
+<body data-track="quant" data-level="advanced">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ QUANT / 03 / BLACK–SCHOLES</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../quant/04-interest-rate-models.html">NEXT: INTEREST-RATE MODELS →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">QUANTITATIVE FINANCE · CHAPTER 03 / 06</div>
+    <h1>Black–Scholes &amp; the Greeks</h1>
+    <p class="lede">Black, Scholes and Merton established a single no-arbitrage argument with one striking consequence. <strong>A stock's volatility, not its expected return, fixes the exact price of an option; the expected return drops out entirely.</strong> The price's derivatives, the Greeks, then measure how the option responds to market moves and what to buy or sell to neutralize that exposure.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>ADVANCED</b></span>
+      <span>READING TIME<b>≈ 26 MIN</b></span>
+      <span>BUILDS ON<b>QUANT 01–02</b></span>
+      <span>INSTRUMENTS<b>PRICER · GREEKS · PAYOFF</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">3.1</span>No-arbitrage pricing</a>
+      <a href="#s2"><span class="n">3.2</span>The model &amp; assumptions</a>
+      <a href="#s3"><span class="n">3.3</span>The formula</a>
+      <a href="#s4"><span class="n">3.4</span>The Greeks</a>
+      <a href="#s5"><span class="n">3.5</span>Implied vol &amp; the smile</a>
+      <a href="#s6"><span class="n">3.6</span>Where it breaks</a>
+      <a href="#s7"><span class="n">3.7</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 3.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">3.1</span><h2>No-arbitrage &amp; risk-neutral pricing</h2></div>
+        <p>The deepest idea in option pricing is also the simplest to state: <strong>you can manufacture an option out of the stock and cash.</strong> Hold a continuously adjusted position of \(\Delta\) shares plus a bond, and you can build a portfolio whose value tracks the option's value <em>instant by instant</em>. If the replicating portfolio costs less than the option, sell the option and buy the portfolio for a riskless profit; if it costs more, do the reverse. The only price that admits no such free lunch is the cost of replication. That is the option's fair value — full stop.</p>
+
+        <p>The magic of the hedge is that it is locally riskless. Over an instant, the option and \(\Delta\) shares move by exactly offsetting amounts, so the combined portfolio has <em>no exposure to the stock's random moves</em>. A riskless portfolio can only earn the riskless rate \(r\) — otherwise arbitrage. Setting "what the hedged portfolio actually earns" equal to "what a riskless portfolio must earn" produces the Black–Scholes PDE (§3.3) with no reference whatsoever to the stock's expected return \(\mu\).</p>
+
+        <div class="callout">
+          <span class="co-icon">KEY</span>
+          <p><strong>Why \(\mu\) disappears.</strong> Two traders who disagree wildly about whether a stock will rise or fall must still agree on the option's price — because both can replicate it with the same hedge at the same cost. Beliefs about direction are irrelevant; only the <em>size</em> of the moves (volatility) matters. This is the single most counter-intuitive fact in the chapter.</p>
+        </div>
+
+        <p>The same conclusion has a probabilistic face. There exists a <strong>risk-neutral measure</strong> \(\mathbb{Q}\) — a re-weighting of the real probabilities — under which every tradable asset drifts at exactly the riskless rate and the option's price is just its discounted expected payoff:</p>
+
+        <div class="eq"><span class="eq-tag">EQ Q3.1 — RISK-NEUTRAL VALUATION</span>
+        $$ V_0 \;=\; e^{-rT}\, \mathbb{E}^{\mathbb{Q}}\!\big[\, \text{payoff}(S_T) \,\big], \qquad \text{with } \; \mathrm{d}S_t = r\,S_t\,\mathrm{d}t + \sigma\,S_t\,\mathrm{d}W_t^{\mathbb{Q}} $$
+        <div class="eq-note">Under \(\mathbb{Q}\) the stock drifts at \(r\), not its real-world drift \(\mu\). \(V_0\) is the value today; \(T\) the time to expiry; \(\sigma\) the volatility. <b>Pricing reduces to taking an expectation and discounting it.</b> For a European call, \(\text{payoff} = \max(S_T - K, 0)\); the expectation under lognormal \(S_T\) has a closed form — that is the Black–Scholes formula. For exotic payoffs with no closed form, you estimate the same expectation by Monte-Carlo (the second runnable cell below).</div>
+        </div>
+
+        <p>This recasting — <em>price = discounted risk-neutral expectation</em> — is the load-bearing beam of the entire field. Binomial trees (Quant 02) compute it by backward induction; Black–Scholes computes it in closed form; interest-rate models (Quant 04) apply it under a cleverly chosen numéraire. Everything downstream is a different way to evaluate EQ Q3.1.</p>
+      </section>
+
+      <!-- ====================== 3.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">3.2</span><h2>The model &amp; its assumptions</h2></div>
+        <p>Black–Scholes assumes the stock follows <strong>geometric Brownian motion</strong> (GBM): proportional returns are normal, so the log-price is a Brownian motion with drift.</p>
+
+        <div class="eq"><span class="eq-tag">EQ Q3.2 — GEOMETRIC BROWNIAN MOTION</span>
+        $$ \mathrm{d}S_t = \mu\,S_t\,\mathrm{d}t + \sigma\,S_t\,\mathrm{d}W_t \quad\Longrightarrow\quad S_T = S_0 \exp\!\Big[\big(\mu - \tfrac{1}{2}\sigma^2\big)T + \sigma\sqrt{T}\,Z\Big],\;\; Z \sim \mathcal{N}(0,1) $$
+        <div class="eq-note">The integrated form follows from Itô's lemma applied to \(\log S\); the \(-\tfrac{1}{2}\sigma^2\) is the Itô correction (volatility drag). Because \(S_T\) is an exponential of a normal, <b>prices are lognormal</b> — never negative, with a right-skewed distribution. The same \(\sigma\) appears whether you take the real-world drift \(\mu\) or the risk-neutral drift \(r\); only the drift changes between measures, never the diffusion.</div>
+        </div>
+
+        <p>Stacked on GBM are four idealizations. Each is wrong in a knowable way — and §3.5–§3.6 are essentially the catalogue of those errors:</p>
+        <table class="data">
+          <thead><tr><th>Assumption</th><th>What it says</th><th>How reality differs</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Constant volatility</strong></td><td class="m">σ fixed for all S, t</td><td>Vol clusters, spikes in crashes, and varies by strike (the smile, §3.5)</td></tr>
+            <tr><td><strong>Constant rate</strong></td><td class="m">r fixed and known</td><td>Rates move; matters most for long-dated options (Quant 04)</td></tr>
+            <tr><td><strong>Continuous paths</strong></td><td class="m">no jumps in S</td><td>Gaps and crashes are jumps; fat tails the lognormal can't produce</td></tr>
+            <tr><td><strong>Frictionless market</strong></td><td class="m">no costs, infinite liquidity, continuous hedging</td><td>Spreads, fees, and discrete rebalancing make the hedge imperfect</td></tr>
+          </tbody>
+        </table>
+        <p class="note">A working quant treats Black–Scholes less as a literal model of the world than as a <em>coordinate system</em>: a universally agreed map from one number everyone can argue about — implied volatility — to a price. Its assumptions being false is not a bug to be hidden but the very thing the volatility surface measures.</p>
+      </section>
+
+      <!-- ====================== 3.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">3.3</span><h2>The Black–Scholes formula</h2></div>
+        <p>The hedging argument of §3.1, made continuous, says any derivative value \(V(S,t)\) must satisfy a parabolic PDE in which — note — \(\mu\) is absent:</p>
+
+        <div class="eq"><span class="eq-tag">EQ Q3.3 — THE BLACK–SCHOLES PDE</span>
+        $$ \frac{\partial V}{\partial t} + \frac{1}{2}\sigma^2 S^2 \frac{\partial^2 V}{\partial S^2} + rS\frac{\partial V}{\partial S} - rV \;=\; 0 $$
+        <div class="eq-note">A backward heat equation: it propagates the known terminal payoff at \(t = T\) back to today. The four terms are time decay, convexity (gamma), drift-at-the-riskless-rate, and discounting. <b>Solve it with the call payoff boundary condition \(V(S,T) = \max(S - K, 0)\) and you get a closed form</b> — no simulation required.</div>
+        </div>
+
+        <p>For a European <strong>call</strong> \(C\) and <strong>put</strong> \(P\) on a non-dividend-paying stock, with spot \(S\), strike \(K\), rate \(r\), volatility \(\sigma\), and time to expiry \(T\):</p>
+
+        <div class="eq"><span class="eq-tag">EQ Q3.4 — THE CLOSED-FORM PRICE</span>
+        $$ C = S\,N(d_1) - K e^{-rT} N(d_2), \qquad P = K e^{-rT} N(-d_2) - S\,N(-d_1) $$
+        $$ d_1 = \frac{\ln(S/K) + \big(r + \tfrac{1}{2}\sigma^2\big)T}{\sigma\sqrt{T}}, \qquad d_2 = d_1 - \sigma\sqrt{T} $$
+        <div class="eq-note">\(N(\cdot)\) is the standard normal CDF. Read the call as two pieces: \(S\,N(d_1)\) is the expected value of the shares you receive if you exercise, \(K e^{-rT} N(d_2)\) is the discounted cost of paying the strike — and \(N(d_2)\) is precisely the risk-neutral probability the option finishes in the money. <b>\(N(d_1)\) is the call's delta</b> (§3.4): the formula already contains its own hedge ratio.</div>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">PUT–CALL PARITY</span>
+          <p><strong>\(C - P = S - K e^{-rT}\).</strong> A model-free identity from no-arbitrage alone: a call minus a put equals a forward on the stock. Subtract EQ Q3.4's two lines and the \(N(d)\) terms collapse via \(N(x) + N(-x) = 1\) to exactly \(S - Ke^{-rT}\). If quoted prices ever violate it, that is a pure arbitrage — and the first sanity check any desk runs.</p>
+        </div>
+
+        <p>The normal CDF \(N(x)\) has no elementary closed form, so implementations evaluate it through the error function, \(N(x) = \tfrac{1}{2}\big[1 + \operatorname{erf}(x/\sqrt{2})\big]\). The instruments and Python cells below use a rational approximation to \(\operatorname{erf}\) accurate to ~1e-7 — more than enough for pricing.</p>
+
+        <div class="widget" id="bs-pricer" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT Q3.1 — OPTION PRICER + GREEKS DASHBOARD</span><span class="w-sub">EQ Q3.4 · LIVE · erf APPROX</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>SPOT S <output id="bs-S-out">100</output></label><input type="range" id="bs-S" min="20" max="200" step="1" value="100"/></div>
+              <div class="ctl"><label>STRIKE K <output id="bs-K-out">100</output></label><input type="range" id="bs-K" min="20" max="200" step="1" value="100"/></div>
+              <div class="ctl"><label>VOL σ <output id="bs-sig-out">0.20</output></label><input type="range" id="bs-sig" min="0.05" max="1.0" step="0.01" value="0.20"/></div>
+            </div>
+            <div class="ctl-row">
+              <div class="ctl"><label>RATE r <output id="bs-r-out">0.05</output></label><input type="range" id="bs-r" min="0" max="0.15" step="0.005" value="0.05"/></div>
+              <div class="ctl"><label>EXPIRY T (yrs) <output id="bs-T-out">1.00</output></label><input type="range" id="bs-T" min="0.05" max="3" step="0.05" value="1"/></div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>TYPE</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-bs-type="call">CALL</button>
+                  <button class="w-btn ghost" data-bs-type="put">PUT</button>
+                </div>
+              </div>
+            </div>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">PRICE</div><div class="r-value" id="bs-price">—</div></div>
+              <div class="readout"><div class="r-label">MONEYNESS</div><div class="r-value" id="bs-money" style="font-size:14px;">—</div></div>
+              <div class="readout"><div class="r-label">d₁ · d₂</div><div class="r-value" id="bs-ds" style="font-size:13px;">—</div></div>
+            </div>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">DELTA Δ</div><div class="r-value" id="bs-delta">—</div></div>
+              <div class="readout"><div class="r-label">GAMMA Γ</div><div class="r-value" id="bs-gamma">—</div></div>
+              <div class="readout"><div class="r-label">VEGA (per 1%)</div><div class="r-value" id="bs-vega">—</div></div>
+              <div class="readout"><div class="r-label">THETA (per day)</div><div class="r-value" id="bs-theta">—</div></div>
+              <div class="readout"><div class="r-label">RHO (per 1%)</div><div class="r-value" id="bs-rho">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Drag σ and watch price and vega rise together — volatility is what you are really buying. Slide S across K to see delta sweep from 0 toward 1 (a call) and the moneyness tag flip from OTM to ITM. Theta is shown per calendar day and turns <span style="color:var(--danger);">red</span> when negative — the daily rent a long option holder pays. Vega and rho are quoted per <em>one percentage point</em> move, as desks quote them.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Black-Scholes price + all five Greeks, scipy-free (erf via math.erf)
+import numpy as np, math
+
+def N(x):  # standard normal CDF through the error function
+    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+def n(x):  # standard normal PDF
+    return math.exp(-0.5 * x * x) / math.sqrt(2.0 * math.pi)
+
+def bs(S, K, r, sig, T, call=True):
+    d1 = (math.log(S / K) + (r + 0.5 * sig * sig) * T) / (sig * math.sqrt(T))
+    d2 = d1 - sig * math.sqrt(T)
+    disc = math.exp(-r * T)
+    if call:
+        price = S * N(d1) - K * disc * N(d2)
+        delta = N(d1)
+        theta = (-S * n(d1) * sig / (2 * math.sqrt(T)) - r * K * disc * N(d2))
+        rho   =  K * T * disc * N(d2)
+    else:
+        price = K * disc * N(-d2) - S * N(-d1)
+        delta = N(d1) - 1.0
+        theta = (-S * n(d1) * sig / (2 * math.sqrt(T)) + r * K * disc * N(-d2))
+        rho   = -K * T * disc * N(-d2)
+    gamma = n(d1) / (S * sig * math.sqrt(T))
+    vega  = S * n(d1) * math.sqrt(T)
+    return price, delta, gamma, vega, theta, rho
+
+S, K, r, sig, T = 100, 100, 0.05, 0.20, 1.0
+for typ, c in (("CALL", True), ("PUT", False)):
+    p, dl, ga, ve, th, rh = bs(S, K, r, sig, T, c)
+    print(f"{typ:4}  price {p:7.4f}  delta {dl:+.4f}  gamma {ga:.4f} "
+          f"vega/1% {ve/100:6.4f}  theta/day {th/365:+.4f}  rho/1% {rh/100:+.4f}")
+print("\nput-call parity check  C - P  vs  S - K*e^(-rT):")
+cp = bs(S,K,r,sig,T,True)[0] - bs(S,K,r,sig,T,False)[0]
+print(f"  {cp:.6f}  vs  {S - K*math.exp(-r*T):.6f}")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 3.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">3.4</span><h2>The Greeks: a risk dashboard</h2></div>
+        <p>The price is a single number; the <strong>Greeks</strong> are its partial derivatives, and they are where the money is managed. Each answers "if <em>this</em> moves by one unit, how much does my option move?" A desk does not predict the market — it measures its exposures with the Greeks and trades to flatten the ones it does not want.</p>
+
+        <div class="eq"><span class="eq-tag">EQ Q3.5 — THE FIVE GREEKS (CALL)</span>
+        $$ \Delta = \frac{\partial C}{\partial S} = N(d_1), \qquad \Gamma = \frac{\partial^2 C}{\partial S^2} = \frac{N'(d_1)}{S\sigma\sqrt{T}}, \qquad \mathcal{V} = \frac{\partial C}{\partial \sigma} = S\,N'(d_1)\sqrt{T} $$
+        $$ \Theta = \frac{\partial C}{\partial t} = -\frac{S\,N'(d_1)\sigma}{2\sqrt{T}} - rKe^{-rT}N(d_2), \qquad \rho = \frac{\partial C}{\partial r} = KTe^{-rT}N(d_2) $$
+        <div class="eq-note">\(N'(x) = \tfrac{1}{\sqrt{2\pi}}e^{-x^2/2}\) is the normal density. <b>Gamma and vega are identical for calls and puts</b> (parity has no \(\sigma\) or curvature). For a put, \(\Delta = N(d_1) - 1 \in [-1, 0]\), \(\rho = -KTe^{-rT}N(-d_2) &lt; 0\), and theta swaps its second term to \(+rKe^{-rT}N(-d_2)\). Desks quote vega and rho per <em>1% point</em> (divide by 100) and theta per <em>day</em> (divide by 365).</div>
+        </div>
+
+        <table class="data">
+          <thead><tr><th>Greek</th><th>Sensitivity to</th><th>Intuition</th><th>How desks hedge it</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Delta Δ</strong></td><td class="m">spot S</td><td>Equivalent share position; ≈ probability of finishing ITM</td><td>Buy/sell \(\Delta\) shares so the book is <em>delta-neutral</em></td></tr>
+            <tr><td><strong>Gamma Γ</strong></td><td class="m">spot (2nd order)</td><td>How fast delta itself moves; the curvature, peaks at-the-money</td><td>Hard to hedge with stock; trade <em>other options</em> to flatten Γ</td></tr>
+            <tr><td><strong>Vega 𝒱</strong></td><td class="m">volatility σ</td><td>P&amp;L if implied vol re-rates; largest for ATM, long-dated</td><td>Buy/sell options of similar maturity to net vega to zero</td></tr>
+            <tr><td><strong>Theta Θ</strong></td><td class="m">time</td><td>Time decay; the rent a long option pays each day</td><td>Usually accepted, not hedged — it pays for gamma/vega</td></tr>
+            <tr><td><strong>Rho ρ</strong></td><td class="m">interest rate r</td><td>Rate sensitivity; small for short-dated, real for LEAPS</td><td>Offset with rate instruments or longer-dated options</td></tr>
+          </tbody>
+        </table>
+
+        <p class="note"><strong>The central trade-off: gamma vs theta.</strong> A long-option book is long gamma (it profits from large moves in either direction — buy low, sell high as you re-hedge) but short theta (it bleeds value as time passes). The two are linked through the PDE: the daily theta you pay is, in expectation, exactly the gamma P&amp;L you collect re-hedging at the realized volatility. A delta-hedged option is a bet that <em>realized</em> vol exceeds the <em>implied</em> vol you paid.</p>
+
+        <div class="widget" id="bs-greeks" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT Q3.2 — GREEKS PROFILE EXPLORER</span><span class="w-sub">CALL · GREEK vs SPOT S · EQ Q3.5</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>GREEK</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-bs-greek="delta">DELTA</button>
+                  <button class="w-btn ghost" data-bs-greek="gamma">GAMMA</button>
+                  <button class="w-btn ghost" data-bs-greek="vega">VEGA</button>
+                  <button class="w-btn ghost" data-bs-greek="theta">THETA</button>
+                </div>
+              </div>
+            </div>
+            <div class="ctl-row">
+              <div class="ctl"><label>VOL σ <output id="bs-g-sig-out">0.20</output></label><input type="range" id="bs-g-sig" min="0.05" max="0.8" step="0.01" value="0.20"/></div>
+              <div class="ctl"><label>EXPIRY T (yrs) <output id="bs-g-T-out">1.00</output></label><input type="range" id="bs-g-T" min="0.05" max="2" step="0.05" value="1"/></div>
+            </div>
+            <canvas class="w-canvas" id="bs-g-canvas" height="320"></canvas>
+          </div>
+          <div class="w-note">The dashed line marks the strike, K = 100. Switch to <b>gamma</b> and lower T toward expiry: the curve spikes into a tall thin peak at the money — short-dated ATM options are explosively convex, the nightmare of a hedging desk. <b>Vega</b> instead grows with T (more uncertainty to be exposed to). <b>Delta</b> sweeps a smooth S-curve from 0 to 1; raising σ smears every profile wider.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 3.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">3.5</span><h2>Implied volatility &amp; the smile</h2></div>
+        <p>Five of the six Black–Scholes inputs are observable: spot, strike, rate, expiry — and the option's market price itself. The sixth, \(\sigma\), is not. So traders run the formula <em>backwards</em>: given a quoted price, find the \(\sigma\) that reproduces it. That number is the <strong>implied volatility</strong>.</p>
+
+        <div class="eq"><span class="eq-tag">EQ Q3.6 — IMPLIED VOLATILITY</span>
+        $$ \sigma_{\text{imp}} : \quad C_{\text{BS}}\big(S, K, r, T;\, \sigma_{\text{imp}}\big) \;=\; C_{\text{market}} $$
+        <div class="eq-note">Because price is monotonic and smooth in \(\sigma\) (vega \(&gt; 0\) always), the inverse exists and is unique. There is no closed form, so you solve numerically — bisection is bulletproof, Newton's method (using vega as the derivative) is fast. <b>Implied vol is the market's price quoted in the language of the model.</b> A trader does not say "this call costs $4.12"; they say "it's trading at 22 vol."</div>
+        </div>
+
+        <p>Here is where the model indicts itself. If Black–Scholes were literally true, every option on the same underlying would imply the <em>same</em> \(\sigma\) — volatility is a property of the stock, not the strike. It does not. Plot implied vol against strike and you get a curve, not a flat line: the <strong>volatility smile</strong> (or, in equity index markets since 1987, a downward <strong>skew</strong> — deep out-of-the-money puts trade at much higher implied vol than calls).</p>
+
+        <div class="callout warn">
+          <span class="co-icon">THE SMILE'S MESSAGE</span>
+          <p><strong>The smile is the market disagreeing with the lognormal.</strong> By bidding up out-of-the-money puts, traders are paying for crash protection — pricing in fatter left tails and jumps than GBM allows. The shape <em>is</em> the error of the constant-vol, no-jump assumption, made tradeable. Quants do not discard Black–Scholes over this; they keep the formula as a quoting device and let \(\sigma(K, T)\) — the volatility surface — carry all the structure the model omits.</p>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Monte-Carlo a European call by simulating GBM, compare to closed-form BS
+import numpy as np, math
+rng = np.random.default_rng(0)
+
+def N(x):  # vectorized normal CDF via erf
+    return 0.5 * (1.0 + np.vectorize(math.erf)(x / math.sqrt(2.0)))
+def bs_call(S, K, r, sig, T):
+    d1 = (math.log(S/K) + (r + 0.5*sig*sig)*T) / (sig*math.sqrt(T))
+    d2 = d1 - sig*math.sqrt(T)
+    return S*float(N(d1)) - K*math.exp(-r*T)*float(N(d2))
+
+S, K, r, sig, T = 100.0, 105.0, 0.05, 0.20, 1.0
+M = 200_000
+Z  = rng.standard_normal(M)
+ST = S * np.exp((r - 0.5*sig*sig)*T + sig*math.sqrt(T)*Z)   # risk-neutral GBM
+payoff = np.maximum(ST - K, 0.0)
+mc    = math.exp(-r*T) * payoff.mean()
+se    = math.exp(-r*T) * payoff.std() / math.sqrt(M)        # standard error
+exact = bs_call(S, K, r, sig, T)
+
+print(f"Monte-Carlo call : {mc:.4f}  (+/- {1.96*se:.4f}, 95% CI)")
+print(f"closed-form  call: {exact:.4f}")
+print(f"gap              : {mc - exact:+.4f}   ({abs(mc-exact)/exact*100:.2f}% )")
+plot_xy(sorted(ST), np.linspace(0, 1, M))   # empirical lognormal CDF of S_T</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="bs-payoff" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT Q3.3 — PAYOFF &amp; BREAK-EVEN DIAGRAM</span><span class="w-sub">EXPIRY PAYOFF vs CURVED VALUE TODAY</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>TYPE</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-bs-p-type="call">CALL</button>
+                  <button class="w-btn ghost" data-bs-p-type="put">PUT</button>
+                </div>
+              </div>
+              <div class="ctl"><label>STRIKE K <output id="bs-p-K-out">100</output></label><input type="range" id="bs-p-K" min="60" max="140" step="1" value="100"/></div>
+            </div>
+            <div class="ctl-row">
+              <div class="ctl"><label>VOL σ <output id="bs-p-sig-out">0.20</output></label><input type="range" id="bs-p-sig" min="0.05" max="0.8" step="0.01" value="0.20"/></div>
+              <div class="ctl"><label>EXPIRY T (yrs) <output id="bs-p-T-out">1.00</output></label><input type="range" id="bs-p-T" min="0.05" max="2" step="0.05" value="1"/></div>
+            </div>
+            <canvas class="w-canvas" id="bs-p-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">PREMIUM PAID</div><div class="r-value" id="bs-p-prem">—</div></div>
+              <div class="readout"><div class="r-label">BREAK-EVEN SPOT</div><div class="r-value" id="bs-p-be">—</div></div>
+              <div class="readout"><div class="r-label">MAX LOSS</div><div class="r-value" id="bs-p-loss">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The <span style="color:var(--accent);">mint</span> line is the kinked payoff at expiry, net of the premium you paid; the <span style="color:var(--blue);">blue</span> curve is the option's smooth value <em>today</em> (the Black–Scholes price across spot). They meet only at expiry, when time value vanishes. The break-even marker is the spot at which the expiry payoff crosses zero — strike plus premium for a call, strike minus premium for a put. Raise σ and the blue curve lifts everywhere: more volatility is worth more, at every spot.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 3.6 ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">3.6</span><h2>Where it breaks &amp; what comes next</h2></div>
+        <p>Black–Scholes is the most successful wrong model in finance. Its failures are not subtle and they are not academic — they have repeatedly arrived as market-wide losses:</p>
+        <ul>
+          <li><strong>Jumps.</strong> GBM has continuous paths; real prices gap. On 19 October 1987 the S&amp;P fell ~20% in a day — a 20-sigma event under lognormal, i.e. effectively impossible, yet it happened. The permanent equity-index <em>skew</em> dates from that morning: the market has priced crash-jumps into puts ever since. Merton's jump-diffusion adds a Poisson jump term to restore the fat left tail.</li>
+          <li><strong>Stochastic volatility.</strong> Vol is not constant — it clusters and spikes. The <strong>Heston model</strong> (1993) makes variance itself a mean-reverting random process correlated with the stock, generating a smile endogenously and admitting a semi-closed form via characteristic functions. SABR is the market standard for interest-rate smiles.</li>
+          <li><strong>Hedging is not free or continuous.</strong> The replication argument assumes costless, continuous rebalancing. In practice transaction costs, discrete hedging, and liquidity gaps mean the hedge leaks — which is precisely how a delta-hedged book's P&amp;L becomes a bet on realized-vs-implied volatility rather than a riskless lock.</li>
+          <li><strong>Correlation and liquidity regimes.</strong> 2008 taught that diversifying assumptions fail together: correlations snap to one and liquidity evaporates exactly when hedges are needed. No single-name vol model captures this; it is a systemic, cross-asset failure.</li>
+        </ul>
+
+        <div class="eq"><span class="eq-tag">EQ Q3.7 — HESTON: STOCHASTIC VARIANCE</span>
+        $$ \mathrm{d}S_t = r S_t\,\mathrm{d}t + \sqrt{v_t}\,S_t\,\mathrm{d}W_t^{S}, \qquad \mathrm{d}v_t = \kappa(\theta - v_t)\,\mathrm{d}t + \xi\sqrt{v_t}\,\mathrm{d}W_t^{v}, \qquad \mathrm{d}W^{S}\mathrm{d}W^{v} = \rho\,\mathrm{d}t $$
+        <div class="eq-note">Variance \(v_t\) mean-reverts to long-run \(\theta\) at speed \(\kappa\) with vol-of-vol \(\xi\); the correlation \(\rho &lt; 0\) (falling stock, rising vol) produces the equity skew. <b>Black–Scholes is the degenerate special case \(\xi = 0\), \(v_t \equiv \sigma^2\)</b> — the model you reach for first, and the baseline every richer model is measured against.</div>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>We held the rate \(r\) constant and known — and for short-dated equity options that is harmless.</strong> It is not harmless for bonds, swaps, and anything long-dated, where the thing being modelled <em>is</em> the rate. Quant 04 turns volatility loose on the yield curve itself: short-rate models (Vasicek, Hull–White, CIR), the change of numéraire that makes them tractable, and why a whole second universe of "Greeks" lives on the interest-rate desk.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 3.7 ====================== -->
+      <section class="section" id="s7">
+        <div class="sec-head"><span class="sec-num">3.7</span><h2>References</h2></div>
+        <ol style="line-height:1.7; color:var(--text-secondary); padding-left:1.2em;">
+          <li><a href="https://www.journals.uchicago.edu/doi/10.1086/260062" target="_blank" rel="noopener" style="color:var(--accent);">Black, F. &amp; Scholes, M. (1973). The Pricing of Options and Corporate Liabilities. <i>Journal of Political Economy</i> 81(3).</a> — the original no-arbitrage derivation and the closed-form formula.</li>
+          <li><a href="https://www.jstor.org/stable/3003143" target="_blank" rel="noopener" style="color:var(--accent);">Merton, R. C. (1973). Theory of Rational Option Pricing. <i>Bell Journal of Economics and Management Science</i> 4(1).</a> — the rigorous continuous-time treatment; later extended with jump-diffusion.</li>
+          <li><a href="https://doi.org/10.1093/rfs/6.2.327" target="_blank" rel="noopener" style="color:var(--accent);">Heston, S. L. (1993). A Closed-Form Solution for Options with Stochastic Volatility. <i>Review of Financial Studies</i> 6(2).</a> — stochastic-variance model that generates the smile endogenously (EQ Q3.7).</li>
+          <li><a href="https://www.pearson.com/en-us/subject-catalog/p/options-futures-and-other-derivatives/P200000005938" target="_blank" rel="noopener" style="color:var(--accent);">Hull, J. C. <i>Options, Futures, and Other Derivatives</i> (11th ed., 2021). Pearson.</a> — the standard practitioner reference for the PDE, the Greeks, and implied-vol surfaces.</li>
+          <li><a href="https://doi.org/10.2307/2329021" target="_blank" rel="noopener" style="color:var(--accent);">Rubinstein, M. (1994). Implied Binomial Trees. <i>Journal of Finance</i> 49(3).</a> — an early reconstruction of the post-1987 volatility smile from market prices.</li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../quant/02-binomial-pricing.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">02</span> Binomial Pricing</div></a>
+        <a class="next" href="../quant/04-interest-rate-models.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">04</span> Interest-Rate Models</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — QUANT · CH 03</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* ============================================================
+   Black–Scholes & the Greeks — chapter instruments
+   Single IIFE, no globals. erf approximation shared by all
+   three widgets so JS and the Python cells agree to ~1e-7.
+   ============================================================ */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  /* --- standard normal CDF / PDF via Abramowitz & Stegun 7.1.26 erf --- */
+  function erf(x) {
+    var s = x < 0 ? -1 : 1;
+    x = Math.abs(x);
+    var t = 1 / (1 + 0.3275911 * x);
+    var y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t
+                  - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x);
+    return s * y;
+  }
+  function ncdf(x) { return 0.5 * (1 + erf(x / Math.SQRT2)); }
+  function npdf(x) { return Math.exp(-0.5 * x * x) / Math.sqrt(2 * Math.PI); }
+
+  /* --- core Black–Scholes: price + the five Greeks (raw, un-rescaled) --- */
+  function bs(S, K, r, sig, T, call) {
+    var sq = Math.sqrt(T);
+    var d1 = (Math.log(S / K) + (r + 0.5 * sig * sig) * T) / (sig * sq);
+    var d2 = d1 - sig * sq;
+    var disc = Math.exp(-r * T);
+    var nd1 = npdf(d1);
+    var price, delta, theta, rho;
+    if (call) {
+      price = S * ncdf(d1) - K * disc * ncdf(d2);
+      delta = ncdf(d1);
+      theta = -S * nd1 * sig / (2 * sq) - r * K * disc * ncdf(d2);
+      rho   =  K * T * disc * ncdf(d2);
+    } else {
+      price = K * disc * ncdf(-d2) - S * ncdf(-d1);
+      delta = ncdf(d1) - 1;
+      theta = -S * nd1 * sig / (2 * sq) + r * K * disc * ncdf(-d2);
+      rho   = -K * T * disc * ncdf(-d2);
+    }
+    var gamma = nd1 / (S * sig * sq);
+    var vega  = S * nd1 * sq;
+    return { price: price, delta: delta, gamma: gamma, vega: vega,
+             theta: theta, rho: rho, d1: d1, d2: d2 };
+  }
+
+  function fnum(x, d) { d = d === undefined ? 4 : d; return x.toFixed(d); }
+
+  /* ========================================================
+     INSTRUMENT Q3.1 — Option pricer + Greeks dashboard
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("bs-pricer");
+    if (!root) return;
+    var ids = ["S", "K", "sig", "r", "T"];
+    var inp = {}, out = {};
+    ids.forEach(function (k) {
+      inp[k] = document.getElementById("bs-" + k);
+      out[k] = document.getElementById("bs-" + k + "-out");
+    });
+    var typeBtns = root.querySelectorAll("[data-bs-type]");
+    var isCall = true;
+    var el = {
+      price: document.getElementById("bs-price"),
+      money: document.getElementById("bs-money"),
+      ds: document.getElementById("bs-ds"),
+      delta: document.getElementById("bs-delta"),
+      gamma: document.getElementById("bs-gamma"),
+      vega: document.getElementById("bs-vega"),
+      theta: document.getElementById("bs-theta"),
+      rho: document.getElementById("bs-rho")
+    };
+    function render() {
+      var S = +inp.S.value, K = +inp.K.value, sig = +inp.sig.value,
+          r = +inp.r.value, T = +inp.T.value;
+      out.S.textContent = S;
+      out.K.textContent = K;
+      out.sig.textContent = fnum(sig, 2);
+      out.r.textContent = fnum(r, 3);
+      out.T.textContent = fnum(T, 2);
+      var g = bs(S, K, r, sig, T, isCall);
+      el.price.textContent = fnum(g.price, 3);
+      el.ds.textContent = fnum(g.d1, 3) + " · " + fnum(g.d2, 3);
+      el.delta.textContent = (g.delta >= 0 ? "+" : "") + fnum(g.delta, 4);
+      el.gamma.textContent = fnum(g.gamma, 5);
+      el.vega.textContent = fnum(g.vega / 100, 4);              /* per 1% vol */
+      var thetaDay = g.theta / 365;
+      el.theta.textContent = (thetaDay >= 0 ? "+" : "") + fnum(thetaDay, 4);
+      el.theta.style.color = thetaDay < 0 ? C.RED : C.BRIGHT;
+      el.rho.textContent = (g.rho >= 0 ? "+" : "") + fnum(g.rho / 100, 4); /* per 1% rate */
+      /* moneyness: ITM/ATM/OTM colored by intrinsic state */
+      var itm = isCall ? S > K : S < K;
+      var atm = Math.abs(S - K) <= 1;
+      el.money.textContent = atm ? "AT-THE-MONEY" : itm ? "IN-THE-MONEY" : "OUT-OF-THE-MONEY";
+      el.money.style.color = atm ? C.SEC : itm ? C.MINT : C.MUT;
+    }
+    ids.forEach(function (k) { inp[k].addEventListener("input", render); });
+    typeBtns.forEach(function (b) {
+      b.addEventListener("click", function () {
+        isCall = b.getAttribute("data-bs-type") === "call";
+        typeBtns.forEach(function (o) { o.classList.toggle("on", o === b); });
+        render();
+      });
+    });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT Q3.2 — Greeks profile explorer (Greek vs spot)
+     ======================================================== */
+  (function () {
+    var canvas = document.getElementById("bs-g-canvas");
+    if (!canvas) return;
+    var K = 100, r = 0.05;
+    var greek = "delta";
+    var sig = document.getElementById("bs-g-sig");
+    var T = document.getElementById("bs-g-T");
+    var sigOut = document.getElementById("bs-g-sig-out");
+    var TOut = document.getElementById("bs-g-T-out");
+    var btns = document.querySelectorAll("[data-bs-greek]");
+    var GMIN = 20, GMAX = 200, NSAMP = 240;
+
+    function greekValue(S, s, t) {
+      var g = bs(S, K, r, s, t, true);
+      if (greek === "delta") return g.delta;
+      if (greek === "gamma") return g.gamma;
+      if (greek === "vega")  return g.vega / 100;   /* per 1% vol */
+      return g.theta / 365;                          /* theta per day */
+    }
+    function render() {
+      var s = +sig.value, t = +T.value;
+      sigOut.textContent = fnum(s, 2);
+      TOut.textContent = fnum(t, 2);
+      var c = FM.setupCanvas(canvas, 320);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      var padL = 52, padR = 16, padT = 18, padB = 30;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      ctx.clearRect(0, 0, w, h);
+      /* sample the curve, find vertical range */
+      var xs = [], ys = [], i, lo = Infinity, hi = -Infinity;
+      for (i = 0; i < NSAMP; i++) {
+        var S = GMIN + (GMAX - GMIN) * i / (NSAMP - 1);
+        var v = greekValue(S, s, t);
+        if (!isFinite(v)) v = 0;
+        xs.push(S); ys.push(v);
+        if (v < lo) lo = v; if (v > hi) hi = v;
+      }
+      if (hi - lo < 1e-9) { hi = lo + 1; }
+      var pad = (hi - lo) * 0.12; lo -= pad; hi += pad;
+      if (lo > 0) lo = 0; if (hi < 0) hi = 0;       /* always show the zero line */
+      function px(S) { return x0 + (S - GMIN) / (GMAX - GMIN) * (x1 - x0); }
+      function py(v) { return y0 - (v - lo) / (hi - lo) * (y0 - y1); }
+      /* grid + axes */
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(x0, y1, x1 - x0, y0 - y1);
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      for (i = 0; i <= 4; i++) {
+        var gv = lo + (hi - lo) * i / 4;
+        var gy = py(gv);
+        ctx.strokeStyle = "rgba(47,50,52,.55)";
+        ctx.beginPath(); ctx.moveTo(x0, gy); ctx.lineTo(x1, gy); ctx.stroke();
+        ctx.fillText(gv.toFixed(Math.abs(gv) < 1 ? 3 : 2), x0 - 6, gy);
+      }
+      /* zero line emphasized */
+      var zy = py(0);
+      ctx.strokeStyle = C.MUT; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x0, zy); ctx.lineTo(x1, zy); ctx.stroke();
+      /* strike marker */
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.setLineDash([4, 4]);
+      var kx = px(K);
+      ctx.beginPath(); ctx.moveTo(kx, y1); ctx.lineTo(kx, y0); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = C.SEC; ctx.textAlign = "center"; ctx.textBaseline = "top";
+      ctx.fillText("K=" + K, kx, y0 + 6);
+      ctx.textAlign = "left";
+      ctx.fillText("S=" + GMIN, x0, y0 + 6);
+      ctx.textAlign = "right";
+      ctx.fillText("S=" + GMAX, x1, y0 + 6);
+      /* the Greek curve */
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (i = 0; i < NSAMP; i++) {
+        var X = px(xs[i]), Y = py(ys[i]);
+        if (i === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y);
+      }
+      ctx.stroke();
+      /* label */
+      ctx.fillStyle = C.MINT; ctx.font = C.MONO;
+      ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText(greek.toUpperCase() + " (CALL) vs SPOT", x0 + 6, y1 + 4);
+    }
+    btns.forEach(function (b) {
+      b.addEventListener("click", function () {
+        greek = b.getAttribute("data-bs-greek");
+        btns.forEach(function (o) { o.classList.toggle("on", o === b); });
+        render();
+      });
+    });
+    sig.addEventListener("input", render);
+    T.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT Q3.3 — Payoff & break-even diagram
+     ======================================================== */
+  (function () {
+    var canvas = document.getElementById("bs-p-canvas");
+    if (!canvas) return;
+    var r = 0.05, S0 = 100;
+    var isCall = true;
+    var Kin = document.getElementById("bs-p-K");
+    var sig = document.getElementById("bs-p-sig");
+    var T = document.getElementById("bs-p-T");
+    var KOut = document.getElementById("bs-p-K-out");
+    var sigOut = document.getElementById("bs-p-sig-out");
+    var TOut = document.getElementById("bs-p-T-out");
+    var premEl = document.getElementById("bs-p-prem");
+    var beEl = document.getElementById("bs-p-be");
+    var lossEl = document.getElementById("bs-p-loss");
+    var typeBtns = document.querySelectorAll("[data-bs-p-type]");
+    var GMIN = 40, GMAX = 160, NSAMP = 240;
+
+    function render() {
+      var K = +Kin.value, s = +sig.value, t = +T.value;
+      KOut.textContent = K;
+      sigOut.textContent = fnum(s, 2);
+      TOut.textContent = fnum(t, 2);
+      var prem = bs(S0, K, r, s, t, isCall).price;   /* premium at spot S0=100 */
+      var be = isCall ? K + prem : K - prem;
+      premEl.textContent = fnum(prem, 2);
+      beEl.textContent = fnum(be, 1);
+      lossEl.textContent = "−" + fnum(prem, 2);       /* long option: max loss = premium */
+
+      var c = FM.setupCanvas(canvas, 320);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      var padL = 50, padR = 16, padT = 18, padB = 30;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      ctx.clearRect(0, 0, w, h);
+
+      function payoff(S) {
+        var intrinsic = isCall ? Math.max(S - K, 0) : Math.max(K - S, 0);
+        return intrinsic - prem;                      /* net of premium */
+      }
+      function curVal(S) { return bs(S, K, r, s, t, isCall).price - prem; }
+
+      /* vertical range across both curves */
+      var lo = Infinity, hi = -Infinity, i, S, v;
+      for (i = 0; i < NSAMP; i++) {
+        S = GMIN + (GMAX - GMIN) * i / (NSAMP - 1);
+        v = payoff(S); if (v < lo) lo = v; if (v > hi) hi = v;
+        v = curVal(S); if (v < lo) lo = v; if (v > hi) hi = v;
+      }
+      var pad = (hi - lo) * 0.1; lo -= pad; hi += pad;
+      function px(S) { return x0 + (S - GMIN) / (GMAX - GMIN) * (x1 - x0); }
+      function py(val) { return y0 - (val - lo) / (hi - lo) * (y0 - y1); }
+
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(x0, y1, x1 - x0, y0 - y1);
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      for (i = 0; i <= 4; i++) {
+        var gv = lo + (hi - lo) * i / 4, gy = py(gv);
+        ctx.strokeStyle = "rgba(47,50,52,.55)";
+        ctx.beginPath(); ctx.moveTo(x0, gy); ctx.lineTo(x1, gy); ctx.stroke();
+        ctx.fillStyle = C.MUT; ctx.fillText(gv.toFixed(0), x0 - 6, gy);
+      }
+      /* zero P&L line */
+      var zy = py(0);
+      ctx.strokeStyle = C.MUT; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x0, zy); ctx.lineTo(x1, zy); ctx.stroke();
+      /* strike + break-even markers */
+      ctx.setLineDash([4, 4]); ctx.strokeStyle = C.HAIR;
+      ctx.beginPath(); ctx.moveTo(px(K), y1); ctx.lineTo(px(K), y0); ctx.stroke();
+      ctx.setLineDash([]);
+      if (be >= GMIN && be <= GMAX) {
+        ctx.strokeStyle = C.SEC; ctx.setLineDash([2, 3]);
+        ctx.beginPath(); ctx.moveTo(px(be), y1); ctx.lineTo(px(be), y0); ctx.stroke();
+        ctx.setLineDash([]);
+        /* break-even dot at zero line */
+        ctx.fillStyle = C.SEC;
+        ctx.beginPath(); ctx.arc(px(be), zy, 3.2, 0, 2 * Math.PI); ctx.fill();
+      }
+      ctx.fillStyle = C.SEC; ctx.textAlign = "center"; ctx.textBaseline = "top";
+      ctx.fillText("K=" + K, px(K), y0 + 6);
+      if (be >= GMIN && be <= GMAX)
+        ctx.fillText("BE=" + be.toFixed(0), px(be), y1 + 2);
+
+      /* current value (blue) */
+      ctx.strokeStyle = C.BLUE; ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (i = 0; i < NSAMP; i++) {
+        S = GMIN + (GMAX - GMIN) * i / (NSAMP - 1);
+        var X = px(S), Y = py(curVal(S));
+        if (i === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y);
+      }
+      ctx.stroke();
+      /* payoff at expiry (mint, kinked) */
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (i = 0; i < NSAMP; i++) {
+        S = GMIN + (GMAX - GMIN) * i / (NSAMP - 1);
+        var X2 = px(S), Y2 = py(payoff(S));
+        if (i === 0) ctx.moveTo(X2, Y2); else ctx.lineTo(X2, Y2);
+      }
+      ctx.stroke();
+
+      /* legend */
+      ctx.font = C.MONO; ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillStyle = C.MINT; ctx.fillText("■ PAYOFF @ EXPIRY", x0 + 6, y1 + 4);
+      ctx.fillStyle = C.BLUE; ctx.fillText("■ VALUE TODAY", x0 + 6, y1 + 18);
+    }
+    typeBtns.forEach(function (b) {
+      b.addEventListener("click", function () {
+        isCall = b.getAttribute("data-bs-p-type") === "call";
+        typeBtns.forEach(function (o) { o.classList.toggle("on", o === b); });
+        render();
+      });
+    });
+    Kin.addEventListener("input", render);
+    sig.addEventListener("input", render);
+    T.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

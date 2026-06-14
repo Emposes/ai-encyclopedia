@@ -1,0 +1,735 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Information Theory — AI Encyclopedia</title>
+<meta name="description" content="Shannon turned surprise into a number — entropy — and that number is the cross-entropy loss training every neural network." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+<link rel="canonical" href="https://ai-encyclopedia.com/stats/08-information-theory" />
+<meta property="og:url" content="https://ai-encyclopedia.com/stats/08-information-theory" />
+</head>
+<body data-track="stats" data-level="core">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ STATISTICS / 08 / INFORMATION THEORY</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../data/01-the-data-problem.html">NEXT: THE DATA PROBLEM →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">MATHEMATICS &amp; STATISTICS · CHAPTER 08 / 08</div>
+    <h1>Information Theory</h1>
+    <p class="lede">In 1948 Claude Shannon laid a foundation that still governs machine learning. <strong>He measured surprise as a number, entropy, and proved it is the irreducible cost of communicating, compressing, or predicting a random source.</strong> Measured between what a model predicts and what actually happens, that same quantity is the cross-entropy loss that trains neural networks. This chapter builds entropy from one axiom, derives cross-entropy and KL divergence, then connects them to the loss function.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 24 MIN</b></span>
+      <span>BUILDS ON<b>STATS 01–07</b></span>
+      <span>INSTRUMENTS<b>ENTROPY · KL · HUFFMAN</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">8.1</span>Entropy — measuring surprise</a>
+      <a href="#s2"><span class="n">8.2</span>Cross-entropy &amp; KL divergence</a>
+      <a href="#s3"><span class="n">8.3</span>Mutual information</a>
+      <a href="#s4"><span class="n">8.4</span>Source coding</a>
+      <a href="#s5"><span class="n">8.5</span>The bridge to ML</a>
+      <a href="#s6"><span class="n">8.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 8.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">8.1</span><h2>Entropy — measuring surprise</h2></div>
+        <p>Start with one demand: <em>how surprised should you be by an outcome?</em> A coin landing heads when you knew it was rigged to always land heads is no surprise at all. A fair coin landing heads is exactly one bit of surprise. Shannon insisted surprise depend only on the probability of the outcome, that a certain event (\(p = 1\)) carry zero surprise, and that the surprise of two <em>independent</em> events <em>add</em>. Only one function satisfies all three: the negative logarithm.</p>
+
+        <div class="eq"><span class="eq-tag">EQ S8.1 — SURPRISAL (SELF-INFORMATION)</span>
+        $$ I(x) \;=\; \log_2 \frac{1}{p(x)} \;=\; -\log_2 p(x) \qquad [\text{bits}] $$
+        <div class="eq-note">The <b>surprisal</b> of an outcome is how many bits it would take to encode it optimally. A coin flip (\(p = \tfrac12\)) costs \(1\) bit; a one-in-a-million event costs \(\approx 20\) bits; a certainty costs \(0\). Independence forces additivity, and \(\log(ab) = \log a + \log b\) is the <b>only</b> function that turns the product of independent probabilities into a sum of surprises. Switch the log base to change the unit: base 2 → bits, base \(e\) → nats, base 10 → bans.</div>
+        </div>
+
+        <p><strong>Entropy</strong> is the <em>average</em> surprisal — the expected number of bits per outcome when the source emits symbols according to distribution \(p\). It is the single number that says how uncertain, how unpredictable, how <em>compressible</em> a source is.</p>
+
+        <div class="eq"><span class="eq-tag">EQ S8.2 — SHANNON ENTROPY</span>
+        $$ H(p) \;=\; \mathbb{E}_{x \sim p}\big[\,I(x)\,\big] \;=\; -\sum_{x} p(x)\,\log_2 p(x) \qquad [\text{bits}] $$
+        <div class="eq-note">By convention \(0 \log 0 = 0\) (an impossible symbol contributes nothing). Entropy is <b>maximized by the uniform distribution</b> — when every outcome is equally likely you cannot do better than guessing, so uncertainty is highest — and <b>minimized (zero) by a point mass</b>, where one outcome is certain. For \(K\) equally likely symbols, \(H = \log_2 K\): a fair die is \(\log_2 6 \approx 2.585\) bits, a fair coin exactly \(1\).</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><div>Fair coin, \(p = (\tfrac12, \tfrac12)\): \(H = -\tfrac12\log_2\tfrac12 - \tfrac12\log_2\tfrac12 = \tfrac12 + \tfrac12 = 1\) bit. Maximal for two outcomes.</div></div>
+          <div class="x-step"><span class="x-n">02</span><div>Biased coin, \(p = (0.9, 0.1)\): \(H = -0.9\log_2 0.9 - 0.1\log_2 0.1 = 0.137 + 0.332 = 0.469\) bits. Knowing it usually lands heads removes more than half the uncertainty.</div></div>
+          <div class="x-step"><span class="x-n">03</span><div>Certain coin, \(p = (1, 0)\): \(H = -1\log_2 1 - 0 = 0\) bits. No surprise, nothing to encode.</div></div>
+          <span class="x-result">RESULT: H sweeps 1.00 → 0.469 → 0 as the coin goes from fair to certain</span>
+        </div></div>
+        </div>
+
+        <p>The two-outcome case has a name — the <strong>binary entropy function</strong> \(H_b(p) = -p\log_2 p - (1-p)\log_2(1-p)\) — and a famous shape: a smooth arch peaking at exactly \(1\) bit when \(p = \tfrac12\) and collapsing to \(0\) at both ends. That arch is the first thing to internalize, because the curve of a training loss is the same idea wearing different clothes.</p>
+
+        <div class="exercise" data-answer="1" data-tol="0.001" data-unit="bits" data-hint="two equally likely outcomes; H = -½log₂½ - ½log₂½">
+          <div class="ex-q">What is the Shannon entropy of a <b>fair coin</b> — outcomes \( \{H, T\} \) each with probability \( \tfrac12 \) — measured in <b>bits</b>?</div>
+          <div class="ex-reveal-src">\( H = -\tfrac12\log_2\tfrac12 - \tfrac12\log_2\tfrac12 = -\tfrac12(-1) - \tfrac12(-1) = \tfrac12 + \tfrac12 = \) <b>1</b> bit. This is the definition of the unit: one fair binary choice is exactly one bit of information.</div>
+        </div>
+
+        <div class="exercise" data-answer="2" data-tol="0.001" data-unit="bits" data-hint="K equally likely symbols give H = log₂ K">
+          <div class="ex-q">A source emits one of <b>4 equally likely</b> symbols. What is its entropy in bits? (\( H = \log_2 K \).)</div>
+          <div class="ex-reveal-src">\( H = \log_2 4 = \) <b>2</b> bits. Four equiprobable outcomes need two yes/no questions to pin down — and no coding scheme can average fewer than two bits per symbol.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># EQ S8.2: entropy of a distribution + the binary-entropy arch
+import numpy as np
+
+def entropy_bits(p):
+    p = np.asarray(p, float)
+    p = p[p > 0]                       # 0*log0 = 0 by convention
+    return float(-(p * np.log2(p)).sum())
+
+print("fair coin   H =", round(entropy_bits([0.5, 0.5]), 4), "bits")
+print("biased coin H =", round(entropy_bits([0.9, 0.1]), 4), "bits")
+print("fair die    H =", round(entropy_bits([1/6]*6), 4), "bits  (= log2 6)")
+print("loaded die  H =", round(entropy_bits([0.5,0.1,0.1,0.1,0.1,0.1]), 4), "bits")
+
+# the binary entropy function H_b(p): an arch peaking at p = 0.5
+ps = np.linspace(0.001, 0.999, 200)
+Hb = -ps*np.log2(ps) - (1-ps)*np.log2(1-ps)
+print("\npeak of H_b at p =", round(float(ps[Hb.argmax()]), 3),
+      "-> H =", round(float(Hb.max()), 4), "bit")
+plot_xy(ps, Hb)</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="it-entropy" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT S8.1 — ENTROPY EXPLORER</span><span class="w-sub">DRAG THE BARS · H PEAKS AT UNIFORM</span></div>
+          <div class="w-body">
+            <div style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.16em;color:#636363;margin-bottom:8px;">PROBABILITY OVER 5 SYMBOLS — DRAG A BAR (RENORMALIZES TO SUM 1)</div>
+            <canvas class="w-canvas" id="it-ent-canvas" height="260"></canvas>
+            <div class="ctl-row" style="margin-top:14px;">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>PRESETS</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-ent-preset="uniform">UNIFORM</button>
+                  <button class="w-btn ghost" data-ent-preset="skew">SKEWED</button>
+                  <button class="w-btn ghost" data-ent-preset="peak">NEAR-CERTAIN</button>
+                </div>
+              </div>
+            </div>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">ENTROPY H</div><div class="r-value" id="it-ent-H">—</div></div>
+              <div class="readout"><div class="r-label">MAX POSSIBLE (log₂ 5)</div><div class="r-value" id="it-ent-max">—</div></div>
+              <div class="readout"><div class="r-label">FRACTION OF MAX</div><div class="r-value" id="it-ent-frac">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Drag any bar up or down — the rest rescale so the distribution always sums to one. Watch the entropy readout: it is <b>highest when all five bars are level</b> (the uniform, \(\log_2 5 = 2.322\) bits) and falls toward zero as you pile all the mass onto one symbol. The mint guideline marks the uniform height; pull a bar above it and entropy <em>drops</em>, because concentration is the opposite of surprise.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 8.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">8.2</span><h2>Cross-entropy &amp; KL divergence</h2></div>
+        <p>Entropy assumes you know the true distribution \(p\). But a model only ever has an <em>estimate</em> \(q\). <strong>Cross-entropy</strong> asks the practical question: if reality is \(p\) but you encode it using a code built for \(q\), how many bits per symbol do you actually pay?</p>
+
+        <div class="eq"><span class="eq-tag">EQ S8.3 — CROSS-ENTROPY</span>
+        $$ H(p, q) \;=\; -\sum_{x} p(x)\,\log_2 q(x) \qquad [\text{bits}] $$
+        <div class="eq-note">Outcomes still happen with the true frequency \(p(x)\), but each is charged at the wrong codeword length \(-\log_2 q(x)\). <b>If your model is right (\(q = p\)), cross-entropy collapses to entropy</b>, \(H(p,p) = H(p)\) — you cannot beat the source's own entropy. If your model is wrong, you pay strictly more. That excess is the entire point of the next equation.</div>
+        </div>
+
+        <p>The gap between paying \(H(p,q)\) and the irreducible floor \(H(p)\) is the <strong>Kullback–Leibler divergence</strong> — the number of <em>wasted</em> bits caused by believing \(q\) when the truth is \(p\).</p>
+
+        <div class="eq"><span class="eq-tag">EQ S8.4 — KL DIVERGENCE (RELATIVE ENTROPY)</span>
+        $$ D_{\mathrm{KL}}(p \,\Vert\, q) \;=\; \sum_{x} p(x)\,\log_2 \frac{p(x)}{q(x)} \;=\; H(p, q) - H(p) \;\ge\; 0 $$
+        <div class="eq-note">The decomposition <b>\(H(p,q) = H(p) + D_{\mathrm{KL}}(p \Vert q)\)</b> is the load-bearing identity of this chapter: the cross-entropy you minimize in training is the irreducible entropy of the data <em>plus</em> the divergence of your model from the truth. Since \(H(p)\) is a constant you cannot change, <b>minimizing cross-entropy is exactly minimizing KL divergence.</b> By Gibbs' inequality \(D_{\mathrm{KL}} \ge 0\), with equality iff \(q = p\) everywhere.</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><div>Truth \(p = (0.7, 0.2, 0.1)\), model \(q = (0.2, 0.5, 0.3)\). First the entropy floor: \(H(p) = -0.7\log_2 0.7 - 0.2\log_2 0.2 - 0.1\log_2 0.1 = 1.157\) bits.</div></div>
+          <div class="x-step"><span class="x-n">02</span><div>Cross-entropy: \(H(p,q) = -0.7\log_2 0.2 - 0.2\log_2 0.5 - 0.1\log_2 0.3 = 1.625 + 0.200 + 0.174 = 1.999\) bits.</div></div>
+          <div class="x-step"><span class="x-n">03</span><div>The waste: \(D_{\mathrm{KL}}(p\Vert q) = H(p,q) - H(p) = 1.999 - 1.157 = 0.842\) bits — the price of using the wrong code.</div></div>
+          <div class="x-step"><span class="x-n">04</span><div>Reverse it: \(D_{\mathrm{KL}}(q\Vert p) = 0.775\) bits. <b>Different number</b> — KL is not symmetric, and is not a distance.</div></div>
+          <span class="x-result">RESULT: KL(p‖q) = 0.842 bits ≠ KL(q‖p) = 0.775 bits</span>
+        </div></div>
+        </div>
+
+        <p class="note"><strong>KL is not a metric.</strong> It is non-negative and zero only when the distributions match, but it is <em>asymmetric</em> — \(D_{\mathrm{KL}}(p\Vert q) \ne D_{\mathrm{KL}}(q\Vert p)\) in general — and it violates the triangle inequality. The asymmetry is not a flaw; it encodes a real modelling choice. <strong>Forward KL</strong> \(D_{\mathrm{KL}}(p\Vert q)\), the form inside maximum-likelihood training, is <em>mass-covering</em>: it punishes \(q\) heavily for assigning near-zero probability anywhere \(p\) has mass, so it spreads \(q\) to cover every mode. <strong>Reverse KL</strong> \(D_{\mathrm{KL}}(q\Vert p)\), the form inside variational inference (the ELBO, §8.5), is <em>mode-seeking</em>: it lets \(q\) ignore parts of \(p\) and lock onto a single mode. Which way you write the bars decides whether your model hedges or commits.</p>
+
+        <div class="exercise" data-answer="0" data-tol="0.001" data-hint="a distribution against itself wastes no bits; log(p/p) = log 1 = 0">
+          <div class="ex-q">What is \( D_{\mathrm{KL}}(p \,\Vert\, p) \) — the KL divergence of any distribution from <b>itself</b>?</div>
+          <div class="ex-reveal-src">Each term is \( p(x)\log_2\dfrac{p(x)}{p(x)} = p(x)\log_2 1 = p(x)\cdot 0 = 0 \), so the sum is <b>0</b>. A perfect model wastes no bits — this is the floor every cross-entropy loss is descending toward, and the equality case of Gibbs' inequality.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># EQ S8.3 / S8.4: entropy, cross-entropy, KL -- and KL's asymmetry
+import numpy as np
+
+def entropy(p):       return float(-(p * np.log2(p)).sum())
+def cross_entropy(p,q):return float(-(p * np.log2(q)).sum())
+def kl(p, q):         return float((p * np.log2(p/q)).sum())
+
+p = np.array([0.7, 0.2, 0.1])      # the truth
+q = np.array([0.2, 0.5, 0.3])      # a wrong model
+
+H   = entropy(p)
+Hpq = cross_entropy(p, q)
+print(f"H(p)            = {H:.4f} bits   (irreducible floor)")
+print(f"H(p, q)         = {Hpq:.4f} bits   (what you actually pay)")
+print(f"KL(p || q)      = {kl(p, q):.4f} bits   (wasted bits)")
+print(f"identity check  : H(p)+KL = {H + kl(p,q):.4f}  == H(p,q)?",
+      np.isclose(H + kl(p,q), Hpq))
+
+print(f"\nKL(p || q)      = {kl(p, q):.4f}")
+print(f"KL(q || p)      = {kl(q, p):.4f}   <- different! KL is asymmetric")
+print(f"KL(p || p)      = {kl(p, p):.4f}   <- zero iff the model is exact")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="it-kl" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT S8.2 — KL ASYMMETRY VISUALIZER</span><span class="w-sub">3 SYMBOLS · KL(P‖Q) vs KL(Q‖P)</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>q₁ <output id="it-kl-q1-out">0.20</output></label><input type="range" id="it-kl-q1" min="0.02" max="0.96" step="0.01" value="0.20"/></div>
+              <div class="ctl"><label>q₂ <output id="it-kl-q2-out">0.50</output></label><input type="range" id="it-kl-q2" min="0.02" max="0.96" step="0.01" value="0.50"/></div>
+            </div>
+            <canvas class="w-canvas" id="it-kl-canvas" height="240"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">KL(P ‖ Q) — FORWARD</div><div class="r-value" id="it-kl-fwd">—</div></div>
+              <div class="readout acc"><div class="r-label">KL(Q ‖ P) — REVERSE</div><div class="r-value" id="it-kl-rev">—</div></div>
+              <div class="readout"><div class="r-label">ASYMMETRY GAP</div><div class="r-value" id="it-kl-gap">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The fixed truth is <span style="color:var(--accent);">P = (0.7, 0.2, 0.1)</span> (mint bars); drag the sliders to reshape your model <span style="color:var(--blue);">Q</span> (blue bars; the third bar fills the remainder). Forward and reverse KL are <b>almost never equal</b> — push a Q-bar toward zero where P has real mass and forward KL explodes (mass-covering punishes it), while reverse KL stays mild. Both readouts hit <b>0</b> only when the blue bars exactly overlay the mint ones.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 8.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">8.3</span><h2>Mutual information — shared surprise</h2></div>
+        <p>So far, one variable. <strong>Mutual information</strong> asks how much knowing one random variable tells you about another: how many bits of \(Y\)'s uncertainty vanish once you observe \(X\). It is the KL divergence between the joint distribution and the product of the marginals — i.e. how far \(X\) and \(Y\) are from being independent.</p>
+
+        <div class="eq"><span class="eq-tag">EQ S8.5 — MUTUAL INFORMATION</span>
+        $$ I(X; Y) \;=\; \sum_{x, y} p(x, y)\,\log_2 \frac{p(x, y)}{p(x)\,p(y)} \;=\; H(Y) - H(Y \mid X) \;=\; D_{\mathrm{KL}}\big(p(x,y) \,\Vert\, p(x)p(y)\big) $$
+        <div class="eq-note">The middle form is the most intuitive: \(H(Y)\) is your uncertainty about \(Y\) before, \(H(Y\mid X)\) is what remains after seeing \(X\), and the drop is the information \(X\) carried. <b>\(I(X;Y) \ge 0\), and \(I(X;Y) = 0\) iff \(X\) and \(Y\) are independent</b> (the joint factorizes, the KL vanishes). Unlike KL, mutual information <em>is</em> symmetric: \(I(X;Y) = I(Y;X)\). It captures arbitrary nonlinear dependence — where correlation sees only straight lines.</div>
+        </div>
+
+        <p>Mutual information is the quiet workhorse behind a surprising amount of machine learning. Decision trees split on the feature with the highest <strong>information gain</strong> — mutual information between a feature and the label. Feature-selection ranks inputs by \(I(\text{feature}; \text{target})\). The <strong>information bottleneck</strong> frames representation learning as compressing \(X\) into \(Z\) while preserving \(I(Z; Y)\); InfoNCE and contrastive objectives are lower bounds on mutual information between views of the same datum. Wherever the question is "how related are these, beyond linear correlation?", mutual information is the honest answer — though estimating it from samples in high dimensions is notoriously hard and an active research area.</p>
+
+        <div class="callout">
+          <span class="co-icon">KEY</span>
+          <p><strong>Correlation sees lines; mutual information sees structure.</strong> Two variables related by \(Y = X^2\) with \(X\) symmetric about zero have correlation <em>exactly zero</em> — yet \(X\) determines \(Y\) completely, so their mutual information is large. Any time you reach for "are these independent?", the bit-accurate test is \(I(X;Y) = 0\), not \(\rho = 0\).</p>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># EQ S8.5: mutual information from a joint table, three identities agree
+import numpy as np
+
+# joint p(x,y) over a 2x2 grid -- correlated, not independent
+P = np.array([[0.40, 0.10],
+              [0.10, 0.40]])
+px = P.sum(1, keepdims=True)        # marginal of X
+py = P.sum(0, keepdims=True)        # marginal of Y
+
+mask = P > 0
+I = float((P[mask] * np.log2(P[mask] / (px @ py)[mask])).sum())
+
+def H(p):                           # entropy of a flat distribution
+    p = p[p > 0]; return float(-(p * np.log2(p)).sum())
+HY   = H(py.ravel())
+HY_X = float(-(P[mask] * np.log2((P / px)[mask])).sum())   # H(Y|X)
+
+print(f"I(X;Y) via KL of joint vs product : {I:.4f} bits")
+print(f"I(X;Y) via H(Y) - H(Y|X)          : {HY - HY_X:.4f} bits")
+print(f"H(Y) = {HY:.3f}, H(Y|X) = {HY_X:.3f}  -> X removes that gap from Y")
+
+indep = px @ py                     # what independence would look like
+print("\nif X,Y were independent, I would be:",
+      round(float((indep[indep>0]*np.log2((indep/(px@py))[indep>0])).sum()), 4))</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 8.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">8.4</span><h2>Source coding — entropy as a compression limit</h2></div>
+        <p>Entropy is not just a measure of uncertainty; it is a <em>hard physical bound</em>. Shannon's <strong>source coding theorem</strong> says: to encode symbols from a source with entropy \(H\) into bits without loss, you need on average <strong>at least \(H\) bits per symbol</strong>, and you can get arbitrarily close to \(H\) with a clever enough code. No lossless compressor — not ZIP, not a neural one — can beat the entropy of the source it is fed. Entropy <em>is</em> the compression limit.</p>
+
+        <div class="eq"><span class="eq-tag">EQ S8.6 — SOURCE CODING THEOREM (BOUNDS)</span>
+        $$ H(p) \;\le\; L^{*} \;<\; H(p) + 1 \qquad\text{where}\qquad L^{*} = \min_{\text{codes}} \sum_x p(x)\,\ell(x) $$
+        <div class="eq-note">\(L^{*}\) is the expected codeword length of the best possible prefix-free code; \(\ell(x)\) is the length assigned to symbol \(x\). The optimal length is \(\ell(x) = -\log_2 p(x)\) — the surprisal of EQ S8.1 — so <b>common symbols get short codes and rare symbols get long ones.</b> The "\(+1\)" slack is the integer rounding penalty (you cannot use \(2.3\) bits for one symbol); coding many symbols at once, or arithmetic coding, drives the average down to \(H\) itself.</div>
+        </div>
+
+        <p><strong>Huffman coding</strong> is the classic constructive proof: repeatedly merge the two least-probable symbols into a subtree, and the resulting prefix code is provably optimal among integer-length codes. When all probabilities are negative powers of two — a <em>dyadic</em> distribution — Huffman hits the entropy bound exactly, with zero slack.</p>
+
+        <div class="exercise" data-answer="1.75" data-tol="0.01" data-unit="bits" data-hint="optimal length per symbol is -log₂ p(x); for p = ½,¼,⅛,⅛ that is 1,2,3,3 bits">
+          <div class="ex-q">A source emits four symbols with probabilities \( (\tfrac12, \tfrac14, \tfrac18, \tfrac18) \). What is its entropy — and the expected length of the optimal Huffman code — in <b>bits per symbol</b>?</div>
+          <div class="ex-reveal-src">Surprisals: \(-\log_2\tfrac12 = 1\), \(-\log_2\tfrac14 = 2\), \(-\log_2\tfrac18 = 3\), \(-\log_2\tfrac18 = 3\). So \( H = \tfrac12(1) + \tfrac14(2) + \tfrac18(3) + \tfrac18(3) = 0.5 + 0.5 + 0.375 + 0.375 = \) <b>1.75</b> bits. Because every probability is a power of two (dyadic), Huffman assigns lengths \(1,2,3,3\) and achieves this entropy <em>exactly</em> — no rounding waste.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># EQ S8.6: build a Huffman code, compare its length to the entropy bound
+import numpy as np, heapq
+
+def huffman_lengths(p):
+    # heap of (prob, tie, node); node is leaf-id or (left,right)
+    h = [(pi, i, i) for i, pi in enumerate(p)]
+    heapq.heapify(h); nxt = len(p)
+    while len(h) > 1:
+        a = heapq.heappop(h); b = heapq.heappop(h)
+        heapq.heappush(h, (a[0]+b[0], nxt, (a[2], b[2]))); nxt += 1
+    lengths = {}
+    def walk(node, d):
+        if isinstance(node, tuple): walk(node[0], d+1); walk(node[1], d+1)
+        else: lengths[node] = max(d, 1)
+    walk(h[0][2], 0)
+    return [lengths[i] for i in range(len(p))]
+
+for name, p in [("dyadic ", [0.5, 0.25, 0.125, 0.125]),
+                ("uniform", [0.25]*4),
+                ("skewed ", [0.6, 0.2, 0.1, 0.1])]:
+    p = np.array(p)
+    H = float(-(p*np.log2(p)).sum())
+    L = float((p * np.array(huffman_lengths(p))).sum())
+    print(f"{name}: H = {H:.4f}  Huffman L = {L:.4f}  "
+          f"slack = {L-H:+.4f}  (theorem: 0 <= slack < 1)")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="it-huff" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT S8.3 — CODING-LENGTH / HUFFMAN DEMO</span><span class="w-sub">4 SYMBOLS · L vs ENTROPY BOUND · EQ S8.6</span></div>
+          <div class="w-body">
+            <div class="ctl-row" style="margin-bottom:10px;">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>SOURCE</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-huff-preset="dyadic">DYADIC (½ ¼ ⅛ ⅛)</button>
+                  <button class="w-btn ghost" data-huff-preset="uniform">UNIFORM</button>
+                  <button class="w-btn ghost" data-huff-preset="skew">SKEWED</button>
+                </div>
+              </div>
+            </div>
+            <div id="it-huff-codes" style="display:flex;flex-direction:column;gap:6px;font-family:ui-monospace,Menlo,monospace;font-size:12px;margin-bottom:6px;"></div>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">ENTROPY H (FLOOR)</div><div class="r-value" id="it-huff-H">—</div></div>
+              <div class="readout acc"><div class="r-label">HUFFMAN LENGTH L</div><div class="r-value" id="it-huff-L">—</div></div>
+              <div class="readout"><div class="r-label">SLACK L − H</div><div class="r-value" id="it-huff-slack">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Each row shows a symbol, its probability, the Huffman codeword built by merging the two rarest symbols, and that codeword's length. The <b>DYADIC</b> preset hits zero slack — \(L = H = 1.75\) bits — because every probability is a power of two and the surprisal \(-\log_2 p\) is already a whole number of bits. <b>UNIFORM</b> over four symbols also lands exactly on \(H = 2\); the <b>SKEWED</b> source pays a small rounding penalty (slack between 0 and 1), exactly as EQ S8.6 promises.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 8.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">8.5</span><h2>The bridge to ML — cross-entropy loss, perplexity, the ELBO</h2></div>
+        <p>Here is the payoff. A classifier outputs a predicted distribution \(q\) over labels; the true label is a one-hot distribution \(p\) (all mass on the correct class \(c\)). Plug into cross-entropy, EQ S8.3:</p>
+
+        <div class="eq"><span class="eq-tag">EQ S8.7 — CROSS-ENTROPY LOSS = NEGATIVE LOG-LIKELIHOOD</span>
+        $$ \mathcal{L} \;=\; H(p, q) \;=\; -\sum_{k} p_k \log q_k \;=\; -\log q_c \qquad (p \text{ one-hot at the true class } c) $$
+        <div class="eq-note">Because \(p\) is one-hot, every term vanishes except \(k = c\), and the loss reduces to <b>the negative log-probability the model assigned to the correct answer</b> — the negative log-likelihood (NLL). Minimizing it over a dataset is maximum-likelihood estimation; via EQ S8.4 it is also minimizing \(D_{\mathrm{KL}}(p \Vert q)\), pushing the model's distribution toward the data's. The softmax that produces \(q\) and this cross-entropy are paired precisely because the softmax's gradient through the loss is the clean \(q - p\) (see Vol I · EQ M2.3 and Vol II · EQ 4.1). <b>Every neural classifier and every language model is trained by descending this single Shannon quantity.</b></div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><div>Logits \(z = (2.0,\ 1.0,\ 0.1)\), true class \(c = 0\). Softmax: \(e^{2}, e^{1}, e^{0.1} = 7.39, 2.72, 1.11\); sum \(= 11.21\).</div></div>
+          <div class="x-step"><span class="x-n">02</span><div>Predicted probabilities \(q = (0.659,\ 0.242,\ 0.099)\). The model gives the right class \(0.659\).</div></div>
+          <div class="x-step"><span class="x-n">03</span><div>Cross-entropy loss \(= -\log q_0 = -\log(0.659) = 0.417\) nats. (In bits, \(-\log_2 0.659 = 0.601\).)</div></div>
+          <div class="x-step"><span class="x-n">04</span><div>A confident-correct model (\(q_0 \to 1\)) drives the loss to \(0\); a confident-wrong one (\(q_0 \to 0\)) sends it to \(+\infty\). That unbounded penalty for confident mistakes is why cross-entropy trains so well.</div></div>
+          <span class="x-result">RESULT: loss = −log(0.659) = 0.417 nats = 0.601 bits</span>
+        </div></div>
+        </div>
+
+        <p>For language models, the same loss wears a friendlier name. The geometric-mean per-token uncertainty is <strong>perplexity</strong> — the exponential of the cross-entropy — interpreted as the effective number of equally likely choices the model faces at each step.</p>
+
+        <div class="eq"><span class="eq-tag">EQ S8.8 — PERPLEXITY</span>
+        $$ \mathrm{PPL} \;=\; b^{\,H(p, q)} \;=\; \exp\!\Big(\!-\tfrac{1}{N}\textstyle\sum_{i=1}^{N} \log q(x_i \mid x_{&lt;i})\Big) $$
+        <div class="eq-note">\(b\) is the log base (use \(e\) with natural-log cross-entropy, \(2\) with bits — they give the same perplexity). A model with cross-entropy \(H\) bits is <b>as uncertain as a fair die with \(2^{H}\) faces.</b> A fair coin (\(H = 1\) bit) has perplexity \(2\); a perfect model has perplexity \(1\). Halving a language model's bits-per-token squares its odds of guessing the next word — which is why every percentage point of cross-entropy is fought over so hard.</div>
+        </div>
+
+        <p>The reach goes further. Generative models that cannot evaluate their own likelihood — VAEs, diffusion models — are trained on the <strong>evidence lower bound (ELBO)</strong>, which is once again entropy bookkeeping. Maximizing the ELBO is maximizing a reconstruction term minus a KL term:</p>
+
+        <div class="eq"><span class="eq-tag">EQ S8.9 — THE ELBO</span>
+        $$ \log p(x) \;\ge\; \underbrace{\mathbb{E}_{q(z\mid x)}\big[\log p(x \mid z)\big]}_{\text{reconstruction}} \;-\; \underbrace{D_{\mathrm{KL}}\big(q(z\mid x) \,\Vert\, p(z)\big)}_{\text{regularizer}} \;=\; \mathcal{L}_{\text{ELBO}} $$
+        <div class="eq-note">The gap between the true log-evidence \(\log p(x)\) and the bound is exactly \(D_{\mathrm{KL}}(q(z\mid x)\Vert p(z\mid x))\) — a KL that is \(\ge 0\), which is <em>why</em> the ELBO is a lower bound. Maximizing it pushes the approximate posterior \(q(z\mid x)\) toward the true posterior while keeping the latent code close to the prior \(p(z)\). <b>The same three quantities — log-likelihood, cross-entropy, KL — that opened this chapter close it</b>, now steering every variational and diffusion model. Information theory is not adjacent to machine learning; it is its loss function.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># EQ S8.7: softmax cross-entropy == negative log-likelihood, on a tiny example
+import numpy as np
+
+def softmax(z):
+    e = np.exp(z - z.max()); return e / e.sum()
+
+logits = np.array([2.0, 1.0, 0.1])     # raw model scores for 3 classes
+c = 0                                   # the true class index
+q = softmax(logits)
+onehot = np.eye(3)[c]                    # true distribution p (one-hot)
+
+ce_full = float(-(onehot * np.log(q)).sum())   # EQ S8.3 with one-hot p
+nll     = float(-np.log(q[c]))                 # collapses to -log q_c
+print("softmax q        :", q.round(4))
+print(f"cross-entropy    : {ce_full:.4f} nats   ({ce_full/np.log(2):.4f} bits)")
+print(f"neg log-likelihd : {nll:.4f} nats   <- identical, EQ S8.7")
+
+# perplexity over a tiny sequence of true-class probabilities (EQ S8.8)
+probs = np.array([0.659, 0.40, 0.90, 0.25])     # q(x_i) the model gave the truth
+ppl = float(np.exp(-np.log(probs).mean()))
+print(f"\nsequence perplexity : {ppl:.3f}  (a perfect model -> 1.0)")
+print(f"a fair coin per step would give PPL = {2**1.0:.1f}")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>Shannon gave us the unit of information and the loss that consumes it — but every bit of entropy in this chapter assumed a clean distribution to count.</strong> Real data is messy, biased, leaky, and never the distribution you wished for. The Data volume opens by confronting that gap head-on: where datasets come from, how they lie, and why the hardest part of machine learning happens before a single gradient is computed. Next: <em>Data · 01 — The Data Problem.</em></p>
+        </div>
+      </section>
+
+      <!-- ====================== 8.R — References ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">8.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://doi.org/10.1002/j.1538-7305.1948.tb01338.x" target="_blank" rel="noopener">Shannon, C. E. (1948). <span class="ref-venue">A Mathematical Theory of Communication</span>.</a> <span class="ref-meta">Bell System Technical Journal 27 — the founding paper: entropy, source coding, and channel capacity (EQ S8.2, S8.6).</span></li>
+          <li><a href="https://doi.org/10.1214/aoms/1177729694" target="_blank" rel="noopener">Kullback, S. &amp; Leibler, R. A. (1951). <span class="ref-venue">On Information and Sufficiency</span>.</a> <span class="ref-meta">Annals of Mathematical Statistics 22(1) — relative entropy / KL divergence (EQ S8.4).</span></li>
+          <li><a href="https://doi.org/10.1002/047174882X" target="_blank" rel="noopener">Cover, T. M. &amp; Thomas, J. A. (2006). <span class="ref-venue">Elements of Information Theory</span> (2nd ed.).</a> <span class="ref-meta">Wiley — the standard graduate text; entropy, mutual information, source coding, and their inequalities.</span></li>
+          <li><a href="https://doi.org/10.1109/JRPROC.1952.273898" target="_blank" rel="noopener">Huffman, D. A. (1952). <span class="ref-venue">A Method for the Construction of Minimum-Redundancy Codes</span>.</a> <span class="ref-meta">Proceedings of the IRE 40(9) — the optimal prefix code of §8.4 (EQ S8.6, Instrument S8.3).</span></li>
+          <li><a href="https://www.inference.org.uk/itprnn/book.pdf" target="_blank" rel="noopener">MacKay, D. J. C. (2003). <span class="ref-venue">Information Theory, Inference, and Learning Algorithms</span>.</a> <span class="ref-meta">Cambridge University Press — free online; the canonical bridge from Shannon to machine learning.</span></li>
+          <li><a href="https://arxiv.org/abs/1312.6114" target="_blank" rel="noopener">Kingma, D. P. &amp; Welling, M. (2014). <span class="ref-venue">Auto-Encoding Variational Bayes</span>.</a> <span class="ref-meta">ICLR — the variational autoencoder and the ELBO objective (EQ S8.9).</span></li>
+          <li><a href="https://arxiv.org/abs/physics/0004057" target="_blank" rel="noopener">Tishby, N., Pereira, F. C. &amp; Bialek, N. (2000). <span class="ref-venue">The Information Bottleneck Method</span>.</a> <span class="ref-meta">arXiv — mutual information as a principle for representation learning (§8.3).</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../stats/07-markov-chains.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">07</span> Markov Chains</div></a>
+        <a class="next" href="../data/01-the-data-problem.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">01</span> Data · The Data Problem</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — STATISTICS · CH 08</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* ============================================================
+   Information Theory — chapter instruments
+   Single IIFE, no globals. All entropy math in bits (log2).
+   ============================================================ */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  var LOG2 = Math.log(2);
+  function log2(x) { return Math.log(x) / LOG2; }
+  function entropyBits(p) {
+    var i, h = 0;
+    for (i = 0; i < p.length; i++) if (p[i] > 0) h -= p[i] * log2(p[i]);
+    return h;
+  }
+  function fnum(x, d) { d = d === undefined ? 3 : d; return x.toFixed(d); }
+
+  /* ========================================================
+     INSTRUMENT S8.1 — Entropy explorer (drag bars)
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("it-entropy");
+    if (!root) return;
+    var canvas = document.getElementById("it-ent-canvas");
+    var hEl = document.getElementById("it-ent-H");
+    var maxEl = document.getElementById("it-ent-max");
+    var fracEl = document.getElementById("it-ent-frac");
+    var btns = root.querySelectorAll("[data-ent-preset]");
+    var N = 5;
+    var p = [0.2, 0.2, 0.2, 0.2, 0.2];        // start uniform: maximal entropy
+    var Hmax = log2(N);
+    var dragging = -1;
+    var geom = { x0: 0, x1: 0, y0: 0, y1: 0, bw: 0, gap: 0 };
+
+    function normalize() {
+      var s = 0, i;
+      for (i = 0; i < N; i++) { if (p[i] < 0.001) p[i] = 0.001; s += p[i]; }
+      for (i = 0; i < N; i++) p[i] /= s;
+    }
+    function render() {
+      var c = FM.setupCanvas(canvas, 260);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      ctx.clearRect(0, 0, w, h);
+      var padL = 30, padR = 16, padT = 16, padB = 26;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      geom.x0 = x0; geom.x1 = x1; geom.y0 = y0; geom.y1 = y1;
+      var gap = 14;
+      var bw = (x1 - x0 - gap * (N - 1)) / N;
+      geom.bw = bw; geom.gap = gap;
+      var pmax = 1.0;                                   // axis tops at p = 1
+      function py(v) { return y0 - v / pmax * (y0 - y1); }
+      /* gridlines */
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      var g;
+      for (g = 0; g <= 4; g++) {
+        var gv = g / 4, gy = py(gv);
+        ctx.strokeStyle = "rgba(47,50,52,.55)"; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(x0, gy); ctx.lineTo(x1, gy); ctx.stroke();
+        ctx.fillText(gv.toFixed(2), x0 - 6, gy);
+      }
+      /* uniform guideline */
+      var uy = py(1 / N);
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 1; ctx.setLineDash([5, 4]);
+      ctx.beginPath(); ctx.moveTo(x0, uy); ctx.lineTo(x1, uy); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = C.MINT; ctx.textAlign = "left"; ctx.textBaseline = "bottom";
+      ctx.fillText("UNIFORM 1/" + N, x0 + 2, uy - 3);
+      /* bars */
+      var i;
+      for (i = 0; i < N; i++) {
+        var bx = x0 + i * (bw + gap);
+        var by = py(p[i]);
+        ctx.fillStyle = i === dragging ? C.BRIGHT : C.MINT;
+        ctx.fillRect(bx, by, bw, y0 - by);
+        ctx.fillStyle = C.SEC; ctx.font = C.MONO;
+        ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+        ctx.fillText(p[i].toFixed(2), bx + bw / 2, by - 3);
+        ctx.fillStyle = C.MUT; ctx.textBaseline = "top";
+        ctx.fillText("x" + (i + 1), bx + bw / 2, y0 + 6);
+      }
+      /* readouts */
+      var H = entropyBits(p);
+      hEl.textContent = fnum(H, 3) + " bits";
+      maxEl.textContent = fnum(Hmax, 3) + " bits";
+      fracEl.textContent = (100 * H / Hmax).toFixed(1) + "%";
+    }
+    function barAt(mx, my) {
+      var i;
+      for (i = 0; i < N; i++) {
+        var bx = geom.x0 + i * (geom.bw + geom.gap);
+        if (mx >= bx && mx <= bx + geom.bw && my >= geom.y1 && my <= geom.y0 + 8)
+          return i;
+      }
+      return -1;
+    }
+    function setFromY(i, my) {
+      var v = (geom.y0 - my) / (geom.y0 - geom.y1);   // 0..1 of axis (pmax=1)
+      v = Math.max(0.001, Math.min(1, v));
+      p[i] = v; normalize(); render();
+    }
+    function evtPos(e) {
+      var r = canvas.getBoundingClientRect();
+      var t = e.touches ? e.touches[0] : e;
+      return { x: t.clientX - r.left, y: t.clientY - r.top };
+    }
+    canvas.addEventListener("mousedown", function (e) {
+      var pos = evtPos(e); var i = barAt(pos.x, pos.y);
+      if (i >= 0) { dragging = i; setFromY(i, pos.y); }
+    });
+    window.addEventListener("mousemove", function (e) {
+      if (dragging < 0) return; setFromY(dragging, evtPos(e).y);
+    });
+    window.addEventListener("mouseup", function () {
+      if (dragging >= 0) { dragging = -1; render(); }
+    });
+    canvas.addEventListener("touchstart", function (e) {
+      var pos = evtPos(e); var i = barAt(pos.x, pos.y);
+      if (i >= 0) { dragging = i; setFromY(i, pos.y); e.preventDefault(); }
+    }, { passive: false });
+    canvas.addEventListener("touchmove", function (e) {
+      if (dragging < 0) return; setFromY(dragging, evtPos(e).y); e.preventDefault();
+    }, { passive: false });
+    canvas.addEventListener("touchend", function () { dragging = -1; render(); });
+    btns.forEach(function (b) {
+      b.addEventListener("click", function () {
+        var k = b.getAttribute("data-ent-preset");
+        if (k === "uniform") p = [0.2, 0.2, 0.2, 0.2, 0.2];
+        else if (k === "skew") p = [0.45, 0.25, 0.15, 0.10, 0.05];
+        else p = [0.86, 0.06, 0.04, 0.03, 0.01];
+        normalize();
+        btns.forEach(function (o) { o.classList.toggle("on", o === b); });
+        render();
+      });
+    });
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT S8.2 — KL asymmetry visualizer
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("it-kl");
+    if (!root) return;
+    var canvas = document.getElementById("it-kl-canvas");
+    var q1 = document.getElementById("it-kl-q1");
+    var q2 = document.getElementById("it-kl-q2");
+    var q1Out = document.getElementById("it-kl-q1-out");
+    var q2Out = document.getElementById("it-kl-q2-out");
+    var fwdEl = document.getElementById("it-kl-fwd");
+    var revEl = document.getElementById("it-kl-rev");
+    var gapEl = document.getElementById("it-kl-gap");
+    var P = [0.7, 0.2, 0.1];                            // fixed truth
+
+    function klBits(a, b) {
+      var i, k = 0;
+      for (i = 0; i < a.length; i++) if (a[i] > 0) k += a[i] * log2(a[i] / b[i]);
+      return k;
+    }
+    function render() {
+      var a = +q1.value, b = +q2.value;
+      var c = 1 - a - b;
+      if (c < 0.02) { c = 0.02; }                       // keep q3 valid & positive
+      var s = a + b + c; var Q = [a / s, b / s, c / s];
+      q1Out.textContent = fnum(Q[0], 2);
+      q2Out.textContent = fnum(Q[1], 2);
+
+      var ctx2 = FM.setupCanvas(canvas, 240);
+      var ctx = ctx2.ctx, w = ctx2.w, h = ctx2.h;
+      ctx.clearRect(0, 0, w, h);
+      var padL = 30, padR = 16, padT = 16, padB = 26;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      function py(v) { return y0 - v / 1.0 * (y0 - y1); }
+      var g;
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      for (g = 0; g <= 4; g++) {
+        var gv = g / 4, gy = py(gv);
+        ctx.strokeStyle = "rgba(47,50,52,.55)"; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(x0, gy); ctx.lineTo(x1, gy); ctx.stroke();
+        ctx.fillText(gv.toFixed(2), x0 - 6, gy);
+      }
+      var N = 3, gap = 22;
+      var groupW = (x1 - x0 - gap * (N - 1)) / N;
+      var halfW = groupW / 2 - 2;
+      var i;
+      for (i = 0; i < N; i++) {
+        var gx = x0 + i * (groupW + gap);
+        /* P bar (mint) left half */
+        var ph = py(P[i]);
+        ctx.fillStyle = C.MINT;
+        ctx.fillRect(gx, ph, halfW, y0 - ph);
+        /* Q bar (blue) right half */
+        var qh = py(Q[i]);
+        ctx.fillStyle = C.BLUE;
+        ctx.fillRect(gx + halfW + 4, qh, halfW, y0 - qh);
+        ctx.fillStyle = C.MUT; ctx.font = C.MONO;
+        ctx.textAlign = "center"; ctx.textBaseline = "top";
+        ctx.fillText("x" + (i + 1), gx + groupW / 2, y0 + 6);
+      }
+      /* legend */
+      ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillStyle = C.MINT; ctx.fillText("■ P (truth)", x0 + 2, y1 + 1);
+      ctx.fillStyle = C.BLUE; ctx.fillText("■ Q (model)", x0 + 92, y1 + 1);
+
+      var fwd = klBits(P, Q);                            // forward KL(P||Q)
+      var rev = klBits(Q, P);                            // reverse KL(Q||P)
+      fwdEl.textContent = fnum(fwd, 3) + " bits";
+      revEl.textContent = fnum(rev, 3) + " bits";
+      gapEl.textContent = fnum(Math.abs(fwd - rev), 3) + " bits";
+    }
+    q1.addEventListener("input", render);
+    q2.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT S8.3 — Coding-length / Huffman demo
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("it-huff");
+    if (!root) return;
+    var codesEl = document.getElementById("it-huff-codes");
+    var HEl = document.getElementById("it-huff-H");
+    var LEl = document.getElementById("it-huff-L");
+    var slackEl = document.getElementById("it-huff-slack");
+    var btns = root.querySelectorAll("[data-huff-preset]");
+    var presets = {
+      dyadic:  [0.5, 0.25, 0.125, 0.125],
+      uniform: [0.25, 0.25, 0.25, 0.25],
+      skew:    [0.6, 0.2, 0.1, 0.1]
+    };
+    var labels = ["x1", "x2", "x3", "x4"];
+
+    /* Huffman: build a tree by merging the two least-probable nodes,
+       assign codewords by descending the tree (0 = left, 1 = right). */
+    function huffman(p) {
+      var nodes = p.map(function (pi, i) {
+        return { p: pi, leaf: i, code: "" };
+      });
+      var heap = nodes.slice();
+      var internal = [];
+      while (heap.length > 1) {
+        heap.sort(function (a, b) { return a.p - b.p; });
+        var a = heap.shift(), b = heap.shift();
+        var merged = { p: a.p + b.p, left: a, right: b, leaf: -1 };
+        internal.push(merged);
+        heap.push(merged);
+      }
+      var codes = new Array(p.length).fill("");
+      (function assign(node, prefix) {
+        if (node.leaf >= 0) { codes[node.leaf] = prefix || "0"; return; }
+        assign(node.left, prefix + "0");
+        assign(node.right, prefix + "1");
+      })(heap[0], "");
+      return codes;
+    }
+    function render(p) {
+      var codes = huffman(p);
+      var H = entropyBits(p), L = 0, i;
+      codesEl.innerHTML = "";
+      for (i = 0; i < p.length; i++) {
+        L += p[i] * codes[i].length;
+        var row = document.createElement("div");
+        row.style.display = "flex";
+        row.style.justifyContent = "space-between";
+        row.style.gap = "10px";
+        row.style.borderBottom = "1px solid " + C.HAIR;
+        row.style.padding = "3px 0";
+        row.innerHTML =
+          '<span style="color:' + C.SEC + ';flex:0 0 28px;">' + labels[i] + '</span>' +
+          '<span style="color:' + C.MUT + ';flex:0 0 64px;">p=' + p[i].toFixed(3) + '</span>' +
+          '<span style="color:' + C.MINT + ';flex:1;letter-spacing:.18em;">' + codes[i] + '</span>' +
+          '<span style="color:' + C.MUT + ';flex:0 0 60px;text-align:right;">' + codes[i].length + ' bit' + (codes[i].length === 1 ? '' : 's') + '</span>';
+        codesEl.appendChild(row);
+      }
+      HEl.textContent = fnum(H, 3) + " bits";
+      LEl.textContent = fnum(L, 3) + " bits";
+      var slack = L - H;
+      slackEl.textContent = (slack < 1e-6 ? "0.000" : "+" + fnum(slack, 3)) + " bits";
+      slackEl.style.color = slack < 1e-6 ? C.MINT : C.BRIGHT;
+    }
+    btns.forEach(function (b) {
+      b.addEventListener("click", function () {
+        btns.forEach(function (o) { o.classList.toggle("on", o === b); });
+        render(presets[b.getAttribute("data-huff-preset")]);
+      });
+    });
+    render(presets.dyadic);                              // meaningful initial state
+  })();
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

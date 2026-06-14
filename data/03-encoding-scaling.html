@@ -1,0 +1,841 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Encoding, Scaling &amp; Transforms — AI Encyclopedia</title>
+<meta name="description" content="Models eat numbers — how you encode categories and scale features often matters more than which model you pick. One-hot, ordinal, target/WOE, standardization, robust scaling, log/Box-Cox/Yeo-Johnson, and binning." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+<link rel="canonical" href="https://ai-encyclopedia.com/data/03-encoding-scaling" />
+<meta property="og:url" content="https://ai-encyclopedia.com/data/03-encoding-scaling" />
+</head>
+<body data-track="data" data-level="core">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ DATA / 03 / ENCODING &amp; SCALING</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../data/04-feature-engineering.html">NEXT: FEATURE ENGINEERING →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">DATA &amp; FEATURE ENGINEERING · CHAPTER 03 / 05</div>
+    <h1>Encoding, Scaling &amp; Transforms</h1>
+    <p class="lede">Models consume numbers, so the encoding of categories and the scaling of features often matters more than the choice of model. <strong>A linear model, an SVM, or a k-NN classifier given raw, unscaled, poorly encoded columns will lose to a mediocre model given clean ones.</strong> This chapter covers the arithmetic of turning messy columns into the well-behaved numeric matrix every estimator assumes it was handed.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 26 MIN</b></span>
+      <span>BUILDS ON<b>DATA 01–02</b></span>
+      <span>INSTRUMENTS<b>ENCODER · SCALER · BOX-COX</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">3.1</span>Categorical encoding</a>
+      <a href="#s2"><span class="n">3.2</span>Target &amp; WOE encoding</a>
+      <a href="#s3"><span class="n">3.3</span>Scaling features</a>
+      <a href="#s4"><span class="n">3.4</span>Distribution transforms</a>
+      <a href="#s5"><span class="n">3.5</span>Binning &amp; discretization</a>
+      <a href="#s6"><span class="n">3.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 3.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">3.1</span><h2>Categorical encoding: one-hot, ordinal, frequency</h2></div>
+        <p>Almost every real dataset arrives with columns that are <em>not</em> numbers: a country, a product category, a browser, a job title. A model cannot multiply a weight by the string <code>"Berlin"</code>. <strong>Encoding</strong> is the map from categories to numbers, and the wrong map silently injects assumptions the data never made.</p>
+
+        <p>The first thing to settle is whether a categorical variable is <strong>nominal</strong> (unordered — colours, cities, payment methods) or <strong>ordinal</strong> (genuinely ranked — <em>small &lt; medium &lt; large</em>, <em>bronze &lt; silver &lt; gold</em>). That single distinction decides almost everything that follows.</p>
+
+        <h3>One-hot encoding</h3>
+        <p>The default for nominal variables. A column with \(K\) distinct levels becomes \(K\) binary indicator columns, exactly one of which is hot (1) per row:</p>
+
+        <div class="eq"><span class="eq-tag">EQ D3.1 — ONE-HOT ENCODING</span>
+        $$ \text{onehot}(x_i)_j \;=\; \mathbb{1}\!\left[\, x_i = c_j \,\right], \qquad j = 1, \ldots, K, \qquad \sum_{j=1}^{K} \text{onehot}(x_i)_j = 1 $$
+        <div class="eq-note">\(c_1, \ldots, c_K\) are the \(K\) distinct categories; \(\mathbb{1}[\cdot]\) is the indicator (1 if true, 0 otherwise). Every row becomes a unit vector pointing at its category — all categories sit at equal, unit distance from one another, so <b>no false ordering is implied</b>. The cost is width: a 50-state column becomes 50 columns, a ZIP-code column becomes tens of thousands. For linear models with an intercept you often <b>drop one level</b> (dummy encoding, \(K-1\) columns) to avoid perfect collinearity; tree models and regularized models can keep all \(K\).</div>
+        </div>
+
+        <div class="exercise" data-answer="4" data-tol="0.001" data-hint="one-hot makes one indicator column per distinct category.">
+          <div class="ex-q">You one-hot encode a single categorical column that has <b>4</b> distinct categories. How many new indicator columns does the encoding add?</div>
+          <div class="ex-reveal-src">One-hot creates exactly one binary indicator per distinct level, so \(K = 4\) categories produce \(K = \) <b>4</b> columns. (If you instead used dummy encoding and dropped one level to avoid collinearity, you would add \(K-1 = 3\) — but plain one-hot adds the full 4.)</div>
+        </div>
+
+        <h3>Ordinal encoding</h3>
+        <p>When the categories really are ordered, map them to ascending integers — <em>small → 0, medium → 1, large → 2</em>. This keeps the column to a single feature and tells the model that <em>large</em> is "more" than <em>small</em>. Applied to a <em>nominal</em> variable, though, ordinal encoding is a trap: labelling <code>{red, green, blue}</code> as <code>{0, 1, 2}</code> tells a linear model that <em>blue is twice green</em> and <em>green sits exactly between red and blue</em> — pure fiction the model will dutifully exploit. <b>Ordinal encoding is correct only when the order is real.</b></p>
+
+        <h3>Frequency / count encoding</h3>
+        <p>A cheap, single-column escape from one-hot's width problem: replace each category by how often it appears (its count or its relative frequency). It collapses \(K\) levels into one numeric feature, which suits high-cardinality columns and tree models well. The implicit claim is that <em>rarity carries signal</em> — often true (rare merchant codes correlate with fraud), sometimes meaningless, and it deliberately collapses two equally-frequent-but-different categories onto the same value.</p>
+
+        <table class="data">
+          <thead><tr><th>Encoding</th><th>New columns</th><th>Best for</th><th>Footgun</th></tr></thead>
+          <tbody>
+            <tr><td><strong>One-hot</strong></td><td class="m">K (or K−1)</td><td>Nominal, low cardinality, linear/SVM/k-NN</td><td>Cardinality blow-up; sparse, wide matrices</td></tr>
+            <tr><td><strong>Ordinal</strong></td><td class="m">1</td><td>Genuinely ranked categories</td><td>Invents an order on nominal data</td></tr>
+            <tr><td><strong>Frequency</strong></td><td class="m">1</td><td>High cardinality, tree models</td><td>Distinct-but-equally-common levels collide</td></tr>
+            <tr><td><strong>Target (§3.2)</strong></td><td class="m">1</td><td>High cardinality + a target</td><td>Leakage if fit on the same rows it encodes</td></tr>
+          </tbody>
+        </table>
+
+        <p class="note"><strong>The cardinality wall.</strong> One-hot is the textbook default precisely because it is honest about nominal structure, but it scales linearly with the number of levels. At a few dozen categories it is fine; at thousands (user IDs, product SKUs, ZIP codes) the matrix becomes enormous and sparse, distances degrade, and you reach for frequency or target encoding instead. That trade-off — fidelity vs. width — is the whole game, and the instrument below lets you feel it.</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># One-hot, ordinal & frequency encoding of a small categorical column (numpy only)
+import numpy as np
+col = np.array(["red","green","blue","red","blue","red","green","red"])
+
+cats, inv, counts = np.unique(col, return_inverse=True, return_counts=True)
+K = len(cats)
+print("categories :", list(cats), " (K =", K, ")")
+
+onehot = np.eye(K, dtype=int)[inv]              # EQ D3.1: K indicator columns
+print("\none-hot matrix (rows = samples, cols =", list(cats), "):")
+print(onehot)
+print("one-hot adds", K, "columns; every row sums to", set(onehot.sum(1).tolist()))
+
+ordinal = inv                                   # integer code per category (order = alpha here)
+freq = counts[inv] / len(col)                   # frequency encoding: share of each category
+print("\nordinal codes  :", ordinal.tolist())
+print("frequency codes:", np.round(freq, 3).tolist(), " (1 column, not", K, ")")
+print("\nNote: ordinal would falsely tell a linear model blue(0) < green(1) < red(2).")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="enc-explorer" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT D3.1 — ENCODING EXPLORER</span><span class="w-sub">ONE-HOT vs TARGET · CARDINALITY BLOW-UP · EQ D3.1 / D3.2</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>DISTINCT CATEGORIES K <output id="enc-k-out">6</output></label><input type="range" id="enc-k" min="2" max="40" step="1" value="6"/></div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>ENCODING</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-enc-mode="onehot">ONE-HOT</button>
+                  <button class="w-btn ghost" data-enc-mode="target">TARGET</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="enc-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">COLUMNS ADDED</div><div class="r-value" id="enc-cols">—</div></div>
+              <div class="readout"><div class="r-label">MATRIX CELLS (n=10K rows)</div><div class="r-value" id="enc-cells">—</div></div>
+              <div class="readout"><div class="r-label">DENSITY (NON-ZERO)</div><div class="r-value" id="enc-density">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Drag <b>K</b> from 2 to 40 in <b>ONE-HOT</b> mode and watch the matrix grow one column per category — at 40 levels and 10K rows you are storing 400K cells of which only 10K (2.5%) are non-zero: the sparse, wide blow-up. Switch to <b>TARGET</b> and the whole thing collapses to a single dense column whatever K is. The canvas shows the actual encoded matrix; the bars show one column being added per category in one-hot, versus one fixed column in target.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 3.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">3.2</span><h2>Target &amp; WOE encoding — and how to keep them leakage-safe</h2></div>
+        <p>When a categorical column has hundreds or thousands of levels, one-hot is unwieldy and frequency throws away the relationship with the label. <strong>Target encoding</strong> (also "mean encoding", introduced by Micci-Barreca in 2001) replaces each category with the <em>average value of the target</em> for that category — one informative numeric column, regardless of cardinality.</p>
+
+        <div class="eq"><span class="eq-tag">EQ D3.2 — SMOOTHED TARGET ENCODING</span>
+        $$ \hat{t}(c) \;=\; \frac{n_c\, \bar{y}_c \;+\; m\, \bar{y}}{n_c + m}, \qquad \bar{y}_c = \frac{1}{n_c}\sum_{i:\,x_i = c} y_i $$
+        <div class="eq-note">\(\bar{y}_c\) is the target mean inside category \(c\); \(n_c\) is how many rows fall in \(c\); \(\bar{y}\) is the global target mean; \(m\) is a <b>smoothing</b> strength. The encoded value is a credibility-weighted blend: a category seen thousands of times trusts its own mean (\(n_c \gg m\)); a category seen twice is pulled toward the global prior \(\bar{y}\) (\(n_c \ll m\)). Without smoothing, a category that appears once would be encoded as <em>exactly</em> its single row's label — a perfect, useless memory of the answer. <b>This shrinkage toward the prior is the entire reason target encoding generalizes.</b></div>
+        </div>
+
+        <h3>Weight of evidence (WOE)</h3>
+        <p>For binary classification, the closely-related <strong>weight of evidence</strong> encoding — a staple of credit scoring — replaces each category with the log-odds it contributes:</p>
+
+        <div class="eq"><span class="eq-tag">EQ D3.3 — WEIGHT OF EVIDENCE</span>
+        $$ \mathrm{WOE}(c) \;=\; \ln\!\left( \frac{\Pr(x = c \mid y = 1)}{\Pr(x = c \mid y = 0)} \right) \;=\; \ln\!\left( \frac{\text{(events in }c)\,/\,\text{(total events)}}{\text{(non-events in }c)\,/\,\text{(total non-events)}} \right) $$
+        <div class="eq-note">WOE is the log-ratio of the share of positives to the share of negatives within a category. It is monotonic in the target rate, lives on the natural log-odds scale a logistic regression already speaks, and the associated <b>Information Value</b> \(\mathrm{IV} = \sum_c (\text{share}_1 - \text{share}_0)\,\mathrm{WOE}(c)\) gives a single number for how predictive the whole feature is. Like target encoding, WOE must be computed with smoothing (and a small \(\varepsilon\) to avoid \(\ln 0\)) and on held-out folds.</div>
+        </div>
+
+        <div class="callout warn">
+          <span class="co-icon">THE LEAKAGE TRAP</span>
+          <p><strong>Target encoding looks at the label — so if you fit the encoding on the same rows you then train on, every row gets to peek at its own answer.</strong> The model sees a feature that is partly a copy of \(y\), validation scores soar, and production collapses. This is the single most common way a leaderboard-topping pipeline dies on real data. The fix is never to encode a row using its own target.</p>
+        </div>
+
+        <p>The disciplined remedy is <strong>out-of-fold (cross-fitted) encoding</strong>: split the training data into \(k\) folds; to encode the rows in fold \(j\), compute the category means using only the <em>other</em> \(k-1\) folds. No row ever contributes to its own encoded value, so the feature carries the category's signal without memorizing the answer. The test set is then encoded from statistics computed on the full training set. Smoothing (EQ D3.2) and out-of-fold computation are <em>complementary</em>, not alternatives — serious pipelines use both.</p>
+
+        <div class="exercise" data-answer="0.6" data-tol="0.01" data-hint="smoothed target encoding, EQ D3.2: (n_c·ȳ_c + m·ȳ) / (n_c + m).">
+          <div class="ex-q">A category appears \(n_c = 4\) times with a positive rate \(\bar{y}_c = 0.75\). The global mean is \(\bar{y} = 0.5\) and the smoothing strength is \(m = 4\). What smoothed target-encoded value \(\hat{t}(c)\) does EQ D3.2 give?</div>
+          <div class="ex-reveal-src">\(\hat{t}(c) = \dfrac{n_c\,\bar{y}_c + m\,\bar{y}}{n_c + m} = \dfrac{4 \times 0.75 + 4 \times 0.5}{4 + 4} = \dfrac{3 + 2}{8} = \dfrac{5}{8} = \) <b>0.6</b>. With \(n_c = m\) the encoding is the simple average of the category mean (0.75) and the prior (0.5) — exactly halfway, because the category has been seen just as often as the smoothing strength assumes.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Target encoding: naive (LEAKS) vs out-of-fold (safe). Watch the leak signal.
+import numpy as np
+rng = np.random.default_rng(0)
+
+# 600 rows, a high-cardinality column with 200 levels, target unrelated to it
+n, K = 600, 200
+cat = rng.integers(0, K, n)
+y   = rng.integers(0, 2, n).astype(float)        # pure coin flips: TRUE signal = 0
+
+def naive_encode(cat, y):                         # fit on the SAME rows -> leak
+    enc = np.zeros(len(cat))
+    for c in np.unique(cat):
+        enc[cat == c] = y[cat == c].mean()
+    return enc
+
+def oof_encode(cat, y, k=5, m=20.0):              # out-of-fold + smoothing (safe)
+    enc, gm = np.zeros(len(cat)), y.mean()
+    fold = np.arange(len(cat)) % k
+    for j in range(k):
+        tr, te = fold != j, fold == j
+        for c in np.unique(cat[te]):
+            mask = tr & (cat == c); nc = mask.sum()
+            enc[te & (cat == c)] = (nc*y[mask].mean() + m*gm)/(nc+m) if nc else gm
+    return enc
+
+def corr(a, b): a,b=a-a.mean(),b-b.mean(); return float((a*b).sum()/np.sqrt((a*a).sum()*(b*b).sum()))
+print("corr(naive encoding, y) :", round(corr(naive_encode(cat,y), y), 3), " <- phantom signal (leak!)")
+print("corr(out-of-fold,   y) :", round(corr(oof_encode(cat,y),  y), 3), " <- ~0, the honest truth")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <p class="note">In the cell above the target is literally a coin flip — there is <em>no</em> real relationship to the category — yet naive encoding manufactures a sizeable correlation with \(y\) out of thin air, because each rare category memorized its own rows. Out-of-fold encoding reports the true near-zero. Run it a few times: the leak is consistent, the honest version is consistently honest.</p>
+      </section>
+
+      <!-- ====================== 3.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">3.3</span><h2>Scaling: standardize, min-max, robust</h2></div>
+        <p>Once everything is numeric, the columns still live on wildly different scales — age in years (0–100), income in dollars (0–10<sup>6</sup>), a fraction in [0, 1]. Any algorithm that measures <em>distance</em> or sums <em>weighted features</em> will let the large-magnitude column dominate purely by accident of units. <strong>Feature scaling</strong> puts every column on comparable footing.</p>
+
+        <p>Who cares about scale, and who does not? It is worth memorizing the split, because scaling a tree model is wasted effort and <em>not</em> scaling a k-NN model is a bug.</p>
+
+        <table class="data">
+          <thead><tr><th>Scaling matters</th><th>Why</th><th>Scaling is irrelevant</th></tr></thead>
+          <tbody>
+            <tr><td>k-NN, k-means</td><td class="m">Euclidean distance</td><td rowspan="3" style="vertical-align:middle;">Decision trees, random forests, gradient-boosted trees — they split on thresholds within a single feature, so monotone rescaling changes nothing.</td></tr>
+            <tr><td>SVM (RBF), PCA</td><td class="m">dot products / variance</td></tr>
+            <tr><td>Linear/logistic + regularization, neural nets</td><td class="m">gradient conditioning; L1/L2 penalize raw coefficients</td></tr>
+          </tbody>
+        </table>
+
+        <h3>Standardization (z-score)</h3>
+        <p>Subtract the mean, divide by the standard deviation. Every column ends up centered at 0 with unit variance:</p>
+
+        <div class="eq"><span class="eq-tag">EQ D3.4 — STANDARDIZATION (z-SCORE)</span>
+        $$ z = \frac{x - \mu}{\sigma}, \qquad \mu = \frac{1}{n}\sum_i x_i, \qquad \sigma = \sqrt{\frac{1}{n}\sum_i (x_i - \mu)^2} $$
+        <div class="eq-note">\(z\) is the number of standard deviations \(x\) sits from the mean. The transformed column has mean 0 and standard deviation 1, but its <em>shape</em> is unchanged — standardizing a skewed column gives a skewed column with nicer units (that is what §3.4 is for). It is the default for most linear models, SVMs, PCA and neural nets. It does <b>not</b> bound the range and it is <b>not</b> robust: a single huge outlier inflates \(\sigma\) and squashes everyone else toward zero.</div>
+        </div>
+
+        <div class="exercise" data-answer="1.0" data-tol="0.001" data-hint="z-score, EQ D3.4: (x − μ) / σ.">
+          <div class="ex-q">Standardize the value \( x = 8 \) for a feature whose mean is \( \mu = 5 \) and standard deviation is \( \sigma = 3 \). What is the z-score \( z \)?</div>
+          <div class="ex-reveal-src">\( z = \dfrac{x - \mu}{\sigma} = \dfrac{8 - 5}{3} = \dfrac{3}{3} = \) <b>1.0</b>. The value sits exactly one standard deviation above the mean — which is precisely what a z-score of 1 means.</div>
+        </div>
+
+        <h3>Min-max scaling</h3>
+        <p>Linearly squeeze the column into a fixed interval, usually [0, 1]:</p>
+
+        <div class="eq"><span class="eq-tag">EQ D3.5 — MIN-MAX SCALING</span>
+        $$ x' = \frac{x - x_{\min}}{x_{\max} - x_{\min}} \;\in\; [0, 1] $$
+        <div class="eq-note">The minimum maps to 0, the maximum to 1, everything else lands proportionally between. It preserves the exact shape of the distribution and the relative spacing of points, which is why it is favoured for image pixels and for inputs to bounded activations. Its weakness is the mirror image of standardization's: it is <b>defined by the extremes</b>, so one outlier at \(x_{\max}\) compresses every real value into a thin band near 0. Use it when you know the bounds and trust them.</div>
+        </div>
+
+        <h3>Robust scaling</h3>
+        <p>When outliers are a fact of life, scale by quantities that ignore the tails — the median for centering, the interquartile range (IQR) for spread:</p>
+
+        <div class="eq"><span class="eq-tag">EQ D3.6 — ROBUST SCALING</span>
+        $$ x'' = \frac{x - \mathrm{median}(x)}{\mathrm{IQR}(x)}, \qquad \mathrm{IQR}(x) = Q_3 - Q_1 $$
+        <div class="eq-note">The median has a 50% breakdown point and the IQR uses only the middle half of the data, so a handful of extreme values barely move either statistic. Robust scaling therefore keeps the bulk of the data on a sensible scale even when 10–20% of it is garbage — at the cost of the clean "mean 0, var 1" guarantee. <b>Reach for it whenever a histogram shows fat tails or known measurement errors;</b> reach for standardization when the data is roughly Gaussian and clean.</div>
+        </div>
+
+        <p class="callout"><span class="co-icon">FIT ON TRAIN ONLY</span><p>Every scaler has parameters learned from data — \(\mu, \sigma\) for z-score, \(x_{\min}, x_{\max}\) for min-max, median/IQR for robust. <strong>Fit those parameters on the training set, then apply the frozen transform to validation and test.</strong> Recomputing the mean on the test set leaks test information into preprocessing and quietly inflates your scores — the scaling-stage twin of the target-encoding leak in §3.2.</p></p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Standardize vs min-max, and a Box-Cox normality gain on skewed data
+import numpy as np
+rng = np.random.default_rng(0)
+x = rng.exponential(2.0, 4000) + 0.5          # right-skewed, strictly positive
+
+def stats(name, v):
+    print(f"{name:11s} mean {v.mean():7.3f}  std {v.std():6.3f}  "
+          f"min {v.min():7.3f}  max {v.max():8.3f}")
+
+stats("raw", x)
+z  = (x - x.mean()) / x.std()                 # EQ D3.4: mean 0, std 1
+mm = (x - x.min()) / (x.max() - x.min())      # EQ D3.5: [0, 1]
+stats("z-score", z); stats("min-max", mm)
+
+def skew(v): v=(v-v.mean())/v.std(); return float((v**3).mean())   # 0 = symmetric
+print("\nscaling does NOT change shape -> skew(raw)=%.2f  skew(z)=%.2f"
+      % (skew(x), skew(z)))
+
+# Box-Cox (lambda chosen by a small grid) pulls the skew toward 0:
+best = min(np.linspace(-1, 1, 41),
+           key=lambda L: abs(skew(np.log(x) if abs(L)<1e-9 else (x**L-1)/L)))
+bc = np.log(x) if abs(best)<1e-9 else (x**best - 1)/best
+print(f"Box-Cox lambda*={best:+.2f} -> skew={skew(bc):+.2f}  (much closer to normal)")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="enc-scaler" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT D3.2 — SCALING VISUALIZER</span><span class="w-sub">TWO FEATURE CLOUDS · STANDARDIZE / MIN-MAX / ROBUST · OUTLIER TOGGLE</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>SCALER</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost" data-scl-mode="none">RAW</button>
+                  <button class="w-btn ghost on" data-scl-mode="standard">STANDARD</button>
+                  <button class="w-btn ghost" data-scl-mode="minmax">MIN-MAX</button>
+                  <button class="w-btn ghost" data-scl-mode="robust">ROBUST</button>
+                </div>
+              </div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>OUTLIER</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-scl-out="off">OFF</button>
+                  <button class="w-btn ghost" data-scl-out="on">INJECT</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="enc-scl-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">FEATURE A → range</div><div class="r-value" id="enc-scl-a">—</div></div>
+              <div class="readout"><div class="r-label">FEATURE B → range</div><div class="r-value" id="enc-scl-b">—</div></div>
+              <div class="readout"><div class="r-label">OUTLIER POSITION</div><div class="r-value" id="enc-scl-note" style="font-size:13px;">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Two clouds on very different native scales (A wide, B narrow). In <b>RAW</b>, feature A dominates any distance. Cycle the scalers: <b>STANDARD</b> and <b>MIN-MAX</b> equalize them — until you hit <b>INJECT</b>, which drops one extreme outlier. Now watch min-max crush the real data into a sliver near 0 and standard inflate its spread, while <b>ROBUST</b> barely flinches because the median and IQR ignore the rogue point. Grid lines mark the target scale of each method.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 3.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">3.4</span><h2>Distribution transforms: log, Box-Cox, Yeo-Johnson</h2></div>
+        <p>Scaling moves and stretches a column but never changes its <em>shape</em>. Yet many real features are badly skewed — incomes, prices, durations, counts — and many estimators (linear regression, anything assuming Gaussian-ish residuals, distance methods) work best on roughly symmetric inputs. <strong>Distribution transforms</strong> are nonlinear maps that pull a long right tail back toward symmetry.</p>
+
+        <h3>The log transform</h3>
+        <p>The workhorse. For strictly positive, right-skewed data, \(x \mapsto \ln x\) compresses large values far more than small ones, taming multiplicative spread into additive spread. It is the right move when a variable is naturally <em>relative</em> — a doubling of income matters the same whether from $10K or $1M. Use \(\ln(1+x)\) (<code>log1p</code>) when the column contains exact zeros.</p>
+
+        <h3>Box-Cox</h3>
+        <p>Box and Cox (1964) generalized the log into a one-parameter family and let the data choose the exponent:</p>
+
+        <div class="eq"><span class="eq-tag">EQ D3.7 — BOX-COX TRANSFORM</span>
+        $$ x^{(\lambda)} = \begin{cases} \dfrac{x^{\lambda} - 1}{\lambda} & \lambda \neq 0 \\[6pt] \ln x & \lambda = 0 \end{cases} \qquad (x > 0) $$
+        <div class="eq-note">A single knob \(\lambda\) sweeps a whole spectrum of shapes: \(\lambda = 1\) is (almost) the identity, \(\lambda = 0.5\) a square root, \(\lambda = 0\) the log, \(\lambda = -1\) a reciprocal. The \(-1\) and division by \(\lambda\) make the family <b>continuous at \(\lambda = 0\)</b>, where it smoothly becomes the log. \(\lambda\) is chosen by <b>maximum likelihood</b> — the value that makes the transformed data most Gaussian. The hard constraint: <b>Box-Cox requires strictly positive inputs.</b></div>
+        </div>
+
+        <div class="exercise" data-answer="1.0" data-tol="0.001" data-hint="Box-Cox with lambda = 1 is (x¹ − 1)/1 = x − 1; plug in x = 2.">
+          <div class="ex-q">Apply the Box-Cox transform (EQ D3.7) with \( \lambda = 1 \) to the value \( x = 2 \). What is \( x^{(\lambda)} \)?</div>
+          <div class="ex-reveal-src">For \( \lambda \neq 0 \), \( x^{(\lambda)} = \dfrac{x^{\lambda} - 1}{\lambda} = \dfrac{2^{1} - 1}{1} = \dfrac{1}{1} = \) <b>1.0</b>. At \( \lambda = 1 \) the transform is just \( x - 1 \), a pure shift — it leaves the distribution's shape untouched, which is exactly why \( \lambda = 1 \) is the "do nothing" point of the family.</div>
+        </div>
+
+        <h3>Yeo-Johnson</h3>
+        <p>Box-Cox's positivity requirement is a real nuisance — temperatures, profits, and standardized features all go negative. <strong>Yeo-Johnson</strong> (2000) extends the same idea to the whole real line by applying mirrored power transforms on each side of zero:</p>
+
+        <div class="eq"><span class="eq-tag">EQ D3.8 — YEO-JOHNSON TRANSFORM</span>
+        $$ x^{(\lambda)} = \begin{cases} \dfrac{(x+1)^{\lambda} - 1}{\lambda} & x \ge 0,\ \lambda \neq 0 \\[4pt] \ln(x+1) & x \ge 0,\ \lambda = 0 \\[4pt] -\dfrac{(-x+1)^{2-\lambda} - 1}{2 - \lambda} & x &lt; 0,\ \lambda \neq 2 \\[4pt] -\ln(-x+1) & x &lt; 0,\ \lambda = 2 \end{cases} $$
+        <div class="eq-note">For non-negative \(x\) it is essentially Box-Cox on \(x+1\); for negative \(x\) it mirrors the transform with exponent \(2-\lambda\). The result is one continuous, differentiable function over all of \(\mathbb{R}\) — no positivity constraint, no \(+\)constant hacks. \(\lambda\) is again fit by maximum likelihood for maximal normality. <b>Default to Yeo-Johnson when the column can be zero or negative; reach for plain Box-Cox or log only when you know the data is strictly positive</b> and want the cleaner interpretation.</div>
+        </div>
+
+        <p class="note"><strong>Honest caveats.</strong> These transforms optimize for marginal normality, which is neither necessary nor sufficient for a good model — modern gradient-boosted trees are invariant to any monotone transform of a feature, so this whole section is largely moot for them. Transforms also distort interpretability (a coefficient on \(\ln(\text{income})\) is an elasticity, not a dollar effect) and they extrapolate dangerously outside the fitted range. They earn their keep most for linear models, classical statistics, and any pipeline where Gaussian-ish inputs genuinely help.</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Box-Cox: scan lambda, pick the most-Gaussian, quantify the normality gain
+import numpy as np
+rng = np.random.default_rng(1)
+x = rng.lognormal(0.0, 0.9, 5000) + 0.2        # heavy right skew, all positive
+
+def boxcox(x, lam):
+    return np.log(x) if abs(lam) < 1e-9 else (x**lam - 1) / lam
+def skew(v):
+    v = (v - v.mean()) / v.std(); return float((v**3).mean())   # 0 == symmetric
+
+lams = np.linspace(-1, 2, 61)
+sk   = [abs(skew(boxcox(x, L))) for L in lams]
+best = lams[int(np.argmin(sk))]
+
+print(f"raw skew                 : {skew(x):+.3f}")
+print(f"best lambda (min |skew|) : {best:+.2f}")
+print(f"Box-Cox skew at lambda*  : {skew(boxcox(x, best)):+.3f}")
+print(f"\nlog  (lambda=0) skew     : {skew(boxcox(x, 0.0)):+.3f}")
+print(f"sqrt (lambda=.5) skew    : {skew(boxcox(x, 0.5)):+.3f}")
+print("\n|skew| vs lambda (the U-shaped normality curve):")
+plot_xy(lams.tolist(), sk)</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="enc-boxcox" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT D3.3 — BOX-COX TRANSFORMER</span><span class="w-sub">SKEWED DISTRIBUTION · λ SLIDER · LIVE SKEWNESS · EQ D3.7</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>LAMBDA λ <output id="enc-bc-out">0.00</output></label><input type="range" id="enc-bc-lam" min="-1" max="2" step="0.05" value="0"/></div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <button class="w-btn" id="enc-bc-best">SNAP TO λ*</button>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="enc-bc-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">SKEWNESS (0 = SYMMETRIC)</div><div class="r-value" id="enc-bc-skew">—</div></div>
+              <div class="readout"><div class="r-label">TRANSFORM AT THIS λ</div><div class="r-value" id="enc-bc-name" style="font-size:13px;">—</div></div>
+              <div class="readout"><div class="r-label">BEST λ (MIN |SKEW|)</div><div class="r-value" id="enc-bc-bestv">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The histogram is a strongly right-skewed (log-normal) feature. Drag <b>λ</b> from 1 (identity, the raw skew) down toward 0 (the log) and watch the long tail fold back into a near-symmetric bell as the skewness readout drives toward zero. Press <b>SNAP TO λ*</b> to jump to the maximum-normality value computed live. Push λ past the sweet spot toward −1 and you over-correct into a left skew — the transform is a dial, not a switch.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 3.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">3.5</span><h2>Binning &amp; discretization</h2></div>
+        <p>The opposite move from a smooth transform: <strong>binning</strong> chops a continuous variable into a handful of discrete intervals — <em>age → {child, adult, senior}</em>, <em>income → deciles</em>. You deliberately throw away resolution to buy something else: robustness to outliers, the ability to capture a non-monotonic effect with a linear model, interpretable "score bands", or a categorical handoff into the encoders of §3.1–§3.2.</p>
+
+        <p>There are two everyday strategies, and the difference is whether the bin <em>edges</em> or the bin <em>counts</em> are held constant:</p>
+
+        <table class="data">
+          <thead><tr><th>Strategy</th><th>Edges chosen by</th><th>Each bin has…</th><th>Good / bad</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Equal-width</strong></td><td class="m">range / k</td><td>equal interval, unequal counts</td><td>Simple &amp; interpretable; empty bins on skewed data</td></tr>
+            <tr><td><strong>Equal-frequency</strong></td><td class="m">quantiles</td><td>equal counts, unequal widths</td><td>Robust to skew; edges shift with the data</td></tr>
+            <tr><td><strong>Supervised (e.g. tree / MDL)</strong></td><td class="m">target purity</td><td>edges where the label changes</td><td>Most predictive; can overfit &amp; leak — fit on train</td></tr>
+          </tbody>
+        </table>
+
+        <div class="eq"><span class="eq-tag">EQ D3.9 — EQUAL-WIDTH vs EQUAL-FREQUENCY BIN EDGES</span>
+        $$ \text{equal-width: } e_j = x_{\min} + j\,\frac{x_{\max} - x_{\min}}{k}; \qquad \text{equal-frequency: } e_j = Q_{j/k}(x), \quad j = 0, \ldots, k $$
+        <div class="eq-note">Equal-width splits the <em>value axis</em> into \(k\) equal pieces — trivial to read ("ages 0–20, 20–40, …") but on a skewed column most points pile into one or two bins and the rest sit empty. Equal-frequency splits the <em>data</em> into \(k\) equal piles using quantiles, so every bin is equally populated, at the price of uneven, data-dependent widths. <b>Equal-frequency is the safer default for skewed real-world data;</b> equal-width wins when the bin boundaries themselves must be round, fixed, human numbers.</div>
+        </div>
+
+        <p>Binning is genuinely contested. It can rescue a linear model from a U-shaped relationship and it makes credit-scorecards legible — but it discards information, plants artificial discontinuities at the bin edges, and (when bins are chosen using the target) leaks exactly like target encoding. The modern view: prefer letting a flexible model learn the nonlinearity (splines, gradient-boosted trees) over hand-binning, and reserve discretization for interpretability, regulatory, or robustness reasons rather than raw accuracy.</p>
+
+        <div class="callout warn">
+          <span class="co-icon">PITFALLS</span>
+          <p><strong>Four ways encoding &amp; scaling silently break a model:</strong> (1) fitting any data-dependent transform — scaler, target encoder, supervised bins — on the full dataset instead of train-only, leaking test/label information; (2) ordinal-encoding a nominal variable and inventing an order; (3) min-max scaling in the presence of outliers, crushing the real data to a sliver; (4) unseen categories at inference time that the encoder has no value for — always reserve an "unknown" bucket and a global-mean fallback.</p>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>Encoding and scaling make the columns you have well-behaved; feature engineering creates the columns you wish you had.</strong> Chapter 04 — <em>Feature Engineering</em> — covers interactions, polynomial and spline bases, date/time and cyclical features, aggregations and lag features, and the discipline of building them without leaking the future into the past.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 3.R ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">3.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://doi.org/10.1145/507533.507538" target="_blank" rel="noopener">Micci-Barreca, D. (2001). <span class="ref-venue">A Preprocessing Scheme for High-Cardinality Categorical Attributes in Classification and Prediction Problems</span>.</a> <span class="ref-meta">ACM SIGKDD Explorations 3(1) — the smoothed target/mean encoding of EQ D3.2.</span></li>
+          <li><a href="https://doi.org/10.1111/j.2517-6161.1964.tb00553.x" target="_blank" rel="noopener">Box, G. E. P. &amp; Cox, D. R. (1964). <span class="ref-venue">An Analysis of Transformations</span>.</a> <span class="ref-meta">Journal of the Royal Statistical Society B 26(2) — the Box-Cox power-transform family, EQ D3.7.</span></li>
+          <li><a href="https://doi.org/10.1093/biomet/87.4.954" target="_blank" rel="noopener">Yeo, I.-K. &amp; Johnson, R. A. (2000). <span class="ref-venue">A New Family of Power Transformations to Improve Normality or Symmetry</span>.</a> <span class="ref-meta">Biometrika 87(4) — the Yeo-Johnson extension to real-valued data, EQ D3.8.</span></li>
+          <li><a href="http://www.feat.engineering/" target="_blank" rel="noopener">Kuhn, M. &amp; Johnson, K. (2019). <span class="ref-venue">Feature Engineering and Selection: A Practical Approach for Predictive Models</span>.</a> <span class="ref-meta">CRC Press (full text online) — encoding, scaling, transforms and leakage-safe resampling.</span></li>
+          <li><a href="https://www.jmlr.org/papers/v12/pedregosa11a.html" target="_blank" rel="noopener">Pedregosa, F. et&nbsp;al. (2011). <span class="ref-venue">Scikit-learn: Machine Learning in Python</span>.</a> <span class="ref-meta">JMLR 12 — the reference implementations of StandardScaler, MinMaxScaler, RobustScaler and PowerTransformer.</span></li>
+          <li><a href="https://doi.org/10.1109/TKDE.2005.99" target="_blank" rel="noopener">Liu, H., Hussain, F., Tan, C. L. &amp; Dash, M. (2002). <span class="ref-venue">Discretization: An Enabling Technique</span>.</a> <span class="ref-meta">Data Mining and Knowledge Discovery 6 — a survey of binning / discretization methods (EQ D3.9).</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../data/02-missing-data.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">02</span> Missing Data</div></a>
+        <a class="next" href="../data/04-feature-engineering.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">04</span> Feature Engineering</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — DATA · CH 03</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* ============================================================
+   Encoding, Scaling & Transforms — chapter instruments
+   Single IIFE, no globals. A seeded Gaussian sampler, a skewed
+   sampler and a few stats helpers are shared by all three
+   widgets. Animations use setTimeout; every widget is guarded
+   by element existence and renders a sensible initial state.
+   ============================================================ */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  /* ---------- shared statistics & RNG ---------- */
+  function mean(a) { var s = 0, i; for (i = 0; i < a.length; i++) s += a[i]; return s / a.length; }
+  function std(a) {
+    var m = mean(a), s = 0, i;
+    for (i = 0; i < a.length; i++) { var d = a[i] - m; s += d * d; }
+    return Math.sqrt(s / a.length);
+  }
+  function skewness(a) {
+    var m = mean(a), sd = std(a), s = 0, i;
+    if (sd < 1e-9) return 0;
+    for (i = 0; i < a.length; i++) { var z = (a[i] - m) / sd; s += z * z * z; }
+    return s / a.length;
+  }
+  function quantile(sorted, q) {
+    var pos = (sorted.length - 1) * q, lo = Math.floor(pos), hi = Math.ceil(pos);
+    if (lo === hi) return sorted[lo];
+    return sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo);
+  }
+  /* Box–Muller on a mulberry32 stream → reproducible standard normals */
+  function gaussFactory(seed) {
+    var rng = FM.mulberry32(seed), spare = null;
+    return function () {
+      if (spare !== null) { var s = spare; spare = null; return s; }
+      var u = 0, v = 0;
+      while (u <= 1e-12) u = rng();
+      v = rng();
+      var mag = Math.sqrt(-2 * Math.log(u));
+      spare = mag * Math.sin(2 * Math.PI * v);
+      return mag * Math.cos(2 * Math.PI * v);
+    };
+  }
+  function fnum(x, d) { d = d === undefined ? 3 : d; return (x >= 0 ? "+" : "") + x.toFixed(d); }
+
+  /* ========================================================
+     INSTRUMENT D3.1 — Encoding explorer
+     One-hot blows up one column per category; target encoding
+     stays a single dense column. Canvas shows the encoded
+     matrix; readouts show the cardinality cost. (EQ D3.1/D3.2)
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("enc-explorer");
+    if (!root) return;
+    var canvas = document.getElementById("enc-canvas");
+    var kIn = document.getElementById("enc-k");
+    var kOut = document.getElementById("enc-k-out");
+    var colsEl = document.getElementById("enc-cols");
+    var cellsEl = document.getElementById("enc-cells");
+    var densEl = document.getElementById("enc-density");
+    var btns = root.querySelectorAll("[data-enc-mode]");
+    var mode = "onehot";
+    var NROWS = 10000;          /* notional dataset size for the cell count */
+    var SHOW = 12;              /* rows actually drawn on the canvas */
+    var g = gaussFactory(11);
+    /* fixed per-display-row category assignment + a per-row target value */
+    var rowsCat = [], rowsTarget = [];
+    for (var i = 0; i < SHOW; i++) { rowsCat.push(i); rowsTarget.push(0.5 + 0.32 * g()); }
+
+    function setMode(m) {
+      mode = m;
+      for (var b = 0; b < btns.length; b++) btns[b].classList.toggle("on", btns[b].getAttribute("data-enc-mode") === m);
+      render();
+    }
+
+    function render() {
+      var K = parseInt(kIn.value, 10);
+      kOut.textContent = K;
+
+      var cols = mode === "onehot" ? K : 1;
+      var cells = NROWS * cols;
+      var nonZero = mode === "onehot" ? NROWS : NROWS;   /* one-hot: 1 per row; target: full column dense */
+      var density = mode === "onehot" ? (1 / K) : 1;
+
+      colsEl.textContent = cols;
+      cellsEl.textContent = FM.siFormat(cells, cells >= 1e6 ? 2 : 0).replace(".00", "");
+      densEl.textContent = (density * 100).toFixed(density < 0.1 ? 1 : 0) + " %";
+
+      var c = FM.setupCanvas(canvas, 300);
+      var ctx = c.ctx;
+      ctx.clearRect(0, 0, c.w, c.h);
+
+      var padL = 64, padT = 34, padB = 16, padR = 16;
+      var gridW = c.w - padL - padR, gridH = c.h - padT - padB;
+      var drawCols = mode === "onehot" ? K : 1;
+      var cw = Math.max(3, Math.min(26, gridW / drawCols));
+      var ch = gridH / SHOW;
+
+      /* header */
+      ctx.font = C.MONO; ctx.textBaseline = "alphabetic";
+      ctx.fillStyle = C.SEC; ctx.textAlign = "left";
+      ctx.fillText(mode === "onehot"
+        ? "ONE-HOT MATRIX  (" + K + " COLUMNS, 1 HOT PER ROW)"
+        : "TARGET-ENCODED  (1 DENSE COLUMN, ANY K)", padL, 18);
+      ctx.fillStyle = C.MUT; ctx.textAlign = "right";
+      ctx.fillText("category", padL - 8, padT + ch * 0.6);
+
+      /* rows */
+      for (var r = 0; r < SHOW; r++) {
+        var y = padT + r * ch;
+        var rowCat = rowsCat[r] % K;
+        /* category label on the left */
+        ctx.fillStyle = C.MUT; ctx.font = C.MONO; ctx.textAlign = "right"; ctx.textBaseline = "middle";
+        ctx.fillText("c" + rowCat, padL - 8, y + ch / 2);
+
+        if (mode === "onehot") {
+          for (var col = 0; col < K; col++) {
+            var x = padL + col * cw;
+            var hot = col === rowCat;
+            ctx.fillStyle = hot ? C.MINT : "rgba(47,50,52,.55)";
+            ctx.fillRect(x + 1, y + 1, cw - 2, ch - 2);
+            if (hot && cw > 12) {
+              ctx.fillStyle = "#000"; ctx.font = "9px ui-monospace,Menlo,monospace";
+              ctx.textAlign = "center"; ctx.fillText("1", x + cw / 2, y + ch / 2 + 1);
+            }
+          }
+        } else {
+          /* target encoding: a single column, shaded by encoded value */
+          var v = rowsTarget[r];
+          var x0 = padL;
+          ctx.fillStyle = "rgba(78,138,247,0.18)";
+          ctx.fillRect(x0 + 1, y + 1, 120 - 2, ch - 2);
+          ctx.fillStyle = C.BLUE;
+          ctx.fillRect(x0 + 1, y + 1, Math.max(2, 120 * Math.max(0, Math.min(1, v))) - 2, ch - 2);
+          ctx.fillStyle = C.BRIGHT; ctx.font = C.MONO; ctx.textAlign = "left"; ctx.textBaseline = "middle";
+          ctx.fillText(v.toFixed(2), x0 + 128, y + ch / 2);
+        }
+      }
+    }
+
+    for (var b = 0; b < btns.length; b++) (function (btn) {
+      btn.addEventListener("click", function () { setMode(btn.getAttribute("data-enc-mode")); });
+    })(btns[b]);
+    kIn.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT D3.2 — Scaling visualizer
+     Two feature clouds on different native scales; standardize /
+     min-max / robust, with an outlier toggle that exposes the
+     fragility of mean/min-max vs the robustness of median/IQR.
+     (EQ D3.4 / D3.5 / D3.6)
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("enc-scaler");
+    if (!root) return;
+    var canvas = document.getElementById("enc-scl-canvas");
+    var aEl = document.getElementById("enc-scl-a");
+    var bEl = document.getElementById("enc-scl-b");
+    var noteEl = document.getElementById("enc-scl-note");
+    var mBtns = root.querySelectorAll("[data-scl-mode]");
+    var oBtns = root.querySelectorAll("[data-scl-out]");
+    var mode = "standard", outlier = "off";
+
+    var N = 90;
+    var g = gaussFactory(23);
+    /* feature A: wide scale ~ N(500, 120); feature B: narrow ~ N(3, 0.6) */
+    var rawA = [], rawB = [];
+    for (var i = 0; i < N; i++) { rawA.push(500 + 120 * g()); rawB.push(3 + 0.6 * g()); }
+
+    function withOutlier(arr, big) {
+      if (outlier === "off") return arr.slice();
+      var a = arr.slice(); a[a.length - 1] = big; return a;
+    }
+    function scale(arr) {
+      var a = arr.slice();
+      if (mode === "none") return a;
+      if (mode === "standard") {
+        var m = mean(a), s = std(a) || 1;
+        return a.map(function (v) { return (v - m) / s; });
+      }
+      if (mode === "minmax") {
+        var lo = Math.min.apply(null, a), hi = Math.max.apply(null, a), rng = (hi - lo) || 1;
+        return a.map(function (v) { return (v - lo) / rng; });
+      }
+      /* robust */
+      var sorted = a.slice().sort(function (x, y) { return x - y; });
+      var med = quantile(sorted, 0.5), iqr = (quantile(sorted, 0.75) - quantile(sorted, 0.25)) || 1;
+      return a.map(function (v) { return (v - med) / iqr; });
+    }
+    function rangeStr(a) {
+      var lo = Math.min.apply(null, a), hi = Math.max.apply(null, a);
+      return "[" + lo.toFixed(Math.abs(hi) < 10 ? 2 : 0) + ", " + hi.toFixed(Math.abs(hi) < 10 ? 2 : 0) + "]";
+    }
+
+    function setMode(m) { mode = m; for (var i = 0; i < mBtns.length; i++) mBtns[i].classList.toggle("on", mBtns[i].getAttribute("data-scl-mode") === m); render(); }
+    function setOut(o) { outlier = o; for (var i = 0; i < oBtns.length; i++) oBtns[i].classList.toggle("on", oBtns[i].getAttribute("data-scl-out") === o); render(); }
+
+    function render() {
+      var A = withOutlier(rawA, 1400);   /* a wild high outlier on feature A */
+      var B = withOutlier(rawB, 11);     /* a wild high outlier on feature B */
+      var sA = scale(A), sB = scale(B);
+
+      aEl.textContent = rangeStr(sA);
+      bEl.textContent = rangeStr(sB);
+      noteEl.textContent = outlier === "off" ? "none injected"
+        : (mode === "minmax" ? "crushes real data ↓"
+          : mode === "robust" ? "ignored by median/IQR"
+            : mode === "standard" ? "inflates the spread" : "dominates raw scale");
+      noteEl.style.color = outlier === "on" && mode === "robust" ? C.MINT
+        : outlier === "on" && mode === "minmax" ? C.RED : C.SEC;
+
+      var c = FM.setupCanvas(canvas, 320);
+      var ctx = c.ctx;
+      ctx.clearRect(0, 0, c.w, c.h);
+      var padL = 40, padR = 16, padT = 20, padB = 28;
+      var x0 = padL, x1 = c.w - padR, midY = (padT + (c.h - padB)) / 2;
+
+      /* dynamic horizontal range across both scaled features */
+      var all = sA.concat(sB);
+      var lo = Math.min.apply(null, all), hi = Math.max.apply(null, all);
+      var pad = (hi - lo) * 0.06 || 1; lo -= pad; hi += pad;
+      function px(v) { return x0 + (v - lo) / (hi - lo) * (x1 - x0); }
+
+      /* reference grid: 0 and 1 lines where meaningful */
+      ctx.strokeStyle = "rgba(47,50,52,.6)"; ctx.lineWidth = 1;
+      function vline(v, label, col) {
+        if (v < lo || v > hi) return;
+        ctx.strokeStyle = col || "rgba(47,50,52,.7)";
+        ctx.beginPath(); ctx.moveTo(px(v), padT); ctx.lineTo(px(v), c.h - padB); ctx.stroke();
+        ctx.fillStyle = C.MUT; ctx.font = C.MONO; ctx.textAlign = "center"; ctx.textBaseline = "top";
+        ctx.fillText(label, px(v), c.h - padB + 6);
+      }
+      if (mode === "minmax") { vline(0, "0", C.MUT); vline(1, "1", C.MUT); }
+      else if (mode === "standard" || mode === "robust") { vline(-1, "-1", "rgba(47,50,52,.7)"); vline(0, "0", C.MUT); vline(1, "1", "rgba(47,50,52,.7)"); }
+
+      /* two horizontal strips of points: A above, B below */
+      function strip(vals, y, color, name) {
+        ctx.fillStyle = C.MUT; ctx.font = C.MONO; ctx.textAlign = "left"; ctx.textBaseline = "middle";
+        ctx.fillText(name, x0 - 34, y);
+        for (var i = 0; i < vals.length; i++) {
+          var isOut = outlier === "on" && i === vals.length - 1;
+          ctx.fillStyle = isOut ? C.RED : color;
+          ctx.globalAlpha = isOut ? 1 : 0.8;
+          ctx.beginPath(); ctx.arc(px(vals[i]), y, isOut ? 5.5 : 3.2, 0, 2 * Math.PI); ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+      }
+      strip(sA, midY - 46, C.MINT, "A");
+      strip(sB, midY + 46, C.BLUE, "B");
+
+      /* title */
+      ctx.fillStyle = C.SEC; ctx.font = C.MONO; ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+      ctx.fillText((mode === "none" ? "RAW (NATIVE SCALES)" : mode.toUpperCase() + " SCALED")
+        + (outlier === "on" ? "  ·  OUTLIER INJECTED" : ""), x0, 14);
+    }
+
+    for (var i = 0; i < mBtns.length; i++) (function (btn) { btn.addEventListener("click", function () { setMode(btn.getAttribute("data-scl-mode")); }); })(mBtns[i]);
+    for (var j = 0; j < oBtns.length; j++) (function (btn) { btn.addEventListener("click", function () { setOut(btn.getAttribute("data-scl-out")); }); })(oBtns[j]);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT D3.3 — Box-Cox transformer
+     A fixed right-skewed (log-normal) sample; the lambda slider
+     reshapes the histogram and the skewness readout drives
+     toward zero at lambda*. (EQ D3.7)
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("enc-boxcox");
+    if (!root) return;
+    var canvas = document.getElementById("enc-bc-canvas");
+    var lamIn = document.getElementById("enc-bc-lam");
+    var lamOut = document.getElementById("enc-bc-out");
+    var skewEl = document.getElementById("enc-bc-skew");
+    var nameEl = document.getElementById("enc-bc-name");
+    var bestEl = document.getElementById("enc-bc-bestv");
+    var bestBtn = document.getElementById("enc-bc-best");
+
+    /* fixed strictly-positive right-skewed sample (log-normal) */
+    var g = gaussFactory(5);
+    var raw = [];
+    for (var i = 0; i < 1500; i++) raw.push(Math.exp(0.9 * g()) + 0.2);
+
+    function boxcox(x, lam) { return Math.abs(lam) < 1e-9 ? Math.log(x) : (Math.pow(x, lam) - 1) / lam; }
+    function transform(lam) {
+      var out = [], k;
+      for (k = 0; k < raw.length; k++) out.push(boxcox(raw[k], lam));
+      return out;
+    }
+    /* precompute best lambda once (min |skew|) over a grid */
+    var bestLam = 0, bestAbs = Infinity;
+    for (var L = -1; L <= 2.0001; L += 0.05) {
+      var sk = Math.abs(skewness(transform(L)));
+      if (sk < bestAbs) { bestAbs = sk; bestLam = L; }
+    }
+    bestEl.textContent = (bestLam >= 0 ? "+" : "") + bestLam.toFixed(2);
+
+    function lamName(lam) {
+      if (Math.abs(lam) < 0.03) return "λ≈0 · LOG";
+      if (Math.abs(lam - 0.5) < 0.03) return "λ≈0.5 · SQRT";
+      if (Math.abs(lam - 1) < 0.03) return "λ≈1 · IDENTITY";
+      if (Math.abs(lam + 1) < 0.03) return "λ≈-1 · RECIPROCAL";
+      return "λ = " + (lam >= 0 ? "+" : "") + lam.toFixed(2) + " · POWER";
+    }
+
+    function render() {
+      var lam = parseFloat(lamIn.value);
+      lamOut.textContent = (lam >= 0 ? "+" : "") + lam.toFixed(2);
+      var t = transform(lam);
+      var sk = skewness(t);
+      skewEl.textContent = fnum(sk, 3);
+      skewEl.style.color = Math.abs(sk) < 0.15 ? C.MINT : Math.abs(sk) > 1 ? C.RED : C.BRIGHT;
+      nameEl.textContent = lamName(lam);
+
+      var c = FM.setupCanvas(canvas, 300);
+      var ctx = c.ctx;
+      ctx.clearRect(0, 0, c.w, c.h);
+      var padL = 30, padR = 16, padT = 18, padB = 26;
+      var x0 = padL, x1 = c.w - padR, y0 = c.h - padB, y1 = padT;
+
+      /* histogram of transformed values */
+      var lo = Math.min.apply(null, t), hi = Math.max.apply(null, t), rng = (hi - lo) || 1;
+      var BINS = 40, counts = new Array(BINS).fill(0), k;
+      for (k = 0; k < t.length; k++) {
+        var bi = Math.min(BINS - 1, Math.floor((t[k] - lo) / rng * BINS));
+        counts[bi]++;
+      }
+      var maxC = Math.max.apply(null, counts) || 1;
+      var bw = (x1 - x0) / BINS;
+      for (k = 0; k < BINS; k++) {
+        var h = counts[k] / maxC * (y0 - y1);
+        ctx.fillStyle = Math.abs(sk) < 0.15 ? "rgba(166,242,204,0.85)" : "rgba(78,138,247,0.7)";
+        ctx.fillRect(x0 + k * bw + 0.5, y0 - h, bw - 1, h);
+      }
+      /* mean & median markers */
+      function vx(v) { return x0 + (v - lo) / rng * (x1 - x0); }
+      var m = mean(t);
+      var sorted = t.slice().sort(function (a, b) { return a - b; });
+      var med = quantile(sorted, 0.5);
+      ctx.setLineDash([4, 4]);
+      ctx.strokeStyle = C.BRIGHT; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(vx(m), y1); ctx.lineTo(vx(m), y0); ctx.stroke();
+      ctx.strokeStyle = C.MUT;
+      ctx.beginPath(); ctx.moveTo(vx(med), y1); ctx.lineTo(vx(med), y0); ctx.stroke();
+      ctx.setLineDash([]);
+
+      /* labels */
+      ctx.fillStyle = C.MUT; ctx.font = C.MONO; ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+      ctx.fillText("TRANSFORMED VALUE →", x0, y0 + 18);
+      ctx.fillStyle = C.BRIGHT; ctx.textAlign = "right";
+      ctx.fillText("mean", vx(m) - 4, y1 + 10);
+      ctx.fillStyle = C.MUT; ctx.textAlign = "left";
+      ctx.fillText("median", vx(med) + 4, y1 + 10);
+    }
+
+    lamIn.addEventListener("input", render);
+    if (bestBtn) bestBtn.addEventListener("click", function () {
+      /* animate the slider toward lambda* with setTimeout steps (no rAF) */
+      var start = parseFloat(lamIn.value), steps = 14, i = 0;
+      var timer = setInterval(function () {
+        i++;
+        lamIn.value = (start + (bestLam - start) * (i / steps)).toFixed(2);
+        render();
+        if (i >= steps) { clearInterval(timer); lamIn.value = bestLam.toFixed(2); render(); }
+      }, 28);
+    });
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

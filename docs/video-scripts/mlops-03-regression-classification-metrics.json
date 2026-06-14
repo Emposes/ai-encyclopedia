@@ -1,0 +1,169 @@
+{
+  "concepts": [
+    {
+      "id": "mlops-03-regression-classification-metrics-s1",
+      "chapter": "mlops/03-regression-classification-metrics",
+      "section": "s1",
+      "title": "Regression metrics: MSE, RMSE, MAE, MAPE, R²",
+      "eyebrow": "MODEL RISK",
+      "beats": [
+        {
+          "text": "Every regression metric starts from one object: the residual, the gap between each truth and its prediction.",
+          "visual": { "type": "title", "text": "Regression metrics", "sub": "MSE · RMSE · MAE · MAPE · R²" }
+        },
+        {
+          "text": "Mean squared error squares each residual, so one error of ten counts as much as a hundred errors of one.",
+          "visual": { "type": "equation", "tex": "\\mathrm{MSE} = \\frac{1}{n}\\sum_{i=1}^{n} (y_i - \\hat{y}_i)^2, \\quad \\mathrm{RMSE} = \\sqrt{\\mathrm{MSE}}", "note": "RMSE returns to original units" }
+        },
+        {
+          "text": "Mean absolute error punishes every unit of error equally, which makes it far more robust to outliers than RMSE.",
+          "visual": { "type": "equation", "tex": "\\mathrm{MAE} = \\frac{1}{n}\\sum_{i=1}^{n} \\lvert y_i - \\hat{y}_i \\rvert", "note": "minimized by the conditional median" }
+        },
+        {
+          "text": "MAPE rescales each residual by the truth, giving a unit-free percentage you can compare across series of different magnitude.",
+          "visual": { "type": "equation", "tex": "\\mathrm{MAPE} = \\frac{100\\%}{n}\\sum_{i=1}^{n} \\left\\lvert \\frac{y_i - \\hat{y}_i}{y_i} \\right\\rvert", "note": "explodes when any y is near zero" }
+        },
+        {
+          "text": "R-squared is the fraction of variance explained against the dumbest baseline, always predicting the mean.",
+          "visual": { "type": "equation", "tex": "R^2 = 1 - \\frac{\\mathrm{SS}_{\\text{res}}}{\\mathrm{SS}_{\\text{tot}}}", "note": "can go negative when worse than the mean" }
+        },
+        {
+          "text": "On the worked example with residuals all of size one, RMSE equals MAE equals one and R-squared lands at 0.80.",
+          "visual": { "type": "stat", "value": 0.80, "label": "R² on worked example", "decimals": 2 }
+        }
+      ]
+    },
+    {
+      "id": "mlops-03-regression-classification-metrics-s2",
+      "chapter": "mlops/03-regression-classification-metrics",
+      "section": "s2",
+      "title": "When each regression metric misleads",
+      "eyebrow": "MODEL RISK",
+      "beats": [
+        {
+          "text": "No regression number is neutral; each encodes an opinion about which errors matter and has a regime where it lies.",
+          "visual": { "type": "title", "text": "When metrics mislead", "sub": "Report at least two, read the gap" }
+        },
+        {
+          "text": "Start with ten residuals of size one: MAE and RMSE both read exactly one, in perfect agreement.",
+          "visual": { "type": "bars", "values": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1], "labels": ["e1", "e2", "e3", "e4", "e5", "e6", "e7", "e8", "e9", "e10"] }
+        },
+        {
+          "text": "Turn one residual into a single bad day of size ten and the two metrics split apart sharply.",
+          "visual": { "type": "bars", "values": [1, 1, 1, 1, 1, 1, 1, 1, 1, 10], "labels": ["e1", "e2", "e3", "e4", "e5", "e6", "e7", "e8", "e9", "out"], "highlight": 9 }
+        },
+        {
+          "text": "MAE crawls only to 1.9 while RMSE leaps to 3.30; the same data, one metric shrugged and the other tripled.",
+          "visual": { "type": "stat", "value": 3.30, "label": "RMSE after one outlier", "decimals": 2 }
+        },
+        {
+          "text": "The MAPE trap: a single true value of 0.01 with a 0.49 miss alone contributes a 4900 percent error term.",
+          "visual": { "type": "stat", "value": 4900, "label": "single-row MAPE term", "unit": "%", "decimals": 0 }
+        },
+        {
+          "text": "The professional habit is to never compute MAPE on data with zeros, and to read the RMSE-to-MAE gap as a tail diagnostic.",
+          "visual": { "type": "plot", "ys": [1.0, 1.2, 1.5, 2.1, 3.3], "dot": 4, "xlabel": "outlier size", "ylabel": "RMSE", "mark": "outlier dominates" }
+        }
+      ]
+    },
+    {
+      "id": "mlops-03-regression-classification-metrics-s3",
+      "chapter": "mlops/03-regression-classification-metrics",
+      "section": "s3",
+      "title": "The confusion matrix",
+      "eyebrow": "MODEL RISK",
+      "beats": [
+        {
+          "text": "The entire grammar of classification metrics is built from a single two-by-two table of counts.",
+          "visual": { "type": "title", "text": "The confusion matrix", "sub": "TP · FP · FN · TN" }
+        },
+        {
+          "text": "A classifier turns a score into a label by comparing it to a threshold, and every prediction lands in one of four cells.",
+          "visual": { "type": "equation", "tex": "\\begin{array}{c|cc} & \\hat{y}=1 & \\hat{y}=0 \\\\ \\hline y=1 & \\mathrm{TP} & \\mathrm{FN} \\\\ y=0 & \\mathrm{FP} & \\mathrm{TN} \\end{array}", "note": "every metric is a ratio of these four" }
+        },
+        {
+          "text": "False positives and false negatives have different costs, so no single number serves every problem.",
+          "visual": { "type": "bars", "values": [60, 40, 40, 60], "labels": ["TP", "FP", "FN", "TN"], "highlight": 2 }
+        },
+        {
+          "text": "The threshold is the dial that moves counts between cells; lower it and both true positives and false alarms rise.",
+          "visual": { "type": "plot", "ys": [0.95, 0.80, 0.60, 0.40, 0.20], "dot": 2, "xlabel": "threshold", "ylabel": "recall", "mark": "lower = more positives" }
+        },
+        {
+          "text": "You cannot cut false alarms and misses at the same time by moving the threshold; you only trade one for the other.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "On a balanced-looking matrix with sixty correct in each diagonal, accuracy is still only 0.60.",
+          "visual": { "type": "stat", "value": 0.60, "label": "accuracy of the demo matrix", "decimals": 2 }
+        }
+      ]
+    },
+    {
+      "id": "mlops-03-regression-classification-metrics-s4",
+      "chapter": "mlops/03-regression-classification-metrics",
+      "section": "s4",
+      "title": "Precision, recall, F1, accuracy",
+      "eyebrow": "MODEL RISK",
+      "beats": [
+        {
+          "text": "Four ratios of the four counts look interchangeable, but choosing the wrong one is how a model ships looking great and fails.",
+          "visual": { "type": "title", "text": "Precision, recall, F1, accuracy", "sub": "Four ratios, four meanings" }
+        },
+        {
+          "text": "Precision asks how many flagged positives were real; recall asks how many real positives were caught.",
+          "visual": { "type": "equation", "tex": "\\mathrm{Precision} = \\frac{\\mathrm{TP}}{\\mathrm{TP}+\\mathrm{FP}}, \\quad \\mathrm{Recall} = \\frac{\\mathrm{TP}}{\\mathrm{TP}+\\mathrm{FN}}", "note": "they pull in opposite directions" }
+        },
+        {
+          "text": "F1 is the harmonic mean of precision and recall, high only when both are high.",
+          "visual": { "type": "equation", "tex": "F_1 = \\frac{2\\,\\mathrm{Precision}\\cdot\\mathrm{Recall}}{\\mathrm{Precision}+\\mathrm{Recall}}", "note": "precision 1.0 with recall 0.0 scores 0" }
+        },
+        {
+          "text": "On a dataset that is ninety-nine percent negative, always predicting negative scores ninety-nine percent accuracy and catches nothing.",
+          "visual": { "type": "stat", "value": 99, "label": "accuracy of always-negative model", "unit": "%", "decimals": 0 }
+        },
+        {
+          "text": "That is the accuracy paradox; under imbalance you report precision, recall, F1, or balanced accuracy instead.",
+          "visual": { "type": "bars", "values": [0.80, 0.667, 0.727], "labels": ["precision", "recall", "F1"], "highlight": 2 }
+        },
+        {
+          "text": "For the worked classifier, precision is 0.80 and recall is 0.667, so F1 is pulled down to 0.727 toward the weaker side.",
+          "visual": { "type": "stat", "value": 0.727, "label": "F1 of the worked classifier", "decimals": 3 }
+        }
+      ]
+    },
+    {
+      "id": "mlops-03-regression-classification-metrics-s5",
+      "chapter": "mlops/03-regression-classification-metrics",
+      "section": "s5",
+      "title": "Log loss & probabilistic scoring",
+      "eyebrow": "MODEL RISK",
+      "beats": [
+        {
+          "text": "Decision metrics grade the label after thresholding, but throwing away the probability discards information.",
+          "visual": { "type": "title", "text": "Log loss", "sub": "Grading honest probabilities" }
+        },
+        {
+          "text": "Log loss, or binary cross-entropy, grades the probability itself, rewarding confidence only when it is earned.",
+          "visual": { "type": "equation", "tex": "\\mathrm{LogLoss} = -\\frac{1}{n}\\sum_{i=1}^{n}\\big[ y_i\\ln \\hat{p}_i + (1-y_i)\\ln(1-\\hat{p}_i) \\big]", "note": "only one term survives per row" }
+        },
+        {
+          "text": "Predict the truth with probability one and the penalty is zero; hedge at 0.5 and you pay 0.693, the cost of a coin flip.",
+          "visual": { "type": "stat", "value": 0.693, "label": "penalty at p = 0.5", "decimals": 3 }
+        },
+        {
+          "text": "The penalty is unbounded, so a confident wrong answer climbs steeply as the predicted probability heads toward zero.",
+          "visual": { "type": "plot", "ys": [0.105, 0.357, 0.693, 2.303, 4.605], "dot": 3, "xlabel": "predicted p (for y=1)", "ylabel": "penalty", "mark": "arrogance punished" }
+        },
+        {
+          "text": "The Brier score is the mean squared error of the probabilities, also proper but bounded at one, so it is gentler on outliers.",
+          "visual": { "type": "equation", "tex": "\\mathrm{Brier} = \\frac{1}{n}\\sum_{i=1}^{n}(\\hat{p}_i - y_i)^2", "note": "bounded alternative to log loss" }
+        },
+        {
+          "text": "Log loss assumes calibrated probabilities, the gap the next chapter on ranking and calibration closes.",
+          "visual": { "type": "stat", "value": 0.105, "label": "penalty at p = 0.9, y = 1", "decimals": 3 }
+        }
+      ]
+    }
+  ]
+}

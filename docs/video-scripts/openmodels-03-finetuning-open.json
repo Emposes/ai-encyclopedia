@@ -1,0 +1,167 @@
+[
+  {
+    "id": "openmodels-03-finetuning-open-s1",
+    "chapter": "openmodels/03-finetuning-open",
+    "section": "s1",
+    "title": "Fine-tune vs prompt vs RAG",
+    "eyebrow": "OPEN MODELS",
+    "beats": [
+      {
+        "text": "Fine-tuning is the third tool you reach for, not the first, after prompting and retrieval have failed.",
+        "visual": { "type": "title", "text": "Fine-tune vs prompt vs RAG", "sub": "The escalation ladder, in order of effort" }
+      },
+      {
+        "text": "The ladder runs from cheapest to most expensive: prompting changes nothing, RAG changes context, fine-tuning changes the weights.",
+        "visual": { "type": "bars", "values": [1, 2, 3], "labels": ["Prompt", "RAG", "Fine-tune"], "highlight": 2 }
+      },
+      {
+        "text": "The sharpest distinction is knowledge versus behavior: RAG fixes facts that move, fine-tuning bakes a pattern into parameters.",
+        "visual": { "type": "lattice" }
+      },
+      {
+        "text": "Apply the one-line test: if pasting the perfect paragraph would solve it, the gap is knowledge, not behavior.",
+        "visual": { "type": "title", "text": "Knowledge gap to RAG", "sub": "Behavior gap to fine-tune" }
+      },
+      {
+        "text": "Most teams find prompting plus RAG covers about eighty percent of cases before any tuning is justified.",
+        "visual": { "type": "stat", "value": 80, "label": "of cases covered by prompt + RAG", "unit": "%" }
+      },
+      {
+        "text": "A fine-tune can let a smaller model match a larger one, turning a 70B job into a 3B one.",
+        "visual": { "type": "bars", "values": [70, 3], "labels": ["70B before", "3B after"], "highlight": 1 }
+      }
+    ]
+  },
+  {
+    "id": "openmodels-03-finetuning-open-s2",
+    "chapter": "openmodels/03-finetuning-open",
+    "section": "s2",
+    "title": "Building a fine-tuning dataset",
+    "eyebrow": "OPEN MODELS",
+    "beats": [
+      {
+        "text": "Once you decide to tune, the dataset is the project; the method is a solved ten-line affair.",
+        "visual": { "type": "title", "text": "Building a fine-tuning dataset", "sub": "Quality dominates quantity" }
+      },
+      {
+        "text": "Supervised fine-tuning is next-token prediction over examples, with the loss masked to the assistant tokens only.",
+        "visual": { "type": "equation", "tex": "\\mathcal{L}_{\\text{SFT}} = -\\sum_{i \\in \\text{completion}} \\log p_\\theta\\left( y_i \\mid y_{<i},\\, \\text{prompt} \\right)", "note": "Cross-entropy scored only over completion tokens" }
+      },
+      {
+        "text": "The LIMA result is the canonical evidence: one thousand curated examples beat far larger but noisier sets.",
+        "visual": { "type": "stat", "value": 1000, "label": "curated examples beat noisy sets", "unit": "ex" }
+      },
+      {
+        "text": "Quality sets the ceiling: gain rises fast then flattens, and mediocre data never reaches a high-quality model.",
+        "visual": { "type": "plot", "ys": [0, 0.42, 0.63, 0.74, 0.78, 0.79], "dot": 4, "xlabel": "training examples (log)", "ylabel": "relative quality gain" }
+      },
+      {
+        "text": "The most common bug is the wrong chat template: train and serve with different delimiters and output is garbage.",
+        "visual": { "type": "lattice" }
+      },
+      {
+        "text": "For style adaptation a few hundred clean examples suffice; a genuine new skill needs low thousands.",
+        "visual": { "type": "bars", "values": [300, 2000, 10000], "labels": ["Style", "New skill", "Robustness"], "highlight": 1 }
+      }
+    ]
+  },
+  {
+    "id": "openmodels-03-finetuning-open-s3",
+    "chapter": "openmodels/03-finetuning-open",
+    "section": "s3",
+    "title": "LoRA / QLoRA in practice",
+    "eyebrow": "OPEN MODELS",
+    "beats": [
+      {
+        "text": "LoRA is what makes owning the weights affordable on hardware you actually have.",
+        "visual": { "type": "title", "text": "LoRA / QLoRA in practice", "sub": "Low-rank updates on a single card" }
+      },
+      {
+        "text": "Full fine-tuning with AdamW costs roughly sixteen bytes per parameter, so a 7B model wants about 112 GB before activations.",
+        "visual": { "type": "stat", "value": 112, "label": "GB optimizer state for full 7B fine-tune", "unit": "GB" }
+      },
+      {
+        "text": "LoRA freezes the pretrained weight and learns the update as a product of two thin matrices.",
+        "visual": { "type": "equation", "tex": "W = W_0 + \\frac{\\alpha}{r}\\, BA, \\quad r \\ll d", "note": "B starts at zero, so training begins at the pretrained model" }
+      },
+      {
+        "text": "At d equal to 4096 and rank 8, the adapter trains 65,536 parameters, about 0.39 percent of the matrix.",
+        "visual": { "type": "stat", "value": 0.39, "label": "trainable fraction of the full update", "unit": "%", "decimals": 2 }
+      },
+      {
+        "text": "Trainable parameters grow linearly in rank while the full update stays fixed, so doubling rank barely moves the fraction.",
+        "visual": { "type": "plot", "ys": [16384, 32768, 65536, 131072, 262144], "xlabel": "rank r", "ylabel": "trainable params" }
+      },
+      {
+        "text": "QLoRA freezes the base in 4-bit NF4, so a 70B model is just 35 GB of frozen weights on one card.",
+        "visual": { "type": "bars", "values": [140, 35], "labels": ["70B fp16", "70B NF4"], "highlight": 1 }
+      }
+    ]
+  },
+  {
+    "id": "openmodels-03-finetuning-open-s4",
+    "chapter": "openmodels/03-finetuning-open",
+    "section": "s4",
+    "title": "Evaluation & iteration",
+    "eyebrow": "OPEN MODELS",
+    "beats": [
+      {
+        "text": "A fine-tune is done when it measurably beats the model you started from, not when the loss looks good.",
+        "visual": { "type": "title", "text": "Evaluation & iteration", "sub": "Beat the base, break nothing else" }
+      },
+      {
+        "text": "Past a couple of epochs training loss actively lies: it falls while real quality drops as the model overfits.",
+        "visual": { "type": "plot", "ys": [0.8, 0.6, 0.45, 0.35, 0.3], "dot": 2, "xlabel": "epochs", "ylabel": "training loss" }
+      },
+      {
+        "text": "A practical evaluation has three legs: the target metric, a forgetting probe, and human eyes.",
+        "visual": { "type": "bars", "values": [1, 1, 1], "labels": ["Target", "Forgetting", "Human"], "highlight": 1 }
+      },
+      {
+        "text": "Read fifty outputs per checkpoint, because automated metrics miss tone, format drift, and the fluent-but-wrong failure.",
+        "visual": { "type": "stat", "value": 50, "label": "manual reads per checkpoint", "unit": "reads" }
+      },
+      {
+        "text": "The loop is data, train, eval, fix the data, since most failures are holes in the dataset, not learning rates.",
+        "visual": { "type": "lattice" }
+      },
+      {
+        "text": "The four classic failures are wrong chat template, eval contamination, overfitting at epoch three, and silent capability regression.",
+        "visual": { "type": "bars", "values": [4, 3, 2, 1], "labels": ["Template", "Contam", "Overfit", "Regress"], "highlight": 0 }
+      }
+    ]
+  },
+  {
+    "id": "openmodels-03-finetuning-open-s5",
+    "chapter": "openmodels/03-finetuning-open",
+    "section": "s5",
+    "title": "Serving your fine-tune",
+    "eyebrow": "OPEN MODELS",
+    "beats": [
+      {
+        "text": "A LoRA fine-tune leaves you a deploy-time choice: fold the adapter into the base or keep it separate.",
+        "visual": { "type": "title", "text": "Serving your fine-tune", "sub": "Merge for speed, separate for scale" }
+      },
+      {
+        "text": "Merge the adapter once for zero inference overhead, served by any engine exactly like the base model.",
+        "visual": { "type": "equation", "tex": "W_0 + \\tfrac{\\alpha}{r} BA \\rightarrow \\text{one merged checkpoint}", "note": "Merge high, quantize after, to avoid quality loss" }
+      },
+      {
+        "text": "Keep adapters separate and one GPU can host hundreds of personalities, swapping tiny matrices in and out.",
+        "visual": { "type": "stat", "value": 100, "label": "adapters hosted per base model", "unit": "+" }
+      },
+      {
+        "text": "A rank-16 adapter is a few hundred megabytes against tens of gigabytes for the model it steers.",
+        "visual": { "type": "bars", "values": [14000, 300], "labels": ["Base model", "Adapter"], "highlight": 1 }
+      },
+      {
+        "text": "A merged 4-bit 7B fine-tune is the same 3.5 GB and 200 tokens per second as its base.",
+        "visual": { "type": "stat", "value": 200, "label": "tok/s ceiling for merged 4-bit 7B", "unit": "tok/s" }
+      },
+      {
+        "text": "Licenses bind the fine-tune too: the base model's terms flow through to your derivative, so check before shipping.",
+        "visual": { "type": "lattice" }
+      }
+    ]
+  }
+]

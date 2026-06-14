@@ -1,0 +1,794 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Generative Adversarial Networks — AI Encyclopedia</title>
+<meta name="description" content="Pit a forger against a detective and let them improve together — adversarial training produced the first photorealistic generators. The minimax game, instability and mode collapse, DCGAN, WGAN, and StyleGAN." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+<link rel="canonical" href="https://ai-encyclopedia.com/dl/06-gans" />
+<meta property="og:url" content="https://ai-encyclopedia.com/dl/06-gans" />
+</head>
+<body data-track="dl" data-level="advanced">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ DEEP LEARNING / 06 / GANs</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../dl/07-training-deep-nets.html">NEXT: TRAINING DEEP NETS →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">DEEP LEARNING · CHAPTER 06 / 07</div>
+    <h1>Generative Adversarial Networks</h1>
+    <p class="lede">Most generative models estimate how likely the data is and climb that gradient. GANs discard the likelihood entirely. <strong>Adversarial training pits a generator against a discriminator that improve together, and it produced the first photorealistic generators.</strong> The generator never sees a real image directly; it learns from the verdicts of an opponent that is itself learning to catch it. A learned, moving loss function is what brought faces, fonts, and textures into focus where fixed objectives had blurred.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>ADVANCED</b></span>
+      <span>READING TIME<b>≈ 26 MIN</b></span>
+      <span>BUILDS ON<b>DL 03 · 05</b></span>
+      <span>INSTRUMENTS<b>TRAINING SIM · MODE COLLAPSE · LATENT WALK</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">6.1</span>The adversarial game</a>
+      <a href="#s2"><span class="n">6.2</span>The minimax objective</a>
+      <a href="#s3"><span class="n">6.3</span>Instability &amp; mode collapse</a>
+      <a href="#s4"><span class="n">6.4</span>DCGAN, WGAN &amp; Wasserstein</a>
+      <a href="#s5"><span class="n">6.5</span>StyleGAN &amp; after</a>
+      <a href="#s6"><span class="n">6.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 6.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">6.1</span><h2>The adversarial game</h2></div>
+        <p>A generative model wants to turn cheap noise into samples that look like real data. The autoencoders of the previous chapter did this by reconstructing inputs through a bottleneck and minimizing a pixel-wise reconstruction loss; the trouble is that pixel-wise losses reward <em>blur</em> — averaging two plausible faces gives a low error and a smeared ghost. GANs replace that hand-chosen loss with a second network whose only job is to tell real from fake, and they train the generator to defeat it.</p>
+
+        <p>The setup is two players. A <strong>generator</strong> \(G\) maps a latent vector \(z\), drawn from a fixed simple prior \(p_z\) (usually a unit Gaussian), to a sample \(G(z)\) in data space. A <strong>discriminator</strong> \(D\) takes any sample \(x\) and outputs \(D(x) \in (0,1)\), its estimated probability that \(x\) is real rather than generated. Goodfellow's 2014 metaphor has stuck because it is exact: \(G\) is a counterfeiter printing banknotes, \(D\) is the police learning to spot forgeries, and the two improve in lockstep until the fakes are indistinguishable from currency.</p>
+
+        <div class="figure">
+          <svg viewBox="0 0 720 220" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Generator and discriminator data flow">
+            <g data-pop>
+              <rect class="dg-box" x="24" y="86" width="96" height="48" rx="4"/>
+              <text class="dg-label" x="72" y="115" text-anchor="middle">z ~ p(z)</text>
+            </g>
+            <g data-pop>
+              <rect class="dg-box-accent" x="168" y="78" width="120" height="64" rx="4"/>
+              <text class="dg-label" x="228" y="106" text-anchor="middle">GENERATOR</text>
+              <text class="dg-label" x="228" y="122" text-anchor="middle">G(z)</text>
+            </g>
+            <g data-pop>
+              <rect class="dg-box" x="168" y="6" width="120" height="48" rx="4"/>
+              <text class="dg-label" x="228" y="35" text-anchor="middle">REAL DATA x</text>
+            </g>
+            <g data-pop>
+              <rect class="dg-box-accent" x="424" y="62" width="128" height="64" rx="4"/>
+              <text class="dg-label" x="488" y="90" text-anchor="middle">DISCRIMINATOR</text>
+              <text class="dg-label" x="488" y="106" text-anchor="middle">D(x) → (0,1)</text>
+            </g>
+            <g data-pop>
+              <rect class="dg-box" x="612" y="70" width="92" height="48" rx="4"/>
+              <text class="dg-label" x="658" y="92" text-anchor="middle">REAL?</text>
+              <text class="dg-label" x="658" y="108" text-anchor="middle">FAKE?</text>
+            </g>
+            <path class="dg-line" data-draw d="M120 110 L168 110"/>
+            <path class="dg-line" data-draw d="M288 102 L424 100"/>
+            <path class="dg-line" data-draw d="M288 30 L356 30 L356 86 L424 86"/>
+            <path class="dg-line" data-draw d="M552 94 L612 94"/>
+          </svg>
+        </div>
+
+        <p>The asymmetry of information is the whole trick. \(D\) is trained on labelled examples — it sees real data and generated data and knows which is which. \(G\) is never shown a single real example directly; its <em>only</em> learning signal is the gradient that flows back through \(D\) telling it which direction would have made its sample look more real. The loss function is therefore not fixed: it is \(D\) itself, and \(D\) is moving. This is the conceptual leap that separates GANs from everything before — the objective the generator climbs is <strong>learned and adversarial</strong>, sharpening exactly where the generator is currently weak.</p>
+
+        <p class="note">Because there is no explicit density, a vanilla GAN cannot tell you the likelihood of a held-out image — it is an <em>implicit</em> generative model. You can sample from it freely but cannot score samples. That is a feature for image realism (no blur-inducing likelihood term) and a liability for evaluation, which is why the field leans on proxy metrics like the Fréchet Inception Distance instead of held-out log-likelihood.</p>
+      </section>
+
+      <!-- ====================== 6.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">6.2</span><h2>The minimax objective</h2></div>
+        <p>Write down what each player wants and you get a single two-player value function. The discriminator wants \(D(x)\) near 1 on real data and near 0 on fakes; the generator wants the opposite. Goodfellow et al. packaged both into one minimax game:</p>
+
+        <div class="eq"><span class="eq-tag">EQ N6.1 — THE MINIMAX GAME</span>
+        $$ \min_{G}\,\max_{D}\; V(D,G) \;=\; \mathbb{E}_{x \sim p_{\text{data}}}\!\big[\log D(x)\big] \;+\; \mathbb{E}_{z \sim p_z}\!\big[\log\big(1 - D(G(z))\big)\big] $$
+        <div class="eq-note">The first term rewards \(D\) for scoring real data high; the second rewards \(D\) for scoring fakes low and rewards \(G\) (which minimizes) for pushing \(D(G(z))\) back toward 1. <b>It is one objective, optimized in opposite directions by the two networks.</b> In practice you alternate: a (few) gradient ascent step(s) on \(D\), then one gradient descent step on \(G\), each on a fresh minibatch of noise and data.</div>
+        </div>
+
+        <p>For a <em>fixed</em> generator, the inner maximization has a closed-form optimum. Treating \(V\) pointwise in \(x\), the optimal discriminator is the posterior probability that a sample is real under the two densities:</p>
+
+        <div class="eq"><span class="eq-tag">EQ N6.2 — THE OPTIMAL DISCRIMINATOR</span>
+        $$ D^{*}_{G}(x) \;=\; \frac{p_{\text{data}}(x)}{p_{\text{data}}(x) + p_{g}(x)} $$
+        <div class="eq-note">\(p_g\) is the (implicit) density the generator induces over data space. Where real and fake densities are equal, \(D^{*}(x) = \tfrac{1}{2}\): the detective is reduced to a coin flip. <b>This is the fixed point of the whole game</b> — when the generator's distribution matches the data, no discriminator can do better than chance, and the most informed possible verdict on every input is exactly 0.5.</div>
+        </div>
+
+        <p>Substitute \(D^{*}_G\) back into \(V\) and the generator's objective collapses to a recognizable distance between distributions. Up to constants it becomes the <strong>Jensen–Shannon divergence</strong>:</p>
+
+        <div class="eq"><span class="eq-tag">EQ N6.3 — WHAT G ACTUALLY MINIMIZES</span>
+        $$ \max_{D} V(D,G) \;=\; 2\,\mathrm{JSD}\!\big(p_{\text{data}} \,\|\, p_g\big) - \log 4, \qquad \mathrm{JSD}(p\|q) = \tfrac{1}{2}\mathrm{KL}\!\big(p \,\|\, m\big) + \tfrac{1}{2}\mathrm{KL}\!\big(q \,\|\, m\big),\;\; m = \tfrac{p+q}{2} $$
+        <div class="eq-note">With the optimal \(D\) plugged in, the generator is minimizing the Jensen–Shannon divergence between the data and its own samples. The global minimum is \(\mathrm{JSD} = 0\), reached only when \(p_g = p_{\text{data}}\), giving value \(-\log 4 \approx -1.386\). The objective is principled — <b>but JSD is also where the trouble starts</b> (§6.3): when the two distributions barely overlap, JSD saturates to the constant \(\log 2\) and its gradient vanishes.</div>
+        </div>
+
+        <p>One practical wrinkle ships in every real implementation. The generator term \(\log(1 - D(G(z)))\) has almost no gradient early in training, exactly when \(D\) easily rejects the generator's garbage (\(D(G(z)) \approx 0\)). So Goodfellow recommended the <strong>non-saturating</strong> reformulation: instead of minimizing \(\log(1 - D(G(z)))\), the generator <em>maximizes</em> \(\log D(G(z))\). Same fixed point, far stronger gradients when the generator is losing — the version everyone actually trains.</p>
+
+        <div class="exercise" data-answer="0.5" data-tol="0.001" data-hint="At the global optimum p_g = p_data, so EQ N6.2 has equal densities in numerator and denominator.">
+          <div class="ex-q">At the global optimum of the GAN game the generator has matched the data distribution, \(p_g = p_{\text{data}}\). Using EQ N6.2, what value does the optimal discriminator \(D^{*}(x)\) output for <b>every</b> input \(x\)?</div>
+          <div class="ex-reveal-src">Substituting \(p_g = p_{\text{data}}\) into \(D^{*}_G(x) = \dfrac{p_{\text{data}}(x)}{p_{\text{data}}(x) + p_g(x)} = \dfrac{p_{\text{data}}(x)}{2\,p_{\text{data}}(x)} = \dfrac{1}{2} = \) <b>0.5</b>. The discriminator is reduced to a coin flip on every input — it can no longer tell real from fake, which is the definition of the generator having won.</div>
+        </div>
+
+        <div class="exercise" data-answer="0.693" data-tol="0.02" data-hint="JSD between two identical distributions is 0; the maximum, for disjoint support, is ln 2.">
+          <div class="ex-q">When the data and generator distributions have <b>disjoint</b> support, the Jensen–Shannon divergence \(\mathrm{JSD}(p_{\text{data}}\|p_g)\) hits its maximum value. What is that maximum, in nats? (It is \(\ln 2\).)</div>
+          <div class="ex-reveal-src">For disjoint \(p\) and \(q\), the mixture \(m = (p+q)/2\) equals \(p/2\) wherever \(p\) lives and \(q/2\) wherever \(q\) lives, so each KL term is \(\int p \log\frac{p}{p/2} = \log 2\), giving \(\mathrm{JSD} = \tfrac12\log 2 + \tfrac12\log 2 = \log 2 = \ln 2 \approx \) <b>0.693</b> nats. Because this is a flat ceiling, its gradient is zero — the vanishing-gradient failure of §6.3.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># 1D GAN toy: a 1-param generator fits a target distribution; print D accuracy
+import numpy as np
+rng = np.random.default_rng(0)
+
+def sig(x): return 1 / (1 + np.exp(-np.clip(x, -30, 30)))
+real = rng.normal(2.0, 0.5, 2000)            # target: mean 2.0, std 0.5
+a, b, mu, s = 1.0, 0.0, 0.0, 1.0             # D(x)=sig(a x + b); G(z)=mu + s z
+lr = 0.05
+
+for it in range(400):
+    z = rng.normal(0, 1, 2000); fake = mu + s * z
+    pr, pf = sig(a*real + b), sig(a*fake + b)            # D step: ascend V
+    a += lr * (np.mean((1-pr)*real) - np.mean(pf*fake))
+    b += lr * (np.mean(1-pr)        - np.mean(pf))
+    z = rng.normal(0, 1, 2000); fake = mu + s * z         # G step: non-saturating
+    pf = sig(a*fake + b)
+    mu += lr * np.mean((1-pf) * a)
+    s  += lr * np.mean((1-pf) * a * z)
+
+print(f"target  : mean 2.00  std 0.50")
+print(f"learned : mean {mu:5.2f}  std {abs(s):4.2f}")
+zf = rng.normal(0, 1, 2000); fake = mu + s*zf
+acc = 0.5*(np.mean(sig(a*real+b) > 0.5) + np.mean(sig(a*fake+b) < 0.5))
+print(f"D accuracy at the end : {acc:.3f}   (0.5 = can't tell real from fake)")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="gan-train-sim" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT N6.1 — ADVERSARIAL TRAINING SIMULATOR</span><span class="w-sub">G &amp; D LOSSES · EQ N6.1–N6.3 · DETERMINISTIC</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>D LEARNING RATE <output id="gan-sim-lrd-out">1.00×</output></label><input type="range" id="gan-sim-lrd" min="0.3" max="3" step="0.1" value="1"/></div>
+              <div class="ctl"><label>D STEPS PER G STEP <output id="gan-sim-k-out">1</output></label><input type="range" id="gan-sim-k" min="1" max="6" step="1" value="1"/></div>
+              <div class="ctl"><label>OBJECTIVE</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost" data-gan-obj="sat">SATURATING</button>
+                  <button class="w-btn ghost on" data-gan-obj="ns">NON-SAT</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="gan-sim-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">G LOSS (FINAL)</div><div class="r-value" id="gan-sim-gloss">—</div></div>
+              <div class="readout"><div class="r-label">D LOSS (FINAL)</div><div class="r-value" id="gan-sim-dloss">—</div></div>
+              <div class="readout acc"><div class="r-label">D(G(z)) — DETECTOR CONFIDENCE</div><div class="r-value" id="gan-sim-dg">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">A deterministic simulation of the two losses as the game runs (fixed seed, so it renders identically with zero interaction). The <span style="color:var(--accent);">mint</span> curve is the generator loss, the <span style="color:var(--blue);">blue</span> curve the discriminator loss; both <b>oscillate</b> around an equilibrium rather than monotonically falling — that is healthy adversarial training, not divergence. Crank the <b>D learning rate</b> or D-steps-per-G-step and watch the discriminator overpower the generator: D loss crashes toward 0, D(G(z)) toward 0, and G's gradient starves. Switch to <b>SATURATING</b> to see the early-training flat spot the non-saturating loss was invented to fix.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 6.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">6.3</span><h2>Instability &amp; mode collapse</h2></div>
+        <p>The theory of §6.2 assumes the inner maximization is solved exactly and the two distributions overlap. Reality grants neither, and the gap is where GANs earned their reputation for being temperamental. Three failure modes dominate.</p>
+
+        <p><strong>Vanishing gradients.</strong> EQ N6.3 says \(G\) minimizes a JSD. But early on, \(p_g\) and \(p_{\text{data}}\) live on nearly disjoint low-dimensional manifolds inside a high-dimensional space — natural images occupy a vanishingly thin sliver of pixel space, and a fresh generator's outputs occupy a different one. Where the supports do not overlap, JSD is pinned at its maximum \(\log 2\) and is <em>locally flat</em>, so a near-optimal discriminator hands the generator a gradient of essentially zero. The detective becomes too good, and the forger stops learning. This is the precise sense in which a perfectly trained discriminator is bad for training.</p>
+
+        <p><strong>Mode collapse.</strong> The minimax objective rewards the generator for fooling \(D\) on the <em>current</em> batch, not for covering the whole data distribution. A generator can win by mapping every \(z\) to a single hyper-realistic output — one perfect "7" for an MNIST GAN, one face. \(D\) eventually learns to reject that point, the generator hops to another single mode, \(D\) chases, and the two play whack-a-mole forever. The pathology is that the generator's loss <em>has no term demanding diversity</em>; covering one mode flawlessly scores as well as covering all of them.</p>
+
+        <div class="callout warn">
+          <span class="co-icon">WHY COLLAPSE IS STRUCTURAL</span>
+          <p><strong>Mode collapse is not a bug in the optimizer — it is in the objective.</strong> Compare to maximum likelihood, whose KL term \(\mathrm{KL}(p_{\text{data}}\|p_g)\) is <em>mode-covering</em>: it explodes if \(p_g\) assigns near-zero probability anywhere the data has mass, forcing the model to spread out (and blur). The adversarial game has no such penalty for dropping a mode entirely, so it is free to be <em>mode-seeking</em> — crisp where it commits, blind to what it abandons. Sharper samples and dropped modes are two faces of the same coin.</p>
+        </div>
+
+        <p><strong>Non-convergence and oscillation.</strong> Even with overlapping supports, simultaneous gradient descent on a minimax game is not guaranteed to converge — the dynamics can orbit the equilibrium indefinitely, like two players in rock-paper-scissors each best-responding to the other's last move. The losses you watch during GAN training oscillate by design; a generator loss that falls smoothly to zero usually means the discriminator has collapsed, not that you have won.</p>
+
+        <div class="exercise" data-answer="0.693" data-tol="0.02" data-hint="With near-disjoint supports the generator minimizes a JSD stuck at its ceiling — the same ln 2 from §6.2.">
+          <div class="ex-q">A fresh generator's samples and the real data occupy near-disjoint manifolds, so \(\mathrm{JSD}(p_{\text{data}}\|p_g)\) sits at its ceiling and the generator's effective loss \(2\,\mathrm{JSD} - \log 4\) is flat. What constant value (in nats) is \(\mathrm{JSD}\) stuck at, killing the gradient?</div>
+          <div class="ex-reveal-src">Disjoint support pins \(\mathrm{JSD}\) at its maximum \(\log 2 = \ln 2 \approx \) <b>0.693</b> nats — a flat plateau whose derivative is zero. No matter how the generator nudges its output, the loss does not move, so no useful gradient flows back. This is the mathematical core of the vanishing-gradient failure, and the precise problem the Wasserstein distance (§6.4) was designed to remove.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Mode collapse: a single-Gaussian generator covers only ONE mode of a mixture
+import numpy as np
+rng = np.random.default_rng(1)
+
+# target: 70% mass near +3, 30% near -3  (two well-separated modes)
+heavy = rng.random(3000) < 0.7
+real  = np.where(heavy, 3.0, -3.0) + rng.normal(0, 0.4, 3000)
+def sig(x): return 1 / (1 + np.exp(-np.clip(x, -30, 30)))
+
+a, b, mu, s = 0.3, 0.0, 0.0, 1.0            # G can only make ONE bump (1 Gaussian)
+for it in range(800):
+    z = rng.normal(0, 1, 3000); fake = mu + s*z
+    pr, pf = sig(a*real + b), sig(a*fake + b)
+    a += 0.02 * (np.mean((1-pr)*real) - np.mean(pf*fake))
+    b += 0.02 * (np.mean(1-pr)        - np.mean(pf))
+    z = rng.normal(0, 1, 3000); fake = mu + s*z; pf = sig(a*fake + b)
+    mu += 0.02 * np.mean((1-pf)*a);  s += 0.02 * np.mean((1-pf)*a*z)
+
+g = mu + abs(s)*rng.normal(0, 1, 8000)
+near_major = np.mean(np.abs(g - 3) < 1.2)
+near_minor = np.mean(np.abs(g + 3) < 1.2)
+print(f"generator: mean {mu:5.2f}  std {abs(s):4.2f}")
+print(f"mass near +3 (major mode): {near_major:.2f}")
+print(f"mass near -3 (minor mode): {near_minor:.2f}  <- collapsed: mode abandoned")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="gan-collapse" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT N6.2 — MODE-COLLAPSE DEMO</span><span class="w-sub">2D MIXTURE OF 8 GAUSSIANS · GENERATOR COVERAGE</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>TRAINING PROGRESS <output id="gan-mc-t-out">step 0</output></label><input type="range" id="gan-mc-t" min="0" max="100" step="1" value="38"/></div>
+              <div class="ctl"><label>DIVERSITY PRESSURE <output id="gan-mc-div-out">off</output></label><input type="range" id="gan-mc-div" min="0" max="100" step="5" value="0"/></div>
+            </div>
+            <canvas class="w-canvas" id="gan-mc-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">MODES COVERED</div><div class="r-value" id="gan-mc-covered">—</div></div>
+              <div class="readout acc"><div class="r-label">COVERAGE</div><div class="r-value" id="gan-mc-cov">—</div></div>
+              <div class="readout"><div class="r-label">REGIME</div><div class="r-value" id="gan-mc-regime">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Eight real modes sit on a ring (<span style="color:var(--secondary);">grey</span> rings); the generator's samples are the <span style="color:var(--accent);">mint</span> cloud. With <b>diversity pressure off</b>, scrub training forward and watch the generator hop from mode to mode — at any moment it parks on one or two and abandons the rest, the signature of collapse. Raise <b>diversity pressure</b> (a stand-in for minibatch discrimination / unrolled-GAN style fixes) and the cloud spreads to cover the full ring. The lesson: nothing in the bare objective rewards coverage; you have to add it.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 6.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">6.4</span><h2>DCGAN, WGAN &amp; the Wasserstein fix</h2></div>
+        <p>The original GAN paper used multilayer perceptrons on small images and trained precariously. Two papers turned the idea into something that worked reliably — one architectural, one about the loss.</p>
+
+        <p><strong>DCGAN</strong> (Radford, Metz &amp; Chintala, 2015) is the architecture that made image GANs reproducible. Its recipe became boilerplate: replace pooling with strided convolutions (let the network learn its own up/down-sampling); use <em>transposed</em> convolutions in \(G\) to grow spatial resolution; apply batch normalization in both networks to stabilize activations; drop fully-connected hidden layers; use ReLU in \(G\) and LeakyReLU in \(D\). Beyond crisp 64×64 samples, DCGAN demonstrated that the learned latent space was <em>structured</em> — vector arithmetic on \(z\) (the famous "man with glasses − man + woman = woman with glasses") moved meaningfully in image space, the first hint that GANs learn a disentangled representation, not just a lookup table.</p>
+
+        <p><strong>WGAN</strong> (Arjovsky, Chintala &amp; Bottou, 2017) attacked the loss. The diagnosis was exactly §6.3: JSD gives no usable gradient when supports are disjoint. The fix is to measure the distance between distributions with the <strong>Wasserstein</strong> (earth-mover's) distance instead, which stays smooth and informative even when the distributions do not overlap. <em>WGAN replaces the JS divergence with the Wasserstein distance.</em></p>
+
+        <div class="eq"><span class="eq-tag">EQ N6.4 — WASSERSTEIN-1 (EARTH MOVER'S) DISTANCE</span>
+        $$ W_1(p_{\text{data}}, p_g) \;=\; \inf_{\gamma \in \Pi(p_{\text{data}}, p_g)} \;\mathbb{E}_{(x,y)\sim\gamma}\big[\,\lVert x - y \rVert\,\big] $$
+        <div class="eq-note">\(\Pi\) is the set of all transport plans \(\gamma\) with the right marginals; \(W_1\) is the minimum average "dirt × distance" to reshape one pile of probability into the other. Unlike JSD, <b>\(W_1\) varies continuously with the generator's parameters even when supports are disjoint</b> — move a far-away blob closer and \(W_1\) drops smoothly, giving a gradient where JSD gave a flat plateau.</div>
+        </div>
+
+        <p>The infimum over transport plans is intractable, so WGAN uses the Kantorovich–Rubinstein duality, which turns it into a maximization over <strong>1-Lipschitz</strong> functions \(f\). The discriminator is repurposed as this \(f\) — now called a <em>critic</em>, because it outputs an unbounded real score, not a probability:</p>
+
+        <div class="eq"><span class="eq-tag">EQ N6.5 — KANTOROVICH–RUBINSTEIN DUAL (THE CRITIC OBJECTIVE)</span>
+        $$ W_1(p_{\text{data}}, p_g) \;=\; \sup_{\lVert f \rVert_{L} \le 1}\; \mathbb{E}_{x \sim p_{\text{data}}}[\,f(x)\,] \;-\; \mathbb{E}_{z \sim p_z}\big[\,f(G(z))\,\big] $$
+        <div class="eq-note">The critic \(f\) maximizes the gap between its average score on real and on fake; the generator minimizes it. The constraint \(\lVert f\rVert_L \le 1\) (1-Lipschitz: \(f\) cannot change faster than its input) is what makes the dual equal \(W_1\). The original WGAN enforced it crudely by <b>weight clipping</b>; WGAN-GP replaced that with a <b>gradient penalty</b> pushing \(\lVert \nabla f \rVert\) toward 1 — far more stable, and the version in wide use.</div>
+        </div>
+
+        <p>The payoff is practical. Because EQ N6.5 estimates a genuine distance, the critic's value <em>correlates with sample quality</em> — for the first time a GAN's loss curve meant something you could read. WGAN tolerates a strong critic (train it to near-optimality between generator steps, the opposite of the vanilla advice), is far less prone to mode collapse, and removed much of the black-magic hyperparameter fiddling. It did not make GANs trivial, but it made them debuggable.</p>
+
+        <table class="data">
+          <thead><tr><th>Variant</th><th>Distribution distance</th><th>Output network</th><th>Headline contribution</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Vanilla GAN</strong></td><td class="m">Jensen–Shannon</td><td class="m">discriminator → (0,1)</td><td>The adversarial game itself (2014)</td></tr>
+            <tr><td><strong>DCGAN</strong></td><td class="m">Jensen–Shannon</td><td class="m">conv discriminator</td><td>Stable conv architecture; structured latent space</td></tr>
+            <tr><td><strong>WGAN</strong></td><td class="hl">Wasserstein-1</td><td class="m">critic → ℝ (clipped)</td><td>Meaningful loss; far less collapse</td></tr>
+            <tr><td><strong>WGAN-GP</strong></td><td class="hl">Wasserstein-1</td><td class="m">critic + gradient penalty</td><td>Lipschitz via penalty, not clipping</td></tr>
+          </tbody>
+        </table>
+
+        <div class="exercise" data-answer="true" data-tol="0" data-hint="WGAN's whole premise is swapping the JS divergence for an earth-mover's distance that stays smooth on disjoint supports.">
+          <div class="ex-q">True or false: WGAN replaces the Jensen–Shannon divergence of the original GAN objective with the Wasserstein (earth-mover's) distance, precisely because the latter gives useful gradients even when the real and generated distributions do not overlap. (Answer <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">This is exactly WGAN's thesis. Vanilla GANs minimize JSD (EQ N6.3), which is flat at \(\log 2\) for disjoint supports and hands the generator no gradient. \(W_1\) (EQ N6.4) instead varies continuously with how far apart the distributions are, so moving generated mass toward real mass always lowers the loss. The discriminator becomes a 1-Lipschitz critic (EQ N6.5). The statement is <b>true</b>.</div>
+        </div>
+
+        <div class="widget" id="gan-latent" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT N6.3 — LATENT-INTERPOLATION VISUALIZER</span><span class="w-sub">WALK z FROM A → B IN LATENT SPACE · DCGAN-STYLE</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>INTERPOLATION t (A → B) <output id="gan-li-t-out">0.50</output></label><input type="range" id="gan-li-t" min="0" max="1" step="0.02" value="0.5"/></div>
+              <div class="ctl"><label>PATH</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost" data-gan-path="lin">LINEAR</button>
+                  <button class="w-btn ghost on" data-gan-path="slerp">SLERP</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="gan-li-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">|z| (LATENT NORM)</div><div class="r-value" id="gan-li-norm">—</div></div>
+              <div class="readout acc"><div class="r-label">DECODED PATTERN</div><div class="r-value" id="gan-li-decoded">—</div></div>
+              <div class="readout"><div class="r-label">ENDPOINTS</div><div class="r-value" id="gan-li-ends">A · B</div></div>
+            </div>
+          </div>
+          <div class="w-note">Two latent codes \(z_A, z_B\) decode (via a small fixed toy generator) to two distinct procedural "textures"; slide \(t\) to walk between them. A <b>smooth, gradual morph</b> with no jumps is the signature of a well-trained generator — the latent space is continuous, so nearby codes give nearby images. Switch <b>LINEAR → SLERP</b>: straight-line interpolation in a Gaussian latent dips through the low-density origin (the \(|z|\) readout sags at \(t=0.5\)), giving washed-out midpoints, while spherical interpolation keeps \(|z|\) on the typical-radius shell and the morph stays crisp — the reason practitioners slerp.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 6.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">6.5</span><h2>StyleGAN &amp; where GANs went</h2></div>
+        <p>By 2018 GANs could generate small images reliably; the open question was control and resolution. Progressive growing (Karras et al., 2017) trained GANs by adding resolution layers one at a time, reaching 1024×1024. <strong>StyleGAN</strong> (Karras, Laine &amp; Aila, 2019) then redesigned the generator itself and produced the photorealistic faces — <em>thispersondoesnotexist.com</em> — that put GANs in the popular imagination.</p>
+
+        <p>StyleGAN's central move was to stop feeding the latent code in at the bottom. Instead a learned mapping network turns \(z\) into an intermediate latent \(w\), and \(w\) controls the image by <strong>modulating the statistics of feature maps at every resolution</strong> via adaptive instance normalization. Coarse layers set pose and face shape; middle layers set features; fine layers set color and micro-texture. Injecting a different \(w\) at different layers ("style mixing") cleanly transplants, say, hair color without touching pose — disentanglement by construction. Per-pixel noise inputs supply the stochastic detail (freckles, stray hairs) that the structured \(w\) need not encode.</p>
+
+        <div class="eq"><span class="eq-tag">EQ N6.6 — STYLE MODULATION (AdaIN)</span>
+        $$ \mathrm{AdaIN}(x_i, w) \;=\; y_{s,i}(w)\,\frac{x_i - \mu(x_i)}{\sigma(x_i)} \;+\; y_{b,i}(w) $$
+        <div class="eq-note">Each feature map \(x_i\) is normalized to zero mean and unit variance, then re-scaled and re-shifted by a per-channel style \((y_{s,i}, y_{b,i})\) computed from \(w\). <b>The style controls the image purely through these scale/shift statistics</b> — applied independently at each resolution, which is what separates coarse structure from fine texture. StyleGAN2 later replaced AdaIN with weight demodulation to remove the characteristic "droplet" artifacts, and StyleGAN3 fixed aliasing so features stick to surfaces under motion.</div>
+        </div>
+
+        <p>Where GANs stand in 2026 is an honest mixed picture. For unconditional and class-conditional <em>image</em> synthesis, <strong>diffusion models largely displaced GANs</strong> after 2021: they are far easier to train (a stable denoising regression, no adversary), cover modes better, and scale to text-to-image systems where GANs never caught up. The 2021 "diffusion beats GANs on image synthesis" result marked the turn. GANs did not vanish, though. Their one decisive advantage is <em>speed</em>: a GAN generates in a single forward pass, while diffusion needs many denoising steps — so GANs and GAN-style adversarial losses survive wherever latency matters: real-time super-resolution, image-to-image translation, neural vocoders for speech, and as the <em>distillation</em> target that compresses slow diffusion models into one-step generators. Adversarial training is now a component in a larger toolbox rather than the whole story.</p>
+
+        <div class="callout warn">
+          <span class="co-icon">CONTESTED</span>
+          <p><strong>"GANs are obsolete" is too strong.</strong> The claim holds for large-scale text-to-image, where diffusion (and autoregressive token models) clearly won on quality and trainability. It does not hold for latency-bound generation, and the line is blurring: state-of-the-art few-step diffusion distillation often <em>adds an adversarial loss</em> to keep one-step samples sharp. The adversarial idea outlived the pure-GAN architecture. Treat anyone who says GANs are simply dead, or simply fine, with equal suspicion.</p>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>Every model in this volume — autoencoder, GAN, the deep classifier — is only as good as the optimization that fits it.</strong> Chapter 07 leaves architectures behind for the craft of <em>training</em> deep nets: initialization, normalization, the vanishing/exploding-gradient problem these adversarial games quietly battle, learning-rate schedules, and the regularization that decides whether a network that <em>can</em> fit the data actually <em>generalizes</em>.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 6.R References ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">6.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://arxiv.org/abs/1406.2661" target="_blank" rel="noopener">Goodfellow, I., Pouget-Abadie, J., Mirza, M., Xu, B., Warde-Farley, D., Ozair, S., Courville, A. &amp; Bengio, Y. (2014). <span class="ref-venue">Generative Adversarial Networks</span>.</a> <span class="ref-meta">NeurIPS 2014 — the original adversarial game, the optimal discriminator (EQ N6.2), and the JSD reduction (EQ N6.3).</span></li>
+          <li><a href="https://arxiv.org/abs/1511.06434" target="_blank" rel="noopener">Radford, A., Metz, L. &amp; Chintala, S. (2015). <span class="ref-venue">Unsupervised Representation Learning with Deep Convolutional Generative Adversarial Networks</span>.</a> <span class="ref-meta">ICLR 2016 — DCGAN: the stable convolutional architecture and latent-space vector arithmetic.</span></li>
+          <li><a href="https://arxiv.org/abs/1701.07875" target="_blank" rel="noopener">Arjovsky, M., Chintala, S. &amp; Bottou, L. (2017). <span class="ref-venue">Wasserstein GAN</span>.</a> <span class="ref-meta">ICML 2017 — replacing JSD with the Wasserstein distance (EQ N6.4–N6.5) and the critic.</span></li>
+          <li><a href="https://arxiv.org/abs/1704.00028" target="_blank" rel="noopener">Gulrajani, I., Ahmed, F., Arjovsky, M., Dumoulin, V. &amp; Courville, A. (2017). <span class="ref-venue">Improved Training of Wasserstein GANs</span>.</a> <span class="ref-meta">NeurIPS 2017 — WGAN-GP: the gradient penalty that replaced weight clipping.</span></li>
+          <li><a href="https://arxiv.org/abs/1812.04948" target="_blank" rel="noopener">Karras, T., Laine, S. &amp; Aila, T. (2019). <span class="ref-venue">A Style-Based Generator Architecture for Generative Adversarial Networks</span>.</a> <span class="ref-meta">CVPR 2019 — StyleGAN: the mapping network, AdaIN style modulation (EQ N6.6), and style mixing.</span></li>
+          <li><a href="https://arxiv.org/abs/1606.03498" target="_blank" rel="noopener">Salimans, T., Goodfellow, I., Zaremba, W., Cheung, V., Radford, A. &amp; Chen, X. (2016). <span class="ref-venue">Improved Techniques for Training GANs</span>.</a> <span class="ref-meta">NeurIPS 2016 — minibatch discrimination and feature matching, the classic anti-collapse fixes behind Instrument N6.2.</span></li>
+          <li><a href="https://arxiv.org/abs/2105.05233" target="_blank" rel="noopener">Dhariwal, P. &amp; Nichol, A. (2021). <span class="ref-venue">Diffusion Models Beat GANs on Image Synthesis</span>.</a> <span class="ref-meta">NeurIPS 2021 — the result marking diffusion's displacement of GANs for large-scale image generation (§6.5).</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../dl/05-autoencoders.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">05</span> Autoencoders</div></a>
+        <a class="next" href="../dl/07-training-deep-nets.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">07</span> Training Deep Nets</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — DEEP LEARNING · CH 06</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* ============================================================
+   Generative Adversarial Networks — chapter instruments.
+   Single IIFE, no globals. setTimeout for any animation.
+   Every widget guarded by element existence; deterministic
+   so each renders a meaningful initial state on load.
+   ============================================================ */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  /* ========================================================
+     INSTRUMENT N6.1 — Adversarial training simulator
+     Deterministic loss trajectories from a small game model.
+     G & D losses oscillate around equilibrium; pushing D
+     harder makes it overpower G (D loss -> 0, gradient dies).
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("gan-train-sim");
+    if (!root) return;
+    var canvas = document.getElementById("gan-sim-canvas");
+    var lrdIn = document.getElementById("gan-sim-lrd");
+    var kIn = document.getElementById("gan-sim-k");
+    var lrdOut = document.getElementById("gan-sim-lrd-out");
+    var kOut = document.getElementById("gan-sim-k-out");
+    var gEl = document.getElementById("gan-sim-gloss");
+    var dEl = document.getElementById("gan-sim-dloss");
+    var dgEl = document.getElementById("gan-sim-dg");
+    var objBtns = root.querySelectorAll("[data-gan-obj]");
+    var obj = "ns";
+    var STEPS = 160;
+
+    /* A toy 1D adversarial game simulated deterministically.
+       D(x)=sigmoid(a x + b), real ~ N(2,0.5), G(z)=mu + s z.
+       Returns per-step G loss, D loss, and D(G(z)).            */
+    function simulate(lrD, k, objMode) {
+      var rng = FM.mulberry32(20240614);
+      function gauss() {
+        var u1 = Math.max(1e-9, rng()), u2 = rng();
+        return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+      }
+      function sig(x) { return 1 / (1 + Math.exp(-Math.max(-30, Math.min(30, x)))); }
+      var a = 0.6, b = 0.0, mu = -0.5, s = 1.0;
+      var N = 256, lrG = 0.06, baseD = 0.05 * lrD;
+      var gL = [], dL = [], dg = [], step;
+      for (step = 0; step < STEPS; step++) {
+        var j, ki;
+        /* k discriminator ascent steps */
+        for (ki = 0; ki < k; ki++) {
+          var gA = 0, gB = 0;
+          for (j = 0; j < N; j++) {
+            var xr = 2.0 + 0.5 * gauss();
+            var xf = mu + s * gauss();
+            var pr = sig(a * xr + b), pf = sig(a * xf + b);
+            gA += (1 - pr) * xr - pf * xf;
+            gB += (1 - pr) - pf;
+          }
+          a += baseD * gA / N; b += baseD * gB / N;
+        }
+        /* one generator descent step */
+        var dMu = 0, dS = 0, dgAvg = 0, dLoss = 0;
+        for (j = 0; j < N; j++) {
+          var z = gauss(), xf2 = mu + s * z;
+          var pf2 = sig(a * xf2 + b);
+          dgAvg += pf2;
+          /* non-saturating: grad of -log D(G) ; saturating: grad of log(1-D(G)) */
+          var w = (objMode === "ns") ? (1 - pf2) : (-pf2);
+          dMu += w * a; dS += w * a * z;
+          var xr2 = 2.0 + 0.5 * gauss();
+          var pr2 = sig(a * xr2 + b);
+          dLoss += -(Math.log(Math.max(1e-9, pr2)) + Math.log(Math.max(1e-9, 1 - pf2)));
+        }
+        mu += lrG * dMu / N; s += lrG * dS / N;
+        if (s < 0.05) s = 0.05;
+        var dgm = dgAvg / N;
+        dg.push(dgm);
+        dL.push(dLoss / N);                          /* D's BCE loss */
+        /* G non-saturating loss = -log D(G(z)) */
+        gL.push(-Math.log(Math.max(1e-9, dgm)));
+      }
+      return { gL: gL, dL: dL, dg: dg, mu: mu, s: s };
+    }
+
+    function render() {
+      var lrD = +lrdIn.value, k = +kIn.value;
+      lrdOut.textContent = lrD.toFixed(2) + "×";
+      kOut.textContent = k;
+      var r = simulate(lrD, k, obj);
+
+      gEl.textContent = r.gL[STEPS - 1].toFixed(2);
+      dEl.textContent = r.dL[STEPS - 1].toFixed(2);
+      var dgFinal = r.dg[STEPS - 1];
+      dgEl.textContent = dgFinal.toFixed(2);
+      dgEl.style.color = dgFinal < 0.15 ? C.RED : (dgFinal > 0.4 ? C.MINT : C.SEC);
+
+      var c = FM.setupCanvas(canvas, 320);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      var padL = 40, padR = 16, padT = 22, padB = 28;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      ctx.clearRect(0, 0, w, h);
+
+      var maxL = 0, i;
+      for (i = 0; i < STEPS; i++) { maxL = Math.max(maxL, r.gL[i], r.dL[i]); }
+      maxL = Math.max(maxL, 1) * 1.1;
+      function px(t) { return x0 + (x1 - x0) * t / (STEPS - 1); }
+      function py(v) { return y0 - (Math.min(v, maxL) / maxL) * (y0 - y1); }
+
+      /* gridlines */
+      ctx.strokeStyle = "rgba(47,50,52,.55)"; ctx.lineWidth = 1;
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      var g;
+      for (g = 0; g <= 4; g++) {
+        var gv = maxL * g / 4, gy = py(gv);
+        ctx.beginPath(); ctx.moveTo(x0, gy); ctx.lineTo(x1, gy); ctx.stroke();
+        ctx.fillText(gv.toFixed(1), x0 - 5, gy);
+      }
+
+      function curve(arr, col, dash) {
+        ctx.strokeStyle = col; ctx.lineWidth = 1.8;
+        ctx.setLineDash(dash || []);
+        ctx.beginPath();
+        for (i = 0; i < STEPS; i++) {
+          var X = px(i), Y = py(arr[i]);
+          if (i === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y);
+        }
+        ctx.stroke(); ctx.setLineDash([]);
+      }
+      curve(r.dL, C.BLUE, [5, 4]);
+      curve(r.gL, C.MINT);
+
+      ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillStyle = C.MINT; ctx.fillText("— GENERATOR LOSS", x0 + 4, y1 - 2);
+      ctx.fillStyle = C.BLUE; ctx.fillText("-- DISCRIMINATOR LOSS", x0 + 150, y1 - 2);
+      ctx.fillStyle = C.MUT; ctx.textAlign = "right"; ctx.textBaseline = "top";
+      ctx.fillText("TRAINING STEP →", x1, y0 + 6);
+      ctx.textAlign = "left";
+      ctx.fillText("0", x0, y0 + 6);
+    }
+
+    objBtns.forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        obj = btn.getAttribute("data-gan-obj");
+        objBtns.forEach(function (b) { b.classList.remove("on"); });
+        btn.classList.add("on");
+        render();
+      });
+    });
+    [lrdIn, kIn].forEach(function (el) { el.addEventListener("input", render); });
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT N6.2 — Mode-collapse demo
+     8 real modes on a ring; the generator (deterministic
+     synthetic samples) parks on a subset as training scrubs,
+     unless diversity pressure spreads it across all modes.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("gan-collapse");
+    if (!root) return;
+    var canvas = document.getElementById("gan-mc-canvas");
+    var tIn = document.getElementById("gan-mc-t");
+    var dIn = document.getElementById("gan-mc-div");
+    var tOut = document.getElementById("gan-mc-t-out");
+    var dOut = document.getElementById("gan-mc-div-out");
+    var covEl = document.getElementById("gan-mc-covered");
+    var covPctEl = document.getElementById("gan-mc-cov");
+    var regimeEl = document.getElementById("gan-mc-regime");
+    var K = 8, R = 1.0;
+
+    var modes = [];
+    (function () {
+      var i;
+      for (i = 0; i < K; i++) {
+        var ang = 2 * Math.PI * i / K;
+        modes.push({ x: R * Math.cos(ang), y: R * Math.sin(ang) });
+      }
+    })();
+
+    /* Generate the cloud deterministically given (step t, diversity d).
+       With low diversity, samples concentrate on a moving subset of
+       modes (chase dynamics). With high diversity, all modes covered. */
+    function sample(step, div) {
+      var rng = FM.mulberry32(7 + step);
+      var pts = [], N = 260, i;
+      var spread = div / 100;                       /* 0 collapse .. 1 full */
+      /* which modes the generator currently favours when collapsed:
+         a rotating window of size 1-2 driven by the step */
+      var center = (step * 0.13) % K;
+      for (i = 0; i < N; i++) {
+        var m;
+        if (rng() < spread) {
+          m = modes[Math.floor(rng() * K)];          /* covered uniformly */
+        } else {
+          /* collapsed: pick from a narrow window near 'center' */
+          var off = Math.round((rng() - 0.5) * 1.6);
+          var idx = ((Math.round(center) + off) % K + K) % K;
+          m = modes[idx];
+        }
+        var r2 = 0.06 + 0.04 * rng();
+        var a2 = 2 * Math.PI * rng();
+        pts.push({ x: m.x + r2 * Math.cos(a2), y: m.y + r2 * Math.sin(a2) });
+      }
+      return pts;
+    }
+
+    function render() {
+      var step = +tIn.value, div = +dIn.value;
+      tOut.textContent = "step " + step;
+      dOut.textContent = div === 0 ? "off" : div + "%";
+      var pts = sample(step, div);
+
+      /* coverage: a mode is "covered" if >=4 samples land within 0.18 */
+      var covered = 0, i, j;
+      for (i = 0; i < K; i++) {
+        var cnt = 0;
+        for (j = 0; j < pts.length; j++) {
+          var dx = pts[j].x - modes[i].x, dy = pts[j].y - modes[i].y;
+          if (dx * dx + dy * dy < 0.18 * 0.18) cnt++;
+        }
+        if (cnt >= 4) covered++;
+      }
+      covEl.textContent = covered + " / " + K;
+      covPctEl.textContent = Math.round(100 * covered / K) + "%";
+      var regime = covered <= 2 ? "COLLAPSED" : (covered >= K - 1 ? "HEALTHY" : "PARTIAL");
+      regimeEl.textContent = regime;
+      regimeEl.style.color = covered <= 2 ? C.RED : (covered >= K - 1 ? C.MINT : "#d8b34a");
+      covPctEl.style.color = covered >= K - 1 ? C.MINT : (covered <= 2 ? C.RED : C.SEC);
+
+      var c = FM.setupCanvas(canvas, 320);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      ctx.clearRect(0, 0, w, h);
+      var cx = w / 2, cy = h / 2;
+      var scale = Math.min(w, h) * 0.34;
+      function X(x) { return cx + x * scale; }
+      function Y(y) { return cy - y * scale; }
+
+      /* real modes: grey rings */
+      ctx.strokeStyle = C.SEC; ctx.lineWidth = 1.4;
+      for (i = 0; i < K; i++) {
+        ctx.beginPath();
+        ctx.arc(X(modes[i].x), Y(modes[i].y), scale * 0.13, 0, 2 * Math.PI);
+        ctx.stroke();
+      }
+
+      /* generator samples: mint cloud */
+      ctx.fillStyle = "rgba(166,242,204,0.55)";
+      for (j = 0; j < pts.length; j++) {
+        ctx.beginPath();
+        ctx.arc(X(pts[j].x), Y(pts[j].y), 1.8, 0, 2 * Math.PI);
+        ctx.fill();
+      }
+
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText("○ REAL MODES (8)", 8, 6);
+      ctx.fillStyle = C.MINT;
+      ctx.fillText("• GENERATOR SAMPLES", 8, 20);
+    }
+    [tIn, dIn].forEach(function (el) { el.addEventListener("input", render); });
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT N6.3 — Latent-interpolation visualizer
+     Walk z from A to B (linear or slerp) through a small fixed
+     toy generator that maps z -> a procedural texture tile.
+     Shows the latent norm dipping for linear interpolation.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("gan-latent");
+    if (!root) return;
+    var canvas = document.getElementById("gan-li-canvas");
+    var tIn = document.getElementById("gan-li-t");
+    var tOut = document.getElementById("gan-li-t-out");
+    var normEl = document.getElementById("gan-li-norm");
+    var decEl = document.getElementById("gan-li-decoded");
+    var pathBtns = root.querySelectorAll("[data-gan-path]");
+    var path = "slerp";
+    var DIM = 6;
+
+    /* two fixed latent endpoints on the typical Gaussian shell (|z|~sqrt(DIM)) */
+    function mk(seed) {
+      var rng = FM.mulberry32(seed), v = [], i, n = 0;
+      for (i = 0; i < DIM; i++) {
+        var u1 = Math.max(1e-9, rng()), u2 = rng();
+        var g = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+        v.push(g); n += g * g;
+      }
+      n = Math.sqrt(n);
+      var target = Math.sqrt(DIM);
+      for (i = 0; i < DIM; i++) v[i] *= target / n;     /* put on the shell */
+      return v;
+    }
+    var zA = mk(101), zB = mk(777);
+
+    function lerp(t) {
+      var v = [], i;
+      for (i = 0; i < DIM; i++) v.push((1 - t) * zA[i] + t * zB[i]);
+      return v;
+    }
+    function slerp(t) {
+      var dot = 0, na = 0, nb = 0, i;
+      for (i = 0; i < DIM; i++) { dot += zA[i] * zB[i]; na += zA[i] * zA[i]; nb += zB[i] * zB[i]; }
+      var om = Math.acos(Math.max(-1, Math.min(1, dot / (Math.sqrt(na) * Math.sqrt(nb)))));
+      var so = Math.sin(om), v = [];
+      if (so < 1e-6) return lerp(t);
+      var ca = Math.sin((1 - t) * om) / so, cb = Math.sin(t * om) / so;
+      for (i = 0; i < DIM; i++) v.push(ca * zA[i] + cb * zB[i]);
+      return v;
+    }
+
+    function render() {
+      var t = +tIn.value;
+      tOut.textContent = t.toFixed(2);
+      var z = (path === "slerp") ? slerp(t) : lerp(t);
+      var norm = 0, i;
+      for (i = 0; i < DIM; i++) norm += z[i] * z[i];
+      norm = Math.sqrt(norm);
+      normEl.textContent = norm.toFixed(2);
+      var typical = Math.sqrt(DIM);
+      normEl.style.color = norm < 0.7 * typical ? C.RED : C.MINT;
+      decEl.textContent = t < 0.25 ? "≈ A" : (t > 0.75 ? "≈ B" : "blend " + Math.round(t * 100) + "%");
+
+      var c = FM.setupCanvas(canvas, 300);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      ctx.clearRect(0, 0, w, h);
+
+      /* left: |z| along the whole path (the dip story) */
+      var padL = 40, padB = 26, padT = 18;
+      var gw = w * 0.46, gx0 = padL, gx1 = gw, gy0 = h - padB, gy1 = padT;
+      ctx.strokeStyle = "rgba(47,50,52,.55)"; ctx.lineWidth = 1;
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      var maxN = typical * 1.15, gg;
+      for (gg = 0; gg <= 3; gg++) {
+        var nv = maxN * gg / 3, ny = gy0 - (nv / maxN) * (gy0 - gy1);
+        ctx.beginPath(); ctx.moveTo(gx0, ny); ctx.lineTo(gx1, ny); ctx.stroke();
+        ctx.fillText(nv.toFixed(1), gx0 - 5, ny);
+      }
+      /* shell reference line */
+      var shellY = gy0 - (typical / maxN) * (gy0 - gy1);
+      ctx.strokeStyle = C.MUT; ctx.setLineDash([3, 3]);
+      ctx.beginPath(); ctx.moveTo(gx0, shellY); ctx.lineTo(gx1, shellY); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = C.MUT; ctx.textAlign = "left"; ctx.textBaseline = "bottom";
+      ctx.fillText("√D shell", gx0 + 2, shellY - 2);
+
+      /* both norm curves for context */
+      function normCurve(fn, col, dash) {
+        ctx.strokeStyle = col; ctx.lineWidth = 1.6; ctx.setLineDash(dash || []);
+        ctx.beginPath();
+        var s;
+        for (s = 0; s <= 40; s++) {
+          var tt = s / 40, zz = fn(tt), nn = 0, k;
+          for (k = 0; k < DIM; k++) nn += zz[k] * zz[k];
+          nn = Math.sqrt(nn);
+          var XX = gx0 + (gx1 - gx0) * tt;
+          var YY = gy0 - (Math.min(nn, maxN) / maxN) * (gy0 - gy1);
+          if (s === 0) ctx.moveTo(XX, YY); else ctx.lineTo(XX, YY);
+        }
+        ctx.stroke(); ctx.setLineDash([]);
+      }
+      normCurve(lerp, "rgba(78,138,247,0.6)", [5, 4]);
+      normCurve(slerp, "rgba(166,242,204,0.85)");
+      /* marker at current t */
+      var curX = gx0 + (gx1 - gx0) * t;
+      var curY = gy0 - (Math.min(norm, maxN) / maxN) * (gy0 - gy1);
+      ctx.fillStyle = C.BRIGHT;
+      ctx.beginPath(); ctx.arc(curX, curY, 3.2, 0, 2 * Math.PI); ctx.fill();
+      ctx.fillStyle = C.MUT; ctx.textAlign = "center"; ctx.textBaseline = "top";
+      ctx.fillText("|z| ALONG PATH  (mint slerp · blue linear)", (gx0 + gx1) / 2, gy0 + 6);
+
+      /* right: the decoded "texture" tile -- a deterministic procedural
+         pattern whose look is driven by z (frequency, phase, tilt). */
+      var tx0 = w * 0.56, ty0 = padT, tw = w - tx0 - 14, th = gy0 - padT;
+      var freqX = 2 + 2.6 * (z[0] + z[1]);
+      var freqY = 2 + 2.6 * (z[2] - z[3]);
+      var phase = z[4], tilt = 0.4 * z[5];
+      var cell = 7, ix, iy;
+      for (iy = 0; iy < th; iy += cell) {
+        for (ix = 0; ix < tw; ix += cell) {
+          var u = ix / tw, vv = iy / th;
+          var val = Math.sin(freqX * u * Math.PI * 2 + phase)
+                  * Math.cos(freqY * vv * Math.PI * 2 + tilt * u * 6);
+          var a = 0.18 + 0.55 * (0.5 + 0.5 * val);
+          ctx.fillStyle = "rgba(166,242,204," + a.toFixed(3) + ")";
+          ctx.fillRect(tx0 + ix, ty0 + iy, cell - 1, cell - 1);
+        }
+      }
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(tx0, ty0, tw, th);
+      ctx.fillStyle = C.MUT; ctx.font = C.MONO;
+      ctx.textAlign = "center"; ctx.textBaseline = "top";
+      ctx.fillText("DECODED G(z) — t = " + t.toFixed(2), tx0 + tw / 2, gy0 + 6);
+    }
+
+    pathBtns.forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        path = btn.getAttribute("data-gan-path");
+        pathBtns.forEach(function (b) { b.classList.remove("on"); });
+        btn.classList.add("on");
+        render();
+      });
+    });
+    tIn.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

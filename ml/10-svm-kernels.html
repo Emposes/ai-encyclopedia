@@ -1,0 +1,886 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>10 · Support Vector Machines &amp; the Kernel Trick — AI Encyclopedia</title>
+<meta name="description" content="Maximize the margin, let a handful of support vectors define the boundary, then bend it into infinite dimensions for free with a kernel — SVMs from hard margin to RBF, with a live margin explorer and kernel playground." />
+<link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
+<meta name="theme-color" content="#000000" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+<link rel="canonical" href="https://ai-encyclopedia.com/ml/10-svm-kernels" />
+<meta property="og:url" content="https://ai-encyclopedia.com/ml/10-svm-kernels" />
+</head>
+<body data-track="ml" data-level="core">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ MACHINE LEARNING / 10 / SVM &amp; KERNELS</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../ml/11-distances-similarity.html">NEXT: DISTANCES &amp; SIMILARITY →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">MACHINE LEARNING · CHAPTER 10 / 15</div>
+    <h1>Support Vector Machines &amp; the Kernel Trick</h1>
+    <p class="lede">Of all the lines that separate two classes, the SVM picks the one sitting in the widest empty corridor. <strong>Maximize that margin and a handful of support vectors define the entire boundary; a kernel then bends it into high or infinite dimensions at little extra cost.</strong> For roughly a decade these were the most accurate classifiers available, and they remain the cleanest place to learn what a margin, a dual problem, and a kernel are.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 28 MIN</b></span>
+      <span>BUILDS ON<b>ML · CH 02–03</b></span>
+      <span>INSTRUMENTS<b>MARGIN EXPLORER · KERNEL PLAYGROUND · C–HINGE</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">10.1</span>The maximum-margin idea</a>
+      <a href="#s2"><span class="n">10.2</span>Hard margin &amp; support vectors</a>
+      <a href="#s3"><span class="n">10.3</span>Soft margin &amp; hinge loss</a>
+      <a href="#s4"><span class="n">10.4</span>The kernel trick</a>
+      <a href="#s5"><span class="n">10.5</span>SVMs in practice</a>
+      <a href="#s6"><span class="n">10.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 10.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">10.1</span><h2>The maximum-margin idea</h2></div>
+        <p>Suppose two classes of points are linearly separable. Then there are <em>infinitely many</em> straight lines that split them with zero training error — and the perceptron of Chapter 03 will happily return whichever one it stumbles onto first. The support vector machine asks a sharper question: among all separating hyperplanes, which one is <strong>best</strong>? Its answer is geometric and almost obvious once stated: pick the boundary that keeps the largest possible empty buffer on either side. A line that skims past a training point is fragile — nudge that point slightly and it flips sides. A line centered in a wide no-man's-land is robust.</p>
+
+        <p>A hyperplane is the set of points satisfying \(w \cdot x + b = 0\), where \(w\) is a normal vector pointing across the boundary and \(b\) shifts it from the origin. The signed distance from any point \(x\) to that hyperplane is \((w \cdot x + b)/\lVert w \rVert\). The classifier is the sign of that expression: \(\hat{y} = \operatorname{sign}(w \cdot x + b)\). What we want to maximize is the <strong>margin</strong> — the distance from the boundary to the closest point of either class.</p>
+
+        <div class="eq"><span class="eq-tag">EQ M10.1 — THE GEOMETRIC MARGIN</span>
+        $$ \gamma \;=\; \min_{i}\; \frac{y_i\,(w \cdot x_i + b)}{\lVert w \rVert}, \qquad y_i \in \{-1, +1\} $$
+        <div class="eq-note">Labels are \(\pm 1\) (not \(0/1\)) precisely so that \(y_i(w\cdot x_i + b)\) is <b>positive exactly when the point is on the correct side</b> — the label cancels the sign. Dividing by \(\lVert w \rVert\) converts the raw score into a real distance, so \(\gamma\) is measured in the units of the data, not the units of \(w\). The SVM's whole objective is to find the \((w, b)\) that makes this smallest distance as large as possible. The corridor's full width is \(2\gamma\).</div>
+        </div>
+
+        <p>There is a redundancy to remove first. The pair \((w, b)\) and \((2w, 2b)\) describe the <em>same</em> hyperplane but give different score magnitudes. SVMs fix this by a <strong>canonical normalization</strong>: scale \((w, b)\) so that the closest points score exactly \(\pm 1\), i.e. \(\min_i y_i(w\cdot x_i + b) = 1\). Under that convention the margin in EQ&nbsp;M10.1 simplifies to the single clean quantity \(\gamma = 1/\lVert w \rVert\) — so <b>maximizing the margin is the same as minimizing \(\lVert w \rVert\)</b>. That equivalence is the hinge on which the next section turns.</p>
+
+        <figure class="figure" data-reveal>
+          <div class="fig-head"><span class="fig-id">FIG M10.A</span><span class="fig-title">ONE OF MANY SEPARATORS VS. THE MAXIMUM-MARGIN ONE</span></div>
+          <div class="fig-body">
+            <svg viewBox="0 0 920 300" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Left: an arbitrary thin separating line. Right: the maximum-margin separator with a wide corridor and three support vectors on the margin.">
+              <!-- left panel: arbitrary separator -->
+              <rect class="dg-box-ghost" x="40" y="30" width="360" height="240"/>
+              <text class="dg-label-mut" x="60" y="24">ARBITRARY SEPARATOR</text>
+              <path class="dg-line" d="M70 250 L370 70" data-draw/>
+              <circle cx="120" cy="210" r="5" fill="#4e8af7" data-pop/>
+              <circle cx="170" cy="240" r="5" fill="#4e8af7" data-pop/>
+              <circle cx="100" cy="160" r="5" fill="#4e8af7" data-pop/>
+              <circle cx="210" cy="190" r="5" fill="#4e8af7" data-pop/>
+              <circle cx="250" cy="120" r="5" fill="#a6f2cc" data-pop/>
+              <circle cx="300" cy="150" r="5" fill="#a6f2cc" data-pop/>
+              <circle cx="330" cy="90" r="5" fill="#a6f2cc" data-pop/>
+              <circle cx="280" cy="80" r="5" fill="#a6f2cc" data-pop/>
+              <text class="dg-label-mut" x="232" y="222">skims a point →</text>
+              <!-- right panel: max-margin separator -->
+              <rect class="dg-box-ghost" x="520" y="30" width="360" height="240"/>
+              <text class="dg-label-acc" x="540" y="24">MAXIMUM MARGIN</text>
+              <path class="dg-line-acc" d="M560 250 L860 70" data-draw/>
+              <path class="dg-line" d="M560 210 L820 56" data-draw style="opacity:.5;"/>
+              <path class="dg-line" d="M600 264 L900 84" data-draw style="opacity:.5;"/>
+              <circle cx="600" cy="210" r="5" fill="#4e8af7" data-pop/>
+              <circle cx="650" cy="240" r="5" fill="#4e8af7" data-pop/>
+              <circle cx="580" cy="160" r="5" fill="#4e8af7" data-pop/>
+              <circle cx="690" cy="226" r="5" fill="#4e8af7" stroke="#ffffff" stroke-width="2" data-pop/>
+              <circle cx="730" cy="156" r="5" fill="#a6f2cc" stroke="#ffffff" stroke-width="2" data-pop/>
+              <circle cx="770" cy="120" r="5" fill="#a6f2cc" data-pop/>
+              <circle cx="810" cy="90" r="5" fill="#a6f2cc" data-pop/>
+              <circle cx="700" cy="96" r="5" fill="#a6f2cc" stroke="#ffffff" stroke-width="2" data-pop/>
+              <text class="dg-label-acc" x="612" y="120">support vectors ⬡</text>
+            </svg>
+          </div>
+          <div class="fig-cap"><b>Same data, two boundaries.</b> The left line separates the classes but hugs a blue point; the right one is centered in the widest empty corridor. The three ringed points are <b>support vectors</b> — the only points that touch the margin, and the only ones that matter (§10.2).</div>
+        </figure>
+
+        <p class="note">The maximum-margin principle is not just aesthetic. Margin width controls the <em>capacity</em> of the classifier in the bias–variance sense of Chapter 06: a wider margin is a simpler, lower-variance hypothesis, and the bound on generalization error degrades with \(1/\gamma^2\) rather than with the dimension of the space. That is the deep reason SVMs tolerate enormous feature spaces (§10.4) without overfitting in the way intuition warns they should.</p>
+      </section>
+
+      <!-- ====================== 10.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">10.2</span><h2>The hard-margin problem and its support vectors</h2></div>
+        <p>Pin down the redundancy with the canonical scaling and the SVM becomes a tidy <strong>convex optimization problem</strong>: minimize \(\lVert w \rVert\) — equivalently \(\tfrac{1}{2}\lVert w \rVert^2\), which is smoother — subject to every point sitting on the correct side of its margin.</p>
+
+        <div class="eq"><span class="eq-tag">EQ M10.2 — THE HARD-MARGIN PRIMAL</span>
+        $$ \min_{w,\,b}\; \frac{1}{2}\lVert w \rVert^2 \qquad \text{subject to}\qquad y_i\,(w \cdot x_i + b) \;\ge\; 1 \quad \text{for all } i $$
+        <div class="eq-note">A quadratic objective under linear inequality constraints — a <b>quadratic program</b>, with a unique global optimum and no local minima to trap you (contrast the loss surfaces of Chapters 07–08). Each constraint says "point \(i\) is correctly classified <em>and</em> at least one margin-unit away from the boundary." Points that hold their constraint with equality (\(y_i(w\cdot x_i + b) = 1\)) sit exactly on the margin; everything else has slack to spare.</div>
+        </div>
+
+        <p>Solving the <strong>dual</strong> of EQ&nbsp;M10.2 — via Lagrange multipliers \(\alpha_i \ge 0\), one per point — reveals the structure that gives the method its name. The optimum has the form \(w = \sum_i \alpha_i y_i x_i\), and the Karush–Kuhn–Tucker conditions force \(\alpha_i = 0\) for every point strictly outside the margin. Only the points <em>on</em> the margin carry a nonzero \(\alpha_i\). Those are the <strong>support vectors</strong>.</p>
+
+        <div class="eq"><span class="eq-tag">EQ M10.3 — THE DUAL: ONLY DOT PRODUCTS SURVIVE</span>
+        $$ \max_{\alpha \ge 0}\; \sum_i \alpha_i \;-\; \frac{1}{2}\sum_{i,j} \alpha_i \alpha_j\, y_i y_j\,(x_i \cdot x_j) \qquad \text{s.t.}\quad \sum_i \alpha_i y_i = 0 $$
+        <div class="eq-note">Two facts make this the most important equation in the chapter. First, the solution is <b>sparse in \(\alpha\)</b>: typically only a small fraction of points are support vectors, so deleting every other training point leaves the boundary unchanged. Second — and this is the seed of §10.4 — the data enters <b>only through inner products \(x_i \cdot x_j\)</b>. Nowhere does the optimizer need the coordinates themselves, only how points relate. Swap that dot product for a kernel and you have changed feature spaces without touching a single line of the solver.</div>
+        </div>
+
+        <p>The consequence is striking. A trained SVM is a list of support vectors, their labels, their weights \(\alpha_i\), and a bias \(b\). On a clean problem that might be a dozen points out of a million. The decision function is</p>
+
+        <div class="eq"><span class="eq-tag">EQ M10.4 — THE DECISION FUNCTION</span>
+        $$ \hat{y}(x) \;=\; \operatorname{sign}\!\Big( \sum_{i \in \text{SV}} \alpha_i\, y_i\,(x_i \cdot x) \;+\; b \Big) $$
+        <div class="eq-note">Classification reduces to comparing the new point against the support vectors alone. The model's memory footprint and prediction cost scale with the <b>number of support vectors</b>, not the size of the training set — which is exactly why SVMs were practical on 1990s hardware and why a "too easy" problem (few SVs) and a "too hard" one (almost every point becomes an SV) feel so different at deployment time.</div>
+        </div>
+
+        <div class="exercise" data-answer="0.5" data-tol="0.01" data-unit="" data-hint="the half-width margin under canonical scaling is 1 / ||w||">
+          <div class="ex-q">An SVM is canonically scaled so the closest points score \(\pm 1\), and its weight vector has norm \(\lVert w \rVert = 2\). By the simplification of EQ M10.1 (\(\gamma = 1/\lVert w \rVert\)), what is the margin \(\gamma\) — the distance from the boundary to the nearest point?</div>
+          <div class="ex-reveal-src">Under canonical scaling the geometric margin collapses to \(\gamma = 1/\lVert w \rVert = 1/2 = \) <b>0.5</b>. The full corridor between the two classes is twice this, \(2\gamma = 1\). Doubling \(\lVert w \rVert\) halves the margin — which is exactly why minimizing \(\lVert w \rVert^2\) maximizes the corridor.</div>
+        </div>
+
+        <div class="widget" id="svm-margin" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT M10.1 — MARGIN EXPLORER</span><span class="w-sub">DRAG POINTS · MAX-MARGIN SOLVED LIVE · EQ M10.2</span></div>
+          <div class="w-body">
+            <canvas class="w-canvas" id="svm-margin-canvas" height="340"></canvas>
+            <div class="ctl-row" style="margin-top:10px;">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>ACTIONS</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost" id="svm-margin-add0">+ BLUE</button>
+                  <button class="w-btn ghost" id="svm-margin-add1">+ MINT</button>
+                  <button class="w-btn ghost" id="svm-margin-reset">RESET</button>
+                </div>
+              </div>
+            </div>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">MARGIN γ = 1/‖w‖</div><div class="r-value" id="svm-margin-gamma">—</div></div>
+              <div class="readout"><div class="r-label">‖w‖</div><div class="r-value" id="svm-margin-norm">—</div></div>
+              <div class="readout acc"><div class="r-label">SUPPORT VECTORS</div><div class="r-value" id="svm-margin-sv">—</div></div>
+              <div class="readout"><div class="r-label">STATUS</div><div class="r-value" id="svm-margin-status" style="font-size:13px;line-height:1.5;">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Drag any point and the maximum-margin boundary re-solves instantly (a small coordinate-ascent on the dual of EQ M10.2). The solid white line is the boundary; the dashed lines are the margins; ringed points are the support vectors that touch them. Drag a faraway point around — the boundary <b>does not move</b>, because its \(\alpha_i\) is zero. Now drag a support vector and watch everything shift: only the points on the corridor have a vote.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Linear soft-margin SVM by sub-gradient descent on the hinge loss
+# (EQ M10.2 + M10.5). Recovers the margin and the support vectors.
+import numpy as np
+rng = np.random.default_rng(0)
+
+# two clearly separable clouds, labels in {-1, +1}
+n = 40
+Xp = rng.normal([ 2.2,  2.0], 0.6, (n, 2))
+Xm = rng.normal([-2.0, -1.6], 0.6, (n, 2))
+X  = np.vstack([Xp, Xm]); y = np.r_[np.ones(n), -np.ones(n)]
+
+w = np.zeros(2); b = 0.0; C = 1.0
+for t in range(1, 4001):                       # Pegasos-style schedule
+    lr = 1.0 / (0.01 * t)                       # 0.01 = regularization 1/(C·N)
+    m = y * (X @ w + b)                         # margins y·f(x)
+    viol = m &lt; 1                                # points inside the margin
+    grad_w = 0.01 * w - C / len(X) * (y[viol] @ X[viol])
+    grad_b =          - C / len(X) * y[viol].sum()
+    w -= lr * grad_w; b -= lr * grad_b
+
+m = y * (X @ w + b)
+sv = np.where(m &lt; 1.05)[0]                      # points on/inside the margin
+print(f"||w||          = {np.linalg.norm(w):.3f}")
+print(f"margin 1/||w|| = {1/np.linalg.norm(w):.3f}")
+print(f"train accuracy = {(np.sign(X @ w + b) == y).mean():.3f}")
+print(f"support vectors= {len(sv)} of {len(X)} points")
+plot_scatter(X[:, 0], X[:, 1], (y &gt; 0).astype(int))</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">push the clouds together (try means ±1.0) and watch the support-vector count climb</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 10.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">10.3</span><h2>Soft margin and the hinge loss</h2></div>
+        <p>Real data is not cleanly separable. One mislabeled point, or two classes that genuinely overlap, and the hard-margin problem of EQ&nbsp;M10.2 has <em>no feasible solution</em> — every hyperplane violates some constraint. Cortes and Vapnik's 1995 fix, the move that turned a beautiful idea into a workhorse, was to let constraints be broken at a price. Introduce a <strong>slack variable</strong> \(\xi_i \ge 0\) for each point measuring how far it intrudes into (or past) its margin, and pay for the total slack:</p>
+
+        <div class="eq"><span class="eq-tag">EQ M10.5 — THE SOFT-MARGIN PRIMAL</span>
+        $$ \min_{w,\,b,\,\xi}\; \frac{1}{2}\lVert w \rVert^2 \;+\; C\sum_i \xi_i \qquad \text{s.t.}\quad y_i(w \cdot x_i + b) \ge 1 - \xi_i,\;\; \xi_i \ge 0 $$
+        <div class="eq-note">The hyperparameter \(C\) sets the exchange rate between a wide margin and few violations. <b>Large \(C\)</b> punishes every violation harshly — the boundary contorts to classify training points, low bias, high variance (toward the hard margin as \(C \to \infty\)). <b>Small \(C\)</b> tolerates mistakes for the sake of a fat, smooth margin — high bias, low variance. \(C\) is the single most important knob on an SVM, and it is precisely the regularization strength of Chapter 06 wearing a different letter.</div>
+        </div>
+
+        <p>Eliminating the slack variables (each is just \(\xi_i = \max(0, 1 - y_i f(x_i))\) at the optimum) recasts the soft-margin SVM as plain regularized empirical-risk minimization with one specific loss — the <strong>hinge loss</strong>:</p>
+
+        <div class="eq"><span class="eq-tag">EQ M10.6 — HINGE LOSS = SVM IN DISGUISE</span>
+        $$ \mathcal{L}(w, b) \;=\; \underbrace{\frac{1}{2}\lVert w \rVert^2}_{\text{margin / L2}} \;+\; C \sum_i \underbrace{\max\!\big(0,\; 1 - y_i\,f(x_i)\big)}_{\text{hinge loss } \ell_{\text{hinge}}}, \qquad f(x) = w \cdot x + b $$
+        <div class="eq-note">The hinge \(\ell(z) = \max(0, 1 - z)\), with \(z = y\,f(x)\) the <em>signed margin</em>, is the soul of the method. It is <b>zero once a point is correctly classified with margin \(\ge 1\)</b> (so those points exert no force — the sparsity of §10.2), then rises linearly as the point drifts inside the margin or onto the wrong side. Unlike the squared loss, it does not keep penalizing points that are already comfortably right; unlike the 0–1 loss it is convex and has a usable (sub-)gradient. Logistic regression's log-loss is its smooth cousin — same shape, rounded corner.</div>
+        </div>
+
+        <p>The hinge's corner at \(z = 1\) is the entire personality of the SVM. Plug in the two cases the brief cares about: a point classified correctly and well clear of the margin (\(z = y\,f(x) = 1.2\)) costs nothing, while a point on the wrong side (\(z = -0.5\)) costs \(1 - (-0.5) = 1.5\). The first two exercises walk exactly these.</p>
+
+        <div class="exercise" data-answer="0" data-tol="0.001" data-unit="" data-hint="hinge loss is max(0, 1 − z) with z = y·f(x); here z exceeds 1">
+          <div class="ex-q">A correctly classified point has signed margin \(z = y\cdot f(x) = 1.2\). Using the hinge loss \(\ell = \max(0,\; 1 - z)\) from EQ M10.6, what loss does this point incur?</div>
+          <div class="ex-reveal-src">\(\ell = \max(0,\; 1 - 1.2) = \max(0,\; -0.2) = \) <b>0</b>. The point is past the margin (\(z &gt; 1\)), so the hinge is flat at zero — it contributes no gradient and is <em>not</em> a support vector. This zero-region is exactly what makes the SVM solution sparse.</div>
+        </div>
+
+        <div class="exercise" data-answer="1.5" data-tol="0.001" data-unit="" data-hint="hinge loss is max(0, 1 − z); a negative z means the point is misclassified">
+          <div class="ex-q">A point lands on the wrong side of the boundary with signed margin \(z = y\cdot f(x) = -0.5\). What hinge loss \(\ell = \max(0,\; 1 - z)\) does it incur (EQ M10.6)?</div>
+          <div class="ex-reveal-src">\(\ell = \max(0,\; 1 - (-0.5)) = \max(0,\; 1.5) = \) <b>1.5</b>. A misclassified point pays more than 1 (it would pay exactly 1 if it sat on the boundary at \(z = 0\)), and the penalty grows linearly the deeper it strays. This nonzero hinge makes it an active, margin-violating support vector.</div>
+        </div>
+
+        <div class="widget" id="svm-hinge" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT M10.2 — HINGE LOSS &amp; THE C TRADE-OFF</span><span class="w-sub">EQ M10.5 / M10.6 · LIVE</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>REGULARIZATION C <output id="svm-hinge-c-out">1.0</output></label><input type="range" id="svm-hinge-c" min="-2" max="3" step="0.1" value="0"/></div>
+              <div class="ctl"><label>CLASS OVERLAP <output id="svm-hinge-ov-out">0.9</output></label><input type="range" id="svm-hinge-ov" min="0.3" max="1.8" step="0.05" value="0.9"/></div>
+            </div>
+            <canvas class="w-canvas" id="svm-hinge-canvas" height="240"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">MARGIN γ = 1/‖w‖</div><div class="r-value" id="svm-hinge-margin">—</div></div>
+              <div class="readout"><div class="r-label">TOTAL HINGE Σξ</div><div class="r-value" id="svm-hinge-slack">—</div></div>
+              <div class="readout"><div class="r-label">MARGIN VIOLATIONS</div><div class="r-value" id="svm-hinge-viol">—</div></div>
+              <div class="readout acc"><div class="r-label">TRAIN ACCURACY</div><div class="r-value" id="svm-hinge-acc">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The curve on the left is the hinge loss \(\max(0, 1-z)\) plotted against the signed margin \(z\) — note the elbow at \(z=1\) and the flat zero beyond it. The panel on the right shows two overlapping clouds with the live SVM boundary and its margins. Slide <b>C</b> from small (fat margin, many tolerated violations) to large (the boundary fights to classify every point, margin shrinks). Raise the overlap until the classes genuinely mix and watch even a large C give up — there is no separating line left to find.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 10.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">10.4</span><h2>The kernel trick: RBF and polynomial</h2></div>
+        <p>So far the boundary is a flat hyperplane — useless for data shaped like concentric rings or two interleaved spirals. The classical escape is to <em>lift</em> the data into a higher-dimensional space where it becomes linearly separable: map each \(x\) through some feature transform \(\phi(x)\), fit a linear SVM there, and the flat boundary upstairs is a curved one back downstairs. The catch is cost: a good \(\phi\) might have thousands or infinitely many components, and computing them all is hopeless.</p>
+
+        <p>Here is the trick, and it is genuinely a piece of magic. Recall from EQ&nbsp;M10.3 and M10.4 that the SVM never needs \(\phi(x)\) by itself — it only ever needs <em>inner products</em> \(\phi(x_i)\cdot\phi(x_j)\). So if some cheap function \(K(x_i, x_j)\) happens to <strong>equal</strong> that inner product, we can compute in the lifted space while never visiting it:</p>
+
+        <div class="eq"><span class="eq-tag">EQ M10.7 — THE KERNEL TRICK</span>
+        $$ K(x, x') \;=\; \phi(x) \cdot \phi(x') \qquad\Longrightarrow\qquad \hat{y}(x) \;=\; \operatorname{sign}\!\Big( \sum_{i \in \text{SV}} \alpha_i\, y_i\, K(x_i, x) \;+\; b \Big) $$
+        <div class="eq-note">Every \(x_i \cdot x_j\) in the dual becomes \(K(x_i, x_j)\); nothing else changes. <b>Mercer's theorem</b> tells you which functions \(K\) are legal: any symmetric \(K\) whose Gram matrix \([K(x_i,x_j)]\) is positive semi-definite corresponds to <em>some</em> valid feature map \(\phi\) — you never have to construct it. You design the similarity measure, not the coordinates. This single substitution turns the linear SVM into a universal nonlinear classifier.</div>
+        </div>
+
+        <p>Two kernels dominate practice:</p>
+
+        <div class="eq"><span class="eq-tag">EQ M10.8 — RBF AND POLYNOMIAL KERNELS</span>
+        $$ K_{\text{RBF}}(x, x') = \exp\!\big(-\gamma\,\lVert x - x' \rVert^2\big), \qquad K_{\text{poly}}(x, x') = \big(\gamma\, x \cdot x' + r\big)^{d} $$
+        <div class="eq-note">The <b>RBF (Gaussian) kernel</b> is the default — a smooth bump of similarity that decays with distance. Its feature map \(\phi\) is <em>infinite-dimensional</em>, so the trick is buying you something you could literally never compute by hand. The width parameter \(\gamma\) is decisive: <b>small \(\gamma\)</b> means each support vector's influence reaches far (smooth, almost-linear boundary); <b>large \(\gamma\)</b> means influence is hyper-local (the boundary wraps tightly around individual points — overfitting). The <b>polynomial kernel</b> of degree \(d\) implicitly contains all feature interactions up to order \(d\): degree 2 gives you every pairwise product \(x_a x_b\) for free.</div>
+        </div>
+
+        <p>RBF and \(C\) are tuned together, almost always by cross-validated grid search, because they trade against each other: a large \(\gamma\) and a large \(C\) both push toward a wiggly, overfit boundary. The instrument below lets you feel that interaction on data that no straight line can touch.</p>
+
+        <div class="widget" id="svm-kernel" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT M10.3 — KERNEL PLAYGROUND</span><span class="w-sub">RBF SVM ON INSEPARABLE RINGS · EQ M10.7 / M10.8</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>RBF WIDTH γ <output id="svm-kernel-g-out">2.0</output></label><input type="range" id="svm-kernel-g" min="-1" max="2.2" step="0.1" value="0.3"/></div>
+              <div class="ctl"><label>REGULARIZATION C <output id="svm-kernel-c-out">5</output></label><input type="range" id="svm-kernel-c" min="-1" max="2.5" step="0.1" value="0.7"/></div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>DATASET</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-svm-data="rings">RINGS</button>
+                  <button class="w-btn ghost" data-svm-data="xor">XOR</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="svm-kernel-canvas" height="340"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">TRAIN ACCURACY</div><div class="r-value" id="svm-kernel-acc">—</div></div>
+              <div class="readout"><div class="r-label">SUPPORT VECTORS</div><div class="r-value" id="svm-kernel-sv">—</div></div>
+              <div class="readout"><div class="r-label">REGIME</div><div class="r-value" id="svm-kernel-regime" style="font-size:13px;line-height:1.5;">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">A linear SVM scores ~50% here — the classes are concentric. The painted regions are a real RBF-kernel SVM (dual coordinate ascent over EQ M10.7) refit live in your browser. Start at a small \(\gamma\): the boundary is smooth but may miss the inner ring. Crank \(\gamma\) up and the boundary tightens into closed loops around clusters — eventually shrink-wrapping individual points, the visual signature of overfitting. Lower \(C\) to forgive stray points and recover a calmer frontier.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># The RBF kernel matrix on inseparable rings, and why lifting helps.
+# Inner ring = class 0, outer ring = class 1 -- no line can split them.
+import numpy as np
+rng = np.random.default_rng(1)
+
+def ring(r, n):
+    t = rng.uniform(0, 2*np.pi, n)
+    rad = r + rng.normal(0, 0.12, n)
+    return np.c_[rad*np.cos(t), rad*np.sin(t)]
+
+X = np.vstack([ring(0.6, 60), ring(2.2, 60)])
+y = np.r_[np.zeros(60, int), np.ones(60, int)]
+
+def rbf(A, B, g):                              # K_ij = exp(-g ||a_i - b_j||^2)
+    d2 = ((A[:, None, :] - B[None, :, :])**2).sum(-1)
+    return np.exp(-g * d2)
+
+K = rbf(X, X, g=1.0)                           # full 120x120 Gram matrix
+print("Gram matrix shape          :", K.shape)
+print("diagonal (self-similarity) :", np.round(K[0, 0], 3), "(always 1)")
+
+# A point's mean kernel-similarity to each class is already discriminative,
+# even though the raw coordinates are not linearly separable at all.
+sim0 = K[:, y == 0].mean(1)                    # closeness to inner ring
+sim1 = K[:, y == 1].mean(1)                    # closeness to outer ring
+pred = (sim1 &gt; sim0).astype(int)               # 1-NN-in-feature-space sanity check
+print("nearest-mean acc in feature space:", f"{(pred == y).mean():.3f}")
+print("=> in RBF feature space the rings ARE separable.")
+plot_scatter(X[:, 0], X[:, 1], y)</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">drop g to 0.05 (too smooth) or push to 30 (too local) and watch the feature-space accuracy crack</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">WHY IT WORKS</span>
+          <p><strong>The kernel trick is a similarity measure in disguise.</strong> An RBF SVM's prediction (EQ M10.7) is a weighted vote of support vectors, where the weight \(K(x_i, x)\) is how similar the query is to each one — large \(\gamma\) makes "similar" mean "almost identical." Seen this way it is a close cousin of the k-NN and kernel-density ideas you will meet in Chapter 11: <em>distance defines everything</em>. The SVM's contribution is choosing <em>which</em> points to remember (the support vectors) and <em>how much</em> to weight each (the \(\alpha_i\)) by maximizing a margin, rather than keeping the whole training set.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 10.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">10.5</span><h2>SVMs in practice — and against the field</h2></div>
+        <p>For roughly a decade — from the late 1990s until deep learning's 2012 breakout — kernel SVMs were the most accurate general-purpose classifiers available, the default for text categorization, handwritten-digit recognition, and bioinformatics. They have receded, but understanding <em>when</em> they still win, and why they faded, is worth a section.</p>
+
+        <p>The practical checklist is short and unusually reliable:</p>
+        <ul>
+          <li><strong>Scale your features.</strong> Both the dot product and the RBF distance are dominated by large-magnitude features, so standardize to zero mean and unit variance first. This is not optional — an unscaled SVM is mostly listening to whichever column happens to have the biggest numbers.</li>
+          <li><strong>Start with the RBF kernel</strong>, and grid-search \((C, \gamma)\) on a log scale with cross-validation. Linear kernels are the right call only when the feature space is already huge and sparse (e.g. bag-of-words text), where they are both faster and just as accurate.</li>
+          <li><strong>Watch the support-vector count.</strong> If nearly every training point becomes a support vector, your \(\gamma\) is too large or the problem is too noisy — the model is memorizing, and both accuracy and prediction speed will suffer.</li>
+          <li><strong>SVMs output a score, not a probability.</strong> Calibrate (Platt scaling, or isotonic regression) if you need \(P(y\,|\,x)\).</li>
+        </ul>
+
+        <table class="data">
+          <thead><tr><th>Model</th><th>Decision boundary</th><th>Scales to N samples</th><th>Probabilities</th><th>Best when…</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Linear SVM</strong></td><td class="m">hyperplane (max-margin)</td><td class="hl">excellent — linear in N</td><td class="m">via calibration</td><td>high-dim sparse text; N in the millions</td></tr>
+            <tr><td><strong>RBF SVM</strong></td><td class="m">smooth nonlinear</td><td class="m">poor — \(O(N^2)\)–\(O(N^3)\) to train</td><td class="m">via calibration</td><td>small/medium N, low-dim, clean signal</td></tr>
+            <tr><td><strong>Logistic regression</strong></td><td class="m">hyperplane (log-loss)</td><td class="hl">excellent</td><td class="hl">native &amp; calibrated</td><td>you need probabilities and interpretability</td></tr>
+            <tr><td><strong>Gradient-boosted trees</strong></td><td class="m">axis-aligned, piecewise</td><td class="hl">excellent</td><td class="m">native-ish</td><td>heterogeneous tabular data (the default to beat)</td></tr>
+            <tr><td><strong>Deep nets</strong></td><td class="m">arbitrary, learned features</td><td class="m">good (SGD), data-hungry</td><td class="hl">native (softmax)</td><td>images, text, audio; very large N</td></tr>
+          </tbody>
+        </table>
+
+        <p>The honest verdict, contested only at the margins: on the <em>medium-sized, low-dimensional, fairly clean</em> problems that gave SVMs their name, a well-tuned RBF SVM is still competitive with anything and often the cleanest model to reason about. But its training cost grows roughly quadratically-to-cubically in the number of samples, which rules it out for the large datasets that define modern ML; on messy tabular data, gradient-boosted trees (Chapter 04) usually edge it out with far less tuning; and on perceptual data, deep networks — which <em>learn</em> their feature map instead of fixing it with a kernel — left SVMs behind entirely after 2012. The kernel idea itself never died, though: it reappears in Gaussian processes, in the "neural tangent kernel" theory of why wide networks train the way they do, and in the attention mechanism of Volume II, which is a learned, data-dependent similarity kernel at heart.</p>
+
+        <div class="callout warn">
+          <span class="co-icon">PITFALLS</span>
+          <p><strong>The four ways an SVM goes wrong:</strong> (1) forgetting to scale features — the single most common failure, and it produces a model that looks trained but isn't; (2) leaving \(C\) and \(\gamma\) at library defaults — they must be searched jointly, and the right values span orders of magnitude; (3) running an RBF SVM on hundreds of thousands of rows and waiting forever — reach for a linear SVM or SGD instead; (4) treating the raw decision score as a probability — it is an uncalibrated margin, not \(P(y\,|\,x)\).</p>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>Every kernel in this chapter was, underneath, a measure of similarity between two points.</strong> Chapter 11 makes that the whole subject: Euclidean, Manhattan, cosine, Mahalanobis, Jaccard, edit distance — what "near" means, why the choice quietly decides everything from k-NN to clustering to the retrieval step inside every modern embedding system.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 10.R ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">10.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://doi.org/10.1007/BF00994018" target="_blank" rel="noopener">Cortes, C. &amp; Vapnik, V. (1995). <span class="ref-venue">Support-Vector Networks</span>. <i>Machine Learning</i> 20(3), 273–297.</a> <span class="ref-meta">The paper that introduced the soft margin and slack variables (EQ M10.5) and gave the method its modern form — the canonical primary source for this chapter.</span></li>
+          <li><a href="https://doi.org/10.1145/130385.130401" target="_blank" rel="noopener">Boser, B. E., Guyon, I. M. &amp; Vapnik, V. N. (1992). <span class="ref-venue">A Training Algorithm for Optimal Margin Classifiers</span>. <i>Proceedings of COLT '92</i>, 144–152.</a> <span class="ref-meta">Where the maximum-margin hyperplane and the kernel trick (EQ M10.1, M10.7) were first combined — the true origin of the kernel SVM.</span></li>
+          <li><a href="https://mitpress.mit.edu/9780262536578/" target="_blank" rel="noopener">Schölkopf, B. &amp; Smola, A. J. (2002). <span class="ref-venue">Learning with Kernels: Support Vector Machines, Regularization, Optimization, and Beyond</span>.</a> <span class="ref-meta">MIT Press — the definitive textbook treatment of kernels, Mercer's theorem, and the optimization behind EQ M10.3, M10.8.</span></li>
+          <li><a href="https://doi.org/10.1023/A:1009715923555" target="_blank" rel="noopener">Burges, C. J. C. (1998). <span class="ref-venue">A Tutorial on Support Vector Machines for Pattern Recognition</span>. <i>Data Mining and Knowledge Discovery</i> 2(2), 121–167.</a> <span class="ref-meta">The most-cited tutorial — derives the dual (EQ M10.3) and the KKT support-vector conditions step by step.</span></li>
+          <li><a href="https://doi.org/10.1145/1961189.1961199" target="_blank" rel="noopener">Chang, C.-C. &amp; Lin, C.-J. (2011). <span class="ref-venue">LIBSVM: A Library for Support Vector Machines</span>. <i>ACM TIST</i> 2(3), 1–27.</a> <span class="ref-meta">The standard implementation behind scikit-learn's SVC, and the reference for practical \((C, \gamma)\) selection (§10.5).</span></li>
+          <li><a href="https://doi.org/10.1007/s10994-010-5221-8" target="_blank" rel="noopener">Shalev-Shwartz, S., Singer, Y., Srebro, N. &amp; Cotter, A. (2011). <span class="ref-venue">Pegasos: Primal Estimated Sub-Gradient Solver for SVM</span>. <i>Mathematical Programming</i> 127(1), 3–30.</a> <span class="ref-meta">The hinge-loss sub-gradient method used in this chapter's first Python cell — how to train a linear SVM at scale.</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../ml/09-naive-bayes.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">09</span> Naive Bayes</div></a>
+        <a class="next" href="../ml/11-distances-similarity.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">11</span> Distances &amp; Similarity</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — MACHINE LEARNING · CH 10</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* chapter instruments — Support Vector Machines & the Kernel Trick */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+
+  var RENDERS = [];
+
+  /* ============================================================= *
+   * INSTRUMENT M10.1 — MARGIN EXPLORER                            *
+   * draggable points; max-margin boundary solved by dual          *
+   * coordinate ascent (SMO-lite) over a linear kernel.            *
+   * ============================================================= */
+  (function marginExplorer() {
+    var root = document.getElementById("svm-margin");
+    if (!root) return;
+    var canvas = document.getElementById("svm-margin-canvas");
+    var gammaEl = document.getElementById("svm-margin-gamma");
+    var normEl = document.getElementById("svm-margin-norm");
+    var svEl = document.getElementById("svm-margin-sv");
+    var statusEl = document.getElementById("svm-margin-status");
+
+    var DOM = { x0: -5, x1: 5, y0: -5, y1: 5 };
+    var pts, w, b, alpha, drag = -1;
+
+    function defaults() {
+      return [
+        { x: -2.4, y: 1.6, c: -1 }, { x: -3.1, y: -0.4, c: -1 },
+        { x: -1.6, y: -1.8, c: -1 }, { x: -3.4, y: 1.0, c: -1 },
+        { x: 2.6, y: -1.4, c: 1 }, { x: 3.2, y: 0.6, c: 1 },
+        { x: 1.7, y: 1.9, c: 1 }, { x: 3.5, y: -0.2, c: 1 }
+      ];
+    }
+
+    /* linear-kernel dual coordinate ascent (soft margin, large C) */
+    function solve() {
+      var n = pts.length, i, j, it;
+      var X = pts, y = pts.map(function (p) { return p.c; });
+      var C = 1e6; /* effectively hard margin if separable */
+      alpha = new Array(n); for (i = 0; i < n; i++) alpha[i] = 0;
+      function K(a, c) { return X[a].x * X[c].x + X[a].y * X[c].y; }
+      /* precompute kernel diagonal */
+      for (it = 0; it < 240; it++) {
+        for (i = 0; i < n; i++) {
+          /* pick a second index different from i */
+          j = (i + 1 + Math.floor(it)) % n; if (j === i) j = (j + 1) % n;
+          if (y[i] === y[j]) continue; /* SMO pair must straddle constraint sum a*y=0 */
+          /* gradient of dual wrt alpha_i with alpha_j adjusting to keep sum a*y=0 */
+          var Ei = 0, Ej = 0, k;
+          for (k = 0; k < n; k++) { Ei += alpha[k] * y[k] * K(k, i); Ej += alpha[k] * y[k] * K(k, j); }
+          Ei -= y[i]; Ej -= y[j];
+          var eta = K(i, i) + K(j, j) - 2 * K(i, j);
+          if (eta < 1e-9) continue;
+          var s = y[i] * y[j];
+          var ai = alpha[i], aj = alpha[j];
+          var delta = (y[i] * (Ej - Ei)) / eta; /* step for alpha_i */
+          var aiNew = ai + delta;
+          var ajNew = aj - s * delta;
+          /* clip to [0, C] */
+          if (aiNew < 0) { ajNew -= s * aiNew; aiNew = 0; }
+          if (aiNew > C) { ajNew -= s * (aiNew - C); aiNew = C; }
+          if (ajNew < 0) { aiNew -= s * ajNew; ajNew = 0; }
+          if (ajNew > C) { aiNew -= s * (ajNew - C); ajNew = C; }
+          alpha[i] = aiNew; alpha[j] = ajNew;
+        }
+      }
+      /* recover w, b */
+      w = { x: 0, y: 0 };
+      for (i = 0; i < n; i++) { w.x += alpha[i] * y[i] * X[i].x; w.y += alpha[i] * y[i] * X[i].y; }
+      var bs = [], cnt = 0;
+      for (i = 0; i < n; i++) {
+        if (alpha[i] > 1e-4) { bs.push(y[i] - (w.x * X[i].x + w.y * X[i].y)); cnt++; }
+      }
+      b = 0; for (i = 0; i < bs.length; i++) b += bs[i]; b = bs.length ? b / bs.length : 0;
+      return cnt;
+    }
+
+    function map(sc) {
+      return {
+        X: function (x) { return (x - DOM.x0) / (DOM.x1 - DOM.x0) * sc.w; },
+        Y: function (y) { return (1 - (y - DOM.y0) / (DOM.y1 - DOM.y0)) * sc.h; },
+        invX: function (px) { return DOM.x0 + px / sc.w * (DOM.x1 - DOM.x0); },
+        invY: function (py) { return DOM.y0 + (1 - py / sc.h) * (DOM.y1 - DOM.y0); }
+      };
+    }
+
+    function render() {
+      solve();
+      var sc = FM.setupCanvas(canvas, 340), ctx = sc.ctx, m = map(sc);
+      ctx.clearRect(0, 0, sc.w, sc.h);
+      var nw = Math.hypot(w.x, w.y);
+
+      /* shade half-planes */
+      var img = ctx;
+      img.globalAlpha = 1;
+      /* boundary line: w.x*X + w.y*Y + b = 0 -> draw across canvas */
+      function lineForOffset(off, style, dash) {
+        /* w.x*x + w.y*y + b = off  => solve y for two x extremes */
+        ctx.strokeStyle = style; ctx.lineWidth = dash ? 1 : 1.8;
+        ctx.setLineDash(dash ? [5, 5] : []);
+        ctx.beginPath();
+        if (Math.abs(w.y) > Math.abs(w.x)) {
+          var xA = DOM.x0, xB = DOM.x1;
+          var yA = (off - b - w.x * xA) / w.y, yB = (off - b - w.x * xB) / w.y;
+          ctx.moveTo(m.X(xA), m.Y(yA)); ctx.lineTo(m.X(xB), m.Y(yB));
+        } else {
+          var yA2 = DOM.y0, yB2 = DOM.y1;
+          var xA2 = (off - b - w.y * yA2) / w.x, xB2 = (off - b - w.y * yB2) / w.x;
+          ctx.moveTo(m.X(xA2), m.Y(yA2)); ctx.lineTo(m.X(xB2), m.Y(yB2));
+        }
+        ctx.stroke(); ctx.setLineDash([]);
+      }
+      if (nw > 1e-6) {
+        /* faint class regions */
+        var B = 10;
+        for (var py = 0; py < sc.h; py += B) {
+          for (var px = 0; px < sc.w; px += B) {
+            var val = w.x * m.invX(px + B / 2) + w.y * m.invY(py + B / 2) + b;
+            ctx.fillStyle = val >= 0 ? "rgba(166,242,204,0.07)" : "rgba(78,138,247,0.07)";
+            ctx.fillRect(px, py, B, B);
+          }
+        }
+        lineForOffset(-1, "rgba(155,155,155,0.6)", true);
+        lineForOffset(1, "rgba(155,155,155,0.6)", true);
+        lineForOffset(0, FM.C.BRIGHT, false);
+      }
+
+      /* points */
+      var svCount = 0;
+      for (var i = 0; i < pts.length; i++) {
+        var p = pts[i], isSV = alpha[i] > 1e-4;
+        if (isSV) svCount++;
+        ctx.beginPath();
+        ctx.arc(m.X(p.x), m.Y(p.y), 6, 0, Math.PI * 2);
+        ctx.fillStyle = p.c > 0 ? FM.C.MINT : FM.C.BLUE;
+        ctx.fill();
+        if (isSV) { ctx.lineWidth = 2.4; ctx.strokeStyle = FM.C.BRIGHT; ctx.stroke(); }
+      }
+
+      var sep = true;
+      for (var q = 0; q < pts.length; q++) {
+        if (pts[q].c * (w.x * pts[q].x + w.y * pts[q].y + b) < 0.2) sep = false;
+      }
+      gammaEl.textContent = nw > 1e-6 ? (1 / nw).toFixed(3) : "∞";
+      normEl.textContent = nw.toFixed(3);
+      svEl.textContent = String(svCount);
+      statusEl.textContent = sep ? "SEPARABLE" : "OVERLAPPING";
+      statusEl.style.color = sep ? FM.C.MINT : FM.C.RED;
+    }
+
+    /* dragging */
+    function pickPoint(px, py, sc) {
+      var m = map(sc);
+      for (var i = 0; i < pts.length; i++) {
+        if (Math.hypot(m.X(pts[i].x) - px, m.Y(pts[i].y) - py) < 12) return i;
+      }
+      return -1;
+    }
+    function localXY(e) {
+      var r = canvas.getBoundingClientRect();
+      var t = (e.touches && e.touches[0]) ? e.touches[0] : e;
+      return { x: t.clientX - r.left, y: t.clientY - r.top, rectW: r.width, rectH: r.height };
+    }
+    function onDown(e) {
+      var sc = FM.setupCanvas(canvas, 340);
+      var L = localXY(e);
+      var px = L.x * (sc.w / L.rectW), py = L.y * (sc.h / L.rectH);
+      drag = pickPoint(px, py, sc);
+      if (drag >= 0 && e.cancelable) e.preventDefault();
+    }
+    function onMove(e) {
+      if (drag < 0) return;
+      var sc = FM.setupCanvas(canvas, 340), m = map(sc);
+      var L = localXY(e);
+      var px = L.x * (sc.w / L.rectW), py = L.y * (sc.h / L.rectH);
+      pts[drag].x = Math.max(DOM.x0 + 0.2, Math.min(DOM.x1 - 0.2, m.invX(px)));
+      pts[drag].y = Math.max(DOM.y0 + 0.2, Math.min(DOM.y1 - 0.2, m.invY(py)));
+      if (e.cancelable) e.preventDefault();
+      render();
+    }
+    function onUp() { drag = -1; }
+
+    canvas.addEventListener("mousedown", onDown);
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    canvas.addEventListener("touchstart", onDown, { passive: false });
+    canvas.addEventListener("touchmove", onMove, { passive: false });
+    canvas.addEventListener("touchend", onUp);
+
+    document.getElementById("svm-margin-add0").addEventListener("click", function () {
+      pts.push({ x: -1 + (Math.random() - 0.5), y: (Math.random() - 0.5) * 4, c: -1 }); render();
+    });
+    document.getElementById("svm-margin-add1").addEventListener("click", function () {
+      pts.push({ x: 1 + (Math.random() - 0.5), y: (Math.random() - 0.5) * 4, c: 1 }); render();
+    });
+    document.getElementById("svm-margin-reset").addEventListener("click", function () {
+      pts = defaults(); render();
+    });
+
+    pts = defaults();
+    RENDERS.push(render);
+    render();
+  })();
+
+  /* ============================================================= *
+   * INSTRUMENT M10.2 — HINGE LOSS + C TRADE-OFF                   *
+   * left: hinge curve; right: two overlapping clouds + linear SVM *
+   * trained by Pegasos sub-gradient descent on EQ M10.6.          *
+   * ============================================================= */
+  (function hingeWidget() {
+    var root = document.getElementById("svm-hinge");
+    if (!root) return;
+    var cIn = document.getElementById("svm-hinge-c");
+    var cOut = document.getElementById("svm-hinge-c-out");
+    var ovIn = document.getElementById("svm-hinge-ov");
+    var ovOut = document.getElementById("svm-hinge-ov-out");
+    var canvas = document.getElementById("svm-hinge-canvas");
+    var marginEl = document.getElementById("svm-hinge-margin");
+    var slackEl = document.getElementById("svm-hinge-slack");
+    var violEl = document.getElementById("svm-hinge-viol");
+    var accEl = document.getElementById("svm-hinge-acc");
+
+    /* deterministic gaussian clouds */
+    function makeData(overlap) {
+      var rnd = FM.mulberry32(42), pts = [], i;
+      function g() {
+        var u = Math.max(rnd(), 1e-9), v = rnd();
+        return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+      }
+      for (i = 0; i < 28; i++) pts.push({ x: 1.4 - overlap + 0.7 * g(), y: 0.9 + 0.9 * g(), c: 1 });
+      for (i = 0; i < 28; i++) pts.push({ x: -1.4 + overlap + 0.7 * g(), y: -0.7 + 0.9 * g(), c: -1 });
+      return pts;
+    }
+
+    function trainSVM(pts, C) {
+      var w = { x: 0, y: 0 }, b = 0, N = pts.length, lambda = 1 / (C * N);
+      for (var t = 1; t <= 2000; t++) {
+        var lr = 1 / (lambda * t);
+        var gx = lambda * w.x, gy = lambda * w.y, gb = 0;
+        for (var i = 0; i < N; i++) {
+          var p = pts[i], f = w.x * p.x + w.y * p.y + b;
+          if (p.c * f < 1) { gx -= (C / N) * p.c * p.x; gy -= (C / N) * p.c * p.y; gb -= (C / N) * p.c; }
+        }
+        w.x -= lr * gx; w.y -= lr * gy; b -= lr * gb;
+      }
+      return { w: w, b: b };
+    }
+
+    function render() {
+      var C = Math.pow(10, parseFloat(cIn.value));
+      var overlap = parseFloat(ovIn.value);
+      cOut.textContent = C >= 100 ? C.toFixed(0) : C.toFixed(2);
+      ovOut.textContent = overlap.toFixed(2);
+      var pts = makeData(overlap);
+      var mdl = trainSVM(pts, C), w = mdl.w, b = mdl.b;
+      var nw = Math.hypot(w.x, w.y);
+
+      var sc = FM.setupCanvas(canvas, 240), ctx = sc.ctx;
+      ctx.clearRect(0, 0, sc.w, sc.h);
+      var split = Math.min(200, sc.w * 0.42);
+
+      /* ---- left: hinge loss curve ---- */
+      var lpad = 34, lw = split - lpad - 14, lh = sc.h - 50, lx0 = lpad, ly0 = 24;
+      ctx.strokeStyle = FM.C.HAIR; ctx.lineWidth = 1; ctx.strokeRect(lx0, ly0, lw, lh);
+      var zmin = -2, zmax = 3;
+      function ZX(z) { return lx0 + (z - zmin) / (zmax - zmin) * lw; }
+      function LY(l) { return ly0 + lh - (l / 3) * lh; }
+      ctx.font = FM.C.MONO; ctx.fillStyle = FM.C.MUT; ctx.textAlign = "center";
+      ctx.fillText("signed margin z = y·f(x)", lx0 + lw / 2, ly0 + lh + 16);
+      /* zero axis */
+      ctx.strokeStyle = "rgba(47,50,52,0.8)"; ctx.beginPath();
+      ctx.moveTo(ZX(0), ly0); ctx.lineTo(ZX(0), ly0 + lh); ctx.stroke();
+      /* elbow marker at z=1 */
+      ctx.strokeStyle = "rgba(255,255,255,0.2)"; ctx.setLineDash([3, 3]);
+      ctx.beginPath(); ctx.moveTo(ZX(1), ly0); ctx.lineTo(ZX(1), ly0 + lh); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = FM.C.SEC; ctx.fillText("z=1", ZX(1), ly0 - 6);
+      /* hinge curve */
+      ctx.strokeStyle = FM.C.MINT; ctx.lineWidth = 2; ctx.beginPath();
+      for (var zz = zmin; zz <= zmax + 0.001; zz += 0.05) {
+        var loss = Math.max(0, 1 - zz);
+        var X = ZX(zz), Y = LY(Math.min(loss, 3));
+        if (zz === zmin) ctx.moveTo(X, Y); else ctx.lineTo(X, Y);
+      }
+      ctx.stroke();
+
+      /* ---- right: data + boundary ---- */
+      var rx0 = split + 14, rw = sc.w - rx0 - 8, rh = sc.h - 16, ry0 = 8;
+      var D = { x0: -4, x1: 4, y0: -4, y1: 4 };
+      function PX(x) { return rx0 + (x - D.x0) / (D.x1 - D.x0) * rw; }
+      function PY(y) { return ry0 + (1 - (y - D.y0) / (D.y1 - D.y0)) * rh; }
+      ctx.save();
+      ctx.beginPath(); ctx.rect(rx0, ry0, rw, rh); ctx.clip();
+      ctx.strokeStyle = FM.C.HAIR; ctx.strokeRect(rx0, ry0, rw, rh);
+      function drawLine(off, style, dash) {
+        ctx.strokeStyle = style; ctx.lineWidth = dash ? 1 : 1.8;
+        ctx.setLineDash(dash ? [5, 5] : []);
+        ctx.beginPath();
+        if (Math.abs(w.y) > 1e-6) {
+          var yA = (off - b - w.x * D.x0) / w.y, yB = (off - b - w.x * D.x1) / w.y;
+          ctx.moveTo(PX(D.x0), PY(yA)); ctx.lineTo(PX(D.x1), PY(yB));
+        } else {
+          var xv = (off - b) / (w.x || 1e-6);
+          ctx.moveTo(PX(xv), PY(D.y0)); ctx.lineTo(PX(xv), PY(D.y1));
+        }
+        ctx.stroke(); ctx.setLineDash([]);
+      }
+      if (nw > 1e-6) { drawLine(-1, "rgba(155,155,155,0.55)", true); drawLine(1, "rgba(155,155,155,0.55)", true); drawLine(0, FM.C.BRIGHT, false); }
+      var slack = 0, viol = 0, correct = 0;
+      for (var i = 0; i < pts.length; i++) {
+        var p = pts[i], f = w.x * p.x + w.y * p.y + b, z = p.c * f;
+        var l = Math.max(0, 1 - z); slack += l; if (z < 1) viol++; if (f * p.c > 0) correct++;
+        ctx.beginPath(); ctx.arc(PX(p.x), PY(p.y), 4.5, 0, Math.PI * 2);
+        ctx.fillStyle = p.c > 0 ? FM.C.MINT : FM.C.BLUE; ctx.globalAlpha = z < 1 ? 1 : 0.6; ctx.fill();
+        if (z < 1) { ctx.globalAlpha = 1; ctx.lineWidth = 1.6; ctx.strokeStyle = FM.C.RED; ctx.stroke(); }
+        ctx.globalAlpha = 1;
+      }
+      ctx.restore();
+
+      marginEl.textContent = nw > 1e-6 ? (1 / nw).toFixed(3) : "∞";
+      slackEl.textContent = slack.toFixed(2);
+      violEl.textContent = String(viol);
+      accEl.textContent = (100 * correct / pts.length).toFixed(1) + "%";
+    }
+
+    cIn.addEventListener("input", render);
+    ovIn.addEventListener("input", render);
+    RENDERS.push(render);
+    render();
+  })();
+
+  /* ============================================================= *
+   * INSTRUMENT M10.3 — KERNEL PLAYGROUND                          *
+   * RBF-kernel SVM (dual coordinate ascent) on rings / XOR data.  *
+   * ============================================================= */
+  (function kernelPlayground() {
+    var root = document.getElementById("svm-kernel");
+    if (!root) return;
+    var gIn = document.getElementById("svm-kernel-g");
+    var gOut = document.getElementById("svm-kernel-g-out");
+    var cIn = document.getElementById("svm-kernel-c");
+    var cOut = document.getElementById("svm-kernel-c-out");
+    var canvas = document.getElementById("svm-kernel-canvas");
+    var accEl = document.getElementById("svm-kernel-acc");
+    var svEl = document.getElementById("svm-kernel-sv");
+    var regimeEl = document.getElementById("svm-kernel-regime");
+    var dataset = "rings";
+
+    var D = { x0: -3.4, x1: 3.4, y0: -3.4, y1: 3.4 };
+
+    function makeRings() {
+      var rnd = FM.mulberry32(7), pts = [], i, t, r;
+      function g() { var u = Math.max(rnd(), 1e-9), v = rnd(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); }
+      for (i = 0; i < 26; i++) { t = 2 * Math.PI * rnd(); r = 0.9 + 0.18 * g(); pts.push({ x: r * Math.cos(t), y: r * Math.sin(t), c: 1 }); }
+      for (i = 0; i < 34; i++) { t = 2 * Math.PI * rnd(); r = 2.4 + 0.18 * g(); pts.push({ x: r * Math.cos(t), y: r * Math.sin(t), c: -1 }); }
+      return pts;
+    }
+    function makeXor() {
+      var rnd = FM.mulberry32(11), pts = [], i;
+      function g() { var u = Math.max(rnd(), 1e-9), v = rnd(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); }
+      var ctr = [[1.5, 1.5, 1], [-1.5, -1.5, 1], [1.5, -1.5, -1], [-1.5, 1.5, -1]];
+      for (var k = 0; k < 4; k++) for (i = 0; i < 15; i++)
+        pts.push({ x: ctr[k][0] + 0.55 * g(), y: ctr[k][1] + 0.55 * g(), c: ctr[k][2] });
+      return pts;
+    }
+
+    function rbf(a, b, g) { var dx = a.x - b.x, dy = a.y - b.y; return Math.exp(-g * (dx * dx + dy * dy)); }
+
+    /* dual coordinate ascent for kernel soft-margin SVM */
+    function train(pts, g, C) {
+      var n = pts.length, i, j, it, k;
+      var y = pts.map(function (p) { return p.c; });
+      var Kmat = []; for (i = 0; i < n; i++) { Kmat.push(new Float64Array(n)); for (j = 0; j < n; j++) Kmat[i][j] = rbf(pts[i], pts[j], g); }
+      var alpha = new Float64Array(n);
+      for (it = 0; it < 120; it++) {
+        for (i = 0; i < n; i++) {
+          j = (i + 1 + it) % n; if (j === i) j = (j + 1) % n;
+          if (y[i] === y[j]) continue;
+          var Ei = 0, Ej = 0;
+          for (k = 0; k < n; k++) { Ei += alpha[k] * y[k] * Kmat[k][i]; Ej += alpha[k] * y[k] * Kmat[k][j]; }
+          Ei -= y[i]; Ej -= y[j];
+          var eta = Kmat[i][i] + Kmat[j][j] - 2 * Kmat[i][j];
+          if (eta < 1e-9) continue;
+          var s = y[i] * y[j];
+          var delta = (y[i] * (Ej - Ei)) / eta;
+          var aiNew = alpha[i] + delta, ajNew = alpha[j] - s * delta;
+          if (aiNew < 0) { ajNew -= s * aiNew; aiNew = 0; }
+          if (aiNew > C) { ajNew -= s * (aiNew - C); aiNew = C; }
+          if (ajNew < 0) { aiNew -= s * ajNew; ajNew = 0; }
+          if (ajNew > C) { aiNew -= s * (ajNew - C); ajNew = C; }
+          alpha[i] = aiNew; alpha[j] = ajNew;
+        }
+      }
+      /* bias from free support vectors (0 < alpha < C) */
+      var bsum = 0, bcnt = 0;
+      for (i = 0; i < n; i++) {
+        if (alpha[i] > 1e-4 && alpha[i] < C - 1e-4) {
+          var fi = 0; for (k = 0; k < n; k++) fi += alpha[k] * y[k] * Kmat[k][i];
+          bsum += y[i] - fi; bcnt++;
+        }
+      }
+      var b = bcnt ? bsum / bcnt : 0;
+      return { alpha: alpha, b: b, y: y, pts: pts, g: g };
+    }
+
+    function decide(mdl, x, y) {
+      var f = mdl.b, a = mdl.alpha, p = mdl.pts, yy = mdl.y;
+      for (var k = 0; k < p.length; k++) if (a[k] > 1e-6) f += a[k] * yy[k] * Math.exp(-mdl.g * ((p[k].x - x) * (p[k].x - x) + (p[k].y - y) * (p[k].y - y)));
+      return f;
+    }
+
+    function render() {
+      var g = Math.pow(10, parseFloat(gIn.value));
+      var C = Math.pow(10, parseFloat(cIn.value));
+      gOut.textContent = g >= 10 ? g.toFixed(0) : g.toFixed(2);
+      cOut.textContent = C >= 10 ? C.toFixed(0) : C.toFixed(2);
+      var pts = dataset === "rings" ? makeRings() : makeXor();
+      var mdl = train(pts, g, C);
+
+      var sc = FM.setupCanvas(canvas, 340), ctx = sc.ctx;
+      ctx.clearRect(0, 0, sc.w, sc.h);
+      function PX(x) { return (x - D.x0) / (D.x1 - D.x0) * sc.w; }
+      function PY(y) { return (1 - (y - D.y0) / (D.y1 - D.y0)) * sc.h; }
+      function IX(px) { return D.x0 + px / sc.w * (D.x1 - D.x0); }
+      function IY(py) { return D.y0 + (1 - py / sc.h) * (D.y1 - D.y0); }
+
+      var B = 8;
+      for (var py = 0; py < sc.h; py += B) {
+        for (var px = 0; px < sc.w; px += B) {
+          var f = decide(mdl, IX(px + B / 2), IY(py + B / 2));
+          ctx.fillStyle = f >= 0 ? "rgba(166,242,204,0.13)" : "rgba(78,138,247,0.13)";
+          ctx.fillRect(px, py, B, B);
+        }
+      }
+      /* boundary contour: redraw blocks straddling f=0 brighter */
+      for (var py2 = 0; py2 < sc.h; py2 += B) {
+        for (var px2 = 0; px2 < sc.w; px2 += B) {
+          var c00 = decide(mdl, IX(px2), IY(py2));
+          var c10 = decide(mdl, IX(px2 + B), IY(py2));
+          if (c00 * c10 < 0) { ctx.fillStyle = "rgba(255,255,255,0.5)"; ctx.fillRect(px2, py2, 2, B); }
+        }
+      }
+
+      var correct = 0, svCount = 0;
+      for (var i = 0; i < pts.length; i++) {
+        var p = pts[i];
+        var isSV = mdl.alpha[i] > 1e-4; if (isSV) svCount++;
+        if (decide(mdl, p.x, p.y) * p.c > 0) correct++;
+        ctx.beginPath(); ctx.arc(PX(p.x), PY(p.y), 5, 0, Math.PI * 2);
+        ctx.fillStyle = p.c > 0 ? FM.C.MINT : FM.C.BLUE; ctx.fill();
+        if (isSV) { ctx.lineWidth = 2; ctx.strokeStyle = FM.C.BRIGHT; ctx.stroke(); }
+      }
+
+      accEl.textContent = (100 * correct / pts.length).toFixed(1) + "%";
+      svEl.textContent = svCount + " / " + pts.length;
+      var regime = g < 0.3 ? "TOO SMOOTH" : g > 8 ? "OVERFIT (LOCAL)" : "BALANCED";
+      regimeEl.textContent = regime;
+      regimeEl.style.color = regime === "BALANCED" ? FM.C.MINT : FM.C.SEC;
+    }
+
+    gIn.addEventListener("input", render);
+    cIn.addEventListener("input", render);
+    var btns = root.querySelectorAll("[data-svm-data]");
+    for (var bi = 0; bi < btns.length; bi++) {
+      btns[bi].addEventListener("click", function (e) {
+        for (var k = 0; k < btns.length; k++) btns[k].classList.remove("on");
+        e.currentTarget.classList.add("on");
+        dataset = e.currentTarget.getAttribute("data-svm-data");
+        render();
+      });
+    }
+    RENDERS.push(render);
+    render();
+  })();
+
+  /* ---------- re-render all instruments on resize ---------- */
+  var rsT = null;
+  window.addEventListener("resize", function () {
+    if (rsT) clearTimeout(rsT);
+    rsT = setTimeout(function () { for (var i = 0; i < RENDERS.length; i++) RENDERS[i](); }, 160);
+  });
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

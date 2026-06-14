@@ -1,0 +1,815 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AR, MA, ARIMA &amp; SARIMA — AI Encyclopedia</title>
+<meta name="description" content="The Box-Jenkins recipe for forecasting: difference a series to stationarity, read its ACF and PACF, and fit autoregressive and moving-average terms — AR, MA, ARMA, ARIMA and seasonal SARIMA, end to end." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+<link rel="canonical" href="https://ai-encyclopedia.com/timeseries/02-arima" />
+<meta property="og:url" content="https://ai-encyclopedia.com/timeseries/02-arima" />
+</head>
+<body data-track="timeseries" data-level="core">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ TIME SERIES / 02 / ARIMA</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../timeseries/03-exponential-smoothing.html">NEXT: 03 EXPONENTIAL SMOOTHING →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">TIME SERIES &amp; ECONOMETRICS · CHAPTER 02 / 06</div>
+    <h1>AR, MA, ARIMA &amp; SARIMA</h1>
+    <p class="lede">Before neural networks reached forecasting, Box and Jenkins reduced it to a procedure that could be taught. <strong>The recipe has three steps: difference the series until it is stationary, read the ACF and PACF to choose orders, then fit autoregressive and moving-average terms.</strong> Now a one-line call in every statistics library, it remains the baseline that more elaborate models are measured against.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 28 MIN</b></span>
+      <span>BUILDS ON<b>TIME SERIES 01 · STATS 04</b></span>
+      <span>INSTRUMENTS<b>ARIMA LAB · AR ROOTS · BOX-JENKINS</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">2.1</span>Autoregressive (AR)</a>
+      <a href="#s2"><span class="n">2.2</span>Moving-average (MA)</a>
+      <a href="#s3"><span class="n">2.3</span>ARMA &amp; ARIMA</a>
+      <a href="#s4"><span class="n">2.4</span>Seasonal ARIMA</a>
+      <a href="#s5"><span class="n">2.5</span>Box-Jenkins</a>
+      <a href="#s6"><span class="n">2.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 2.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">2.1</span><h2>Autoregressive (AR) models</h2></div>
+        <p>The simplest honest forecast is "tomorrow looks like today, plus a nudge." An <strong>autoregressive</strong> model formalizes that intuition: regress the series on its own past. An AR of order \(p\) — written AR(\(p\)) — predicts the current value as a weighted sum of the previous \(p\) values plus a fresh shock:</p>
+
+        <div class="eq"><span class="eq-tag">EQ T2.1 — AUTOREGRESSIVE MODEL AR(p)</span>
+        $$ y_t \;=\; c \;+\; \phi_1 y_{t-1} \;+\; \phi_2 y_{t-2} \;+\; \cdots \;+\; \phi_p y_{t-p} \;+\; \varepsilon_t, \qquad \varepsilon_t \sim \mathrm{WN}(0,\sigma^2) $$
+        <div class="eq-note">\(\phi_1,\dots,\phi_p\) are the AR coefficients, \(c\) a constant tied to the long-run mean (\(\mu = c/(1-\sum\phi_i)\)), and \(\varepsilon_t\) is <b>white noise</b> — zero-mean, constant-variance, serially uncorrelated. The model has <em>memory</em>: a shock at time \(t\) propagates forward through the \(\phi\)'s, decaying geometrically. <b>AR(1) is the workhorse — \(\phi\) is literally the one-step persistence of the series.</b></div>
+        </div>
+
+        <p>Persistence is the whole story for AR(1), \(y_t = c + \phi y_{t-1} + \varepsilon_t\). A \(\phi\) near \(+1\) means shocks linger (a slow, trending-looking series); a \(\phi\) near \(0\) means the series snaps back to its mean almost immediately (near white noise); a negative \(\phi\) makes it oscillate, flipping sign each step. The catch is <strong>stationarity</strong>: the process only has a stable mean and variance if its shocks don't compound forever. For AR(1) that means \(|\phi| &lt; 1\); for higher orders the condition lives in the <em>roots</em> of the characteristic polynomial.</p>
+
+        <div class="eq"><span class="eq-tag">EQ T2.2 — STATIONARITY: ROOTS OUTSIDE THE UNIT CIRCLE</span>
+        $$ \Phi(z) \;=\; 1 - \phi_1 z - \phi_2 z^2 - \cdots - \phi_p z^p \;=\; 0 \quad\Longrightarrow\quad |z_i| &gt; 1 \;\; \forall i $$
+        <div class="eq-note">Write the model with the lag operator \(L\) (where \(L\,y_t = y_{t-1}\)) as \(\Phi(L)\,y_t = c + \varepsilon_t\). The process is <b>stationary iff every root of \(\Phi(z)\) lies strictly outside the unit circle</b> — equivalently, every reciprocal root lies <em>inside</em> it. For AR(1), \(1-\phi z = 0\) gives \(z = 1/\phi\), so \(|z|&gt;1\) is exactly \(|\phi|&lt;1\). A root <em>on</em> the circle (\(|z|=1\)) is a <b>unit root</b> — the boundary case of a random walk, which §2.3 differences away.</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><div>Take AR(2) with \(\phi_1 = 0.5,\ \phi_2 = 0.3\). The characteristic polynomial is \(\Phi(z) = 1 - 0.5z - 0.3z^2\).</div></div>
+          <div class="x-step"><span class="x-n">02</span><div>Solve \(0.3z^2 + 0.5z - 1 = 0\): \(z = \dfrac{-0.5 \pm \sqrt{0.25 + 1.2}}{0.6} = \dfrac{-0.5 \pm 1.204}{0.6}\), giving \(z_1 = 1.174,\ z_2 = -2.840\).</div></div>
+          <div class="x-step"><span class="x-n">03</span><div>Both \(|z_i| &gt; 1\), so the process is stationary. Equivalently \(\phi_1 + \phi_2 = 0.8 &lt; 1\), \(\phi_2 - \phi_1 = -0.2 &lt; 1\), and \(|\phi_2| &lt; 1\) — the three sides of the AR(2) stationarity triangle.</div></div>
+          <span class="x-result">RESULT: roots 1.17 and −2.84 — both outside the unit circle → stationary</span>
+        </div></div>
+        </div>
+
+        <div class="exercise" data-answer="5" data-tol="0.001" data-unit="" data-hint="Plug into the AR(1) one-step rule: forecast = phi · last value.">
+          <div class="ex-q">An AR(1) process with no constant is \( y_t = 0.5\,y_{t-1} + \varepsilon_t \). The last observed value is \( y_{t-1} = 10 \). What is the one-step forecast \( \hat{y}_t = 0.5\,y_{t-1} \) (the expected next value, since \( \mathbb{E}[\varepsilon_t] = 0 \))?</div>
+          <div class="ex-reveal-src">The minimum-mean-squared-error forecast sets the unknown shock to its mean, \( \mathbb{E}[\varepsilon_t] = 0 \), so \( \hat{y}_t = 0.5 \times 10 = \) <b>5</b>. With \( \phi = 0.5 \) the series gives back half its current deviation each step — fast mean reversion.</div>
+        </div>
+
+        <p>How do you <em>estimate</em> the \(\phi\)'s from data? The classical route is the <strong>Yule-Walker equations</strong>, which connect the AR coefficients to the series' autocorrelations. They say: the autocorrelation at lag \(k\) equals the same weighted combination of nearby autocorrelations that the model imposes on the values themselves.</p>
+
+        <div class="eq"><span class="eq-tag">EQ T2.3 — YULE-WALKER EQUATIONS</span>
+        $$ \rho_k \;=\; \phi_1 \rho_{k-1} + \phi_2 \rho_{k-2} + \cdots + \phi_p \rho_{k-p}, \quad k = 1,\dots,p \qquad\Longleftrightarrow\qquad R\,\boldsymbol{\phi} = \mathbf{r} $$
+        <div class="eq-note">\(\rho_k\) is the autocorrelation at lag \(k\); \(R\) is the \(p\times p\) Toeplitz matrix of autocorrelations \(\rho_{|i-j|}\) and \(\mathbf{r} = (\rho_1,\dots,\rho_p)\). Estimate the \(\rho_k\) from the data, plug them in, and <b>solve the linear system \(\boldsymbol{\phi} = R^{-1}\mathbf{r}\)</b> — a closed-form fit with no iteration. For AR(2) this unpacks to \(\phi_1 = \dfrac{\rho_1(1-\rho_2)}{1-\rho_1^2}\), \(\phi_2 = \dfrac{\rho_2 - \rho_1^2}{1-\rho_1^2}\). Maximum likelihood is usually preferred in production, but Yule-Walker is the transparent estimator that shows where the numbers come from.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Fit an AR(2) by Yule-Walker (EQ T2.3) in pure numpy. No statsmodels needed.
+import numpy as np
+rng = np.random.default_rng(0)
+
+phi1, phi2 = 0.5, 0.3              # the TRUE coefficients we will recover
+n = 600
+e = rng.normal(0, 1, n)
+y = np.zeros(n)
+for t in range(2, n):             # simulate the AR(2) process (EQ T2.1)
+    y[t] = phi1 * y[t-1] + phi2 * y[t-2] + e[t]
+y = y - y.mean()                  # center: Yule-Walker works on the mean-removed series
+
+def acf(x, k):                    # sample autocorrelation at lag k
+    return np.sum(x[k:] * x[:len(x)-k]) / np.sum(x * x)
+
+r1, r2 = acf(y, 1), acf(y, 2)
+R = np.array([[1.0, r1], [r1, 1.0]])   # Toeplitz matrix of autocorrelations
+r = np.array([r1, r2])
+phi_hat = np.linalg.solve(R, r)        # phi = R^{-1} r  (EQ T2.3)
+
+print(f"sample autocorrelations : rho1={r1:.3f}  rho2={r2:.3f}")
+print(f"Yule-Walker estimate    : phi1={phi_hat[0]:.3f}  phi2={phi_hat[1]:.3f}")
+print(f"true coefficients       : phi1={phi1}      phi2={phi2}")
+print(f"sum phi (persistence)   : {phi_hat.sum():.3f}  (<1 => stationary)")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="arima-roots-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT T2.1 — AR-COEFFICIENT STABILITY &amp; ROOTS</span><span class="w-sub">AR(2) STATIONARITY TRIANGLE · EQ T2.2</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>φ₁ <output id="arima-roots-p1-out">0.50</output></label><input type="range" id="arima-roots-p1" min="-2.5" max="2.5" step="0.02" value="0.5"/></div>
+              <div class="ctl"><label>φ₂ <output id="arima-roots-p2-out">0.30</output></label><input type="range" id="arima-roots-p2" min="-1.2" max="1.2" step="0.02" value="0.3"/></div>
+            </div>
+            <canvas class="w-canvas" id="arima-roots-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">STATUS</div><div class="r-value" id="arima-roots-status" style="font-size:13px;">—</div></div>
+              <div class="readout"><div class="r-label">ROOTS |z|</div><div class="r-value" id="arima-roots-mod">—</div></div>
+              <div class="readout"><div class="r-label">φ₁ + φ₂</div><div class="r-value" id="arima-roots-sum">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The <span style="color:var(--accent);">mint</span> triangle is the AR(2) stationarity region — its three sides are \(\phi_1+\phi_2&lt;1\), \(\phi_2-\phi_1&lt;1\) and \(\phi_2&gt;-1\). Drag the coefficients and watch the marker: inside the triangle the roots of \(\Phi(z)\) sit outside the unit circle and the process is stable; cross a side and a root crosses the circle, the variance blows up, and the forecast diverges. The lower parabola \(\phi_2 = -\phi_1^2/4\) splits real roots (above) from the complex-root region (below), where the series oscillates with a pseudo-period rather than decaying monotonically.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 2.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">2.2</span><h2>Moving-average (MA) models</h2></div>
+        <p>An AR model remembers past <em>values</em>. A <strong>moving-average</strong> model remembers past <em>shocks</em>. MA(\(q\)) writes the current value as the current white-noise shock plus a weighted sum of the last \(q\) shocks:</p>
+
+        <div class="eq"><span class="eq-tag">EQ T2.4 — MOVING-AVERAGE MODEL MA(q)</span>
+        $$ y_t \;=\; \mu \;+\; \varepsilon_t \;+\; \theta_1 \varepsilon_{t-1} \;+\; \theta_2 \varepsilon_{t-2} \;+\; \cdots \;+\; \theta_q \varepsilon_{t-q} $$
+        <div class="eq-note">\(\mu\) is the mean, \(\theta_1,\dots,\theta_q\) the MA coefficients, and the \(\varepsilon\)'s are unobserved white-noise shocks. The defining property: an MA(\(q\)) has <b>finite memory</b> — a shock affects only the next \(q\) observations and then vanishes completely. So an MA process is <em>always</em> stationary (it is a finite sum of stationary terms), and its autocorrelation function <b>cuts off sharply after lag \(q\)</b>. That clean cutoff is exactly the fingerprint §2.5 uses to identify \(q\).</div>
+        </div>
+
+        <p>The two model families are mirror images, and the mirror is precise. An <strong>invertible</strong> MA(\(q\)) — one whose MA polynomial \(\Theta(z) = 1 + \theta_1 z + \cdots + \theta_q z^q\) also has all roots outside the unit circle — can be rewritten as an infinite-order AR, and a stationary AR(\(p\)) can be rewritten as an infinite-order MA. The duality has a sharp diagnostic consequence:</p>
+
+        <table class="data">
+          <thead><tr><th>Model</th><th>ACF (autocorrelation)</th><th>PACF (partial autocorr.)</th></tr></thead>
+          <tbody>
+            <tr><td><strong>AR(p)</strong></td><td>tails off (decays geometrically / sinusoidally)</td><td class="hl">cuts off after lag p</td></tr>
+            <tr><td><strong>MA(q)</strong></td><td class="hl">cuts off after lag q</td><td>tails off (decays geometrically)</td></tr>
+            <tr><td><strong>ARMA(p,q)</strong></td><td>tails off after lag q</td><td>tails off after lag p</td></tr>
+          </tbody>
+        </table>
+        <p class="note"><strong>This table is the heart of classical model identification.</strong> The ACF measures correlation between \(y_t\) and \(y_{t-k}\); the <em>partial</em> ACF measures the same after removing the influence of the intervening lags. A sharp ACF cutoff at lag \(q\) with a slowly tailing PACF screams MA(\(q\)); the reverse screams AR(\(p\)). When both tail off, you are in mixed ARMA territory — and these "cutoffs" are statistical, blurred by sampling noise, so read them as strong hints, not certainties.</p>
+
+        <div class="exercise" data-answer="2" data-tol="0.001" data-unit="" data-hint="An MA(q) autocorrelation is exactly zero for every lag beyond q.">
+          <div class="ex-q">The sample autocorrelation function of a series is large at lags 1 and 2, then drops to essentially zero (inside the noise band) from lag 3 onward, while the PACF tails off slowly. This is the fingerprint of an MA(\(q\)) model. What is \( q \)?</div>
+          <div class="ex-reveal-src">An MA(\(q\)) process has autocorrelations that cut off — are exactly zero — for all lags greater than \(q\) (EQ T2.4). The last significant spike is at lag 2, so the memory is two shocks deep: \( q = \) <b>2</b>.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># MA(2) fingerprint: its ACF cuts off after lag 2, the PACF tails off (the table).
+import numpy as np
+rng = np.random.default_rng(1)
+
+theta1, theta2 = 0.7, 0.4
+n = 4000
+e = rng.normal(0, 1, n + 2)
+y = e[2:] + theta1 * e[1:-1] + theta2 * e[:-2]   # MA(2) per EQ T2.4
+y = y - y.mean()
+
+def acf(x, k):
+    return np.sum(x[k:] * x[:len(x)-k]) / np.sum(x * x)
+
+# theoretical MA(2) autocorrelations for comparison
+denom = 1 + theta1**2 + theta2**2
+th = [1.0, (theta1 + theta1*theta2)/denom, theta2/denom, 0.0, 0.0]
+print(" lag   sample ACF   theory ACF")
+for k in range(5):
+    print(f"  {k:2d}     {acf(y,k):+.3f}      {th[k]:+.3f}")
+print("\nACF is large at lags 1-2 then ~0 -> the MA(2) cutoff. q reads straight off.")
+plot_xy(list(range(8)), [acf(y, k) for k in range(8)])</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 2.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">2.3</span><h2>ARMA &amp; ARIMA</h2></div>
+        <p>Combine the two memories and you get <strong>ARMA(\(p,q\))</strong>: the value depends on its own past <em>and</em> on past shocks. In lag-operator form the symmetry is plain — an AR polynomial acting on the values equals an MA polynomial acting on the noise:</p>
+
+        <div class="eq"><span class="eq-tag">EQ T2.5 — ARMA(p,q)</span>
+        $$ \underbrace{\Big(1 - \phi_1 L - \cdots - \phi_p L^p\Big)}_{\Phi(L)}\, y_t \;=\; c + \underbrace{\Big(1 + \theta_1 L + \cdots + \theta_q L^q\Big)}_{\Theta(L)}\, \varepsilon_t $$
+        <div class="eq-note">\(L\) is the lag operator (\(L^k y_t = y_{t-k}\)). ARMA needs the series to be <b>stationary already</b>: \(\Phi(z)\) must have its roots outside the unit circle (EQ T2.2). Most real series — prices, sales, GDP — are <em>not</em> stationary; they trend or wander. The fix is the "I" in ARIMA.</div>
+        </div>
+
+        <p>The <strong>I</strong> stands for <em>integrated</em>: an ARIMA(\(p,d,q\)) is an ARMA(\(p,q\)) fitted to the series after taking <strong>\(d\) differences</strong>. Differencing is the operator \(\Delta y_t = y_t - y_{t-1} = (1-L)y_t\); apply it \(d\) times to strip out trend. A series that becomes stationary after \(d\) differences is "integrated of order \(d\)", written \(I(d)\). Most economic series are \(I(1)\): one difference — turning levels into changes — is enough.</p>
+
+        <div class="eq"><span class="eq-tag">EQ T2.6 — ARIMA(p,d,q)</span>
+        $$ \Phi(L)\,\underbrace{(1-L)^d\, y_t}_{\text{differenced }d\text{ times}} \;=\; c + \Theta(L)\,\varepsilon_t $$
+        <div class="eq-note">Three integers fully specify the model: \(p\) AR terms, \(d\) differences, \(q\) MA terms. The familiar special cases all fall out of this one equation: ARIMA(\(p,0,0\)) is plain AR(\(p\)); ARIMA(\(0,0,q\)) is MA(\(q\)); ARIMA(\(0,1,0\)) is \(\Delta y_t = \varepsilon_t\), the <b>random walk</b>; ARIMA(\(0,1,0\)) with a constant is a random walk <em>with drift</em>. <b>Over-differencing is a real hazard</b> — it injects spurious negative autocorrelation and inflates the variance — so difference the minimum needed, checked with a unit-root test (ADF / KPSS), not reflexively.</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><div>Set \(p=0,\ d=1,\ q=0\). EQ T2.6 becomes \((1)(1-L)\,y_t = \varepsilon_t\), i.e. \(y_t - y_{t-1} = \varepsilon_t\).</div></div>
+          <div class="x-step"><span class="x-n">02</span><div>Rearrange: \(y_t = y_{t-1} + \varepsilon_t\). Each value is the previous value plus an unpredictable shock — the definition of a <b>random walk</b>.</div></div>
+          <div class="x-step"><span class="x-n">03</span><div>Its best forecast is therefore the last observation, \(\hat{y}_{t+1} = y_t\) ("naïve forecast"), and forecast uncertainty grows like \(\sqrt{h}\) with the horizon \(h\) — the variance accumulates because nothing pulls it back.</div></div>
+          <span class="x-result">RESULT: ARIMA(0,1,0) ≡ random walk, forecast = last value</span>
+        </div></div>
+        </div>
+
+        <div class="exercise" data-answer="true" data-tol="0" data-unit="" data-hint="Set p=0, d=1, q=0 in EQ T2.6 and simplify (1-L)y_t = e_t.">
+          <div class="ex-q">An ARIMA(0,1,0) model — zero AR terms, one difference, zero MA terms — is exactly a random walk, \( y_t = y_{t-1} + \varepsilon_t \). True or false? (Answer <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">With \(p=q=0\) and \(d=1\), EQ T2.6 reduces to \((1-L)y_t = \varepsilon_t\), i.e. \(y_t - y_{t-1} = \varepsilon_t\), which rearranges to \(y_t = y_{t-1} + \varepsilon_t\) — the textbook random walk. So the statement is <b>true</b>. (Add a constant and it becomes a random walk with drift.)</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># One-step ARIMA(1,1,1) forecast BY HAND on a tiny series (EQ T2.6).
+import numpy as np
+
+y = np.array([10., 12., 11., 14., 16., 15.])   # the observed levels
+phi, theta = 0.6, 0.4                           # ARMA(1,1) on the differences
+
+w = np.diff(y)                 # d=1: work on changes  w_t = y_t - y_{t-1}
+print("differences w :", w)
+
+# Recover the unobserved shocks e_t by the ARMA(1,1) recursion (start e_0 = 0):
+#   w_t = phi*w_{t-1} + e_t + theta*e_{t-1}  =>  e_t = w_t - phi*w_{t-1} - theta*e_{t-1}
+e = np.zeros(len(w))
+for t in range(1, len(w)):
+    e[t] = w[t] - phi * w[t-1] - theta * e[t-1]
+print("residuals e   :", np.round(e, 3))
+
+w_next = phi * w[-1] + theta * e[-1]   # forecast the NEXT difference (E[e_next]=0)
+y_next = y[-1] + w_next                # integrate back: undo the differencing
+print(f"\nforecast next change  w_hat = {w_next:.3f}")
+print(f"forecast next level   y_hat = y[-1] + w_hat = {y[-1]:.1f} + ({w_next:.3f})"
+      f" = {y_next:.3f}")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="arima-lab-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT T2.2 — ARIMA(p,d,q) PLAYGROUND</span><span class="w-sub">SIMULATE · DIFFERENCE · FORECAST · EQ T2.6</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>AR order p <output id="arima-lab-p-out">1</output></label><input type="range" id="arima-lab-p" min="0" max="2" step="1" value="1"/></div>
+              <div class="ctl"><label>DIFFERENCING d <output id="arima-lab-d-out">1</output></label><input type="range" id="arima-lab-d" min="0" max="2" step="1" value="1"/></div>
+              <div class="ctl"><label>MA order q <output id="arima-lab-q-out">1</output></label><input type="range" id="arima-lab-q" min="0" max="2" step="1" value="1"/></div>
+            </div>
+            <div class="ctl-row">
+              <div class="ctl"><label>AR strength φ <output id="arima-lab-phi-out">0.60</output></label><input type="range" id="arima-lab-phi" min="-0.9" max="0.9" step="0.05" value="0.6"/></div>
+              <div class="ctl"><label>MA strength θ <output id="arima-lab-theta-out">0.40</output></label><input type="range" id="arima-lab-theta" min="-0.9" max="0.9" step="0.05" value="0.4"/></div>
+            </div>
+            <canvas class="w-canvas" id="arima-lab-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">MODEL</div><div class="r-value" id="arima-lab-spec" style="font-size:13px;">—</div></div>
+              <div class="readout"><div class="r-label">FORECAST DRIFT / STEP</div><div class="r-value" id="arima-lab-drift">—</div></div>
+              <div class="readout"><div class="r-label">SHAPE</div><div class="r-value" id="arima-lab-shape" style="font-size:12px;">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">A fixed white-noise driver builds an ARIMA(\(p,d,q\)) series (<span style="color:var(--secondary);">grey</span>), then the model forecasts the next 24 steps (<span style="color:var(--accent);">mint</span>) with its \(\sqrt{h}\)-growing uncertainty band. Set \(d=0\) and the forecast reverts to the mean; set \(d=1\) and it persists from the last value (the random-walk limit at \(p=q=0\)); set \(d=2\) and a trend extrapolates. Push \(\phi\) toward \(\pm0.9\) to feel persistence vs oscillation, and watch how a higher \(d\) widens the forecast cone — uncertainty that compounds is the price of differencing away a trend.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 2.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">2.4</span><h2>Seasonal ARIMA (SARIMA)</h2></div>
+        <p>Monthly sales peak every December; electricity demand cycles every 24 hours; retail repeats every 7 days. A plain ARIMA can chase a trend but it has no machinery for a repeating <em>season</em>. <strong>SARIMA</strong> bolts a second, seasonal ARIMA onto the first — same AR/I/MA logic, but operating at the seasonal lag \(s\) (12 for monthly-with-yearly-cycle, 7 for daily-with-weekly-cycle):</p>
+
+        <div class="eq"><span class="eq-tag">EQ T2.7 — SARIMA(p,d,q)(P,D,Q)ₛ</span>
+        $$ \Phi_p(L)\,\Phi_P(L^s)\,(1-L)^d\,(1-L^s)^D\, y_t \;=\; c + \Theta_q(L)\,\Theta_Q(L^s)\,\varepsilon_t $$
+        <div class="eq-note">The lowercase \((p,d,q)\) handle the <b>short-range</b> dynamics; the uppercase \((P,D,Q)_s\) handle the <b>seasonal</b> dynamics at multiples of the period \(s\). \((1-L^s)^D\) is <b>seasonal differencing</b> — subtract the value one full season ago (\(y_t - y_{t-s}\)) to remove a stable seasonal pattern, just as \((1-L)^d\) removes trend. The seasonal polynomials \(\Phi_P(L^s),\,\Theta_Q(L^s)\) act only at lags \(s, 2s, \dots\). <b>The classic "airline model", SARIMA(0,1,1)(0,1,1)₁₂, fits a startling range of monthly business series</b> with just two parameters — it is the seasonal baseline to beat.</div>
+        </div>
+
+        <p>The two layers multiply rather than add, which is what lets one shock leave both a short-range footprint (the next few periods) and a seasonal echo (the same period next year). In practice you almost never need \(D &gt; 1\): one seasonal difference plus one ordinary difference removes both a trend and a yearly cycle, and stacking more differences over-differences just as fast as in the non-seasonal case. The cost of the extra flexibility is parameters — six orders to choose instead of three — which is exactly why automated order selection (§2.5) became indispensable for SARIMA.</p>
+
+        <div class="exercise" data-answer="12" data-tol="0.001" data-unit="" data-hint="Seasonal differencing subtracts the value one full season ago: y_t - y_{t-s}.">
+          <div class="ex-q">You fit a SARIMA model to <em>monthly</em> data with a yearly cycle and apply one seasonal difference, \( y_t - y_{t-s} \). What is the seasonal lag \( s \) — i.e. how many steps back does the seasonal difference reach?</div>
+          <div class="ex-reveal-src">Monthly data with a yearly cycle repeats every 12 observations, so the seasonal period is \( s = \) <b>12</b>: the seasonal difference subtracts the value from the same month one year earlier, \( y_t - y_{t-12} \). (Daily-with-weekly would be \( s = 7 \); hourly-with-daily, \( s = 24 \).)</div>
+        </div>
+
+        <p class="note"><strong>SARIMA's honest limits.</strong> It assumes a <em>single, fixed</em> seasonal period with constant amplitude. Multiple overlapping seasonalities (a daily series with both weekly and yearly cycles), seasonality that grows with the level, or non-integer periods all break it — and that is where TBATS, Fourier-term regressors with ARIMA errors, Prophet, and modern ML forecasters earn their place. SARIMA remains the right first tool for one clean season, and a strong baseline even when it is not the final one.</p>
+      </section>
+
+      <!-- ====================== 2.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">2.5</span><h2>The Box-Jenkins methodology</h2></div>
+        <p>Box and Jenkins did not just propose models — they proposed a <strong>procedure</strong>, an iterative loop that turns a raw series into a fitted forecast. It is the recipe the whole chapter has been building toward, and it has three stages that you cycle until the residuals are clean:</p>
+
+        <div class="eq"><span class="eq-tag">EQ T2.8 — THE BOX-JENKINS LOOP</span>
+        $$ \textbf{Identify} \;\longrightarrow\; \textbf{Estimate} \;\longrightarrow\; \textbf{Diagnose} \;\;\xrightarrow{\text{residuals not white?}}\;\; \textbf{back to Identify} $$
+        <div class="eq-note"><b>Identify</b> — make the series stationary (difference / log-transform; confirm with ADF or KPSS), then read the ACF/PACF (and seasonal lags) to propose orders \((p,d,q)(P,D,Q)_s\). <b>Estimate</b> — fit the coefficients by maximum likelihood. <b>Diagnose</b> — check that the residuals are indistinguishable from white noise (Ljung-Box test, residual ACF); if not, the model missed structure, so revise the orders and loop. <b>The terminal condition is white-noise residuals: when nothing predictable is left in the errors, you have extracted all the linear signal.</b></div>
+        </div>
+
+        <p>Stage one — identification — is where the AR/MA fingerprint table from §2.2 does its work. Pick orders by competing candidates on an <strong>information criterion</strong> that rewards fit and penalizes complexity, rather than by eyeballing the ACF alone:</p>
+
+        <div class="eq"><span class="eq-tag">EQ T2.9 — AKAIKE INFORMATION CRITERION (AIC)</span>
+        $$ \mathrm{AIC} \;=\; -2\,\ln \hat{L} \;+\; 2k, \qquad k = p + q + P + Q + (\text{constant}) $$
+        <div class="eq-note">\(\hat{L}\) is the maximized likelihood and \(k\) the number of estimated parameters. The first term rewards goodness of fit; \(+2k\) is the <b>complexity penalty</b> that stops you from adding terms that only chase noise. Lower AIC wins. <b>This is the engine inside <code>auto.arima</code></b>: it searches over candidate \((p,d,q)(P,D,Q)_s\) orders and keeps the lowest-AIC model. AICc adds a small-sample correction; BIC penalizes complexity harder (\(\ln(n)\,k\)) and prefers sparser models. None of them replaces the white-noise residual check — a low AIC with autocorrelated residuals is still a failed model.</div>
+        </div>
+
+        <p>The genuinely contested part is whether to trust automation. <code>auto.arima</code> (and Python's <code>pmdarima</code>) made order selection a one-liner, and for well-behaved series it usually finds a sensible model. But it optimizes in-sample fit, can be fooled by outliers and structural breaks, and will happily return a model whose residuals still carry seasonality it failed to difference away. The defensible practice in 2026 is the same as in 1976: let the search propose, then <em>diagnose</em> — plot the residual ACF, run Ljung-Box, and back-test on held-out horizons before shipping.</p>
+
+        <div class="callout warn">
+          <span class="co-icon">PITFALLS</span>
+          <p><strong>Four ways Box-Jenkins goes wrong:</strong> (1) <em>over-differencing</em> — differencing a series that was already stationary injects negative autocorrelation and inflates variance; difference the minimum and confirm with ADF/KPSS. (2) <em>reading ACF/PACF too literally</em> — sampling noise blurs the cutoffs, so a "spike at lag 7" may be chance, not weekly seasonality. (3) <em>trusting AIC over residuals</em> — the lowest-AIC model can still have autocorrelated errors; the residual diagnostics are the real gate. (4) <em>forecasting far past the data's regime</em> — ARIMA extrapolates its fitted linear dynamics and is blind to structural breaks, so long-horizon intervals are optimistic.</p>
+        </div>
+
+        <div class="widget" id="arima-bj-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT T2.3 — BOX-JENKINS IDENTIFICATION GUIDE</span><span class="w-sub">DECISION TREE FROM ACF / PACF · EQ T2.8</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl" style="flex:1 1 100%;">
+                <label>OBSERVED ACF / PACF PATTERN</label>
+                <div class="seg-row" id="arima-bj-seg">
+                  <button class="w-btn ghost on" data-bj="nonstat">TREND / SLOW-DECAY ACF</button>
+                  <button class="w-btn ghost" data-bj="ar">PACF CUTS OFF</button>
+                  <button class="w-btn ghost" data-bj="ma">ACF CUTS OFF</button>
+                  <button class="w-btn ghost" data-bj="arma">BOTH TAIL OFF</button>
+                  <button class="w-btn ghost" data-bj="seasonal">SPIKE AT LAG s</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="arima-bj-canvas" height="240"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">DIAGNOSIS</div><div class="r-value" id="arima-bj-diag" style="font-size:12px;">—</div></div>
+              <div class="readout"><div class="r-label">SUGGESTED MODEL</div><div class="r-value" id="arima-bj-model" style="font-size:13px;">—</div></div>
+            </div>
+            <div id="arima-bj-advice" style="border:1px solid var(--hairline);border-radius:4px;padding:12px 14px;margin-top:8px;font-size:13px;line-height:1.6;color:var(--secondary);">—</div>
+          </div>
+          <div class="w-note">Pick the pattern you see in a stationary series' correlograms and the tree maps it to a model order, drawing a stylized ACF (<span style="color:var(--accent);">mint</span>) and PACF (<span style="color:var(--blue);">blue</span>) so you can match the shape. This is the §2.2 fingerprint table made operational: <b>PACF cutoff → AR, ACF cutoff → MA, both tail off → ARMA, slow ACF decay → difference first, spike at a seasonal lag → add a seasonal term.</b> It is a teaching guide, not a substitute for fitting and diagnosing — real correlograms are noisier than these idealized stems.</div>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>ARIMA fits the conditional mean by least squares on lagged values; exponential smoothing weights the past geometrically instead.</strong> The two families overlap more than their notation suggests — simple exponential smoothing is an ARIMA(0,1,1) in disguise. Chapter 03: the exponential-smoothing family, from simple to Holt-Winters, the state-space (ETS) formulation that gives it likelihoods and intervals, and when its decaying-memory view beats ARIMA's algebra.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 2.R — References ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">2.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://doi.org/10.1002/9781118619193" target="_blank" rel="noopener">Box, G. E. P., Jenkins, G. M., Reinsel, G. C. &amp; Ljung, G. M. (2015). <span class="ref-venue">Time Series Analysis: Forecasting and Control</span> (5th ed.).</a> <span class="ref-meta">Wiley — the foundational text that defined the AR/MA/ARIMA/SARIMA framework and the identify-estimate-diagnose loop (EQ T2.8).</span></li>
+          <li><a href="https://otexts.com/fpp3/" target="_blank" rel="noopener">Hyndman, R. J. &amp; Athanasopoulos, G. (2021). <span class="ref-venue">Forecasting: Principles and Practice</span> (3rd ed.).</a> <span class="ref-meta">OTexts — the modern, free standard reference; its ARIMA chapter and <code>auto.arima</code> sit behind §2.3–§2.5.</span></li>
+          <li><a href="https://doi.org/10.1109/TAC.1974.1100705" target="_blank" rel="noopener">Akaike, H. (1974). <span class="ref-venue">A New Look at the Statistical Model Identification</span>.</a> <span class="ref-meta">IEEE Transactions on Automatic Control 19(6) — the Akaike Information Criterion behind automated order selection (EQ T2.9).</span></li>
+          <li><a href="https://doi.org/10.1093/biomet/65.2.297" target="_blank" rel="noopener">Ljung, G. M. &amp; Box, G. E. P. (1978). <span class="ref-venue">On a Measure of Lack of Fit in Time Series Models</span>.</a> <span class="ref-meta">Biometrika 65(2) — the Ljung-Box portmanteau test used in the diagnostic stage to check for white-noise residuals.</span></li>
+          <li><a href="https://doi.org/10.2307/2286348" target="_blank" rel="noopener">Dickey, D. A. &amp; Fuller, W. A. (1979). <span class="ref-venue">Distribution of the Estimators for Autoregressive Time Series with a Unit Root</span>.</a> <span class="ref-meta">JASA 74(366) — the Augmented Dickey-Fuller unit-root test that decides how many differences \(d\) a series needs.</span></li>
+          <li><a href="https://doi.org/10.18637/jss.v027.i03" target="_blank" rel="noopener">Hyndman, R. J. &amp; Khandakar, Y. (2008). <span class="ref-venue">Automatic Time Series Forecasting: The forecast Package for R</span>.</a> <span class="ref-meta">Journal of Statistical Software 27(3) — the algorithm behind <code>auto.arima</code> and its AIC-driven stepwise order search (§2.5).</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../timeseries/01-fundamentals.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">01</span> Fundamentals</div></a>
+        <a class="next" href="../timeseries/03-exponential-smoothing.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">03</span> Exponential Smoothing</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — TIME SERIES &amp; ECONOMETRICS · CH 02</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* ============================================================
+   AR, MA, ARIMA & SARIMA — chapter instruments
+   Single IIFE, no globals. Deterministic mulberry32 RNG keeps
+   every render reproducible; setTimeout (never rAF) is used for
+   resize re-renders so background tabs stay quiet.
+   ============================================================ */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
+
+  /* ========================================================
+     INSTRUMENT T2.1 — AR-coefficient stability & roots
+     Draws the AR(2) stationarity triangle in (phi1, phi2)
+     space; reports the moduli of the roots of the
+     characteristic polynomial 1 - phi1 z - phi2 z^2 and
+     whether the marker is inside the triangle (stationary).
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("arima-roots-demo");
+    if (!root) return;
+    var canvas = document.getElementById("arima-roots-canvas");
+    var p1El = document.getElementById("arima-roots-p1");
+    var p2El = document.getElementById("arima-roots-p2");
+    var p1Out = document.getElementById("arima-roots-p1-out");
+    var p2Out = document.getElementById("arima-roots-p2-out");
+    var statusOut = document.getElementById("arima-roots-status");
+    var modOut = document.getElementById("arima-roots-mod");
+    var sumOut = document.getElementById("arima-roots-sum");
+
+    var LO = -2.5, HI = 2.5;   /* phi1 axis range */
+    var P2LO = -1.5, P2HI = 1.5; /* phi2 axis range */
+
+    /* moduli of the two roots z of  -phi2 z^2 - phi1 z + 1 = 0 */
+    function rootModuli(phi1, phi2) {
+      /* polynomial: phi2 z^2 + phi1 z - 1 = 0 (from 1 - phi1 z - phi2 z^2 = 0) */
+      var a = phi2, b = phi1, c = -1;
+      if (Math.abs(a) < 1e-9) {                 /* AR(1): 1 - phi1 z = 0 */
+        if (Math.abs(b) < 1e-9) return [Infinity, Infinity];
+        return [Math.abs(1 / b), Infinity];
+      }
+      var disc = b * b - 4 * a * c;
+      if (disc >= 0) {
+        var s = Math.sqrt(disc);
+        return [Math.abs((-b + s) / (2 * a)), Math.abs((-b - s) / (2 * a))];
+      }
+      var re = -b / (2 * a), im = Math.sqrt(-disc) / (2 * a);
+      var m = Math.sqrt(re * re + im * im);
+      return [m, m];
+    }
+
+    function stationary(phi1, phi2) {
+      return (phi1 + phi2 < 1) && (phi2 - phi1 < 1) && (phi2 > -1);
+    }
+
+    function render() {
+      var phi1 = +p1El.value, phi2 = +p2El.value;
+      p1Out.textContent = phi1.toFixed(2);
+      p2Out.textContent = phi2.toFixed(2);
+
+      var cc = FM.setupCanvas(canvas, 320);
+      var ctx = cc.ctx, w = cc.w, h = cc.h;
+      ctx.clearRect(0, 0, w, h);
+
+      var padL = 42, padR = 14, padT = 14, padB = 30;
+      var plotW = w - padL - padR, plotH = h - padT - padB;
+      function px(x) { return padL + (x - LO) / (HI - LO) * plotW; }
+      function py(y) { return padT + (1 - (y - P2LO) / (P2HI - P2LO)) * plotH; }
+
+      ctx.font = C.MONO; ctx.textBaseline = "middle";
+
+      /* grid */
+      ctx.strokeStyle = "rgba(47,50,52,.6)"; ctx.lineWidth = 1;
+      ctx.fillStyle = C.MUT; ctx.textAlign = "right";
+      var g;
+      for (g = -1; g <= 1; g++) {
+        var yy = py(g);
+        ctx.beginPath(); ctx.moveTo(padL, yy); ctx.lineTo(w - padR, yy); ctx.stroke();
+        ctx.fillText(g.toFixed(0), padL - 6, yy);
+      }
+      ctx.textAlign = "center"; ctx.textBaseline = "top";
+      for (g = -2; g <= 2; g++) {
+        var xx = px(g);
+        ctx.strokeStyle = "rgba(47,50,52,.35)";
+        ctx.beginPath(); ctx.moveTo(xx, padT); ctx.lineTo(xx, padT + plotH); ctx.stroke();
+        ctx.fillStyle = C.MUT;
+        ctx.fillText(g.toFixed(0), xx, padT + plotH + 6);
+      }
+
+      /* stationarity triangle: vertices (-2,-1), (2,-1), (0,1) */
+      ctx.fillStyle = "rgba(166,242,204,.10)";
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(px(-2), py(-1));
+      ctx.lineTo(px(2), py(-1));
+      ctx.lineTo(px(0), py(1));
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+
+      /* real/complex boundary parabola phi2 = -phi1^2/4 */
+      ctx.strokeStyle = "rgba(78,138,247,.55)"; ctx.setLineDash([4, 3]); ctx.lineWidth = 1;
+      ctx.beginPath();
+      var first = true, xv;
+      for (xv = LO; xv <= HI; xv += 0.04) {
+        var yv = -xv * xv / 4;
+        if (yv < P2LO) continue;
+        var X = px(xv), Y = py(yv);
+        if (first) { ctx.moveTo(X, Y); first = false; } else ctx.lineTo(X, Y);
+      }
+      ctx.stroke(); ctx.setLineDash([]);
+
+      /* current point */
+      var stat = stationary(phi1, phi2);
+      var col = stat ? C.MINT : C.RED;
+      ctx.fillStyle = col;
+      ctx.beginPath(); ctx.arc(px(phi1), py(clamp(phi2, P2LO, P2HI)), 5, 0, 2 * Math.PI); ctx.fill();
+      ctx.strokeStyle = "#000"; ctx.lineWidth = 1.5; ctx.stroke();
+
+      /* axis labels */
+      ctx.fillStyle = C.SEC; ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText("φ₁ →", w - padR - 30, padT + plotH + 6);
+      ctx.save();
+      ctx.translate(12, padT + plotH / 2); ctx.rotate(-Math.PI / 2);
+      ctx.textAlign = "center"; ctx.fillText("φ₂", 0, 0);
+      ctx.restore();
+      ctx.fillStyle = "rgba(78,138,247,.8)"; ctx.textAlign = "center";
+      ctx.fillText("complex-root boundary", px(0), py(-0.06));
+
+      /* readouts */
+      var mods = rootModuli(phi1, phi2);
+      statusOut.textContent = stat ? "STATIONARY" : "NON-STATIONARY";
+      statusOut.style.color = col;
+      var m0 = isFinite(mods[0]) ? mods[0].toFixed(2) : "∞";
+      var m1 = isFinite(mods[1]) ? mods[1].toFixed(2) : "∞";
+      modOut.textContent = m0 + " · " + m1;
+      modOut.style.color = stat ? C.SEC : C.RED;
+      sumOut.textContent = (phi1 + phi2).toFixed(2);
+      sumOut.style.color = (phi1 + phi2) < 1 ? C.SEC : C.RED;
+    }
+
+    p1El.addEventListener("input", render);
+    p2El.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();   /* meaningful initial state with zero interaction */
+  })();
+
+  /* ========================================================
+     INSTRUMENT T2.2 — ARIMA(p,d,q) playground
+     A fixed white-noise driver builds an ARMA(p,q) base, which
+     is cumulatively summed d times to integrate (the "I"). The
+     model then forecasts 24 steps ahead with a sqrt(h) interval
+     band, and reports the per-step forecast drift and the shape.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("arima-lab-demo");
+    if (!root) return;
+    var canvas = document.getElementById("arima-lab-canvas");
+    var pEl = document.getElementById("arima-lab-p");
+    var dEl = document.getElementById("arima-lab-d");
+    var qEl = document.getElementById("arima-lab-q");
+    var phiEl = document.getElementById("arima-lab-phi");
+    var thetaEl = document.getElementById("arima-lab-theta");
+    var pOut = document.getElementById("arima-lab-p-out");
+    var dOut = document.getElementById("arima-lab-d-out");
+    var qOut = document.getElementById("arima-lab-q-out");
+    var phiOut = document.getElementById("arima-lab-phi-out");
+    var thetaOut = document.getElementById("arima-lab-theta-out");
+    var specOut = document.getElementById("arima-lab-spec");
+    var driftOut = document.getElementById("arima-lab-drift");
+    var shapeOut = document.getElementById("arima-lab-shape");
+
+    var N = 90, H = 24, SEED = 73331;
+
+    /* build a stationary ARMA(p,q) series of length N + the shocks */
+    function buildArma(p, q, phi, theta) {
+      var rng = FM.mulberry32(SEED);
+      var e = [], i;
+      for (i = 0; i < N + H + 2; i++) {
+        /* Box-Muller standard normal */
+        var u1 = Math.max(rng(), 1e-9), u2 = rng();
+        e.push(Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2));
+      }
+      /* geometric AR weights so the series stays bounded for |phi|<1 */
+      var y = [], j;
+      for (i = 0; i < N; i++) {
+        var v = e[i];
+        if (q >= 1) v += theta * e[i - 1 >= 0 ? i - 1 : 0];
+        if (q >= 2) v += 0.5 * theta * e[i - 2 >= 0 ? i - 2 : 0];
+        if (p >= 1 && i >= 1) v += phi * (y[i - 1] !== undefined ? y[i - 1] : 0);
+        if (p >= 2 && i >= 2) v += 0.4 * phi * (y[i - 2] !== undefined ? y[i - 2] : 0);
+        y.push(v);
+      }
+      return { y: y, e: e };
+    }
+
+    /* integrate d times (cumulative sum) starting from a base level */
+    function integrate(arr, d, base) {
+      var out = arr.slice(), k, i, acc;
+      for (k = 0; k < d; k++) {
+        acc = base;
+        for (i = 0; i < out.length; i++) { acc += out[i]; out[i] = acc; }
+      }
+      return out;
+    }
+
+    function render() {
+      var p = +pEl.value, d = +dEl.value, q = +qEl.value;
+      var phi = +phiEl.value, theta = +thetaEl.value;
+      pOut.textContent = p; dOut.textContent = d; qOut.textContent = q;
+      phiOut.textContent = phi.toFixed(2); thetaOut.textContent = theta.toFixed(2);
+
+      var arma = buildArma(p, q, phi, theta);
+      var series = integrate(arma.y, d, 20);    /* observed levels, base level 20 */
+
+      /* forecast the ARMA part h steps ahead, then integrate the forecast on */
+      var lastVals = arma.y.slice(-2);
+      var fc = [], i;
+      var prev1 = lastVals[1] !== undefined ? lastVals[1] : 0;
+      var prev2 = lastVals[0] !== undefined ? lastVals[0] : 0;
+      for (i = 0; i < H; i++) {
+        var f = 0;
+        if (p >= 1) f += phi * prev1;
+        if (p >= 2) f += 0.4 * phi * prev2;
+        /* MA terms vanish beyond the data (future shocks have mean 0) */
+        fc.push(f);
+        prev2 = prev1; prev1 = f;
+      }
+      /* integrate forecast on top of the observed end-level */
+      var fcLevels = [], k, acc, baseLevels;
+      baseLevels = series.slice();
+      var stitched = arma.y.concat(fc);
+      var integ = integrate(stitched, d, 20);
+      fcLevels = integ.slice(N);             /* the forecast portion in level space */
+
+      /* sqrt(h) interval half-width, scaled by d (wider when differenced more) */
+      var band = [];
+      var sigma = 1.0 * (1 + 0.9 * d);
+      for (i = 0; i < H; i++) band.push(1.6 * sigma * Math.sqrt(i + 1));
+
+      var perStepDrift = H > 1 ? (fcLevels[H - 1] - fcLevels[0]) / (H - 1) : 0;
+
+      var cc = FM.setupCanvas(canvas, 320);
+      var ctx = cc.ctx, w = cc.w, h = cc.h;
+      ctx.clearRect(0, 0, w, h);
+
+      var padL = 40, padR = 14, padT = 14, padB = 26;
+      var plotW = w - padL - padR, plotH = h - padT - padB;
+
+      /* y-range over observed + forecast + band */
+      var lo = Infinity, hi = -Infinity, vv;
+      for (i = 0; i < N; i++) { vv = series[i]; if (vv < lo) lo = vv; if (vv > hi) hi = vv; }
+      for (i = 0; i < H; i++) {
+        var top = fcLevels[i] + band[i], bot = fcLevels[i] - band[i];
+        if (top > hi) hi = top; if (bot < lo) lo = bot;
+      }
+      var pad = (hi - lo) * 0.08 || 1; lo -= pad; hi += pad;
+      var total = N + H;
+      function px(idx) { return padL + (idx / (total - 1)) * plotW; }
+      function py(v) { return padT + (1 - (v - lo) / (hi - lo)) * plotH; }
+
+      ctx.font = C.MONO; ctx.textBaseline = "middle";
+
+      /* y grid */
+      ctx.strokeStyle = "rgba(47,50,52,.55)"; ctx.lineWidth = 1; ctx.fillStyle = C.MUT; ctx.textAlign = "right";
+      for (i = 0; i <= 4; i++) {
+        var yval = lo + (hi - lo) * i / 4, Y = py(yval);
+        ctx.beginPath(); ctx.moveTo(padL, Y); ctx.lineTo(w - padR, Y); ctx.stroke();
+        ctx.fillText(yval.toFixed(0), padL - 6, Y);
+      }
+
+      /* divider between observed and forecast */
+      ctx.strokeStyle = C.SEC; ctx.setLineDash([4, 4]); ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(px(N - 1), padT); ctx.lineTo(px(N - 1), padT + plotH); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = C.MUT; ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText("FORECAST →", px(N - 1) + 4, padT + 2);
+
+      /* forecast interval band */
+      ctx.fillStyle = "rgba(166,242,204,.13)";
+      ctx.beginPath();
+      ctx.moveTo(px(N - 1), py(series[N - 1]));
+      for (i = 0; i < H; i++) ctx.lineTo(px(N + i), py(fcLevels[i] + band[i]));
+      for (i = H - 1; i >= 0; i--) ctx.lineTo(px(N + i), py(fcLevels[i] - band[i]));
+      ctx.lineTo(px(N - 1), py(series[N - 1]));
+      ctx.closePath(); ctx.fill();
+
+      /* observed series (grey) */
+      ctx.strokeStyle = C.SEC; ctx.lineWidth = 1.4; ctx.beginPath();
+      for (i = 0; i < N; i++) { var X = px(i), Y2 = py(series[i]); if (i === 0) ctx.moveTo(X, Y2); else ctx.lineTo(X, Y2); }
+      ctx.stroke();
+
+      /* forecast line (mint) */
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 1.8; ctx.beginPath();
+      ctx.moveTo(px(N - 1), py(series[N - 1]));
+      for (i = 0; i < H; i++) ctx.lineTo(px(N + i), py(fcLevels[i]));
+      ctx.stroke();
+
+      /* x label */
+      ctx.fillStyle = C.MUT; ctx.textAlign = "center"; ctx.textBaseline = "top";
+      ctx.fillText("TIME →", padL + plotW / 2, padT + plotH + 8);
+
+      /* readouts */
+      specOut.textContent = "ARIMA(" + p + "," + d + "," + q + ")";
+      driftOut.textContent = (perStepDrift >= 0 ? "+" : "") + perStepDrift.toFixed(2);
+      var shape;
+      if (d === 0) shape = "mean-reverting";
+      else if (d === 1) shape = (p === 0 && q === 0) ? "random walk" : "persistent";
+      else shape = "trend-extrapolating";
+      shapeOut.textContent = shape;
+    }
+
+    [pEl, dEl, qEl, phiEl, thetaEl].forEach(function (el) { el.addEventListener("input", render); });
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();   /* meaningful initial state with zero interaction */
+  })();
+
+  /* ========================================================
+     INSTRUMENT T2.3 — Box-Jenkins identification guide
+     A decision tree from the observed ACF/PACF pattern to a
+     model order. Draws stylized ACF (mint) and PACF (blue)
+     stems matching the chosen pattern, and prints the diagnosis,
+     suggested order, and the reasoning. Pure lookup, no RNG.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("arima-bj-demo");
+    if (!root) return;
+    var canvas = document.getElementById("arima-bj-canvas");
+    var seg = document.getElementById("arima-bj-seg");
+    var diagOut = document.getElementById("arima-bj-diag");
+    var modelOut = document.getElementById("arima-bj-model");
+    var adviceOut = document.getElementById("arima-bj-advice");
+
+    /* each case: stylized acf/pacf stems (length 9, lag 0..8) + verdict text */
+    var CASES = {
+      nonstat: {
+        diag: "NON-STATIONARY",
+        model: "difference first → I(d)",
+        advice: "The ACF decays very slowly (near 1 across many lags) — the signature of a trend or unit root. Box-Jenkins step one: difference the series (d = 1, confirm with ADF/KPSS) and re-read the correlograms of the differenced series before choosing p and q.",
+        acf: [1, 0.95, 0.90, 0.85, 0.80, 0.76, 0.71, 0.67, 0.63],
+        pacf: [1, 0.95, 0.05, -0.02, 0.01, 0.00, 0.01, -0.01, 0.00]
+      },
+      ar: {
+        diag: "AR SIGNATURE",
+        model: "AR(p) — here p = 2",
+        advice: "The PACF cuts off sharply (here after lag 2) while the ACF tails off geometrically. That is the autoregressive fingerprint: the partial autocorrelations vanish beyond the AR order, so set p to the last significant PACF spike and q = 0.",
+        acf: [1, 0.72, 0.50, 0.35, 0.24, 0.17, 0.12, 0.08, 0.06],
+        pacf: [1, 0.72, 0.34, 0.04, -0.02, 0.01, 0.00, 0.01, 0.00]
+      },
+      ma: {
+        diag: "MA SIGNATURE",
+        model: "MA(q) — here q = 2",
+        advice: "The ACF cuts off sharply (here after lag 2) while the PACF tails off. That is the moving-average fingerprint: autocorrelations are exactly zero beyond the MA order, so set q to the last significant ACF spike and p = 0.",
+        acf: [1, 0.62, 0.38, 0.03, -0.02, 0.01, 0.00, 0.01, 0.00],
+        pacf: [1, 0.62, -0.05, -0.22, 0.10, -0.05, 0.03, -0.02, 0.01]
+      },
+      arma: {
+        diag: "MIXED (ARMA)",
+        model: "ARMA(p,q) — try (1,1)",
+        advice: "Both the ACF and the PACF tail off without a clean cutoff — neither pure AR nor pure MA. This is mixed ARMA. Start small (p = q = 1), estimate, and let AIC (EQ T2.9) and the residual diagnostics arbitrate between competing low orders.",
+        acf: [1, 0.65, 0.42, 0.27, 0.18, 0.12, 0.08, 0.05, 0.03],
+        pacf: [1, 0.65, -0.18, 0.12, -0.08, 0.05, -0.03, 0.02, -0.01]
+      },
+      seasonal: {
+        diag: "SEASONAL STRUCTURE",
+        model: "SARIMA — add (P,D,Q)ₛ",
+        advice: "A pronounced spike at the seasonal lag s (and its multiples 2s, 3s…) on top of the short-range pattern means a season the non-seasonal terms cannot capture. Add a seasonal difference (1 − Lˢ) and seasonal AR/MA terms — the airline model SARIMA(0,1,1)(0,1,1)ₛ is the standard starting point.",
+        acf: [1, 0.30, 0.10, 0.05, 0.02, 0.04, 0.62, 0.20, 0.05],
+        pacf: [1, 0.30, 0.02, 0.01, 0.00, 0.02, 0.55, -0.10, 0.02]
+      }
+    };
+
+    var current = "nonstat";
+
+    function drawStems(ctx, vals, x0, y0, plotW, plotH, color, title) {
+      var n = vals.length, i;
+      var mid = y0 + plotH / 2;
+      ctx.font = C.MONO; ctx.textBaseline = "alphabetic";
+      /* zero axis */
+      ctx.strokeStyle = "rgba(47,50,52,.8)"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x0, mid); ctx.lineTo(x0 + plotW, mid); ctx.stroke();
+      /* ~95% noise band +/- 0.18 (stylized) */
+      ctx.strokeStyle = "rgba(99,99,99,.5)"; ctx.setLineDash([3, 3]);
+      var bandPx = (plotH / 2) * 0.18 / 1.05;
+      ctx.beginPath(); ctx.moveTo(x0, mid - bandPx); ctx.lineTo(x0 + plotW, mid - bandPx); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x0, mid + bandPx); ctx.lineTo(x0 + plotW, mid + bandPx); ctx.stroke();
+      ctx.setLineDash([]);
+      var step = plotW / n;
+      for (i = 0; i < n; i++) {
+        var cx = x0 + step * (i + 0.5);
+        var hpx = (vals[i] / 1.05) * (plotH / 2);
+        ctx.strokeStyle = color; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(cx, mid); ctx.lineTo(cx, mid - hpx); ctx.stroke();
+        ctx.fillStyle = color;
+        ctx.beginPath(); ctx.arc(cx, mid - hpx, 2.3, 0, 2 * Math.PI); ctx.fill();
+      }
+      ctx.fillStyle = C.SEC; ctx.textAlign = "left";
+      ctx.fillText(title, x0, y0 + 11);
+      ctx.fillStyle = C.MUT; ctx.textAlign = "center";
+      ctx.fillText("lag 0 … 8", x0 + plotW / 2, y0 + plotH + 11);
+    }
+
+    function render() {
+      var d = CASES[current];
+      var cc = FM.setupCanvas(canvas, 240);
+      var ctx = cc.ctx, w = cc.w, h = cc.h;
+      ctx.clearRect(0, 0, w, h);
+
+      var pad = 14, gap = 22;
+      var colW = (w - pad * 2 - gap) / 2;
+      var plotH = h - 40;
+      drawStems(ctx, d.acf, pad, 16, colW, plotH, C.MINT, "ACF");
+      drawStems(ctx, d.pacf, pad + colW + gap, 16, colW, plotH, C.BLUE, "PACF");
+
+      diagOut.textContent = d.diag;
+      modelOut.textContent = d.model;
+      adviceOut.textContent = d.advice;
+    }
+
+    seg.addEventListener("click", function (ev) {
+      var btn = ev.target.closest("[data-bj]");
+      if (!btn) return;
+      current = btn.getAttribute("data-bj");
+      var all = seg.querySelectorAll("[data-bj]"), i;
+      for (i = 0; i < all.length; i++) all[i].classList.toggle("on", all[i] === btn);
+      render();
+    });
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();   /* meaningful initial state with zero interaction */
+  })();
+
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

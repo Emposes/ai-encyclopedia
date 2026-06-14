@@ -1,0 +1,169 @@
+{
+  "concepts": [
+    {
+      "id": "multimodal-03-image-generation-s1",
+      "chapter": "multimodal/03-image-generation",
+      "section": "s1",
+      "title": "The text-to-image landscape",
+      "eyebrow": "MULTIMODAL",
+      "beats": [
+        {
+          "text": "Text-to-image is conditional generation: given a caption, sample an image from the distribution of images that match it.",
+          "visual": { "type": "title", "text": "The text-to-image landscape", "sub": "Sampling x from p(x | c)" }
+        },
+        {
+          "text": "The task asks the model to draw a sample x from the conditional distribution p of x given the caption c.",
+          "visual": { "type": "equation", "tex": "x \\sim p(x \\mid c)", "note": "Conditional generative modeling" }
+        },
+        {
+          "text": "Three families took turns owning it: GANs first, then autoregressive token models, then diffusion after 2021.",
+          "visual": { "type": "title", "text": "Three families", "sub": "GAN  ·  autoregressive  ·  diffusion" }
+        },
+        {
+          "text": "GANs gave the first sharp faces but suffered mode collapse and were hard to scale to open-vocabulary prompts.",
+          "visual": { "type": "bars", "values": [2, 5, 9, 7], "labels": ["GAN", "Autoreg", "Diffusion", "Masked"], "highlight": 0 }
+        },
+        {
+          "text": "Autoregressive models predict thousands of image tokens one by one, paying an O of N generation cost.",
+          "visual": { "type": "stat", "value": 1024, "label": "image tokens per sequence", "unit": "tokens" }
+        },
+        {
+          "text": "Diffusion won the open-domain prize: stable to train, mode-covering, and fast once moved into a latent space.",
+          "visual": { "type": "bars", "values": [2, 5, 9, 7], "labels": ["GAN", "Autoreg", "Diffusion", "Masked"], "highlight": 2 }
+        }
+      ]
+    },
+    {
+      "id": "multimodal-03-image-generation-s2",
+      "chapter": "multimodal/03-image-generation",
+      "section": "s2",
+      "title": "Diffusion for images, in one page",
+      "eyebrow": "MULTIMODAL",
+      "beats": [
+        {
+          "text": "A diffusion model is two opposing processes: a fixed forward chain that adds noise, and a learned reverse chain that removes it.",
+          "visual": { "type": "title", "text": "Diffusion for images", "sub": "Forward noising  ↔  learned denoising" }
+        },
+        {
+          "text": "The forward process has a closed form that jumps straight to any timestep, mixing the clean image with Gaussian noise.",
+          "visual": { "type": "equation", "tex": "x_t = \\sqrt{\\bar\\alpha_t}\\, x_0 + \\sqrt{1 - \\bar\\alpha_t}\\,\\varepsilon", "note": "EQ MM3.1 forward process" }
+        },
+        {
+          "text": "The signal fraction alpha-bar slides from about one at the clean image to about zero at pure noise.",
+          "visual": { "type": "plot", "ys": [1.0, 0.92, 0.78, 0.6, 0.4, 0.22, 0.08, 0.0], "dot": 7, "xlabel": "timestep t", "ylabel": "signal fraction" }
+        },
+        {
+          "text": "The network is trained to predict the noise that was added; the entire loss is a denoising regression.",
+          "visual": { "type": "equation", "tex": "\\mathcal{L} = \\mathbb{E}\\big[\\,\\lVert \\varepsilon - \\varepsilon_\\theta(x_t, t) \\rVert^2\\,\\big]", "note": "EQ MM3.2 denoising objective" }
+        },
+        {
+          "text": "The same trained denoiser is reused at every timestep; depth in time comes from iteration, not more parameters.",
+          "visual": { "type": "stat", "value": 35, "label": "denoising steps, one shared net", "unit": "steps" }
+        },
+        {
+          "text": "Conditioning injects the caption embedding through cross-attention; the backbone shifted from U-Net to diffusion transformers.",
+          "visual": { "type": "title", "text": "U-Net  →  DiT", "sub": "Cross-attention on the text embedding c" }
+        }
+      ]
+    },
+    {
+      "id": "multimodal-03-image-generation-s3",
+      "chapter": "multimodal/03-image-generation",
+      "section": "s3",
+      "title": "Latent diffusion — DALL·E, Imagen, Stable Diffusion",
+      "eyebrow": "MULTIMODAL",
+      "beats": [
+        {
+          "text": "Pixel-space diffusion is expensive: a single step on a 512 by 512 color image touches about 786 thousand values.",
+          "visual": { "type": "stat", "value": 786432, "label": "values per pixel-space step", "unit": "values" }
+        },
+        {
+          "text": "Latent diffusion stops diffusing pixels: a VAE compresses the image into a small latent, decoded only once at the end.",
+          "visual": { "type": "equation", "tex": "z = \\mathcal{E}(x), \\quad x \\approx \\mathcal{D}(z)", "note": "EQ MM3.3 latent compression" }
+        },
+        {
+          "text": "With downsample factor eight and four latent channels, the value count drops by 48 times before any diffusion runs.",
+          "visual": { "type": "bars", "values": [48, 1], "labels": ["pixel cost", "latent cost"], "highlight": 1 }
+        },
+        {
+          "text": "The three landmark systems differ mostly in where they spend compute: CLIP latents, a frozen T5, or a VAE latent.",
+          "visual": { "type": "title", "text": "DALL·E 2 · Imagen · Stable Diffusion", "sub": "unCLIP · pixel cascade · latent f=8" }
+        },
+        {
+          "text": "Classifier-free guidance extrapolates along the conditional direction, walking s times further than the model would alone.",
+          "visual": { "type": "equation", "tex": "\\tilde\\varepsilon = \\varepsilon_\\theta(\\varnothing) + s\\,[\\varepsilon_\\theta(c) - \\varepsilon_\\theta(\\varnothing)]", "note": "EQ MM3.4 classifier-free guidance" }
+        },
+        {
+          "text": "Raising the guidance scale increases prompt adherence but shrinks diversity, and too high it fries textures.",
+          "visual": { "type": "plot", "ys": [0.2, 0.5, 1.4, 2.45, 3.5, 4.6], "dot": 3, "xlabel": "guidance scale s", "ylabel": "guided noise" }
+        }
+      ]
+    },
+    {
+      "id": "multimodal-03-image-generation-s4",
+      "chapter": "multimodal/03-image-generation",
+      "section": "s4",
+      "title": "Autoregressive & masked image models",
+      "eyebrow": "MULTIMODAL",
+      "beats": [
+        {
+          "text": "The autoregressive camp treats an image like text: tokenize it with a VQ codebook, then predict the tokens.",
+          "visual": { "type": "title", "text": "Autoregressive & masked image models", "sub": "Tokenize, then predict" }
+        },
+        {
+          "text": "A VQ-VAE snaps each latent vector to the nearest codebook entry, turning a 32 by 32 grid into 1024 discrete indices.",
+          "visual": { "type": "stat", "value": 1024, "label": "discrete tokens from a 32x32 grid", "unit": "indices" }
+        },
+        {
+          "text": "A transformer models the token sequence with the same next-token factorization used for language.",
+          "visual": { "type": "equation", "tex": "p_\\theta(z_{1:N} \\mid c) = \\prod_{i=1}^{N} p_\\theta(z_i \\mid z_{<i}, c)", "note": "EQ MM3.5 autoregressive image likelihood" }
+        },
+        {
+          "text": "The cost is N sequential forward passes; for 1024 tokens that is the full autoregressive tax per image.",
+          "visual": { "type": "bars", "values": [1024, 10], "labels": ["autoregressive", "masked parallel"], "highlight": 1 }
+        },
+        {
+          "text": "Masked models like MaskGIT and Muse unmask many tokens in parallel, collapsing 256 steps into 8 to 12 rounds.",
+          "visual": { "type": "plot", "ys": [256, 64, 24, 12, 8], "dot": 4, "xlabel": "decoding rounds", "ylabel": "tokens remaining" }
+        },
+        {
+          "text": "In 2026 pure autoregressive lost the fidelity crown, but is resurgent inside unified multimodal token streams.",
+          "visual": { "type": "title", "text": "Unified token streams", "sub": "Image tokens in the same stream as text" }
+        }
+      ]
+    },
+    {
+      "id": "multimodal-03-image-generation-s5",
+      "chapter": "multimodal/03-image-generation",
+      "section": "s5",
+      "title": "Video generation — Sora-class models",
+      "eyebrow": "MULTIMODAL",
+      "beats": [
+        {
+          "text": "Video is an image problem with one extra axis: time, and the whole challenge is temporal coherence.",
+          "visual": { "type": "title", "text": "Video generation", "sub": "Sora-class models · denoise the clip jointly" }
+        },
+        {
+          "text": "Generating frames independently fails: objects flicker, identities swap, and motion is incoherent across frames.",
+          "visual": { "type": "plot", "ys": [0.2, 0.8, 0.1, 0.9, 0.3, 0.7, 0.15], "dot": 3, "xlabel": "frame", "ylabel": "object position" }
+        },
+        {
+          "text": "The recipe is latent diffusion lifted into space-time: compress the clip into spacetime patches and denoise them together.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "The patch count multiplies temporal chunks by spatial patches, and joint attention costs order N squared.",
+          "visual": { "type": "equation", "tex": "N = \\frac{T_f}{p_t} \\times \\frac{H}{p_h}\\frac{W}{p_w}, \\quad \\text{cost} \\sim O(N^2)", "note": "EQ MM3.6 spacetime patch count" }
+        },
+        {
+          "text": "Doubling clip length quadruples the attention bill, which is why long video is the genuinely hard part.",
+          "visual": { "type": "bars", "values": [1, 4, 9, 16], "labels": ["1x", "2x", "3x", "4x"], "highlight": 3 }
+        },
+        {
+          "text": "These systems learn crude physics statistically, but still violate it; latency and cost remain the binding constraints.",
+          "visual": { "type": "stat", "value": 30, "label": "denoising steps over thousands of patches", "unit": "steps" }
+        }
+      ]
+    }
+  ]
+}

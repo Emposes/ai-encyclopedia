@@ -1,0 +1,724 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Running Open Models — AI Encyclopedia</title>
+<meta name="description" content="Run a frontier-class open model on your own hardware: the local inference stack, llama.cpp and GGUF, vLLM for production, quantization trade-offs, and the memory math that tells you whether it will fit." />
+<link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
+<meta name="theme-color" content="#000000" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+<link rel="canonical" href="https://ai-encyclopedia.com/openmodels/02-running-open-models" />
+<meta property="og:url" content="https://ai-encyclopedia.com/openmodels/02-running-open-models" />
+</head>
+<body data-track="openmodels" data-level="core">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ OPEN MODELS / 02 / RUNNING LOCALLY</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../openmodels/03-finetuning-open.html">NEXT: FINE-TUNING OPEN →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">OPEN MODELS &amp; PRACTICE · CHAPTER 02 / 05</div>
+    <h1>Running Open Models</h1>
+    <p class="lede"><strong>A frontier-class model can run on your laptop once you understand quantization, the serving engine, and the memory math.</strong> Open weights are a download. Turning them into tokens per second is an engineering problem with three moving parts, and this chapter makes each one a number you can compute before you click "pull".</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 22 MIN</b></span>
+      <span>BUILDS ON<b>OPEN MODELS · 01 · Vol II · CH 03, 07</b></span>
+      <span>INSTRUMENTS<b>WILL IT FIT · QUANT EXPLORER · THROUGHPUT</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">2.1</span>The local inference stack</a>
+      <a href="#s2"><span class="n">2.2</span>llama.cpp &amp; GGUF</a>
+      <a href="#s3"><span class="n">2.3</span>vLLM &amp; production serving</a>
+      <a href="#s4"><span class="n">2.4</span>Quantization for local</a>
+      <a href="#s5"><span class="n">2.5</span>Hardware sizing — will it fit?</a>
+      <a href="#s6"><span class="n">2.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 2.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">2.1</span><h2>The local inference stack</h2></div>
+        <p>An open-weights release is a directory of tensors plus a config. To produce text you need an <strong>inference engine</strong> that loads those tensors, applies the model's chat template, runs the forward pass, manages the KV cache, and samples tokens. The engine is where almost all of your practical choices live — the weights are inert until something runs them.</p>
+
+        <p>It helps to see the stack as four layers, from metal to prompt:</p>
+        <table class="data">
+          <thead><tr><th>Layer</th><th>What it decides</th><th>Examples</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Hardware</strong></td><td>memory ceiling &amp; bandwidth — the hard limit on what fits</td><td class="m">RTX 4090 (24 GB), M-series unified memory, H100 (80 GB), CPU + RAM</td></tr>
+            <tr><td><strong>Kernels / runtime</strong></td><td>how a matmul actually executes on that silicon</td><td class="m">CUDA, Metal, ROCm, Vulkan, plain AVX2/NEON CPU</td></tr>
+            <tr><td><strong>Inference engine</strong></td><td>quant format, KV cache, batching, sampling</td><td class="m">llama.cpp, vLLM, SGLang, TensorRT-LLM, MLX, ExLlamaV2</td></tr>
+            <tr><td><strong>Front-end / API</strong></td><td>how you talk to it</td><td class="m">Ollama, LM Studio, an OpenAI-compatible <code>/v1</code> endpoint</td></tr>
+          </tbody>
+        </table>
+
+        <p>Two questions decide your engine. First, <em>where does the model live?</em> If the weights fit in GPU VRAM the GPU does everything; if not, the engine must split layers between GPU and CPU/RAM (offloading), and the slowest tier sets the pace. Second, <em>how many requests at once?</em> A single user wants the lowest latency per token; a server wants the highest aggregate throughput, which is a different — sometimes opposite — objective (§2.3).</p>
+
+        <p>The economics changed because the bottleneck is not compute. Autoregressive decoding generates one token at a time, and each token must stream the model's weights from memory through the compute units. So single-stream decode is <strong>memory-bandwidth-bound</strong>, not FLOP-bound: roughly, the upper bound on tokens per second is the device's memory bandwidth divided by the number of bytes you read per token.</p>
+
+        <div class="eq"><span class="eq-tag">EQ OM2.1 — THE DECODE BANDWIDTH BOUND</span>
+        $$ \text{tok/s} \;\lesssim\; \frac{\text{memory bandwidth (B/s)}}{\text{model bytes read per token}} \;=\; \frac{\text{BW}}{N_{\text{params}} \times \dfrac{\text{bits}}{8}} $$
+        <div class="eq-note">Generating one token reads essentially every weight once. A 7B model in 4-bit is \(\approx 3.5\) GB; on a 1 TB/s consumer GPU that ceiling is \(\approx 1000/3.5 \approx 285\) tok/s, and real engines reach a healthy fraction of it. <b>Quantizing from 16-bit to 4-bit reads 4× fewer bytes per token, so it speeds up decode roughly 4× and quarters the memory footprint — the single biggest lever you have on a laptop.</b> Prefill (processing the prompt) is the opposite regime: it is compute-bound and highly parallel.</div>
+        </div>
+
+        <div class="exercise" data-answer="200" data-tol="0.05" data-unit="tok/s" data-hint="Bytes per token for a 4-bit 7B model are about 3.5 GB; divide bandwidth by that.">
+          <div class="ex-q">A laptop GPU has \(700\) GB/s of memory bandwidth. You run a \(7\text{B}\) model quantized to \(4\) bits (\(\approx 3.5\) GB read per token). What is the theoretical decode ceiling, in tokens per second (\(\text{BW} / \text{bytes per token}\))?</div>
+          <div class="ex-reveal-src">\( \dfrac{700\text{ GB/s}}{3.5\text{ GB/token}} = \) <b>200</b> tok/s. This is an upper bound — real throughput is a fraction of it after sampling, attention, and Python overhead — but it explains why a faster GPU and a smaller quant both raise the same number.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 2.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">2.2</span><h2>llama.cpp &amp; GGUF</h2></div>
+        <p><strong>llama.cpp</strong>, started by Georgi Gerganov in 2023, is the project that made local inference mainstream. It is a dependency-light C/C++ engine that runs the forward pass on CPU, GPU (CUDA, Metal, Vulkan, ROCm), or any split of the two. Ollama and LM Studio are friendly wrappers over it; when someone "runs a model on their MacBook," llama.cpp is almost always the thing actually executing.</p>
+
+        <p>Its companion is <strong>GGUF</strong> (GPT-Generated Unified Format), the single-file container llama.cpp loads. One <code>.gguf</code> file holds the quantized tensors, the tokenizer, the chat template, and metadata such as context length — everything needed to run, with no separate config to mismatch. The format is self-describing and memory-mappable, so the OS can page weights in lazily rather than read the whole file up front.</p>
+
+        <div class="callout">
+          <span class="co-icon">NAMING</span>
+          <p>A file like <code>Llama-3.1-8B-Instruct-Q4_K_M.gguf</code> reads as: model · size · instruct-tuned · <strong>quant scheme</strong>. The <code>Q4_K_M</code> suffix is the most important part — <code>Q4</code> is ~4 bits per weight, <code>_K</code> is the k-quant method (per-block scales chosen to minimize error), and <code>_M</code> is the "medium" mix that keeps a few sensitive tensors at higher precision. <code>Q4_K_M</code> and <code>Q5_K_M</code> are the everyday defaults; <code>Q8_0</code> is near-lossless but twice the size of Q4.</p>
+        </div>
+
+        <p>The footprint of a GGUF is close to <em>bits-per-weight × parameters</em>. That is the whole game on a memory-limited box, so it is worth being able to compute it cold:</p>
+
+        <div class="eq"><span class="eq-tag">EQ OM2.2 — WEIGHT FOOTPRINT</span>
+        $$ \text{bytes}_{\text{weights}} \;=\; N_{\text{params}} \times \frac{\text{bits per weight}}{8} \qquad\Longrightarrow\qquad \text{GB} \;=\; \frac{N_{\text{params}} \times \text{bpw}}{8 \times 10^{9}} $$
+        <div class="eq-note">"bpw" is bits per weight — \(16\) for bf16, \(8\) for Q8, \(\approx 4.5\) for a real Q4_K_M (the extra half-bit is the per-block scales and the higher-precision tensors). Nominal Q4 uses \(4\) bpw exactly. <b>A 7B model: bf16 = 14 GB, Q8 = 7 GB, Q4 = 3.5 GB.</b> Each step down halves the file and roughly halves the bytes read per token — at a quality cost that §2.4 quantifies.</div>
+        </div>
+
+        <div class="exercise" data-answer="true" data-hint="It is the single-file container that llama.cpp loads.">
+          <div class="ex-q">GGUF is the file format used by llama.cpp to package a quantized model (weights, tokenizer, chat template, metadata) into one file. True or false?</div>
+          <div class="ex-reveal-src">GGUF (GPT-Generated Unified Format) is exactly that single-file container — it superseded the older GGML format and is what Ollama and LM Studio ship under the hood. The answer is <b>true</b>.</div>
+        </div>
+
+        <div class="exercise" data-answer="3.5" data-tol="0.05" data-unit="GB" data-hint="Use EQ OM2.2: 4 bits is 0.5 bytes per parameter.">
+          <div class="ex-q">Using EQ OM2.2 with the nominal \(4\) bits per weight (\(0.5\) bytes/param), roughly how many GB do the <b>weights</b> of a \(7\text{B}\)-parameter model occupy at 4-bit?</div>
+          <div class="ex-reveal-src">\( 7\times10^{9} \times \dfrac{4}{8} = 7\times10^{9} \times 0.5 = 3.5\times10^{9} \) bytes \( = \) <b>3.5</b> GB. (A real Q4_K_M is a touch larger — about 4–4.5 GB — because of the per-block scales; the back-of-envelope 3.5 GB is what you size against first.)</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># EQ OM2.2: a memory estimator -- params x bit-width -> GB of weights
+import numpy as np
+
+def weight_gb(params, bpw):
+    return params * (bpw / 8) / 1e9        # bytes -> gigabytes
+
+sizes = {"7B": 7e9, "13B": 13e9, "70B": 70e9}
+quants = {"bf16": 16, "Q8_0": 8, "Q5_K_M": 5.5, "Q4_K_M": 4.5, "Q4_0": 4}
+
+print(f"{'model':>6} | " + " | ".join(f"{q:>7}" for q in quants))
+print("-" * (9 + 10 * len(quants)))
+for name, p in sizes.items():
+    row = " | ".join(f"{weight_gb(p, b):6.1f}G" for b in quants.values())
+    print(f"{name:>6} | {row}")
+
+print("\nA 24 GB card holds a 7B at any quant, a 13B comfortably,")
+print("and a 70B ONLY once you drop to ~Q4 (35 GB nominal) -- which still")
+print("needs a 48 GB card or two 24 GB cards. Bits-per-weight is destiny.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <p class="note"><strong>The other half of the bill is the KV cache.</strong> Weights are fixed; the cache grows with context and concurrency (Vol II · EQ 3.5). On a single laptop that buffer is usually small next to the weights, but at long context it can rival them — which is why the calculator in §2.5 sums both. A handy trick on Apple silicon: unified memory means the GPU and CPU share one pool, so "VRAM" and "RAM" are the same budget and a 64 GB Mac can hold a 70B Q4 that no consumer discrete GPU can.</p>
+      </section>
+
+      <!-- ====================== 2.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">2.3</span><h2>vLLM &amp; production serving</h2></div>
+        <p>llama.cpp optimizes the single-user laptop. <strong>vLLM</strong> optimizes the opposite end: many concurrent users on datacenter GPUs, maximizing tokens served per second per dollar. It is the open-source serving engine most production open-model deployments are built on, and its key idea is about memory, not math.</p>
+
+        <p>Naive serving pre-allocates a contiguous KV-cache buffer per request, sized for the maximum possible sequence length. Most requests never reach that length, so most of that memory sits idle — internal fragmentation that strands GPU memory and caps how many requests fit. vLLM's <strong>PagedAttention</strong> borrows the operating-system idea of virtual memory: the KV cache is split into fixed-size <em>blocks</em> allocated on demand, with a block table mapping a request's logical positions to physical blocks. Memory is handed out a block at a time, fragmentation drops to near zero, and identical prefixes (a shared system prompt, a few-shot preamble) can <em>share</em> the same physical blocks across requests.</p>
+
+        <div class="eq"><span class="eq-tag">EQ OM2.3 — KV BLOCKS &amp; CONCURRENCY</span>
+        $$ \text{max concurrent seqs} \;\approx\; \frac{M_{\text{KV}}}{\text{bytes/token} \times \bar{T}}, \qquad \text{blocks per seq} = \left\lceil \frac{T}{B} \right\rceil $$
+        <div class="eq-note">\(M_{\text{KV}}\) is the GPU memory left for cache after the weights; \(\bar T\) is the average sequence length; \(B\) is the block size (commonly 16 tokens). Because blocks are allocated lazily and shared on common prefixes, vLLM packs far more concurrent sequences into the same \(M_{\text{KV}}\) than contiguous allocation — the original paper reports up to <b>2–4× higher throughput at the same latency</b>. <b>Continuous batching</b> compounds it: finished sequences free their blocks and new requests fill the slot mid-flight, instead of the whole batch waiting for its slowest member.</div>
+        </div>
+
+        <p>The serving picture has a fundamental shape: throughput rises with batch size because the GPU's parallelism gets amortized across more sequences, until you run out of KV memory or saturate compute — after which adding requests only raises latency. The instrument below lets you find that knee.</p>
+
+        <div class="widget" id="run-tput" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT OM2.3 — THROUGHPUT vs BATCH SIZE</span><span class="w-sub">CONTINUOUS BATCHING · SATURATING CURVE</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>PER-STREAM SPEED <output id="run-tput-base-out">40 tok/s</output></label><input type="range" id="run-tput-base" min="10" max="120" step="5" value="40"/></div>
+              <div class="ctl"><label>GPU SATURATION POINT <output id="run-tput-knee-out">32 seqs</output></label><input type="range" id="run-tput-knee" min="4" max="96" step="2" value="32"/></div>
+            </div>
+            <canvas class="w-canvas" id="run-tput-canvas" height="280"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">PER-USER @ THIS BATCH</div><div class="r-value" id="run-tput-peruser">—</div></div>
+              <div class="readout acc"><div class="r-label">AGGREGATE THROUGHPUT</div><div class="r-value" id="run-tput-agg">—</div></div>
+              <div class="readout"><div class="r-label">BATCH (DRAG ON CANVAS)</div><div class="r-value" id="run-tput-batch">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Hover or drag across the curve to pick a batch size. The mint line is <b>aggregate tokens/s</b> (what a server bills for); the blue line is <b>per-user tokens/s</b> (what a single user feels). Below the saturation point throughput scales almost linearly and latency barely moves — free money. Past it, aggregate flattens while per-user speed falls off a cliff: you are now trading latency for nothing.</div>
+        </div>
+
+        <p class="note">Use the right tool for the job. <strong>llama.cpp / Ollama</strong> for one user, a laptop, or a quick local prototype. <strong>vLLM / SGLang / TensorRT-LLM</strong> when you serve traffic and care about cost per million tokens. The same open weights run on both; only the engine — and therefore the memory accounting — changes.</p>
+      </section>
+
+      <!-- ====================== 2.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">2.4</span><h2>Quantization for local (recap)</h2></div>
+        <p>Quantization is the lever that turns "needs a datacenter" into "runs on my desk." The full theory — absmax vs zero-point, GPTQ, AWQ, the NF4 data type — lives in <strong>Vol II · Chapter 07</strong>; here is the operating intuition and the local-specific defaults.</p>
+
+        <p>Weights are stored at lower precision so each one occupies fewer bits. Trained weights cluster tightly around zero, so the modern schemes (k-quants, GPTQ, AWQ, NF4) spend their limited code values where the weights actually are, and protect the few outlier channels that carry disproportionate signal — the central finding of LLM.int8(), which showed that a handful of large-magnitude features, if naively quantized, wreck accuracy. The quality cost is not linear in bits:</p>
+
+        <div class="eq"><span class="eq-tag">EQ OM2.4 — THE QUALITY ELBOW</span>
+        $$ \Delta\text{quality}(\text{bpw}) \approx \begin{cases} \approx 0 &amp; \text{bpw} \ge 8 \\ \text{small} &amp; \text{bpw} \approx 4\text{–}6 \\ \text{steep} &amp; \text{bpw} &lt; 4 \end{cases} $$
+        <div class="eq-note">8-bit is effectively lossless; the drop from 8 to ~4 bits is small and usually worth the 2× memory win; below ~4 bits quality falls off fast. <b>The practical sweet spot for local use is Q4_K_M to Q5_K_M</b> — roughly 4.5–5.5 effective bpw, where a model that would not fit at all becomes one that fits with little measurable loss. A 4-bit copy of a bigger model almost always beats an 8-bit copy of a smaller one at the same memory budget: <em>parameters buy more quality than precision does.</em></div>
+        </div>
+
+        <div class="widget" id="run-quant" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT OM2.4 — QUANT LEVEL EXPLORER</span><span class="w-sub">SIZE vs QUALITY · EQ OM2.2 · EQ OM2.4</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>MODEL SIZE <output id="run-quant-n-out">7B params</output></label><input type="range" id="run-quant-n" min="0" max="5" step="1" value="1"/></div>
+              <div class="ctl"><label>QUANT LEVEL <output id="run-quant-q-out">Q4_K_M</output></label><input type="range" id="run-quant-q" min="0" max="5" step="1" value="1"/></div>
+            </div>
+            <canvas class="w-canvas" id="run-quant-canvas" height="240"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">EFFECTIVE BPW</div><div class="r-value" id="run-quant-bpw">—</div></div>
+              <div class="readout acc"><div class="r-label">WEIGHT FOOTPRINT</div><div class="r-value" id="run-quant-gb">—</div></div>
+              <div class="readout acc"><div class="r-label">QUALITY RETAINED</div><div class="r-value" id="run-quant-qual">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The bar shows size; the curve shows the quality elbow. Slide the quant from bf16 down to Q2 and watch the footprint collapse while quality holds — then drops sharply past Q4. The mint marker is where most people live: Q4_K_M, the best bytes-per-IQ point for laptops in 2026.</div>
+        </div>
+
+        <p class="note">Two honest caveats. First, the "quality retained" curve here is a stylized model — real degradation depends on the model, the quant method, and the task (code and math are more fragile than chat). Always run your own eval at the quant you intend to ship. Second, KV cache can be quantized too (FP8 or INT4 K/V), which buys context length at a smaller quality cost than weight quantization — increasingly standard in both llama.cpp and vLLM.</p>
+      </section>
+
+      <!-- ====================== 2.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">2.5</span><h2>Hardware sizing — will it fit?</h2></div>
+        <p>Everything above reduces to one inequality: the model's total footprint must fit under your memory ceiling. Total memory is weights plus KV cache plus a working overhead for activations and the framework:</p>
+
+        <div class="eq"><span class="eq-tag">EQ OM2.5 — TOTAL INFERENCE MEMORY</span>
+        $$ M_{\text{total}} \;=\; \underbrace{N_{\text{params}}\!\times\!\tfrac{\text{bpw}}{8}}_{\text{weights}} \;+\; \underbrace{2 L\, h_{kv}\, d_k\, T\, b \times \tfrac{\text{bits}_{kv}}{8}}_{\text{KV cache (Vol II · EQ 3.5)}} \;+\; \underbrace{M_{\text{overhead}}}_{\approx 1\text{–}2\text{ GB}} $$
+        <div class="eq-note">Weights are the constant; the KV term is the variable that grows with context \(T\) and batch \(b\). For a single user at modest context the weights dominate, so the bpw choice decides whether it fits. At long context or high concurrency the KV term takes over — which is when GQA (Vol II · §3.6) and KV quantization earn their keep. <b>Leave headroom: a model whose total sits at 100% of VRAM will OOM the moment the context grows.</b> Target ~85–90% of the card.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># KV cache size as a function of context length and model geometry
+# (Vol II EQ 3.5) -- the variable half of EQ OM2.5
+import numpy as np
+
+def kv_gb(L, h_kv, d_k, T, batch=1, bits=16):
+    bytes_per_tok = 2 * L * h_kv * d_k * (bits / 8)   # 2 = K and V
+    return bytes_per_tok * T * batch / 1e9
+
+# Llama-3-8B geometry: 32 layers, GQA with 8 KV heads, head dim 128
+geom = dict(L=32, h_kv=8, d_k=128)
+per_tok_kb = 2 * 32 * 8 * 128 * 2 / 1024
+print(f"per-token KV (FP16): {per_tok_kb:.0f} KB  -> {per_tok_kb/1024:.3f} MB")
+
+xs, ys = [], []
+for T in (2048, 8192, 32768, 131072):
+    g = kv_gb(T=T, **geom)
+    xs.append(T); ys.append(g)
+    print(f"  T = {T:>7,}: {g:6.2f} GB of KV cache (batch 1, FP16)")
+
+print("\nWeights (8B at Q4) are a fixed ~4.5 GB; the cache is what scales")
+print("with context. At 128K tokens the cache alone rivals the weights.")
+plot_xy(xs, ys)</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="run-fit" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT OM2.5 — WILL IT FIT?</span><span class="w-sub">EQ OM2.5 · WEIGHTS + KV + OVERHEAD</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>MODEL SIZE <output id="run-fit-n-out">8B params</output></label><input type="range" id="run-fit-n" min="0" max="5" step="1" value="1"/></div>
+              <div class="ctl"><label>QUANT (bpw) <output id="run-fit-bpw-out">Q4 · 4.5</output></label><input type="range" id="run-fit-bpw" min="0" max="4" step="1" value="1"/></div>
+            </div>
+            <div class="ctl-row">
+              <div class="ctl"><label>CONTEXT T <output id="run-fit-t-out">8K</output></label><input type="range" id="run-fit-t" min="11" max="20" step="1" value="13"/></div>
+              <div class="ctl"><label>CONCURRENT USERS <output id="run-fit-b-out">1</output></label><input type="range" id="run-fit-b" min="1" max="32" step="1" value="1"/></div>
+            </div>
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>YOUR HARDWARE</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost" data-run-hw="8">8 GB</button>
+                  <button class="w-btn ghost on" data-run-hw="24">24 GB · 4090</button>
+                  <button class="w-btn ghost" data-run-hw="48">48 GB</button>
+                  <button class="w-btn ghost" data-run-hw="80">80 GB · H100</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="run-fit-canvas" height="200"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">WEIGHTS</div><div class="r-value" id="run-fit-w">—</div></div>
+              <div class="readout"><div class="r-label">KV CACHE</div><div class="r-value" id="run-fit-kv">—</div></div>
+              <div class="readout acc"><div class="r-label">TOTAL / CEILING</div><div class="r-value" id="run-fit-total">—</div></div>
+              <div class="readout acc"><div class="r-label">VERDICT</div><div class="r-value" id="run-fit-verdict">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Defaults: an 8B model at Q4, 8K context, one user — comfortably inside a 24 GB card. Push context to 128K or users to 32 and watch the KV bar swallow the budget. Switch to 70B and only Q4 on a 48/80 GB card stays green. The dashed line is your hardware ceiling; aim to stay under ~90% of it.</div>
+        </div>
+
+        <div class="exercise" data-answer="6" data-tol="0.05" data-unit="GB" data-hint="Weights via EQ OM2.2 at 4-bit, plus 1 GB of KV, plus 1.5 GB overhead.">
+          <div class="ex-q">Estimate total inference memory for a \(7\text{B}\) model at \(4\) bits (use \(0.5\) bytes/param), with \(\approx 1\) GB of KV cache and \(\approx 1.5\) GB of overhead. What is \(M_{\text{total}}\) in GB?</div>
+          <div class="ex-reveal-src">Weights \( = 7\times10^{9}\times0.5 = 3.5 \) GB; plus \( 1 \) GB KV plus \( 1.5 \) GB overhead \( = 3.5 + 1 + 1.5 = \) <b>6</b> GB. That fits an 8 GB card with a sliver of headroom — exactly the regime where laptops became viable.</div>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>You can now run any open model and predict whether it fits before you download it.</strong> Chapter 03 takes the next step: <em>changing</em> the weights instead of just serving them — fine-tuning open models with LoRA and QLoRA on the same consumer hardware, and merging or hot-swapping adapters back into the serving stack you just built.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 2.R ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">2.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://github.com/ggerganov/llama.cpp" target="_blank" rel="noopener">Gerganov, G. et&nbsp;al. (2023). <span class="ref-venue">llama.cpp — LLM inference in C/C++</span>.</a> <span class="ref-meta">The reference local inference engine and the home of the GGUF format.</span></li>
+          <li><a href="https://arxiv.org/abs/2309.06180" target="_blank" rel="noopener">Kwon, W., Li, Z., Zhuang, S. et&nbsp;al. (2023). <span class="ref-venue">Efficient Memory Management for Large Language Model Serving with PagedAttention</span>.</a> <span class="ref-meta">SOSP 2023 — the vLLM paper; paged KV cache and continuous batching.</span></li>
+          <li><a href="https://arxiv.org/abs/2208.07339" target="_blank" rel="noopener">Dettmers, T., Lewis, M., Belkada, Y. &amp; Zettlemoyer, L. (2022). <span class="ref-venue">LLM.int8(): 8-bit Matrix Multiplication for Transformers at Scale</span>.</a> <span class="ref-meta">NeurIPS 2022 — outlier-aware 8-bit quantization; why a few features must be preserved.</span></li>
+          <li><a href="https://arxiv.org/abs/2210.17323" target="_blank" rel="noopener">Frantar, E., Ashkboos, S., Hoefler, T. &amp; Alistarh, D. (2023). <span class="ref-venue">GPTQ: Accurate Post-Training Quantization for Generative Pre-trained Transformers</span>.</a> <span class="ref-meta">ICLR 2023 — one-shot 3–4 bit weight quantization, a basis for local quants.</span></li>
+          <li><a href="https://arxiv.org/abs/2306.00978" target="_blank" rel="noopener">Lin, J., Tang, J., Tang, H. et&nbsp;al. (2024). <span class="ref-venue">AWQ: Activation-aware Weight Quantization for LLM Compression and Acceleration</span>.</a> <span class="ref-meta">MLSys 2024 — protects salient weight channels; widely used for 4-bit serving.</span></li>
+          <li><a href="https://docs.vllm.ai/" target="_blank" rel="noopener">The vLLM Team. <span class="ref-venue">vLLM Documentation</span>.</a> <span class="ref-meta">Official guide to deployment, quantization, and the OpenAI-compatible server.</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../openmodels/01-open-vs-closed.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">01</span> Open vs Closed</div></a>
+        <a class="next" href="../openmodels/03-finetuning-open.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">03</span> Fine-tuning Open</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — OPEN MODELS · CH 02</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* chapter instruments — single IIFE, no globals */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  var C = (FM && FM.C) || {
+    MINT: "#a6f2cc", DEEP: "#2b5945", BLUE: "#4e8af7", RED: "#ff4136",
+    HAIR: "#2f3234", MUT: "#636363", SEC: "#9b9b9b", BRIGHT: "#ffffff",
+    MONO: "10px ui-monospace, SF Mono, Menlo, monospace"
+  };
+  var MONO = C.MONO || "10px ui-monospace, SF Mono, Menlo, monospace";
+
+  function fmtGB(gb) {
+    if (gb >= 100) return gb.toFixed(0) + " GB";
+    if (gb >= 10) return gb.toFixed(1) + " GB";
+    if (gb >= 1) return gb.toFixed(2) + " GB";
+    return (gb * 1024).toFixed(0) + " MB";
+  }
+
+  /* ============================================================
+     INSTRUMENT OM2.3 — THROUGHPUT vs BATCH SIZE
+     Saturating model: per-user speed = base while batch <= knee,
+     then decays ~ knee/batch; aggregate = batch * per-user.
+     ============================================================ */
+  (function throughputCurve() {
+    var root = document.getElementById("run-tput");
+    if (!root) return;
+    var canvas = document.getElementById("run-tput-canvas");
+    if (!canvas) return;
+    var baseEl = document.getElementById("run-tput-base");
+    var kneeEl = document.getElementById("run-tput-knee");
+    var baseOut = document.getElementById("run-tput-base-out");
+    var kneeOut = document.getElementById("run-tput-knee-out");
+    var perUserEl = document.getElementById("run-tput-peruser");
+    var aggEl = document.getElementById("run-tput-agg");
+    var batchEl = document.getElementById("run-tput-batch");
+    var MAXB = 128;
+    var sel = 32;        // selected batch
+
+    function perUser(batch, base, knee) {
+      // flat until the GPU saturates, then ~1/batch falloff
+      if (batch <= knee) return base;
+      return base * knee / batch;
+    }
+    function render() {
+      var base = parseInt(baseEl.value, 10);
+      var knee = parseInt(kneeEl.value, 10);
+      baseOut.textContent = base + " tok/s";
+      kneeOut.textContent = knee + " seqs";
+      if (sel < 1) sel = 1; if (sel > MAXB) sel = MAXB;
+
+      var s = FM.setupCanvas(canvas, 280);
+      var ctx = s.ctx, w = s.w, h = s.h;
+      ctx.clearRect(0, 0, w, h);
+      var padL = 46, padR = 46, padT = 18, padB = 34;
+      var plotW = w - padL - padR, plotH = h - padT - padB;
+
+      // precompute curves to find maxima
+      var aggMax = 0, puMax = base;
+      var i, b, pu, agg;
+      for (b = 1; b <= MAXB; b++) {
+        agg = b * perUser(b, base, knee);
+        if (agg > aggMax) aggMax = agg;
+      }
+      if (aggMax <= 0) aggMax = 1;
+
+      function xOf(batch) { return padL + (batch - 1) / (MAXB - 1) * plotW; }
+      function yAgg(v) { return padT + plotH - (v / aggMax) * plotH; }
+      function yPu(v) { return padT + plotH - (v / puMax) * plotH; }
+
+      // grid
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(padL, padT); ctx.lineTo(padL, padT + plotH); ctx.lineTo(padL + plotW, padT + plotH);
+      ctx.stroke();
+
+      // knee marker
+      ctx.strokeStyle = "rgba(99,99,99,.5)";
+      ctx.setLineDash([3, 4]);
+      ctx.beginPath(); ctx.moveTo(xOf(knee), padT); ctx.lineTo(xOf(knee), padT + plotH); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = C.MUT; ctx.font = MONO; ctx.textAlign = "center";
+      ctx.fillText("saturation", xOf(knee), padT + 10);
+
+      // aggregate curve (mint)
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 2; ctx.beginPath();
+      for (b = 1; b <= MAXB; b++) {
+        agg = b * perUser(b, base, knee);
+        var x = xOf(b), y = yAgg(agg);
+        if (b === 1) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+
+      // per-user curve (blue, own scale)
+      ctx.strokeStyle = C.BLUE; ctx.lineWidth = 1.6; ctx.beginPath();
+      for (b = 1; b <= MAXB; b++) {
+        pu = perUser(b, base, knee);
+        var x2 = xOf(b), y2 = yPu(pu);
+        if (b === 1) ctx.moveTo(x2, y2); else ctx.lineTo(x2, y2);
+      }
+      ctx.stroke();
+
+      // selected batch marker
+      var selPu = perUser(sel, base, knee);
+      var selAgg = sel * selPu;
+      ctx.strokeStyle = "rgba(229,229,229,.35)";
+      ctx.beginPath(); ctx.moveTo(xOf(sel), padT); ctx.lineTo(xOf(sel), padT + plotH); ctx.stroke();
+      ctx.fillStyle = C.MINT;
+      ctx.beginPath(); ctx.arc(xOf(sel), yAgg(selAgg), 3.5, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = C.BLUE;
+      ctx.beginPath(); ctx.arc(xOf(sel), yPu(selPu), 3.5, 0, Math.PI * 2); ctx.fill();
+
+      // axes labels
+      ctx.fillStyle = C.MUT; ctx.font = MONO;
+      ctx.textAlign = "center";
+      ctx.fillText("batch size (concurrent sequences)", padL + plotW / 2, h - 8);
+      ctx.textAlign = "left";
+      ctx.fillStyle = C.MINT; ctx.fillText("aggregate tok/s", padL + 4, padT + 12);
+      ctx.fillStyle = C.BLUE; ctx.fillText("per-user tok/s", padL + 4, padT + 26);
+
+      perUserEl.textContent = Math.round(selPu) + " tok/s";
+      aggEl.textContent = Math.round(selAgg) + " tok/s";
+      batchEl.textContent = sel + " seqs";
+    }
+    function pickFromEvent(ev) {
+      var rect = canvas.getBoundingClientRect();
+      var cx = (ev.touches ? ev.touches[0].clientX : ev.clientX) - rect.left;
+      var padL = 46, padR = 46;
+      var plotW = rect.width - padL - padR;
+      var frac = (cx - padL) / plotW;
+      frac = Math.max(0, Math.min(1, frac));
+      sel = Math.round(1 + frac * (MAXB - 1));
+      render();
+    }
+    var dragging = false;
+    canvas.addEventListener("mousedown", function (e) { dragging = true; pickFromEvent(e); });
+    canvas.addEventListener("mousemove", function (e) { if (dragging) pickFromEvent(e); });
+    window.addEventListener("mouseup", function () { dragging = false; });
+    canvas.addEventListener("mousemove", function (e) { if (!dragging) pickFromEvent(e); });
+    canvas.addEventListener("touchstart", function (e) { pickFromEvent(e); }, { passive: true });
+    canvas.addEventListener("touchmove", function (e) { pickFromEvent(e); }, { passive: true });
+    baseEl.addEventListener("input", render);
+    kneeEl.addEventListener("input", render);
+    window.addEventListener("resize", render);
+    render();
+  })();
+
+  /* ============================================================
+     INSTRUMENT OM2.4 — QUANT LEVEL EXPLORER
+     Size from EQ OM2.2; quality from a stylized elbow (EQ OM2.4).
+     ============================================================ */
+  (function quantExplorer() {
+    var root = document.getElementById("run-quant");
+    if (!root) return;
+    var canvas = document.getElementById("run-quant-canvas");
+    if (!canvas) return;
+    var nEl = document.getElementById("run-quant-n");
+    var qEl = document.getElementById("run-quant-q");
+    var nOut = document.getElementById("run-quant-n-out");
+    var qOut = document.getElementById("run-quant-q-out");
+    var bpwEl = document.getElementById("run-quant-bpw");
+    var gbEl = document.getElementById("run-quant-gb");
+    var qualEl = document.getElementById("run-quant-qual");
+
+    var SIZES = [
+      { label: "3B", params: 3e9 }, { label: "7B", params: 7e9 },
+      { label: "13B", params: 13e9 }, { label: "34B", params: 34e9 },
+      { label: "70B", params: 70e9 }, { label: "405B", params: 405e9 }
+    ];
+    // name, effective bits-per-weight, modelled quality retained (fraction)
+    var QUANTS = [
+      { label: "bf16", bpw: 16, qual: 1.000 },
+      { label: "Q4_K_M", bpw: 4.5, qual: 0.985 },
+      { label: "Q5_K_M", bpw: 5.5, qual: 0.992 },
+      { label: "Q8_0", bpw: 8, qual: 0.999 },
+      { label: "Q3_K_M", bpw: 3.4, qual: 0.945 },
+      { label: "Q2_K", bpw: 2.6, qual: 0.870 }
+    ];
+
+    function render() {
+      var sz = SIZES[parseInt(nEl.value, 10)];
+      var qi = parseInt(qEl.value, 10);
+      var q = QUANTS[qi];
+      nOut.textContent = sz.label + " params";
+      qOut.textContent = q.label;
+      var gb = sz.params * (q.bpw / 8) / 1e9;
+      bpwEl.textContent = q.bpw.toFixed(1) + " bpw";
+      gbEl.textContent = fmtGB(gb);
+      qualEl.textContent = (q.qual * 100).toFixed(1) + " %";
+
+      var s = FM.setupCanvas(canvas, 240);
+      var ctx = s.ctx, w = s.w, h = s.h;
+      ctx.clearRect(0, 0, w, h);
+      var padL = 44, padR = 44, padT = 16, padB = 30;
+      var plotW = w - padL - padR, plotH = h - padT - padB;
+
+      // quality elbow curve over bpw 1..16
+      function qualOf(bpw) {
+        // saturating logistic-ish curve: ~1 by 8 bits, steep drop under 4
+        return 1 / (1 + Math.exp(-1.35 * (bpw - 3.1)));
+      }
+      function xOf(bpw) { return padL + (bpw - 1) / (16 - 1) * plotW; }
+      function yOf(qv) { return padT + plotH - qv * plotH; }
+
+      // axes
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(padL, padT); ctx.lineTo(padL, padT + plotH); ctx.lineTo(padL + plotW, padT + plotH);
+      ctx.stroke();
+
+      // sweet-spot band (4-6 bpw)
+      ctx.fillStyle = "rgba(166,242,204,.07)";
+      ctx.fillRect(xOf(4), padT, xOf(6) - xOf(4), plotH);
+
+      // quality curve
+      ctx.strokeStyle = C.SEC; ctx.lineWidth = 1.8; ctx.beginPath();
+      var first = true;
+      for (var bpw = 1; bpw <= 16; bpw += 0.25) {
+        var x = xOf(bpw), y = yOf(qualOf(bpw));
+        if (first) { ctx.moveTo(x, y); first = false; } else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+
+      // current point
+      var px = xOf(q.bpw), py = yOf(q.qual);
+      ctx.strokeStyle = "rgba(229,229,229,.3)";
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath(); ctx.moveTo(px, padT + plotH); ctx.lineTo(px, py); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(padL, py); ctx.lineTo(px, py); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = (q.bpw >= 4 ? C.MINT : C.RED);
+      ctx.beginPath(); ctx.arc(px, py, 4.5, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = C.BRIGHT; ctx.font = "11px ui-monospace, Menlo, monospace";
+      ctx.textAlign = "center";
+      ctx.fillText(q.label, px, py - 10);
+
+      // axis labels
+      ctx.fillStyle = C.MUT; ctx.font = MONO;
+      ctx.textAlign = "center";
+      ctx.fillText("bits per weight  →", padL + plotW / 2, h - 6);
+      ctx.fillText("2", xOf(2), padT + plotH + 14);
+      ctx.fillText("4", xOf(4), padT + plotH + 14);
+      ctx.fillText("8", xOf(8), padT + plotH + 14);
+      ctx.fillText("16", xOf(16), padT + plotH + 14);
+      ctx.save();
+      ctx.translate(12, padT + plotH / 2); ctx.rotate(-Math.PI / 2);
+      ctx.fillText("quality", 0, 0);
+      ctx.restore();
+    }
+    nEl.addEventListener("input", render);
+    qEl.addEventListener("input", render);
+    window.addEventListener("resize", render);
+    render();
+  })();
+
+  /* ============================================================
+     INSTRUMENT OM2.5 — WILL IT FIT?
+     M_total = weights + KV cache + overhead  (EQ OM2.5)
+     KV geometry scaled to model size; bar vs hardware ceiling.
+     ============================================================ */
+  (function willItFit() {
+    var root = document.getElementById("run-fit");
+    if (!root) return;
+    var canvas = document.getElementById("run-fit-canvas");
+    if (!canvas) return;
+    var nEl = document.getElementById("run-fit-n");
+    var bpwEl = document.getElementById("run-fit-bpw");
+    var tEl = document.getElementById("run-fit-t");
+    var bEl = document.getElementById("run-fit-b");
+    var nOut = document.getElementById("run-fit-n-out");
+    var bpwOut = document.getElementById("run-fit-bpw-out");
+    var tOut = document.getElementById("run-fit-t-out");
+    var bOut = document.getElementById("run-fit-b-out");
+    var wEl = document.getElementById("run-fit-w");
+    var kvEl = document.getElementById("run-fit-kv");
+    var totalEl = document.getElementById("run-fit-total");
+    var verdictEl = document.getElementById("run-fit-verdict");
+    var hwBtns = root.querySelectorAll("[data-run-hw]");
+
+    // model size -> approximate transformer geometry (L, h_kv GQA, d_k)
+    var SIZES = [
+      { label: "3B", params: 3e9, L: 28, h_kv: 4, d_k: 128 },
+      { label: "8B", params: 8e9, L: 32, h_kv: 8, d_k: 128 },
+      { label: "13B", params: 13e9, L: 40, h_kv: 8, d_k: 128 },
+      { label: "34B", params: 34e9, L: 48, h_kv: 8, d_k: 128 },
+      { label: "70B", params: 70e9, L: 80, h_kv: 8, d_k: 128 },
+      { label: "405B", params: 405e9, L: 126, h_kv: 8, d_k: 128 }
+    ];
+    var BPW = [
+      { label: "bf16 · 16", bpw: 16 },
+      { label: "Q4 · 4.5", bpw: 4.5 },
+      { label: "Q5 · 5.5", bpw: 5.5 },
+      { label: "Q8 · 8", bpw: 8 },
+      { label: "Q3 · 3.4", bpw: 3.4 }
+    ];
+    var OVERHEAD = 1.5; // GB
+    var ceiling = 24;
+
+    function render() {
+      var sz = SIZES[parseInt(nEl.value, 10)];
+      var bp = BPW[parseInt(bpwEl.value, 10)];
+      var T = Math.pow(2, parseInt(tEl.value, 10));
+      var batch = parseInt(bEl.value, 10);
+      nOut.textContent = sz.label + " params";
+      bpwOut.textContent = bp.label;
+      tOut.textContent = T >= 1024 ? (T / 1024) + "K" : String(T);
+      bOut.textContent = String(batch);
+
+      var weightsGB = sz.params * (bp.bpw / 8) / 1e9;
+      // KV cache FP16 (2 bytes), 2 for K&V (Vol II EQ 3.5)
+      var kvBytes = 2 * sz.L * sz.h_kv * sz.d_k * T * batch * 2;
+      var kvGB = kvBytes / 1e9;
+      var total = weightsGB + kvGB + OVERHEAD;
+
+      wEl.textContent = fmtGB(weightsGB);
+      kvEl.textContent = fmtGB(kvGB);
+      totalEl.textContent = fmtGB(total) + " / " + ceiling + " GB";
+      var pct = total / ceiling;
+      var fits = total <= ceiling;
+      var tight = fits && pct > 0.9;
+      verdictEl.textContent = fits ? (tight ? "TIGHT" : "FITS") : "OOM";
+      verdictEl.style.color = fits ? (tight ? C.BLUE : C.MINT) : C.RED;
+
+      var s = FM.setupCanvas(canvas, 200);
+      var ctx = s.ctx, w = s.w, h = s.h;
+      ctx.clearRect(0, 0, w, h);
+      var padL = 14, padR = 14, padT = 26, padB = 26;
+      var barH = 34;
+      var barY = (h - barH) / 2;
+      var fullW = w - padL - padR;
+      // scale: max of ceiling and total, with a little headroom
+      var scaleMax = Math.max(ceiling, total) * 1.08;
+      function px(gb) { return (gb / scaleMax) * fullW; }
+
+      // track
+      ctx.fillStyle = "rgba(47,50,52,.4)";
+      ctx.fillRect(padL, barY, fullW, barH);
+
+      // weights segment
+      var x = padL;
+      var wSeg = px(weightsGB);
+      ctx.fillStyle = C.DEEP;
+      ctx.fillRect(x, barY, wSeg, barH);
+      // KV segment
+      var kvSeg = px(kvGB);
+      ctx.fillStyle = "rgba(78,138,247,.55)";
+      ctx.fillRect(x + wSeg, barY, kvSeg, barH);
+      // overhead segment
+      var ovSeg = px(OVERHEAD);
+      ctx.fillStyle = "rgba(99,99,99,.6)";
+      ctx.fillRect(x + wSeg + kvSeg, barY, ovSeg, barH);
+
+      // outline tinted by verdict
+      ctx.strokeStyle = fits ? (tight ? C.BLUE : C.MINT) : C.RED;
+      ctx.lineWidth = 1.4;
+      ctx.strokeRect(padL, barY, Math.min(px(total), fullW), barH);
+
+      // ceiling line
+      var cx = padL + px(ceiling);
+      ctx.strokeStyle = C.RED; ctx.lineWidth = 1.4;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath(); ctx.moveTo(cx, barY - 10); ctx.lineTo(cx, barY + barH + 10); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = C.RED; ctx.font = MONO; ctx.textAlign = "center";
+      ctx.fillText(ceiling + " GB CEILING", cx, barY - 14);
+
+      // legend
+      ctx.font = MONO; ctx.textAlign = "left";
+      ctx.fillStyle = C.DEEP; ctx.fillRect(padL, h - 14, 9, 9);
+      ctx.fillStyle = C.SEC; ctx.fillText("weights", padL + 13, h - 6);
+      ctx.fillStyle = "rgba(78,138,247,.8)"; ctx.fillRect(padL + 78, h - 14, 9, 9);
+      ctx.fillStyle = C.SEC; ctx.fillText("KV cache", padL + 91, h - 6);
+      ctx.fillStyle = "rgba(99,99,99,.9)"; ctx.fillRect(padL + 162, h - 14, 9, 9);
+      ctx.fillStyle = C.SEC; ctx.fillText("overhead", padL + 175, h - 6);
+
+      // total label above bar
+      ctx.textAlign = "left";
+      ctx.fillStyle = C.BRIGHT; ctx.font = "11px ui-monospace, Menlo, monospace";
+      ctx.fillText("TOTAL " + fmtGB(total), padL, barY - 12);
+    }
+    for (var i = 0; i < hwBtns.length; i++) {
+      (function (btn) {
+        btn.addEventListener("click", function () {
+          for (var j = 0; j < hwBtns.length; j++) hwBtns[j].classList.remove("on");
+          btn.classList.add("on");
+          ceiling = parseFloat(btn.getAttribute("data-run-hw"));
+          render();
+        });
+      })(hwBtns[i]);
+    }
+    nEl.addEventListener("input", render);
+    bpwEl.addEventListener("input", render);
+    tEl.addEventListener("input", render);
+    bEl.addEventListener("input", render);
+    window.addEventListener("resize", render);
+    render();
+  })();
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

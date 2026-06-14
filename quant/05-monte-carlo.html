@@ -1,0 +1,733 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Monte Carlo Methods in Finance — AI Encyclopedia</title>
+<meta name="description" content="When no formula exists, simulate a million futures and average — Monte Carlo prices the path-dependent and high-dimensional options that closed forms cannot touch." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+<link rel="canonical" href="https://ai-encyclopedia.com/quant/05-monte-carlo" />
+<meta property="og:url" content="https://ai-encyclopedia.com/quant/05-monte-carlo" />
+</head>
+<body data-track="quant" data-level="core">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ QUANT / 05 / MONTE CARLO</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../quant/06-risk-measurement.html">NEXT: RISK MEASUREMENT →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">QUANTITATIVE FINANCE · CHAPTER 05 / 06</div>
+    <h1>Monte Carlo Methods in Finance</h1>
+    <p class="lede">A price is an expectation, and an expectation can be estimated by averaging samples. <strong>When no closed form exists, Monte Carlo simulates many futures and averages them, pricing options that analytic formulas cannot reach.</strong> Its error shrinks only as one over the square root of the sample size, so the practical work is reducing variance: antithetic pairs, control variates, and related techniques that make a slow estimator faster.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 24 MIN</b></span>
+      <span>BUILDS ON<b>QUANT 01–03</b></span>
+      <span>INSTRUMENTS<b>PRICER · ANTITHETIC · 1/√N</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">5.1</span>The idea</a>
+      <a href="#s2"><span class="n">5.2</span>Simulating payoffs</a>
+      <a href="#s3"><span class="n">5.3</span>Variance reduction</a>
+      <a href="#s4"><span class="n">5.4</span>Path-dependent options</a>
+      <a href="#s5"><span class="n">5.5</span>Greeks via Monte Carlo</a>
+      <a href="#s6"><span class="n">5.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 5.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">5.1</span><h2>Monte Carlo for pricing — the idea</h2></div>
+        <p>Risk-neutral valuation (Quant 03) says an option's price today is the discounted expectation of its payoff under the risk-neutral measure \(\mathbb{Q}\): \(V_0 = e^{-rT}\,\mathbb{E}^{\mathbb{Q}}[\,\text{payoff}\,]\). For a European call on a single lognormal stock that expectation has a closed form — the Black–Scholes formula. But the moment the payoff depends on the <em>whole path</em> (an Asian average, a barrier that may knock out), or on <em>many</em> assets at once (a basket, a worst-of), the integral becomes high-dimensional and no formula survives. <strong>Monte Carlo replaces the integral with an average over simulated futures.</strong></p>
+
+        <p>The justification is the law of large numbers: draw \(N\) independent payoff samples \(Y_1, \dots, Y_N\) with mean \(\mu = \mathbb{E}[Y]\), and their sample mean converges to \(\mu\). That sample mean, discounted, is our price estimate:</p>
+
+        <div class="eq"><span class="eq-tag">EQ Q5.1 — THE MONTE CARLO ESTIMATOR</span>
+        $$ \hat{V}_N \;=\; e^{-rT}\,\frac{1}{N}\sum_{i=1}^{N} \text{payoff}\big(S^{(i)}\big), \qquad \hat{V}_N \xrightarrow[N\to\infty]{\text{a.s.}} V_0 $$
+        <div class="eq-note">Each \(S^{(i)}\) is one simulated future of the underlying under \(\mathbb{Q}\); \(\text{payoff}(\cdot)\) reads its value off that scenario. <b>The estimator is unbiased</b> — its expectation is exactly \(V_0\) for any \(N\) — so the only error is statistical noise that the central limit theorem makes precise. Crucially, the method does not care how complicated the payoff is, nor how many assets feed it: a worst-of-twenty basket costs the same per-path arithmetic as a vanilla call.</div>
+        </div>
+
+        <p>How wrong can \(\hat{V}_N\) be? The central limit theorem turns the spread of the samples into an error bar. With \(\sigma_Y\) the standard deviation of the (discounted) payoff, the estimator's own standard deviation — its <strong>standard error</strong> — is</p>
+
+        <div class="eq"><span class="eq-tag">EQ Q5.2 — STANDARD ERROR &amp; THE 1/√N LAW</span>
+        $$ \mathrm{SE}\big(\hat{V}_N\big) \;=\; \frac{\sigma_Y}{\sqrt{N}}, \qquad \text{95\% CI} \;\approx\; \hat{V}_N \,\pm\, 1.96\,\frac{\hat\sigma_Y}{\sqrt{N}} $$
+        <div class="eq-note">\(\hat\sigma_Y\) is the sample standard deviation of the payoffs — you estimate the error from the same run that estimates the price. <b>The error falls as \(1/\sqrt{N}\), not \(1/N\)</b>: to halve it you need four times the paths; to add a decimal digit (10×) you need a hundred times the paths. This brutal scaling is the central fact of the chapter and the reason every other section exists — they are all ways to shrink \(\sigma_Y\) rather than grow \(N\).</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><div>A run of \(N = 10{,}000\) paths returns price \(\hat V = 8.00\) with sample payoff std \(\hat\sigma_Y = 12.0\).</div></div>
+          <div class="x-step"><span class="x-n">02</span><div>Standard error \(= 12.0 / \sqrt{10{,}000} = 12.0 / 100 = 0.12\). The 95% half-width is \(1.96 \times 0.12 = 0.235\).</div></div>
+          <div class="x-step"><span class="x-n">03</span><div>You want the error halved, to \(0.06\). Since \(\mathrm{SE}\propto 1/\sqrt N\), you need \(N \to 4N = 40{,}000\) paths.</div></div>
+          <div class="x-step"><span class="x-n">04</span><div>To shrink it tenfold, to \(0.012\), you need \(100N = 1{,}000{,}000\) paths. Accuracy is genuinely expensive — hence variance reduction (§5.3).</div></div>
+          <span class="x-result">RESULT: SE = 0.12 → halving costs 4×, a digit costs 100×</span>
+        </div></div>
+        </div>
+
+        <div class="exercise" data-answer="10" data-tol="0.001" data-unit="×" data-hint="error scales as 1/sqrt(N); 100× more paths means sqrt(100) less error.">
+          <div class="ex-q">Monte Carlo error scales as \(1/\sqrt{N}\). If you run <b>100×</b> as many paths, by what factor does the standard error shrink?</div>
+          <div class="ex-reveal-src">\(\mathrm{SE}\propto N^{-1/2}\), so multiplying \(N\) by 100 multiplies the error by \(1/\sqrt{100} = 1/10\). The error shrinks by a factor of <b>10</b> — one extra correct digit costs a hundredfold more work.</div>
+        </div>
+
+        <p class="note">Why bother, when grids and trees exist? Because their cost explodes with dimension. A finite-difference PDE solver or a binomial tree (Quant 02) is excellent for one or two underlyings but suffers the <em>curse of dimensionality</em>: work grows exponentially in the number of state variables. Monte Carlo's \(1/\sqrt{N}\) error is <strong>independent of dimension</strong> — the same hundred-thousand paths price a one-asset call and a fifty-asset basket. Above three or four dimensions, simulation is the only game in town.</p>
+
+        <div class="widget" id="mcsim-pricer" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT Q5.1 — MONTE CARLO OPTION PRICER</span><span class="w-sub">EUROPEAN CALL · EQ Q5.1–Q5.2 · LIVE</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>PATHS N <output id="mcsim-N-out">10,000</output></label><input type="range" id="mcsim-N" min="6" max="19" step="1" value="13"/></div>
+              <div class="ctl"><label>STRIKE K <output id="mcsim-K-out">105</output></label><input type="range" id="mcsim-K" min="70" max="140" step="1" value="105"/></div>
+              <div class="ctl"><label>VOL σ <output id="mcsim-sig-out">0.20</output></label><input type="range" id="mcsim-sig" min="0.05" max="0.8" step="0.01" value="0.20"/></div>
+            </div>
+            <canvas class="w-canvas" id="mcsim-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">MC PRICE</div><div class="r-value" id="mcsim-price">—</div></div>
+              <div class="readout"><div class="r-label">STD ERROR</div><div class="r-value" id="mcsim-se">—</div></div>
+              <div class="readout"><div class="r-label">95% CI HALF-WIDTH</div><div class="r-value" id="mcsim-ci">—</div></div>
+              <div class="readout acc"><div class="r-label">CLOSED FORM (BS)</div><div class="r-value" id="mcsim-bs">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Spot \(S_0=100\), rate \(r=5\%\), expiry \(T=1\)y are fixed. The grey band is the live 95% confidence interval around the running MC estimate; the <span style="color:var(--blue);">blue</span> line is the exact Black–Scholes price. Drag <b>PATHS</b> from 64 up to half a million and watch the band tighten toward the blue line as \(1/\sqrt{N}\) — quadrupling \(N\) only halves the band. The seed is fixed, so each \(N\) is a true refinement of the same path set, not a fresh roll.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 5.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">5.2</span><h2>Simulating payoffs under the risk-neutral measure</h2></div>
+        <p>To average payoffs you must first generate scenarios — and they must be drawn under \(\mathbb{Q}\), where the underlying drifts at the riskless rate \(r\) rather than its real-world drift \(\mu\). For a stock following geometric Brownian motion (Quant 03), one terminal price needs exactly one Gaussian draw, because the exact solution of the SDE is known in closed form:</p>
+
+        <div class="eq"><span class="eq-tag">EQ Q5.3 — EXACT GBM SIMULATION (TERMINAL)</span>
+        $$ S_T \;=\; S_0 \exp\!\Big[\big(r - \tfrac{1}{2}\sigma^2\big)T \;+\; \sigma\sqrt{T}\,Z\Big], \qquad Z \sim \mathcal{N}(0,1) $$
+        <div class="eq-note">The drift carries the Itô correction \(-\tfrac12\sigma^2\) so that \(\mathbb{E}^{\mathbb{Q}}[S_T] = S_0 e^{rT}\) exactly. <b>For a European payoff you never simulate the path — only its endpoint</b>, one normal draw per scenario. Because the GBM solution is exact, this introduces <em>no discretization error</em>; the only error is statistical (EQ Q5.2). When the payoff is path-dependent (§5.4), you instead step the SDE through time.</div>
+        </div>
+
+        <p>When you do need the whole path — for an Asian average or a barrier check — you discretize the SDE over a time grid \(0 = t_0 &lt; t_1 &lt; \cdots &lt; t_m = T\). The log-Euler (exact-in-log) scheme steps the log-price with one independent Gaussian per step:</p>
+
+        <div class="eq"><span class="eq-tag">EQ Q5.4 — STEPPING THE PATH (LOG-EULER)</span>
+        $$ S_{t_{k+1}} \;=\; S_{t_k}\exp\!\Big[\big(r - \tfrac{1}{2}\sigma^2\big)\Delta t \;+\; \sigma\sqrt{\Delta t}\,Z_{k+1}\Big], \qquad Z_{k+1}\sim\mathcal{N}(0,1)\ \text{i.i.d.} $$
+        <div class="eq-note">Stepping in \(\log S\) keeps the scheme exact for GBM at <em>any</em> step size \(\Delta t\); the price stays strictly positive. For SDEs without a closed-form solution (Heston, CIR), plain Euler–Maruyama introduces a discretization bias of order \(\Delta t\) that adds to the statistical error — so a path-dependent price has <b>two</b> errors to control: too few paths (variance) and too few steps (bias).</div>
+        </div>
+
+        <p>The whole recipe for a European price is then four lines: draw \(Z\), map to \(S_T\), apply the payoff, discount the mean. The first Python cell does exactly this and lays the result alongside the closed form so you can see the agreement — and the standard error that quantifies it.</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Monte-Carlo price a European call vs Black-Scholes, with a standard error
+import numpy as np, math
+rng = np.random.default_rng(0)
+
+def N(x):  # standard normal CDF via the error function
+    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+def bs_call(S, K, r, sig, T):
+    d1 = (math.log(S/K) + (r + 0.5*sig*sig)*T) / (sig*math.sqrt(T))
+    d2 = d1 - sig*math.sqrt(T)
+    return S*N(d1) - K*math.exp(-r*T)*N(d2)
+
+S0, K, r, sig, T = 100.0, 105.0, 0.05, 0.20, 1.0
+M = 200_000
+Z  = rng.standard_normal(M)
+ST = S0 * np.exp((r - 0.5*sig*sig)*T + sig*math.sqrt(T)*Z)   # EQ Q5.3, risk-neutral
+disc_payoff = math.exp(-r*T) * np.maximum(ST - K, 0.0)        # discounted payoffs
+
+price = disc_payoff.mean()                                    # EQ Q5.1
+se    = disc_payoff.std(ddof=1) / math.sqrt(M)                # EQ Q5.2
+exact = bs_call(S0, K, r, sig, T)
+
+print(f"Monte-Carlo call : {price:.4f}   +/- {1.96*se:.4f}  (95% CI)")
+print(f"Black-Scholes    : {exact:.4f}")
+print(f"gap / SE         : {(price-exact)/se:+.2f}  (should sit within ~2)")
+print(f"exact lies in CI : {abs(price-exact) <= 1.96*se}")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="mcsim-conv" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT Q5.2 — THE 1/√N CONVERGENCE LAW</span><span class="w-sub">SE vs PATHS · LOG–LOG · EQ Q5.2</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>PAYOFF VOL σ_Y <output id="mcsim-cv-sy-out">12.0</output></label><input type="range" id="mcsim-cv-sy" min="2" max="30" step="0.5" value="12"/></div>
+              <div class="ctl"><label>TARGET SE <output id="mcsim-cv-tgt-out">0.05</output></label><input type="range" id="mcsim-cv-tgt" min="0.01" max="0.5" step="0.01" value="0.05"/></div>
+            </div>
+            <canvas class="w-canvas" id="mcsim-cv-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">SLOPE (LOG–LOG)</div><div class="r-value" id="mcsim-cv-slope">−0.50</div></div>
+              <div class="readout acc"><div class="r-label">PATHS FOR TARGET SE</div><div class="r-value" id="mcsim-cv-need">—</div></div>
+              <div class="readout"><div class="r-label">4× PATHS ⇒ ERROR ×</div><div class="r-value" id="mcsim-cv-half">0.50</div></div>
+            </div>
+          </div>
+          <div class="w-note">On log–log axes the standard error is a straight line of slope exactly \(-\tfrac12\) — that is the \(1/\sqrt{N}\) law made visible, and it never bends no matter how you set the payoff spread \(\sigma_Y\). Raising \(\sigma_Y\) lifts the whole line: a wilder payoff needs more paths for the same accuracy, which is precisely the lever variance reduction pulls. The "paths for target SE" readout is \(N = (\sigma_Y/\text{SE})^2\) — note it grows <em>quadratically</em> as you tighten the target.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 5.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">5.3</span><h2>Variance reduction — antithetic &amp; control variates</h2></div>
+        <p>Because the error is \(\sigma_Y/\sqrt{N}\), there are only two ways to make a Monte Carlo estimate more accurate: run more paths (linear cost, square-root payoff) or <strong>shrink \(\sigma_Y\) itself</strong>. The second is almost free and is what separates a textbook simulation from a production one. Two techniques dominate.</p>
+
+        <h3>Antithetic variates</h3>
+        <p>The Gaussian is symmetric: if \(Z\) is a valid draw, so is \(-Z\), with the same probability. So pair every path driven by \(Z\) with a mirror path driven by \(-Z\), and average the two payoffs into one sample. The pairs cost one extra (cheap) evaluation but reuse the same random number, and — for a payoff that moves monotonically with \(Z\) — the two halves are <em>negatively correlated</em>, which cancels noise:</p>
+
+        <div class="eq"><span class="eq-tag">EQ Q5.5 — ANTITHETIC PAIR VARIANCE</span>
+        $$ \hat{V}_{\text{anti}} = \frac{1}{N/2}\sum_{i=1}^{N/2}\frac{Y_i + \tilde{Y}_i}{2}, \qquad \mathrm{Var}\big(\hat{V}_{\text{anti}}\big) = \frac{\sigma_Y^2}{N}\big(1 + \rho\big), \quad \rho = \mathrm{Corr}\big(Y,\tilde Y\big) $$
+        <div class="eq-note">\(Y_i = \text{payoff}(Z_i)\) and \(\tilde Y_i = \text{payoff}(-Z_i)\) are the mirror pair. Compare the plain estimator's variance \(\sigma_Y^2/N\): the antithetic version multiplies it by \((1+\rho)\). <b>Whenever \(\rho &lt; 0\), variance drops</b> — and for any payoff <em>monotone</em> in \(Z\) (a vanilla call, a put, a forward) the correlation is provably negative, so antithetics always help. The honest caveat: for a payoff that is <em>not</em> monotone in \(Z\) (e.g. a straddle, symmetric about the strike) the correlation can be positive and antithetics can <em>increase</em> variance — so it is a default, not a law.</div>
+        </div>
+
+        <div class="exercise" data-answer="true" data-tol="0.001" data-hint="for a payoff monotone in the Gaussian shock, the mirror path is negatively correlated.">
+          <div class="ex-q">For a European call, antithetic variates (pairing each \(Z\) with \(-Z\)) <b>reduce</b> the variance of the price estimate. True or false?</div>
+          <div class="ex-reveal-src">A call's payoff \(\max(S_T-K,0)\) is monotone increasing in the shock \(Z\), so \(Y=\text{payoff}(Z)\) and \(\tilde Y=\text{payoff}(-Z)\) are negatively correlated (\(\rho&lt;0\)). By EQ Q5.5 the variance is \(\tfrac{\sigma_Y^2}{N}(1+\rho) &lt; \tfrac{\sigma_Y^2}{N}\). Answer: <b>true</b>.</div>
+        </div>
+
+        <h3>Control variates</h3>
+        <p>If you can't reduce a payoff's spread, subtract off a correlated quantity whose expectation you <em>already know</em>. Let \(X\) be a control with known mean \(\mathbb{E}[X]\) (for an Asian option, the stock itself, or a geometric-average Asian which prices in closed form). Form a corrected estimator:</p>
+
+        <div class="eq"><span class="eq-tag">EQ Q5.6 — CONTROL VARIATE</span>
+        $$ Y_{\text{cv}} = Y - c\,\big(X - \mathbb{E}[X]\big), \qquad c^\star = \frac{\mathrm{Cov}(Y,X)}{\mathrm{Var}(X)} \;\Longrightarrow\; \mathrm{Var}(Y_{\text{cv}}) = \sigma_Y^2\,\big(1-\rho_{XY}^2\big) $$
+        <div class="eq-note">Subtracting \(c(X-\mathbb{E}[X])\) leaves the mean unchanged (the correction has expectation zero) but removes the part of \(Y\) that \(X\) can explain. The optimal coefficient \(c^\star\) is exactly a regression slope, and the resulting variance is scaled by \(1-\rho_{XY}^2\). <b>A control correlated 0.99 with the payoff cuts the variance ~50× </b>(\(1-0.99^2\approx0.02\)) — the single most powerful trick in the chapter. The price you pay: \(c^\star\) is usually estimated from a pilot run, introducing a tiny bias that vanishes as \(N\to\infty\).</div>
+        </div>
+
+        <p class="note">These compose. Production pricers stack antithetics, a strong control variate, and quasi-random (low-discrepancy Sobol) sequences, which replace pseudo-random points with a deliberately even sweep of the unit cube and can lift the convergence rate toward \(1/N\) in low effective dimension. The discipline is always the same: never grow \(N\) when you can shrink \(\sigma_Y\).</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Antithetic variates: measure the variance reduction vs plain Monte Carlo
+import numpy as np, math
+rng = np.random.default_rng(1)
+
+S0, K, r, sig, T = 100.0, 105.0, 0.05, 0.20, 1.0
+M = 100_000                                   # plain uses M draws; antithetic M/2 pairs
+drift, vol, disc = (r - 0.5*sig*sig)*T, sig*math.sqrt(T), math.exp(-r*T)
+def call_payoff(Z):
+    return disc * np.maximum(S0*np.exp(drift + vol*Z) - K, 0.0)
+
+# plain MC: M independent draws
+Yp = call_payoff(rng.standard_normal(M))
+price_plain, se_plain = Yp.mean(), Yp.std(ddof=1)/math.sqrt(M)
+
+# antithetic: M/2 shocks, each paired with its mirror -Z, averaged into one sample
+Zh = rng.standard_normal(M//2)
+Ya = 0.5 * (call_payoff(Zh) + call_payoff(-Zh))   # M/2 antithetic samples
+price_anti, se_anti = Ya.mean(), Ya.std(ddof=1)/math.sqrt(M//2)
+
+rho = np.corrcoef(call_payoff(Zh), call_payoff(-Zh))[0, 1]
+print(f"plain MC     : {price_plain:.4f}  SE {se_plain:.4f}")
+print(f"antithetic   : {price_anti:.4f}  SE {se_anti:.4f}")
+print(f"mirror corr  : {rho:+.3f}   (negative -> variance falls)")
+print(f"variance cut : {(se_plain/se_anti)**2:.2f}x   for the same {M:,} evaluations")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="mcsim-anti" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT Q5.3 — PLAIN vs ANTITHETIC</span><span class="w-sub">SAME EVALUATIONS · EQ Q5.5 · 60 TRIALS</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>EVALUATIONS / TRIAL <output id="mcsim-anti-N-out">4,096</output></label><input type="range" id="mcsim-anti-N" min="8" max="15" step="1" value="12"/></div>
+              <div class="ctl"><label>VOL σ <output id="mcsim-anti-sig-out">0.30</output></label><input type="range" id="mcsim-anti-sig" min="0.05" max="0.8" step="0.01" value="0.30"/></div>
+            </div>
+            <canvas class="w-canvas" id="mcsim-anti-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">PLAIN — SPREAD (SD)</div><div class="r-value" id="mcsim-anti-sp">—</div></div>
+              <div class="readout acc"><div class="r-label">ANTITHETIC — SPREAD (SD)</div><div class="r-value" id="mcsim-anti-sa">—</div></div>
+              <div class="readout acc"><div class="r-label">VARIANCE REDUCTION</div><div class="r-value" id="mcsim-anti-red">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Each dot is one independent pricing trial of a \(K=100\) call, plotted by its estimate. The <span style="color:var(--accent);">mint</span> cloud (antithetic) and the <span style="color:var(--blue);">blue</span> cloud (plain) use the <em>same number of payoff evaluations</em> per trial, so this is a fair fight. The mint cloud hugs the true price far more tightly: that narrower scatter is the variance reduction, quantified at right. The call is monotone in the shock, so antithetics always win here — switch your mental model to a straddle and they would not.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 5.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">5.4</span><h2>Path-dependent options — Asian &amp; barrier</h2></div>
+        <p>Monte Carlo earns its keep where closed forms stop. Two workhorse exotics show why. Both depend not on \(S_T\) alone but on the trajectory the price took to get there — so you must simulate the whole path (EQ Q5.4), not just the endpoint.</p>
+
+        <p>An <strong>Asian option</strong> pays on the <em>average</em> price over a set of monitoring dates, not the final price. Averaging damps both the payoff's volatility and any last-minute manipulation, which is why Asians are popular in commodity and FX markets:</p>
+
+        <div class="eq"><span class="eq-tag">EQ Q5.7 — ARITHMETIC ASIAN CALL</span>
+        $$ \text{payoff} = \max\!\left( \bar{S} - K,\ 0 \right), \qquad \bar{S} = \frac{1}{m}\sum_{k=1}^{m} S_{t_k} $$
+        <div class="eq-note">\(\bar S\) is the arithmetic mean over \(m\) monitoring dates along each simulated path. <b>No closed form exists</b> — a sum of lognormals is not lognormal — so this is a genuine Monte Carlo problem. The neat trick: the <em>geometric</em>-average Asian (product, not sum) <em>does</em> price in closed form, and it is ~0.99 correlated with the arithmetic one, making it the textbook control variate (EQ Q5.6) for this payoff.</div>
+        </div>
+
+        <p>A <strong>barrier option</strong> activates or extinguishes if the price touches a level \(B\) at any point. A down-and-out call, say, pays the usual call payoff <em>unless</em> the path ever falls to \(B\), in which case it is worthless:</p>
+
+        <div class="eq"><span class="eq-tag">EQ Q5.8 — DOWN-AND-OUT CALL</span>
+        $$ \text{payoff} = \max(S_T - K,\ 0)\,\cdot\,\mathbf{1}\!\left\{\min_{0\le t\le T} S_t \,&gt;\, B\right\} $$
+        <div class="eq-note">The indicator \(\mathbf{1}\{\cdot\}\) zeroes the payoff on any path whose running minimum breaches the barrier \(B\). <b>Discrete monitoring introduces a bias</b>: checking the barrier only at grid points misses intra-step crossings, so a coarse path systematically over-prices a knock-out. Refining the grid (\(m\to\infty\)) removes it, or a Brownian-bridge correction estimates the missed-crossing probability analytically between steps. This is the path-discretization bias of §5.2 made concrete — and a classic Monte Carlo trap.</div>
+        </div>
+
+        <p class="note">The pattern generalizes: lookbacks (payoff on the running max/min), cliquets (sums of capped period returns), autocallables (early-redemption ladders), and worst-of baskets across many correlated underlyings are all priced by the same loop — simulate paths, apply the payoff functional, discount the mean. The payoff code changes; the engine does not. That uniformity is exactly why simulation became the lingua franca of the exotics desk.</p>
+      </section>
+
+      <!-- ====================== 5.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">5.5</span><h2>Greeks via Monte Carlo</h2></div>
+        <p>A price is only half the job — desks hedge with the Greeks (Quant 03), and those derivatives must come out of the same simulation. The naïve approach, <strong>finite differences (bump-and-revalue)</strong>, reprices at \(S_0\) and \(S_0+h\) and takes the slope. It is universal but treacherous:</p>
+
+        <div class="eq"><span class="eq-tag">EQ Q5.9 — BUMP-AND-REVALUE DELTA</span>
+        $$ \hat\Delta \;=\; \frac{\hat V(S_0 + h) - \hat V(S_0 - h)}{2h} $$
+        <div class="eq-note">A central difference of two Monte Carlo prices. <b>The bias–variance trap:</b> too large an \(h\) biases the estimate (you measure a secant, not the tangent); too small an \(h\) and the difference is swamped by Monte Carlo noise — the variance of the quotient blows up like \(1/h^2\). The one rule that rescues it: use <em>common random numbers</em> — the same seed for both legs — so the noise cancels in the difference rather than compounding.</div>
+        </div>
+
+        <p>Two cleaner families avoid the bump entirely. The <strong>pathwise (infinitesimal perturbation) estimator</strong> differentiates the payoff itself — for a call, \(\partial_{S_0}\max(S_T-K,0) = \mathbf{1}\{S_T&gt;K\}\,S_T/S_0\) — giving an unbiased delta in a single pass, valid whenever the payoff is Lipschitz (it fails at the kink of a digital). The <strong>likelihood-ratio method</strong> instead differentiates the probability density, moving the derivative onto a smooth weight so it works even for discontinuous payoffs, at the cost of higher variance. Modern pricers increasingly use <strong>adjoint algorithmic differentiation (AAD)</strong>, which computes <em>all</em> Greeks in one reverse pass at a cost independent of the number of parameters — the same trick that powers backpropagation in deep learning.</p>
+
+        <div class="callout warn">
+          <span class="co-icon">THE COMMON-SEED RULE</span>
+          <p><strong>Reuse random numbers across every revaluation.</strong> Pricing the base and bumped scenarios on <em>independent</em> draws makes their difference the difference of two noisy numbers — the noise adds in quadrature and the Greek is garbage. Freeze the seed (common random numbers) and the bulk of the noise is identical in both legs and cancels in the subtraction. It is the single most common Monte Carlo Greeks bug, and the cheapest to fix.</p>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>The same engine that prices an exotic also measures a portfolio's tail.</strong> Replace "discounted payoff" with "loss" and the average becomes an expected shortfall, the quantile becomes a Value-at-Risk. Quant 06 turns Monte Carlo loose on the whole book: VaR and ES, historical vs parametric vs simulated risk, backtesting, and why the rare-event tail is exactly where \(1/\sqrt{N}\) hurts most and importance sampling earns its keep.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 5.R ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">5.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://doi.org/10.1016/0304-405X(77)90005-8" target="_blank" rel="noopener">Boyle, P. (1977). <span class="ref-venue">Options: A Monte Carlo Approach</span>.</a> <span class="ref-meta">Journal of Financial Economics 4(3) — the paper that brought simulation to option pricing.</span></li>
+          <li><a href="https://doi.org/10.1007/978-0-387-21617-1" target="_blank" rel="noopener">Glasserman, P. (2003). <span class="ref-venue">Monte Carlo Methods in Financial Engineering</span>.</a> <span class="ref-meta">Springer — the definitive reference for variance reduction, path simulation, and Greeks.</span></li>
+          <li><a href="https://doi.org/10.1016/0304-405X(77)90016-2" target="_blank" rel="noopener">Boyle, P., Broadie, M. &amp; Glasserman, P. (1997). <span class="ref-venue">Monte Carlo Methods for Security Pricing</span>.</a> <span class="ref-meta">Journal of Economic Dynamics and Control 21 — the canonical survey of MC techniques in finance.</span></li>
+          <li><a href="https://doi.org/10.1111/1467-9965.00057" target="_blank" rel="noopener">Longstaff, F. &amp; Schwartz, E. (2001). <span class="ref-venue">Valuing American Options by Simulation: A Simple Least-Squares Approach</span>.</a> <span class="ref-meta">Review of Financial Studies 14(1) — least-squares Monte Carlo for early-exercise payoffs.</span></li>
+          <li><a href="https://doi.org/10.21314/JOR.2006.140" target="_blank" rel="noopener">Giles, M. &amp; Glasserman, P. (2006). <span class="ref-venue">Smoking Adjoints: Fast Monte Carlo Greeks</span>.</a> <span class="ref-meta">RISK Magazine — adjoint algorithmic differentiation for computing all Greeks in one reverse pass.</span></li>
+          <li><a href="https://doi.org/10.1007/978-1-4757-3071-5" target="_blank" rel="noopener">Kloeden, P. &amp; Platen, E. (1992). <span class="ref-venue">Numerical Solution of Stochastic Differential Equations</span>.</a> <span class="ref-meta">Springer — Euler–Maruyama and higher-order path-discretization schemes.</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../quant/04-interest-rate-models.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">04</span> Interest-Rate Models</div></a>
+        <a class="next" href="../quant/06-risk-measurement.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">06</span> Risk Measurement</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — QUANT · CH 05</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* ============================================================
+   Monte Carlo Methods in Finance — chapter instruments
+   Single IIFE, no globals. A shared erf/Black-Scholes core and
+   a deterministic standard-normal generator (Box-Muller on a
+   mulberry32 stream) keep every widget reproducible and let the
+   JS agree with the Python cells to plotting precision.
+   ============================================================ */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  /* --- standard normal CDF via Abramowitz & Stegun 7.1.26 erf --- */
+  function erf(x) {
+    var s = x < 0 ? -1 : 1;
+    x = Math.abs(x);
+    var t = 1 / (1 + 0.3275911 * x);
+    var y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t
+                  - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x);
+    return s * y;
+  }
+  function ncdf(x) { return 0.5 * (1 + erf(x / Math.SQRT2)); }
+
+  /* --- closed-form Black-Scholes call (the truth line) --- */
+  function bsCall(S, K, r, sig, T) {
+    var sq = Math.sqrt(T);
+    var d1 = (Math.log(S / K) + (r + 0.5 * sig * sig) * T) / (sig * sq);
+    var d2 = d1 - sig * sq;
+    return S * ncdf(d1) - K * Math.exp(-r * T) * ncdf(d2);
+  }
+
+  /* --- deterministic N(0,1) draws: Box-Muller over a seeded stream --- */
+  function gaussians(n, seed) {
+    var rnd = FM.mulberry32(seed >>> 0);
+    var out = new Float64Array(n), i;
+    for (i = 0; i + 1 < n; i += 2) {
+      var u1 = rnd(), u2 = rnd();
+      if (u1 < 1e-12) u1 = 1e-12;
+      var R = Math.sqrt(-2 * Math.log(u1)), th = 2 * Math.PI * u2;
+      out[i] = R * Math.cos(th);
+      out[i + 1] = R * Math.sin(th);
+    }
+    if (n % 2 === 1) {                       /* odd tail: one more draw */
+      var a = rnd(); if (a < 1e-12) a = 1e-12;
+      out[n - 1] = Math.sqrt(-2 * Math.log(a)) * Math.cos(2 * Math.PI * rnd());
+    }
+    return out;
+  }
+
+  function fnum(x, d) { d = d === undefined ? 4 : d; return x.toFixed(d); }
+  function commafy(n) { return Math.round(n).toLocaleString("en-US"); }
+
+  /* ========================================================
+     INSTRUMENT Q5.1 — Monte Carlo option pricer
+     Estimate & 95% band converge to the BS line as N grows.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("mcsim-pricer");
+    if (!root) return;
+    var canvas = document.getElementById("mcsim-canvas");
+    var inN = document.getElementById("mcsim-N");
+    var inK = document.getElementById("mcsim-K");
+    var inSig = document.getElementById("mcsim-sig");
+    var outN = document.getElementById("mcsim-N-out");
+    var outK = document.getElementById("mcsim-K-out");
+    var outSig = document.getElementById("mcsim-sig-out");
+    var elPrice = document.getElementById("mcsim-price");
+    var elSE = document.getElementById("mcsim-se");
+    var elCI = document.getElementById("mcsim-ci");
+    var elBS = document.getElementById("mcsim-bs");
+    var S0 = 100, r = 0.05, T = 1.0;
+    var EVAL_CAP = 60000;     /* cap on simulated draws (UI stays snappy);
+                                 displayed N can exceed this — math is identical
+                                 in expectation, only the realized noise differs */
+
+    /* price a call by MC at a *displayed* path count N, returns {est, se} */
+    function priceMC(N, K, sig) {
+      var disc = Math.exp(-r * T);
+      var drift = (r - 0.5 * sig * sig) * T, vol = sig * Math.sqrt(T);
+      var n = Math.min(N, EVAL_CAP);
+      var Z = gaussians(n, 12345);
+      var sum = 0, sum2 = 0, i, p;
+      for (i = 0; i < n; i++) {
+        p = disc * Math.max(S0 * Math.exp(drift + vol * Z[i]) - K, 0);
+        sum += p; sum2 += p * p;
+      }
+      var mean = sum / n;
+      var varp = Math.max(sum2 / n - mean * mean, 0);
+      /* report SE for the *displayed* N (the honest 1/sqrt(N) law) */
+      var se = Math.sqrt(varp) / Math.sqrt(N);
+      return { est: mean, se: se, sd: Math.sqrt(varp) };
+    }
+
+    function render() {
+      var N = Math.round(Math.pow(2, +inN.value));
+      var K = +inK.value, sig = +inSig.value;
+      outN.textContent = commafy(N);
+      outK.textContent = K;
+      outSig.textContent = fnum(sig, 2);
+
+      var truth = bsCall(S0, K, r, sig, T);
+      var res = priceMC(N, K, sig);
+      var half = 1.96 * res.se;
+
+      elPrice.textContent = fnum(res.est, 3);
+      elSE.textContent = fnum(res.se, 4);
+      elCI.textContent = "± " + fnum(half, 4);
+      elBS.textContent = fnum(truth, 3);
+
+      /* ---- draw: estimate ± 95% band vs the BS truth line, over a sweep of N ---- */
+      var c = FM.setupCanvas(canvas, 300);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      var padL = 54, padR = 16, padT = 18, padB = 32;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      ctx.clearRect(0, 0, w, h);
+
+      var EXPS = [];               /* x-axis: log2(N) from 6..19 */
+      var lo = +inN.min | 0, hi = +inN.max | 0, e;
+      for (e = lo; e <= hi; e++) EXPS.push(e);
+
+      /* vertical range: truth +/- a few percent, plus widest band */
+      var band0 = priceMC(Math.round(Math.pow(2, lo)), K, sig);
+      var span = Math.max(1.96 * band0.se * 1.15, truth * 0.06, 1);
+      var vlo = truth - span, vhi = truth + span;
+      function px(ex) { return x0 + (ex - lo) / (hi - lo) * (x1 - x0); }
+      function py(v) { return y0 - (v - vlo) / (vhi - vlo) * (y0 - y1); }
+
+      /* frame + gridlines */
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(x0, y1, x1 - x0, y0 - y1);
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      var gi;
+      for (gi = 0; gi <= 4; gi++) {
+        var gv = vlo + (vhi - vlo) * gi / 4, gy = py(gv);
+        ctx.strokeStyle = "rgba(47,50,52,.5)";
+        ctx.beginPath(); ctx.moveTo(x0, gy); ctx.lineTo(x1, gy); ctx.stroke();
+        ctx.fillStyle = C.MUT; ctx.fillText(gv.toFixed(2), x0 - 6, gy);
+      }
+
+      /* the 95% band as a shaded ribbon across N */
+      var pts = EXPS.map(function (ex) {
+        var Ni = Math.round(Math.pow(2, ex));
+        var rr = priceMC(Ni, K, sig);
+        return { ex: ex, est: rr.est, half: 1.96 * rr.se };
+      });
+      ctx.fillStyle = "rgba(155,155,155,.14)";
+      ctx.beginPath();
+      pts.forEach(function (p, i) {
+        var X = px(p.ex), Y = py(Math.min(p.est + p.half, vhi));
+        if (i === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y);
+      });
+      for (var j = pts.length - 1; j >= 0; j--) {
+        ctx.lineTo(px(pts[j].ex), py(Math.max(pts[j].est - pts[j].half, vlo)));
+      }
+      ctx.closePath(); ctx.fill();
+
+      /* BS truth line (blue) */
+      ctx.strokeStyle = C.BLUE; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(x0, py(truth)); ctx.lineTo(x1, py(truth)); ctx.stroke();
+
+      /* MC estimate path (mint) */
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 2;
+      ctx.beginPath();
+      pts.forEach(function (p, i) {
+        var X = px(p.ex), Y = py(Math.max(Math.min(p.est, vhi), vlo));
+        if (i === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y);
+      });
+      ctx.stroke();
+
+      /* marker at the selected N */
+      var selX = px(+inN.value), selY = py(Math.max(Math.min(res.est, vhi), vlo));
+      ctx.fillStyle = C.MINT;
+      ctx.beginPath(); ctx.arc(selX, selY, 3.6, 0, 2 * Math.PI); ctx.fill();
+      ctx.strokeStyle = C.SEC; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+      ctx.beginPath(); ctx.moveTo(selX, y1); ctx.lineTo(selX, y0); ctx.stroke();
+      ctx.setLineDash([]);
+
+      /* axis labels */
+      ctx.fillStyle = C.MUT; ctx.font = C.MONO;
+      ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText("N = 2^" + lo, x0, y0 + 6);
+      ctx.textAlign = "right";
+      ctx.fillText("N = 2^" + hi, x1, y0 + 6);
+      ctx.fillStyle = C.BLUE; ctx.textAlign = "left";
+      ctx.fillText("■ BLACK–SCHOLES", x0 + 6, y1 + 4);
+      ctx.fillStyle = C.MINT;
+      ctx.fillText("■ MC ESTIMATE ± 95%", x0 + 6, y1 + 18);
+    }
+
+    inN.addEventListener("input", render);
+    inK.addEventListener("input", render);
+    inSig.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT Q5.2 — The 1/sqrt(N) convergence law
+     SE = sigma_Y / sqrt(N) drawn on log-log axes (slope -1/2).
+     ======================================================== */
+  (function () {
+    var canvas = document.getElementById("mcsim-cv-canvas");
+    if (!canvas) return;
+    var inSy = document.getElementById("mcsim-cv-sy");
+    var inTgt = document.getElementById("mcsim-cv-tgt");
+    var outSy = document.getElementById("mcsim-cv-sy-out");
+    var outTgt = document.getElementById("mcsim-cv-tgt-out");
+    var elNeed = document.getElementById("mcsim-cv-need");
+
+    function render() {
+      var sy = +inSy.value, tgt = +inTgt.value;
+      outSy.textContent = fnum(sy, 1);
+      outTgt.textContent = fnum(tgt, 2);
+      var need = Math.pow(sy / tgt, 2);          /* N = (sigma_Y / SE)^2 */
+      elNeed.textContent = need >= 1e6 ? (need / 1e6).toFixed(2) + "M"
+                          : need >= 1e3 ? (need / 1e3).toFixed(1) + "K"
+                          : Math.round(need).toString();
+
+      var c = FM.setupCanvas(canvas, 300);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      var padL = 54, padR = 16, padT = 18, padB = 34;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      ctx.clearRect(0, 0, w, h);
+
+      /* x: log10(N) from 1 (10) to 7 (10M); y: log10(SE) auto-ranged */
+      var lx = 1, hx = 7;
+      function seAt(N) { return sy / Math.sqrt(N); }
+      var seHi = Math.log10(seAt(Math.pow(10, lx)));   /* largest SE (smallest N) */
+      var seLo = Math.log10(seAt(Math.pow(10, hx)));   /* smallest SE (largest N) */
+      var ly = Math.floor(seLo) - 0.3, hy = Math.ceil(seHi) + 0.3;
+      function px(lN) { return x0 + (lN - lx) / (hx - lx) * (x1 - x0); }
+      function py(lSE) { return y0 - (lSE - ly) / (hy - ly) * (y0 - y1); }
+
+      /* frame */
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(x0, y1, x1 - x0, y0 - y1);
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+
+      /* vertical gridlines = decades of N */
+      ctx.textAlign = "center"; ctx.textBaseline = "top";
+      var i;
+      for (i = lx; i <= hx; i++) {
+        var gx = px(i);
+        ctx.strokeStyle = "rgba(47,50,52,.5)";
+        ctx.beginPath(); ctx.moveTo(gx, y1); ctx.lineTo(gx, y0); ctx.stroke();
+        ctx.fillStyle = C.MUT; ctx.fillText("10^" + i, gx, y0 + 6);
+      }
+      /* horizontal gridlines = decades of SE */
+      ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      var yd;
+      for (yd = Math.ceil(ly); yd <= Math.floor(hy); yd++) {
+        var gy = py(yd);
+        ctx.strokeStyle = "rgba(47,50,52,.5)";
+        ctx.beginPath(); ctx.moveTo(x0, gy); ctx.lineTo(x1, gy); ctx.stroke();
+        ctx.fillStyle = C.MUT; ctx.fillText("10^" + yd, x0 - 6, gy);
+      }
+
+      /* target SE horizontal line */
+      var lTgt = Math.log10(tgt);
+      if (lTgt >= ly && lTgt <= hy) {
+        ctx.strokeStyle = C.SEC; ctx.setLineDash([4, 4]); ctx.lineWidth = 1;
+        var ty = py(lTgt);
+        ctx.beginPath(); ctx.moveTo(x0, ty); ctx.lineTo(x1, ty); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = C.SEC; ctx.textAlign = "left"; ctx.textBaseline = "bottom";
+        ctx.fillText("TARGET SE = " + tgt.toFixed(2), x0 + 6, ty - 3);
+        /* mark the N that meets it */
+        var lNneed = Math.log10(need);
+        if (lNneed >= lx && lNneed <= hx) {
+          ctx.fillStyle = C.MINT;
+          ctx.beginPath(); ctx.arc(px(lNneed), ty, 3.6, 0, 2 * Math.PI); ctx.fill();
+        }
+      }
+
+      /* the convergence line: straight, slope -1/2 */
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(px(lx), py(Math.log10(seAt(Math.pow(10, lx)))));
+      ctx.lineTo(px(hx), py(Math.log10(seAt(Math.pow(10, hx)))));
+      ctx.stroke();
+
+      ctx.fillStyle = C.MINT; ctx.font = C.MONO;
+      ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText("SE = σ_Y / √N   (slope −1/2)", x0 + 6, y1 + 4);
+    }
+    inSy.addEventListener("input", render);
+    inTgt.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT Q5.3 — Plain vs antithetic scatter
+     Many trials, same #evaluations each; compare the spreads.
+     ======================================================== */
+  (function () {
+    var canvas = document.getElementById("mcsim-anti-canvas");
+    if (!canvas) return;
+    var inN = document.getElementById("mcsim-anti-N");
+    var inSig = document.getElementById("mcsim-anti-sig");
+    var outN = document.getElementById("mcsim-anti-N-out");
+    var outSig = document.getElementById("mcsim-anti-sig-out");
+    var elSP = document.getElementById("mcsim-anti-sp");
+    var elSA = document.getElementById("mcsim-anti-sa");
+    var elRed = document.getElementById("mcsim-anti-red");
+    var S0 = 100, K = 100, r = 0.05, T = 1.0, TRIALS = 60;
+
+    function callPay(z, drift, vol, disc) {
+      return disc * Math.max(S0 * Math.exp(drift + vol * z) - K, 0);
+    }
+    function stats(arr) {
+      var n = arr.length, s = 0, i;
+      for (i = 0; i < n; i++) s += arr[i];
+      var m = s / n, v = 0;
+      for (i = 0; i < n; i++) v += (arr[i] - m) * (arr[i] - m);
+      return { mean: m, sd: Math.sqrt(v / n) };
+    }
+
+    function render() {
+      var N = Math.round(Math.pow(2, +inN.value));   /* evaluations per trial */
+      var sig = +inSig.value;
+      outN.textContent = commafy(N);
+      outSig.textContent = fnum(sig, 2);
+      var drift = (r - 0.5 * sig * sig) * T, vol = sig * Math.sqrt(T);
+      var disc = Math.exp(-r * T);
+      var truth = bsCall(S0, K, r, sig, T);
+
+      var plain = [], anti = [], seed = 808, t, i;
+      for (t = 0; t < TRIALS; t++) {
+        /* plain: N independent draws */
+        var Zp = gaussians(N, seed++); var sp = 0;
+        for (i = 0; i < N; i++) sp += callPay(Zp[i], drift, vol, disc);
+        plain.push(sp / N);
+        /* antithetic: N/2 shocks, each averaged with its mirror -> N evals */
+        var half = N >> 1; var Za = gaussians(half, seed++); var sa = 0;
+        for (i = 0; i < half; i++)
+          sa += 0.5 * (callPay(Za[i], drift, vol, disc) + callPay(-Za[i], drift, vol, disc));
+        anti.push(sa / half);
+      }
+      var stP = stats(plain), stA = stats(anti);
+      elSP.textContent = fnum(stP.sd, 4);
+      elSA.textContent = fnum(stA.sd, 4);
+      var red = stA.sd > 1e-12 ? (stP.sd * stP.sd) / (stA.sd * stA.sd) : 0;
+      elRed.textContent = red.toFixed(2) + "×";
+
+      /* ---- draw the two scatter clouds vs the truth line ---- */
+      var c = FM.setupCanvas(canvas, 300);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      var padL = 54, padR = 16, padT = 30, padB = 30;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      ctx.clearRect(0, 0, w, h);
+
+      var span = Math.max(stP.sd * 3.2, 0.4);
+      var vlo = truth - span, vhi = truth + span;
+      function vy(v) { return y0 - (v - vlo) / (vhi - vlo) * (y0 - y1); }
+      var rowP = y1 + (y0 - y1) * 0.33, rowA = y1 + (y0 - y1) * 0.70;
+
+      /* frame */
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(x0, y1, x1 - x0, y0 - y1);
+
+      /* truth = vertical line (price axis is x here) */
+      function vx(v) { return x0 + (v - vlo) / (vhi - vlo) * (x1 - x0); }
+      ctx.strokeStyle = C.BLUE; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(vx(truth), y1); ctx.lineTo(vx(truth), y0); ctx.stroke();
+      ctx.fillStyle = C.BLUE; ctx.font = C.MONO;
+      ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+      ctx.fillText("TRUE PRICE " + truth.toFixed(2), vx(truth), y1 - 4);
+
+      /* axis ticks (price) */
+      ctx.fillStyle = C.MUT; ctx.textAlign = "center"; ctx.textBaseline = "top";
+      var k;
+      for (k = 0; k <= 4; k++) {
+        var pv = vlo + (vhi - vlo) * k / 4;
+        ctx.fillText(pv.toFixed(2), vx(pv), y0 + 6);
+      }
+
+      /* plain cloud (blue) */
+      ctx.fillStyle = "rgba(78,138,247,.7)";
+      plain.forEach(function (p) {
+        ctx.beginPath(); ctx.arc(vx(Math.max(Math.min(p, vhi), vlo)), rowP, 2.6, 0, 2 * Math.PI); ctx.fill();
+      });
+      /* antithetic cloud (mint) */
+      ctx.fillStyle = "rgba(166,242,204,.85)";
+      anti.forEach(function (p) {
+        ctx.beginPath(); ctx.arc(vx(Math.max(Math.min(p, vhi), vlo)), rowA, 2.6, 0, 2 * Math.PI); ctx.fill();
+      });
+
+      /* row labels */
+      ctx.font = C.MONO; ctx.textAlign = "left"; ctx.textBaseline = "middle";
+      ctx.fillStyle = C.BLUE; ctx.fillText("PLAIN", x0 + 6, rowP);
+      ctx.fillStyle = C.MINT; ctx.fillText("ANTITHETIC", x0 + 6, rowA);
+    }
+    inN.addEventListener("input", render);
+    inSig.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

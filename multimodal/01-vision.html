@@ -1,0 +1,787 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Computer Vision with Deep Nets — AI Encyclopedia</title>
+<meta name="description" content="Vision was deep learning's first conquest, and the Vision Transformer quietly merged it with the language stack. Pixels to features, convolutional backbones and ImageNet, ViT, detection and segmentation, and CLIP's shared image-text embedding space." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+<link rel="canonical" href="https://ai-encyclopedia.com/multimodal/01-vision" />
+<meta property="og:url" content="https://ai-encyclopedia.com/multimodal/01-vision" />
+</head>
+<body data-track="multimodal" data-level="core">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ MULTIMODAL / 01 / VISION</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../multimodal/02-multimodal-llms.html">NEXT: 02 MULTIMODAL LLMs →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">MULTIMODAL &amp; WORLD MODELS · CHAPTER 01 / 06</div>
+    <h1>Computer Vision with Deep Nets</h1>
+    <p class="lede">Convolutional networks learned to read pixels, ImageNet made accuracy a shared benchmark, and recognition became the first task deep learning largely solved. <strong>The Vision Transformer later replaced the convolutional prior with the same attention blocks used in language models</strong>, putting vision and text on one architecture. This chapter covers how images become features, why ViT works, and how CLIP compares a photograph against a sentence.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 26 MIN</b></span>
+      <span>BUILDS ON<b>DEEP LEARNING 02 · VOL II 03</b></span>
+      <span>INSTRUMENTS<b>PATCH EMBED · RECEPTIVE FIELD · CLIP SIMILARITY</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">1.1</span>From pixels to features</a>
+      <a href="#s2"><span class="n">1.2</span>Conv backbones &amp; ImageNet</a>
+      <a href="#s3"><span class="n">1.3</span>Vision Transformers (ViT)</a>
+      <a href="#s4"><span class="n">1.4</span>Detection &amp; segmentation</a>
+      <a href="#s5"><span class="n">1.5</span>CLIP — images and text</a>
+      <a href="#s6"><span class="n">1.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 1.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">1.1</span><h2>From pixels to features — the CV problem</h2></div>
+        <p>A digital image is a tensor of numbers: an \(H\times W\times 3\) grid where each cell holds the red, green and blue intensity of one pixel. A modest \(224\times 224\) RGB photo is therefore \(150{,}528\) values — and nothing in those raw numbers tells you there is a cat in the frame. The defining difficulty of computer vision is the <strong>semantic gap</strong>: the pixels are low-level and the label is high-level, and between them sit every nuisance a real scene throws at you — lighting, viewpoint, occlusion, scale, background clutter, intra-class variation. Two photos of the same cat can share almost no pixel values; two photos of <em>different</em> things can be nearly identical at the pixel level.</p>
+
+        <p>For decades the answer was <strong>hand-engineered features</strong>: SIFT, HOG, SURF — operators a human designed to be robust to some of those nuisances, computing histograms of gradient orientations or scale-invariant keypoints, then feeding the result to a classifier like an SVM. They worked, within limits, and they encoded real insight about what makes images comparable. Their ceiling was that a person had to <em>guess</em> in advance which features mattered, and that guess never generalized far beyond the task it was tuned for.</p>
+
+        <p>The deep-learning bet was to stop guessing and <strong>learn the feature hierarchy from data</strong>. A trained vision network discovers, layer by layer, a representation that climbs the semantic gap on its own: the first layers respond to oriented edges and color contrasts, the middle layers to textures and motifs, the deep layers to object parts and finally whole objects. Crucially this hierarchy is not specified by hand — it falls out of fitting one differentiable function end-to-end against labels. The same compositional idea underlies everything that follows in this chapter; the only question that changes is <em>what architecture</em> does the composing.</p>
+
+        <div class="eq"><span class="eq-tag">EQ MM1.1 — AN IMAGE AS A FUNCTION TO A LABEL</span>
+        $$ I \in \mathbb{R}^{H\times W\times 3}, \qquad \hat{y} \;=\; f_\theta(I), \qquad \theta^\star = \arg\min_\theta \; \mathbb{E}_{(I,y)}\big[\, \mathcal{L}\big(f_\theta(I),\, y\big)\,\big] $$
+        <div class="eq-note">Vision is supervised learning where the input is a pixel grid. The classical pipeline fixed a hand-designed feature map \(\phi(I)\) and learned only a shallow classifier on top of \(\phi\). Deep learning makes the <b>entire</b> map \(f_\theta\) — features and classifier together — learnable, so the representation is optimized for the task instead of guessed in advance. Everything in this chapter is a different parameterization of \(f_\theta\): a convolutional stack (§1.2), a patch-transformer (§1.3), or a dual image/text encoder (§1.5).</div>
+        </div>
+
+        <p class="note">A subtlety worth stating up front: a pixel value is not a meaningful coordinate. Doubling the brightness of a photo is, semantically, almost a no-op, yet it moves every input number. This is exactly why raw-pixel nearest-neighbour search fails and why learned features — which are trained to be <em>invariant</em> to such nuisances — are the entire game. The features below are what make two images comparable at all.</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Why raw pixels are a bad space: brightness shift moves every number,
+# yet the picture is "the same". Learned features fix this; pixels don't.
+import numpy as np
+rng = np.random.default_rng(0)
+
+# a tiny 8x8 grayscale "image": a bright square in the corner
+img = np.zeros((8, 8))
+img[1:4, 1:4] = 0.8
+
+same_scene = np.clip(img + 0.15, 0, 1)        # same scene, brighter lighting
+diff_scene = np.zeros((8, 8)); diff_scene[4:7, 4:7] = 0.8   # different object
+
+def pix_dist(a, b):                            # raw-pixel L2 distance
+    return float(np.sqrt(((a - b) ** 2).sum()))
+
+print(f"pixel dist  same scene (brighter) : {pix_dist(img, same_scene):.3f}")
+print(f"pixel dist  different object      : {pix_dist(img, diff_scene):.3f}")
+print("\nin pixel space a brightness change can look as 'far' as a new object.")
+print("learning a feature map that ignores lighting is the whole point of §1.2-1.5.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 1.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">1.2</span><h2>Convolutional backbones &amp; ImageNet</h2></div>
+        <p>The architecture that closed the semantic gap was the <strong>convolutional neural network</strong> (covered in full in Deep Learning · Ch 02). The single idea: rather than a dense layer that wires every pixel to every unit, slide one small learnable kernel across the whole image and reuse it everywhere. That bakes in two priors that happen to be true of natural images — <em>locality</em> (the pixels relevant to an edge are adjacent) and <em>translation equivariance</em> (a pattern means the same thing wherever it appears) — and it is exactly this built-in <strong>inductive bias</strong> that lets a CNN generalize from far fewer images than an unconstrained network would need.</p>
+
+        <p>A <strong>backbone</strong> is the stack of convolution + normalization + pooling blocks that turns an image into a feature volume; a small <em>head</em> on top reads that volume for the task at hand. The canonical rhythm is to shrink the spatial grid while growing channel depth — trading <em>where</em> for <em>what</em> — until a global pool collapses the map to one vector per channel that a linear classifier can read.</p>
+
+        <p>What made this a field-wide movement rather than a clever trick was a benchmark. <strong>ImageNet</strong> — roughly 1.2 million labelled training images across 1000 categories, organized for the ILSVRC competition — gave everyone a shared, hard, large-scale yardstick. The inflection point was 2012: <strong>AlexNet</strong> cut the top-5 error from ~26% to ~16% in one stroke, the moment the modern deep-learning era is usually dated to. The years after were a tight relay of ideas, each fixing the previous ceiling:</p>
+
+        <table class="data">
+          <thead><tr><th>Model</th><th>Year</th><th>Top-5 err.</th><th>The idea it added</th></tr></thead>
+          <tbody>
+            <tr><td><strong>AlexNet</strong></td><td class="m">2012</td><td class="m">~16.4%</td><td>CNNs at GPU scale on ImageNet: ReLU, dropout, heavy augmentation. Started the era.</td></tr>
+            <tr><td><strong>VGG-16/19</strong></td><td class="m">2014</td><td class="m">~7.3%</td><td>Depth from uniformity — stacks of \(3\times 3\) convs only; two \(3\times3\)s match a \(5\times5\) field with fewer weights.</td></tr>
+            <tr><td><strong>GoogLeNet</strong></td><td class="m">2014</td><td class="m">~6.7%</td><td>Multi-scale Inception blocks with \(1\times1\) bottlenecks to stay cheap.</td></tr>
+            <tr><td><strong>ResNet-152</strong></td><td class="m">2015</td><td class="m hl">~3.6%</td><td>The residual / skip connection — \(\mathbf{y}=\mathcal{F}(\mathbf{x})+\mathbf{x}\) — that let networks go past ~20 layers and below human-level error.</td></tr>
+          </tbody>
+        </table>
+
+        <p>The decisive jump was <strong>ResNet</strong>. Before it, the field believed deeper was simply better, yet past about twenty layers accuracy got <em>worse</em> — and not from overfitting, since training error rose too. The cause was an optimization failure: gradients had to thread through too many transformations to reach the early layers. He et al. fixed it by adding the block's input back to its output, so each block learns only a <em>residual</em> correction and the gradient gets a direct \(+1\) path home. That one line enabled 152-layer networks, won ImageNet 2015, and created the <strong>residual stream</strong> that is now the backbone of essentially every deep architecture — Transformers included (Vol II · EQ 2.x). Hold onto this; the receptive-field instrument below makes the depth story tangible, and §1.3 reuses the very same residual blocks with attention instead of convolution.</p>
+
+        <p class="note">Honest status in 2026: convnets no longer hold the absolute accuracy crown on large-scale benchmarks — given enough data, ViT (§1.3) matches or exceeds them. But the gap is narrower than headlines imply. CNNs modernized with the same training recipes (the "ConvNeXt" line) remain competitive, and convolution still wins where data is scarce or latency and edge deployment matter, because its inductive bias substitutes for data a transformer cannot. Convolution did not lose; it became one well-understood tool among several.</p>
+
+        <div class="widget" id="vis-rf" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT MM1.1 — CONV vs ViT RECEPTIVE FIELD</span><span class="w-sub">3×3 CONV STACK (LOCAL, GROWS) vs ViT (GLOBAL FROM LAYER 1)</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>DEPTH (layers / blocks) <output id="vis-rf-depth-out">5</output></label><input type="range" id="vis-rf-depth" min="1" max="12" step="1" value="5"/></div>
+              <div class="ctl"><label>3×3 CONV STRIDE-2 DOWNSAMPLES <output id="vis-rf-pool-out">1</output></label><input type="range" id="vis-rf-pool" min="0" max="4" step="1" value="1"/></div>
+            </div>
+            <canvas class="w-canvas" id="vis-rf-canvas" height="240"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">CONV RECEPTIVE FIELD</div><div class="r-value" id="vis-rf-conv">11 px</div></div>
+              <div class="readout acc"><div class="r-label">ViT RECEPTIVE FIELD</div><div class="r-value" id="vis-rf-vit">FULL</div></div>
+              <div class="readout"><div class="r-label">CONV FEATURE STRIDE</div><div class="r-value" id="vis-rf-jump">2</div></div>
+            </div>
+          </div>
+          <div class="w-note">A convolutional unit only "sees" a window of the input — its receptive field — which grows slowly with depth: \(r_\ell = r_{\ell-1} + (k-1)\,j_{\ell-1}\), and only a stride-2 downsample doubles the jump \(j\) so later layers reach further. A ViT self-attention layer, by contrast, lets every patch attend to every other patch, so its receptive field is the <b>entire image at layer 1</b> (flat line at the top). That single difference — local-and-growing vs global-and-immediate — is the whole architectural argument of §1.3. Add downsamples and watch the conv curve climb to meet the global line.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 1.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">1.3</span><h2>Vision Transformers (ViT)</h2></div>
+        <p>The Transformer was built for sequences of tokens (Vol II · Ch 02–03). The Vision Transformer's contribution — "An Image is Worth 16×16 Words" — was the disarmingly simple observation that you can turn an image <em>into</em> a sequence of tokens and then change almost nothing else. Cut the image into a grid of non-overlapping square <strong>patches</strong>, flatten each patch into a vector, project it linearly to the model dimension, and you have a sequence of "visual words" that a standard Transformer encoder can chew on with self-attention.</p>
+
+        <p>Concretely, take an \(H\times W\) image and a patch size \(P\). You get a grid of \(\tfrac{H}{P}\times\tfrac{W}{P}\) patches; the canonical recipe is a \(224\times 224\) image with \(P=16\), giving a \(14\times 14\) grid — <strong>196 patches</strong>. Each patch of \(P\times P\times 3 = 768\) raw values is flattened and multiplied by one learned matrix \(E\) to produce a \(D\)-dimensional <strong>patch embedding</strong>. This is the only image-specific operation in the entire model:</p>
+
+        <div class="eq"><span class="eq-tag">EQ MM1.2 — PATCH EMBEDDING &amp; SEQUENCE LENGTH</span>
+        $$ N \;=\; \frac{H}{P}\cdot\frac{W}{P}, \qquad z_0 \;=\; \big[\, x_{\text{cls}};\; x_p^{1}E;\; x_p^{2}E;\; \cdots;\; x_p^{N}E \,\big] \;+\; E_{\text{pos}}, \qquad E \in \mathbb{R}^{(P^2\cdot 3)\times D} $$
+        <div class="eq-note">Each raw patch \(x_p^{i}\in\mathbb{R}^{P^2\cdot 3}\) is linearly projected by the shared matrix \(E\) to a \(D\)-vector — a single learned conv with kernel and stride both equal to \(P\). A prepended learnable <b>[CLS] token</b> \(x_{\text{cls}}\) aggregates information for classification, and a learned <b>positional embedding</b> \(E_{\text{pos}}\) is added because attention is permutation-invariant — without it the model could not tell top-left from bottom-right. From here the sequence \(z_0\) enters an ordinary Transformer encoder; <b>there is no convolutional prior left</b>. The cost: self-attention is \(O(N^2)\) in the patch count, so halving \(P\) quadruples \(N\) and roughly 16×'s the attention compute.</div>
+        </div>
+
+        <p>What you gain is a <em>global</em> receptive field from layer one (the instrument in §1.2 shows exactly this): any patch can attend to any other in a single step, where a CNN needs many layers to relate distant regions. What you give up is the convolutional inductive bias — locality and translation equivariance no longer come for free, the model must learn them. That trade has a sharp consequence the original paper made famous: <strong>ViT is data-hungry</strong>. Trained on ImageNet-1k alone it underperforms a comparable ResNet; pre-trained on a far larger corpus (the paper used the 303M-image JFT-300M) it overtakes the best CNNs. The slogan is fair: <em>convolution trades data for prior knowledge; ViT trades prior knowledge for data.</em></p>
+
+        <p>Since 2020 the picture has filled in. Strong data augmentation and regularization recipes (DeiT) made ViT trainable on ImageNet-1k alone; hierarchical, windowed variants (Swin) reintroduced a multi-scale, locality-aware structure that made transformers practical as general backbones for detection and segmentation; and self-supervised pre-training (DINO, MAE) learns ViT features without labels at all. The CLS-token / patch-sequence formulation, though, is the through-line — and it is what lets the same model family ingest images and text in one stack, the subject of §1.5 and of the next chapter.</p>
+
+        <div class="exercise" data-answer="196" data-tol="0.001" data-hint="patches per side = image side / patch side; total = (224/16) squared.">
+          <div class="ex-q">A Vision Transformer processes a \(224\times 224\) image using non-overlapping \(16\times 16\) patches. How many patches does it produce (excluding the [CLS] token)?</div>
+          <div class="ex-reveal-src">Patches per side \(= 224/16 = 14\). The grid is \(14\times 14\), so the patch count is \(14^2 = \) <b>196</b>. (With the [CLS] token the sequence length the encoder sees is \(196+1 = 197\).)</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># EQ MM1.2: patchify an image into NxN patches and flatten — the ONE
+# image-specific step in a Vision Transformer. We use a toy 8x8 RGB image.
+import numpy as np
+rng = np.random.default_rng(0)
+
+H = W = 8          # image side (toy; ViT uses 224)
+C = 3              # RGB channels
+P = 2              # patch side (toy; ViT uses 16)
+img = rng.integers(0, 256, size=(H, W, C)).astype(float)
+
+n_side = H // P                                   # patches per row/col
+patches = (img.reshape(n_side, P, n_side, P, C)   # block the grid
+              .transpose(0, 2, 1, 3, 4)           # group each PxP block
+              .reshape(n_side * n_side, P * P * C))  # flatten each patch
+
+print(f"image shape          : {img.shape}")
+print(f"grid of patches      : {n_side} x {n_side} = {n_side*n_side} patches")
+print(f"patch sequence shape : {patches.shape}   (N, P*P*C)")
+print(f"one patch is a vector of length P*P*C = {P*P*C}")
+
+# the same arithmetic for the real ViT-Base/16 setting:
+H2, P2 = 224, 16
+print(f"\nViT-B/16 on 224x224  : ({H2}//{P2})^2 = {(H2//P2)**2} patches (+1 CLS)")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="vis-patch" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT MM1.2 — PATCH-EMBEDDING EXPLORER</span><span class="w-sub">IMAGE → GRID OF PATCHES → TOKEN SEQUENCE · EQ MM1.2</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>IMAGE SIDE H = W <output id="vis-patch-img-out">224</output></label><input type="range" id="vis-patch-img" min="96" max="384" step="32" value="224"/></div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>PATCH SIZE P</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost" data-vis-p="8">8</button>
+                  <button class="w-btn ghost on" data-vis-p="16">16</button>
+                  <button class="w-btn ghost" data-vis-p="32">32</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="vis-patch-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">PATCHES (N)</div><div class="r-value" id="vis-patch-n">196</div></div>
+              <div class="readout"><div class="r-label">SEQUENCE (N + CLS)</div><div class="r-value" id="vis-patch-seq">197</div></div>
+              <div class="readout acc"><div class="r-label">ATTENTION COST ∝ N²</div><div class="r-value" id="vis-patch-cost">38.4K</div></div>
+            </div>
+          </div>
+          <div class="w-note">A synthetic scene is sliced into the \(\tfrac{H}{P}\times\tfrac{H}{P}\) patch grid that a ViT actually sees; each cell becomes one token in the sequence on the right. Switch to \(P=16\), \(H=224\) for the canonical 196 patches. Drop \(P\) to 8 and watch the patch count quadruple and the \(N^2\) attention cost explode — the central efficiency knob of every vision transformer.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 1.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">1.4</span><h2>Detection &amp; segmentation in brief</h2></div>
+        <p>Classification answers "<em>what</em> is in this image?" with a single label. Most real vision tasks demand "<em>what</em>, and <em>where</em>?" — and the answer's shape is what distinguishes the major task families. It is worth fixing the vocabulary, because the rest of the field is built on it:</p>
+
+        <ul>
+          <li><strong>Object detection</strong> — predict a <em>bounding box</em> plus a class for every object instance. Output: a variable-length list of (box, label, score) tuples.</li>
+          <li><strong>Semantic segmentation</strong> — assign a class to <em>every pixel</em>, with no notion of instances. Two adjacent cars become one undifferentiated "car" region. Output: an \(H\times W\) label map.</li>
+          <li><strong>Instance segmentation</strong> — a per-pixel mask for each individual object, separating those two cars. The union of detection and semantic segmentation.</li>
+          <li><strong>Panoptic segmentation</strong> — label every pixel, distinguishing countable <em>things</em> (cars, people) as instances while treating uncountable <em>stuff</em> (sky, road) as regions.</li>
+        </ul>
+
+        <p>Architecturally these are heads bolted onto the backbones of §1.2–1.3. The historical arc on detection ran from two-stage region proposers (R-CNN → Fast → Faster R-CNN, which propose candidate boxes then classify them) to single-shot real-time detectors (the YOLO and SSD families, which predict boxes directly in one pass), and most recently to <strong>set-prediction transformers</strong> (DETR), which cast detection as directly emitting a fixed set of objects and match predictions to ground truth with the Hungarian algorithm — no hand-designed anchor boxes or non-max suppression. Segmentation followed a parallel path: fully-convolutional encoder–decoders (FCN, U-Net) that upsample features back to pixel resolution, then Mask R-CNN adding a mask branch to a detector, and now transformer-based unifiers (Mask2Former) that treat every segmentation task as mask classification.</p>
+
+        <p>How do you score a predicted box against the truth? The universal currency is <strong>Intersection over Union</strong> — the overlap of the two boxes divided by their combined area. It is the threshold that decides whether a detection "counts," and it composes into mean Average Precision (mAP), the standard detection metric.</p>
+
+        <div class="eq"><span class="eq-tag">EQ MM1.3 — INTERSECTION OVER UNION (IoU)</span>
+        $$ \mathrm{IoU}(A, B) \;=\; \frac{|A \cap B|}{|A \cup B|} \;=\; \frac{|A \cap B|}{|A| + |B| - |A \cap B|} \;\in\; [0, 1] $$
+        <div class="eq-note">\(A\) is the predicted box, \(B\) the ground-truth box; \(|\cdot|\) is area. IoU \(= 1\) is a perfect overlap, \(0\) is disjoint. The union is written as \(|A|+|B|-|A\cap B|\) so the shared area is not double-counted. A detection is conventionally accepted when \(\mathrm{IoU}\ge 0.5\) (stricter benchmarks average over thresholds up to 0.95). The same measure, applied per-pixel, scores segmentation masks. <b>IoU is scale-free</b> — it cares about <i>relative</i> overlap, which is exactly why it survives across box sizes.</div>
+        </div>
+
+        <div class="exercise" data-answer="0.333" data-tol="0.02" data-unit="" data-hint="Two unit squares offset by half a side overlap in a 0.5-wide strip; IoU = intersection / (2 - intersection).">
+          <div class="ex-q">Two \(1\times 1\) boxes are offset so they overlap in a region of area \(0.5\). What is their IoU? (Use \(\mathrm{IoU}=\dfrac{|A\cap B|}{|A|+|B|-|A\cap B|}\).)</div>
+          <div class="ex-reveal-src">Intersection \(=0.5\); each box has area \(1\), so the union \(=1+1-0.5=1.5\). Then \(\mathrm{IoU}=\dfrac{0.5}{1.5}=\dfrac{1}{3}=\) <b>0.333</b>. Below the usual \(0.5\) acceptance threshold, so this prediction would not count as a hit.</div>
+        </div>
+
+        <p class="note">The frontier in 2026 is <strong>open-vocabulary and promptable</strong> perception: the Segment Anything Model (SAM/SAM 2) segments arbitrary objects from a point or box prompt without per-class training, and grounding models like Grounding DINO detect objects named by free text. Both lean on the image–text alignment of §1.5 — perception is increasingly steered by language rather than a fixed list of classes.</p>
+      </section>
+
+      <!-- ====================== 1.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">1.5</span><h2>CLIP — connecting images and text</h2></div>
+        <p>Every model so far maps an image to a label from a <em>fixed</em> list. CLIP — Contrastive Language–Image Pre-training — broke that ceiling by learning from the open web instead. The training signal is not class labels but the roughly 400 million <strong>(image, caption)</strong> pairs people already wrote on the internet. The architecture is two encoders that never share weights: an image encoder (a ViT or ResNet) and a text encoder (a Transformer). Each maps its input to a vector in <em>one shared embedding space</em>, and training pulls matching image–text pairs together while pushing mismatched ones apart.</p>
+
+        <p>The geometry that makes this work is <strong>cosine similarity</strong>: once both encoders' outputs are L2-normalized to unit length, the dot product of an image embedding and a text embedding measures the cosine of the angle between them — high when they describe the same thing, low when they do not. "Aligning images and text in a shared space" means precisely this: a photo of a dog and the string "a photo of a dog" land near each other on the unit sphere.</p>
+
+        <div class="eq"><span class="eq-tag">EQ MM1.4 — COSINE SIMILARITY &amp; THE CONTRASTIVE OBJECTIVE</span>
+        $$ \mathrm{sim}(I, T) \;=\; \frac{\mathbf{u}_I \cdot \mathbf{v}_T}{\lVert \mathbf{u}_I\rVert\,\lVert \mathbf{v}_T\rVert}, \qquad \mathcal{L} \;=\; -\frac{1}{2}\Big[\, \log\frac{e^{\,\mathrm{sim}(I_i,T_i)/\tau}}{\sum_{j} e^{\,\mathrm{sim}(I_i,T_j)/\tau}} \;+\; \log\frac{e^{\,\mathrm{sim}(I_i,T_i)/\tau}}{\sum_{j} e^{\,\mathrm{sim}(I_j,T_i)/\tau}}\,\Big] $$
+        <div class="eq-note">\(\mathbf{u}_I\) is the image embedding, \(\mathbf{v}_T\) the text embedding. The loss is a <b>symmetric InfoNCE</b>: over a batch of \(n\) pairs it forms an \(n\times n\) similarity matrix and applies cross-entropy so each image picks its true caption out of all \(n\) (and each caption picks its true image), with a learned temperature \(\tau\). The diagonal should be hot, everything off-diagonal cold. Because the supervision is "which caption matches," CLIP needs no curated label set and can therefore recognize concepts it was never explicitly trained to name.</div>
+        </div>
+
+        <p>The payoff is <strong>zero-shot classification</strong>. To classify an image into arbitrary categories you never trained on, write each candidate label as a sentence — "a photo of a {label}" — embed all of them with the text encoder, embed the image with the image encoder, and take the label whose embedding is most similar. No fine-tuning, no task-specific head; the classifier is built on the fly from words. CLIP matched a fully-supervised ResNet-50 on ImageNet <em>without seeing a single ImageNet training label</em>, and it generalizes far more robustly across distribution shifts than models trained on a fixed label set.</p>
+
+        <p>This shared space is the hinge of modern multimodal AI. CLIP's image encoder is the visual front-end of countless vision-language models (the next chapter); its text-conditioning is what lets diffusion image generators follow a prompt; and its similarity score is the retrieval engine behind "find me the photo that matches this description." The honest caveats: CLIP inherits the biases and noise of uncurated web data, it is weak at fine-grained counting and spatial relations, and its zero-shot accuracy is sensitive to the exact wording of the prompt ("prompt engineering" for images). It is a representation, not an oracle — but it is the representation that fused vision with the language stack.</p>
+
+        <div class="exercise" data-answer="true" data-tol="0" data-hint="CLIP's two encoders output vectors compared by cosine similarity in one common space.">
+          <div class="ex-q">True or false: CLIP trains an image encoder and a text encoder so that an image and its matching caption are mapped to nearby vectors in a single shared embedding space, compared by cosine similarity. (Answer <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">This is exactly CLIP's design (EQ MM1.4): both encoders emit L2-normalized vectors into one common space, and the contrastive objective pulls each (image, caption) pair together while pushing mismatched pairs apart. Matching pairs end up with high cosine similarity, which is what enables zero-shot classification by comparing an image against text-described labels. The statement is <b>true</b>.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># EQ MM1.4: cosine similarity + CLIP-style zero-shot pick. Toy 4-dim
+# embeddings stand in for a real image/text encoder's output vectors.
+import numpy as np
+
+def unit(v):                                   # L2-normalize to the unit sphere
+    return v / np.linalg.norm(v)
+
+def cosine(a, b):
+    return float(unit(a) @ unit(b))
+
+# one image embedding, three candidate-caption embeddings
+img        = np.array([0.9, 0.2, 0.1, 0.0])    # "a photo of a dog"
+captions = {
+    "a photo of a dog": np.array([0.8, 0.3, 0.0, 0.1]),
+    "a photo of a cat": np.array([0.1, 0.9, 0.2, 0.0]),
+    "a city skyline"  : np.array([0.0, 0.1, 0.2, 0.9]),
+}
+
+print("cosine similarity image vs each caption:")
+scores = {t: cosine(img, v) for t, v in captions.items()}
+for t, s in scores.items():
+    print(f"  {s:+.3f}   {t}")
+
+best = max(scores, key=scores.get)
+print(f"\nzero-shot prediction (argmax cosine): \"{best}\"")
+print("the dog caption wins — no ImageNet label, just words vs pixels.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="vis-clip" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT MM1.3 — CLIP SIMILARITY DEMO</span><span class="w-sub">ONE IMAGE EMBEDDING vs TEXT EMBEDDINGS · COSINE · EQ MM1.4</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>IMAGE</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-vis-img="dog">DOG PHOTO</button>
+                  <button class="w-btn ghost" data-vis-img="cat">CAT PHOTO</button>
+                  <button class="w-btn ghost" data-vis-img="city">CITY PHOTO</button>
+                </div>
+              </div>
+              <div class="ctl"><label>SOFTMAX TEMPERATURE 1/τ <output id="vis-clip-temp-out">10</output></label><input type="range" id="vis-clip-temp" min="1" max="30" step="1" value="10"/></div>
+            </div>
+            <canvas class="w-canvas" id="vis-clip-canvas" height="280"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">TOP MATCH</div><div class="r-value" id="vis-clip-top">a photo of a dog</div></div>
+              <div class="readout"><div class="r-label">TOP COSINE</div><div class="r-value" id="vis-clip-cos">0.96</div></div>
+              <div class="readout acc"><div class="r-label">ZERO-SHOT P(TOP)</div><div class="r-value" id="vis-clip-p">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Pick an image; the bars show its cosine similarity to five text prompts, and the softmax over those similarities (sharpened by \(1/\tau\)) is the zero-shot class probability. The matching caption stays brightest no matter which image you choose — that consistency <i>is</i> the shared embedding space. Crank the temperature up and the distribution collapses toward a confident one-hot pick; turn it down and the model hedges across captions.</div>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>CLIP gave vision and language a common coordinate system; the next step is putting them in one model that can talk back.</strong> Chapter 02 covers multimodal LLMs — how a CLIP-style vision encoder is stitched to a language model through a projection bridge, what visual instruction tuning trains, and how a single network learns to caption, answer questions about, and reason over images.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 1.R ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">1.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://arxiv.org/abs/2010.11929" target="_blank" rel="noopener">Dosovitskiy, A. et al. (2021). <span class="ref-venue">An Image Is Worth 16×16 Words: Transformers for Image Recognition at Scale</span>.</a> <span class="ref-meta">ICLR 2021 — the Vision Transformer; patch embeddings and the [CLS] token (EQ MM1.2).</span></li>
+          <li><a href="https://arxiv.org/abs/2103.00020" target="_blank" rel="noopener">Radford, A. et al. (2021). <span class="ref-venue">Learning Transferable Visual Models From Natural Language Supervision</span>.</a> <span class="ref-meta">ICML 2021 — CLIP; contrastive image–text pre-training and zero-shot transfer (EQ MM1.4).</span></li>
+          <li><a href="https://arxiv.org/abs/1512.03385" target="_blank" rel="noopener">He, K., Zhang, X., Ren, S. &amp; Sun, J. (2016). <span class="ref-venue">Deep Residual Learning for Image Recognition</span>.</a> <span class="ref-meta">CVPR 2016 — ResNet; the skip connection that unlocked very deep convolutional backbones.</span></li>
+          <li><a href="https://papers.nips.cc/paper/4824-imagenet-classification-with-deep-convolutional-neural-networks" target="_blank" rel="noopener">Krizhevsky, A., Sutskever, I. &amp; Hinton, G. E. (2012). <span class="ref-venue">ImageNet Classification with Deep Convolutional Neural Networks</span>.</a> <span class="ref-meta">NeurIPS 25 — AlexNet; the result that started the deep-learning era of vision.</span></li>
+          <li><a href="https://arxiv.org/abs/1409.0575" target="_blank" rel="noopener">Russakovsky, O. et al. (2015). <span class="ref-venue">ImageNet Large Scale Visual Recognition Challenge</span>.</a> <span class="ref-meta">IJCV 115(3) — the ImageNet/ILSVRC benchmark that drove the whole progression.</span></li>
+          <li><a href="https://arxiv.org/abs/2005.12872" target="_blank" rel="noopener">Carion, N. et al. (2020). <span class="ref-venue">End-to-End Object Detection with Transformers (DETR)</span>.</a> <span class="ref-meta">ECCV 2020 — detection as set prediction; no anchors or non-max suppression.</span></li>
+          <li><a href="https://arxiv.org/abs/2304.02643" target="_blank" rel="noopener">Kirillov, A. et al. (2023). <span class="ref-venue">Segment Anything</span>.</a> <span class="ref-meta">ICCV 2023 — SAM; promptable, open-vocabulary segmentation (§1.4 frontier).</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../index.html#toc"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">↖</span> INDEX</div></a>
+        <a class="next" href="../multimodal/02-multimodal-llms.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">02</span> Multimodal LLMs</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — MULTIMODAL &amp; WORLD MODELS · CH 01</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* chapter instruments — single IIFE, no globals */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  /* ============================================================
+     INSTRUMENT MM1.1 — CONV vs ViT RECEPTIVE FIELD
+     Conv RF grows by the recursion r_l = r_{l-1} + (k-1)*j_{l-1},
+     j doubles on each stride-2 downsample; ViT RF is full from layer 1.
+     ============================================================ */
+  (function () {
+    var root = document.getElementById("vis-rf");
+    if (!root) return;
+    var canvas = document.getElementById("vis-rf-canvas");
+    var depthIn = document.getElementById("vis-rf-depth");
+    var poolIn = document.getElementById("vis-rf-pool");
+    var depthOut = document.getElementById("vis-rf-depth-out");
+    var poolOut = document.getElementById("vis-rf-pool-out");
+    var convOut = document.getElementById("vis-rf-conv");
+    var vitOut = document.getElementById("vis-rf-vit");
+    var jumpOut = document.getElementById("vis-rf-jump");
+    var IMAGE_PX = 224; // reference image side for the "FULL" line
+
+    /* Build a schedule of `depth` 3x3 convs with `nPool` stride-2
+       downsamples spread roughly evenly through the stack. */
+    function schedule() {
+      var depth = parseInt(depthIn.value, 10);
+      var nPool = parseInt(poolIn.value, 10);
+      var poolAt = {};
+      if (nPool > 0) {
+        var step = depth / (nPool + 1);
+        for (var p = 1; p <= nPool; p++) {
+          poolAt[Math.min(depth, Math.round(step * p))] = true;
+        }
+      }
+      var layers = [];
+      for (var c = 1; c <= depth; c++) {
+        layers.push({ k: 3, s: poolAt[c] ? 2 : 1 });
+      }
+      return layers;
+    }
+
+    /* trace the conv RF; r0 = 1, j0 = 1 */
+    function trace(layers) {
+      var r = 1, j = 1, out = [{ r: 1, j: 1 }], i;
+      for (i = 0; i < layers.length; i++) {
+        r = r + (layers[i].k - 1) * j;
+        j = j * layers[i].s;
+        out.push({ r: r, j: j });
+      }
+      return out;
+    }
+
+    function render() {
+      depthOut.textContent = depthIn.value;
+      poolOut.textContent = poolIn.value;
+
+      var layers = schedule();
+      var tr = trace(layers);
+      var n = tr.length;
+      var finalConv = tr[n - 1].r;
+      var finalJump = tr[n - 1].j;
+
+      convOut.textContent = finalConv + " px";
+      vitOut.textContent = "FULL";
+      jumpOut.textContent = finalJump;
+
+      var s = FM.setupCanvas(canvas, 240);
+      var ctx = s.ctx, W = s.w, H = s.h;
+      ctx.clearRect(0, 0, W, H);
+
+      var padL = 42, padR = 16, padT = 24, padB = 34;
+      var x0 = padL, x1 = W - padR, y0 = H - padB, y1 = padT;
+      var maxR = Math.max(IMAGE_PX, finalConv);
+
+      /* frame */
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(x0, y1, x1 - x0, y0 - y1);
+
+      /* y gridlines */
+      ctx.font = C.MONO; ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      var g;
+      for (g = 0; g <= 4; g++) {
+        var gv = maxR * g / 4;
+        var gy = y0 - (gv / maxR) * (y0 - y1);
+        ctx.strokeStyle = "rgba(47,50,52,.5)";
+        ctx.beginPath(); ctx.moveTo(x0, gy); ctx.lineTo(x1, gy); ctx.stroke();
+        ctx.fillStyle = C.MUT;
+        ctx.fillText(Math.round(gv) + "px", x0 - 6, gy);
+      }
+
+      function px(i) { return n <= 1 ? x0 : x0 + i / (n - 1) * (x1 - x0); }
+      function py(r) { return y0 - (r / maxR) * (y0 - y1); }
+
+      /* ViT receptive field = full image, flat line at the top */
+      var vitY = py(IMAGE_PX);
+      ctx.strokeStyle = C.BLUE; ctx.lineWidth = 2;
+      ctx.setLineDash([5, 4]);
+      ctx.beginPath(); ctx.moveTo(x0, vitY); ctx.lineTo(x1, vitY); ctx.stroke();
+      ctx.setLineDash([]);
+
+      /* conv RF growth curve */
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 2;
+      ctx.beginPath();
+      var i;
+      for (i = 0; i < n; i++) {
+        var X = px(i), Y = py(tr[i].r);
+        if (i === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y);
+      }
+      ctx.stroke();
+
+      /* conv points: bigger blue square where a downsample occurred */
+      for (i = 0; i < n; i++) {
+        var X2 = px(i), Y2 = py(tr[i].r);
+        var down = i > 0 && tr[i].j > tr[i - 1].j;
+        if (down) {
+          ctx.fillStyle = C.BLUE;
+          ctx.fillRect(X2 - 3.5, Y2 - 3.5, 7, 7);
+        } else {
+          ctx.fillStyle = C.MINT;
+          ctx.beginPath(); ctx.arc(X2, Y2, 2.6, 0, 2 * Math.PI); ctx.fill();
+        }
+      }
+
+      /* labels + legend */
+      ctx.fillStyle = C.SEC; ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText("RECEPTIVE FIELD (px) vs DEPTH", x0 + 4, y1 + 3);
+      ctx.fillStyle = C.MUT; ctx.textAlign = "center"; ctx.textBaseline = "top";
+      ctx.fillText("layer →", (x0 + x1) / 2, y0 + 8);
+      ctx.textAlign = "right";
+      ctx.fillStyle = C.BLUE; ctx.fillText("- - ViT (global)", x1 - 4, vitY + 6);
+      ctx.fillStyle = C.MINT; ctx.fillText("● conv", x1 - 66, y1 + 3);
+      ctx.fillStyle = C.BLUE; ctx.fillText("■ downsample", x1 - 4, y1 + 3);
+    }
+
+    depthIn.addEventListener("input", render);
+    poolIn.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ============================================================
+     INSTRUMENT MM1.2 — PATCH-EMBEDDING EXPLORER
+     Slice a synthetic image into an (H/P)x(H/P) grid of ViT patches;
+     show the token sequence and the N, N+1, N^2 readouts. (EQ MM1.2)
+     ============================================================ */
+  (function () {
+    var root = document.getElementById("vis-patch");
+    if (!root) return;
+    var canvas = document.getElementById("vis-patch-canvas");
+    var imgIn = document.getElementById("vis-patch-img");
+    var imgOut = document.getElementById("vis-patch-img-out");
+    var nOut = document.getElementById("vis-patch-n");
+    var seqOut = document.getElementById("vis-patch-seq");
+    var costOut = document.getElementById("vis-patch-cost");
+    var btns = root.querySelectorAll("[data-vis-p]");
+    var P = 16;
+
+    /* A smooth synthetic "scene": a sky/ground gradient with a sun disc and
+       a foreground block — deterministic, so it renders identically every time. */
+    function scene(u, v) {
+      // u, v in [0,1] across the image
+      var sky = 1 - v;                         // brighter toward the top
+      var r, gch, b;
+      // sun disc near upper-right
+      var dx = u - 0.72, dy = v - 0.26;
+      var sun = Math.exp(-(dx * dx + dy * dy) / 0.010);
+      // ground band
+      var ground = v > 0.62 ? 1 : 0;
+      // a foreground rectangle (a "building")
+      var build = (u > 0.20 && u < 0.40 && v > 0.45 && v < 0.78) ? 1 : 0;
+      r = 0.18 + 0.55 * sky + 0.8 * sun - 0.10 * ground - 0.05 * build;
+      gch = 0.22 + 0.50 * sky + 0.7 * sun + 0.12 * ground - 0.08 * build;
+      b = 0.40 + 0.55 * sky + 0.4 * sun - 0.05 * ground + 0.10 * build;
+      function cl(x) { return Math.max(0, Math.min(1, x)); }
+      return [cl(r), cl(gch), cl(b)];
+    }
+
+    function render() {
+      var Himg = parseInt(imgIn.value, 10);
+      imgOut.textContent = Himg;
+      var nSide = Math.max(1, Math.floor(Himg / P));
+      var N = nSide * nSide;
+
+      nOut.textContent = N;
+      seqOut.textContent = (N + 1);
+      var cost = N * N;
+      costOut.textContent = FM.siFormat(cost, 1);
+
+      var s = FM.setupCanvas(canvas, 300);
+      var ctx = s.ctx, W = s.w, H = s.h;
+      ctx.clearRect(0, 0, W, H);
+
+      var topPad = 24, botPad = 22;
+      var gap = 46;
+      var avail = (W - gap) / 2;
+      var imgSide = Math.min(avail, H - topPad - botPad);
+      var imgX = (avail - imgSide) / 2;
+      var imgY = topPad;
+      var cell = imgSide / nSide;
+
+      /* labels */
+      ctx.font = C.MONO; ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+      ctx.fillStyle = C.SEC;
+      ctx.fillText("IMAGE  " + Himg + "×" + Himg, imgX + imgSide / 2, topPad - 9);
+
+      /* draw the scene, sampling at each pixel-block, then patch gridlines */
+      var px, py;
+      var res = Math.min(nSide * 4, 48); // sampling resolution for the picture
+      var rcell = imgSide / res;
+      for (px = 0; px < res; px++) {
+        for (py = 0; py < res; py++) {
+          var col = scene((px + 0.5) / res, (py + 0.5) / res);
+          ctx.fillStyle = "rgb(" + Math.round(col[0] * 255) + "," +
+            Math.round(col[1] * 255) + "," + Math.round(col[2] * 255) + ")";
+          ctx.fillRect(imgX + px * rcell, imgY + py * rcell,
+            Math.ceil(rcell), Math.ceil(rcell));
+        }
+      }
+      /* patch grid overlay */
+      ctx.strokeStyle = "rgba(0,0,0,.55)"; ctx.lineWidth = 1;
+      var i;
+      for (i = 0; i <= nSide; i++) {
+        ctx.beginPath();
+        ctx.moveTo(imgX + i * cell, imgY); ctx.lineTo(imgX + i * cell, imgY + imgSide); ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(imgX, imgY + i * cell); ctx.lineTo(imgX + imgSide, imgY + i * cell); ctx.stroke();
+      }
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 1.5;
+      ctx.strokeRect(imgX, imgY, imgSide, imgSide);
+
+      /* arrow */
+      var midY = imgY + imgSide / 2;
+      ctx.strokeStyle = C.MUT; ctx.lineWidth = 1.5;
+      var ax = avail + 6;
+      ctx.beginPath(); ctx.moveTo(ax, midY); ctx.lineTo(ax + gap - 18, midY); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(ax + gap - 18, midY); ctx.lineTo(ax + gap - 24, midY - 4);
+      ctx.lineTo(ax + gap - 24, midY + 4); ctx.closePath();
+      ctx.fillStyle = C.MUT; ctx.fill();
+      ctx.fillStyle = C.MUT; ctx.textAlign = "center";
+      ctx.font = C.MONO;
+      ctx.fillText("flatten + E", avail + gap / 2, midY - 10);
+
+      /* token sequence on the right: CLS + a strip of patch tokens */
+      var seqX = avail + gap;
+      var seqW = avail;
+      ctx.fillStyle = C.MINT; ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+      ctx.fillText("TOKEN SEQUENCE  " + (N + 1), seqX + seqW / 2, topPad - 9);
+
+      /* show up to a fixed number of token chips, then an ellipsis */
+      var maxChips = 28;
+      var shown = Math.min(N, maxChips);
+      var perRow = 7;
+      var chip = Math.min((seqW - 6) / perRow - 5, 30);
+      var startY = imgY + 4;
+      /* CLS token first */
+      function drawChip(idx, label, color, fill) {
+        var rrow = Math.floor(idx / perRow);
+        var ccol = idx % perRow;
+        var cx = seqX + ccol * (chip + 5) + 2;
+        var cy = startY + rrow * (chip + 5);
+        ctx.fillStyle = fill;
+        ctx.fillRect(cx, cy, chip, chip);
+        ctx.strokeStyle = color; ctx.lineWidth = 1;
+        ctx.strokeRect(cx, cy, chip, chip);
+        if (label) {
+          ctx.fillStyle = color; ctx.font = "8px ui-monospace, Menlo, monospace";
+          ctx.textAlign = "center"; ctx.textBaseline = "middle";
+          ctx.fillText(label, cx + chip / 2, cy + chip / 2);
+        }
+      }
+      drawChip(0, "CLS", C.BRIGHT, "rgba(78,138,247,.30)");
+      for (i = 0; i < shown; i++) {
+        drawChip(i + 1, "", C.MINT, "rgba(166,242,204,.16)");
+      }
+      if (N > maxChips) {
+        ctx.fillStyle = C.MUT; ctx.font = C.MONO;
+        ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+        var rrow = Math.floor((shown + 1) / perRow);
+        ctx.fillText("… + " + (N - shown) + " more",
+          seqX + 2, startY + (rrow + 1) * (chip + 5) + 4);
+      }
+    }
+
+    btns.forEach(function (b) {
+      b.addEventListener("click", function () {
+        P = parseInt(b.getAttribute("data-vis-p"), 10);
+        btns.forEach(function (x) { x.classList.remove("on"); });
+        b.classList.add("on");
+        render();
+      });
+    });
+    imgIn.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ============================================================
+     INSTRUMENT MM1.3 — CLIP SIMILARITY DEMO
+     Pick an image; show cosine similarity to 5 text prompts and the
+     softmax (zero-shot) distribution over them. (EQ MM1.4)
+     ============================================================ */
+  (function () {
+    var root = document.getElementById("vis-clip");
+    if (!root) return;
+    var canvas = document.getElementById("vis-clip-canvas");
+    var tempIn = document.getElementById("vis-clip-temp");
+    var tempOut = document.getElementById("vis-clip-temp-out");
+    var topOut = document.getElementById("vis-clip-top");
+    var cosOut = document.getElementById("vis-clip-cos");
+    var pOut = document.getElementById("vis-clip-p");
+    var btns = root.querySelectorAll("[data-vis-img]");
+    var current = "dog";
+
+    /* Toy 5-dim embeddings on a shared "concept space". Each image vector is
+       aligned with its matching caption — this is exactly what CLIP learns. */
+    var PROMPTS = [
+      "a photo of a dog",
+      "a photo of a cat",
+      "a city skyline",
+      "a plate of food",
+      "a sailboat at sea"
+    ];
+    var TEXT = [
+      [0.90, 0.12, 0.05, 0.10, 0.04],  // dog
+      [0.14, 0.90, 0.08, 0.12, 0.03],  // cat
+      [0.05, 0.07, 0.92, 0.06, 0.20],  // city
+      [0.10, 0.15, 0.05, 0.90, 0.05],  // food
+      [0.03, 0.04, 0.22, 0.05, 0.92]   // sailboat
+    ];
+    var IMAGES = {
+      dog:  [0.86, 0.20, 0.06, 0.14, 0.05],
+      cat:  [0.20, 0.88, 0.10, 0.16, 0.04],
+      city: [0.06, 0.10, 0.90, 0.08, 0.26]
+    };
+
+    function unit(v) {
+      var s = 0, i;
+      for (i = 0; i < v.length; i++) s += v[i] * v[i];
+      s = Math.sqrt(s) || 1;
+      return v.map(function (x) { return x / s; });
+    }
+    function cosine(a, b) {
+      var ua = unit(a), ub = unit(b), d = 0, i;
+      for (i = 0; i < ua.length; i++) d += ua[i] * ub[i];
+      return d;
+    }
+
+    function render() {
+      var invTau = parseInt(tempIn.value, 10);
+      tempOut.textContent = invTau;
+
+      var imgVec = IMAGES[current];
+      var sims = TEXT.map(function (t) { return cosine(imgVec, t); });
+      /* softmax over invTau * sims = zero-shot probabilities */
+      var probs = FM.softmax(sims.map(function (x) { return x * invTau; }), 1);
+
+      /* find top */
+      var topIdx = 0, k;
+      for (k = 1; k < sims.length; k++) if (sims[k] > sims[topIdx]) topIdx = k;
+      topOut.textContent = PROMPTS[topIdx];
+      cosOut.textContent = sims[topIdx].toFixed(2);
+      pOut.textContent = (probs[topIdx] * 100).toFixed(0) + "%";
+
+      var s = FM.setupCanvas(canvas, 280);
+      var ctx = s.ctx, W = s.w, H = s.h;
+      ctx.clearRect(0, 0, W, H);
+
+      var padL = 150, padR = 64, padT = 26, padB = 20;
+      var rowH = (H - padT - padB) / PROMPTS.length;
+      var barMax = W - padL - padR;
+      var i;
+
+      ctx.font = C.MONO; ctx.textBaseline = "middle";
+      ctx.fillStyle = C.SEC; ctx.textAlign = "left";
+      ctx.fillText("COSINE  (image: " + current + ")", padL, padT - 12);
+      ctx.textAlign = "right";
+      ctx.fillStyle = C.MUT;
+      ctx.fillText("P(zero-shot)", W - 6, padT - 12);
+
+      for (i = 0; i < PROMPTS.length; i++) {
+        var cy = padT + rowH * i + rowH / 2;
+        var sim = sims[i];
+        /* bar length scales cosine from 0..1 across barMax */
+        var len = Math.max(2, sim * barMax);
+        var isTop = i === topIdx;
+        var col = isTop ? C.MINT : C.MUT;
+
+        /* prompt label (right-aligned in the left gutter) */
+        ctx.fillStyle = isTop ? C.BRIGHT : C.SEC;
+        ctx.textAlign = "right"; ctx.font = C.MONO;
+        ctx.fillText(PROMPTS[i], padL - 10, cy);
+
+        /* track */
+        ctx.fillStyle = "rgba(47,50,52,.5)";
+        ctx.fillRect(padL, cy - 7, barMax, 14);
+        /* bar */
+        ctx.fillStyle = isTop ? "rgba(166,242,204,.85)" : "rgba(99,99,99,.7)";
+        ctx.fillRect(padL, cy - 7, len, 14);
+        /* cosine value at bar end */
+        ctx.fillStyle = col; ctx.textAlign = "left";
+        ctx.fillText(sim.toFixed(2), padL + len + 6, cy);
+
+        /* probability on the far right */
+        ctx.fillStyle = isTop ? C.MINT : C.MUT; ctx.textAlign = "right";
+        ctx.fillText((probs[i] * 100).toFixed(0) + "%", W - 6, cy);
+      }
+    }
+
+    btns.forEach(function (b) {
+      b.addEventListener("click", function () {
+        current = b.getAttribute("data-vis-img");
+        btns.forEach(function (x) { x.classList.remove("on"); });
+        b.classList.add("on");
+        render();
+      });
+    });
+    tempIn.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

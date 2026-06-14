@@ -1,0 +1,169 @@
+{
+  "concepts": [
+    {
+      "id": "dl-06-gans-s1",
+      "chapter": "dl/06-gans",
+      "section": "s1",
+      "title": "The adversarial game",
+      "eyebrow": "DEEP LEARNING",
+      "beats": [
+        {
+          "text": "A GAN sets up two networks as opponents and trains them together until fake samples become indistinguishable from real data.",
+          "visual": { "type": "title", "text": "The adversarial game", "sub": "Forger versus detective" }
+        },
+        {
+          "text": "Pixel-wise reconstruction losses reward blur, because averaging two plausible faces gives low error and a smeared ghost.",
+          "visual": { "type": "bars", "values": [0.9, 0.55, 0.2], "labels": ["sharp face", "averaged", "blurred"], "highlight": 1 }
+        },
+        {
+          "text": "The generator maps a latent vector drawn from a fixed Gaussian prior into a sample in data space.",
+          "visual": { "type": "equation", "tex": "z \\sim p_z, \\quad G(z) \\in \\mathcal{X}", "note": "noise to sample" }
+        },
+        {
+          "text": "The discriminator takes any sample and outputs its estimated probability that the input is real rather than generated.",
+          "visual": { "type": "equation", "tex": "D(x) \\in (0,1)", "note": "real vs fake probability" }
+        },
+        {
+          "text": "The generator never sees a real image directly; its only signal is the gradient flowing back through a moving discriminator.",
+          "visual": { "type": "plot", "ys": [0.2, 0.35, 0.5, 0.65, 0.8], "dot": 4, "xlabel": "training", "ylabel": "realism" }
+        },
+        {
+          "text": "A vanilla GAN is an implicit model: you can sample from it freely, but it cannot score the likelihood of a held-out image.",
+          "visual": { "type": "lattice" }
+        }
+      ]
+    },
+    {
+      "id": "dl-06-gans-s2",
+      "chapter": "dl/06-gans",
+      "section": "s2",
+      "title": "The minimax objective",
+      "eyebrow": "DEEP LEARNING",
+      "beats": [
+        {
+          "text": "Both players are packaged into a single two-player value function optimized in opposite directions.",
+          "visual": { "type": "title", "text": "The minimax objective", "sub": "One game, two directions" }
+        },
+        {
+          "text": "The discriminator maximizes and the generator minimizes the value function over real data and over noise.",
+          "visual": { "type": "equation", "tex": "\\min_G \\max_D \\; \\mathbb{E}_{x \\sim p_{\\text{data}}}[\\log D(x)] + \\mathbb{E}_{z \\sim p_z}[\\log(1 - D(G(z)))]", "note": "EQ N6.1" }
+        },
+        {
+          "text": "For a fixed generator the optimal discriminator is the posterior probability that a sample is real under the two densities.",
+          "visual": { "type": "equation", "tex": "D^{*}_G(x) = \\frac{p_{\\text{data}}(x)}{p_{\\text{data}}(x) + p_g(x)}", "note": "EQ N6.2" }
+        },
+        {
+          "text": "When the generator matches the data, the most informed verdict on every input is exactly one half, a coin flip.",
+          "visual": { "type": "stat", "value": 0.5, "label": "D* at the fixed point", "decimals": 1 }
+        },
+        {
+          "text": "Substituting the optimal discriminator, the generator is minimizing the Jensen-Shannon divergence, with global minimum minus log four.",
+          "visual": { "type": "equation", "tex": "\\max_D V(D,G) = 2\\,\\mathrm{JSD}(p_{\\text{data}} \\| p_g) - \\log 4 \\approx -1.386", "note": "EQ N6.3" }
+        },
+        {
+          "text": "In practice the generator maximizes log D of its samples, the non-saturating form that gives strong gradients while it is losing.",
+          "visual": { "type": "plot", "ys": [0.05, 0.1, 0.3, 0.6, 0.9], "dot": 0, "xlabel": "early training", "ylabel": "gradient" }
+        }
+      ]
+    },
+    {
+      "id": "dl-06-gans-s3",
+      "chapter": "dl/06-gans",
+      "section": "s3",
+      "title": "Instability & mode collapse",
+      "eyebrow": "DEEP LEARNING",
+      "beats": [
+        {
+          "text": "The theory assumes the inner maximization is solved exactly and the distributions overlap; reality grants neither.",
+          "visual": { "type": "title", "text": "Instability & mode collapse", "sub": "Three failure modes" }
+        },
+        {
+          "text": "When supports barely overlap, the Jensen-Shannon divergence is pinned at its ceiling of log two, so the gradient vanishes.",
+          "visual": { "type": "stat", "value": 0.693, "label": "JSD stuck at ln 2 (nats)", "decimals": 3 }
+        },
+        {
+          "text": "Mode collapse: the generator can win by mapping every latent to a single hyper-realistic output and abandoning the rest.",
+          "visual": { "type": "bars", "values": [0.95, 0.02, 0.01, 0.02], "labels": ["mode A", "mode B", "mode C", "mode D"], "highlight": 0 }
+        },
+        {
+          "text": "Collapse is structural: the adversarial loss has no term demanding diversity, so covering one mode scores as well as all.",
+          "visual": { "type": "equation", "tex": "\\mathrm{KL}(p_{\\text{data}} \\| p_g) \\;\\text{mode-covering} \\;\\;vs\\;\\; \\text{adversarial} \\;\\text{mode-seeking}", "note": "no diversity penalty" }
+        },
+        {
+          "text": "Simultaneous gradient descent on a minimax game can orbit the equilibrium forever, like players in rock-paper-scissors.",
+          "visual": { "type": "plot", "ys": [0.5, 0.8, 0.4, 0.75, 0.45, 0.7], "xlabel": "step", "ylabel": "loss" }
+        },
+        {
+          "text": "A generator loss that falls smoothly to zero usually means the discriminator collapsed, not that training succeeded.",
+          "visual": { "type": "plot", "ys": [0.9, 0.6, 0.35, 0.15, 0.05, 0.0], "dot": 5, "xlabel": "step", "ylabel": "G loss" }
+        }
+      ]
+    },
+    {
+      "id": "dl-06-gans-s4",
+      "chapter": "dl/06-gans",
+      "section": "s4",
+      "title": "DCGAN, WGAN & the Wasserstein fix",
+      "eyebrow": "DEEP LEARNING",
+      "beats": [
+        {
+          "text": "Two papers turned the fragile original GAN into something reliable: one fixed the architecture, one fixed the loss.",
+          "visual": { "type": "title", "text": "DCGAN, WGAN & Wasserstein", "sub": "Architecture and loss" }
+        },
+        {
+          "text": "DCGAN made image GANs reproducible with strided convolutions, transposed convolutions, batch norm, and no fully connected layers.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "WGAN measures distance with the Wasserstein earth-mover's metric, which stays smooth even when supports do not overlap.",
+          "visual": { "type": "equation", "tex": "W_1(p_{\\text{data}}, p_g) = \\inf_{\\gamma \\in \\Pi} \\; \\mathbb{E}_{(x,y) \\sim \\gamma}[\\, \\lVert x - y \\rVert \\,]", "note": "EQ N6.4" }
+        },
+        {
+          "text": "The intractable infimum becomes a maximization over one-Lipschitz functions, repurposing the discriminator as an unbounded critic.",
+          "visual": { "type": "equation", "tex": "W_1 = \\sup_{\\lVert f \\rVert_L \\le 1} \\; \\mathbb{E}_{x \\sim p_{\\text{data}}}[f(x)] - \\mathbb{E}_{z \\sim p_z}[f(G(z))]", "note": "EQ N6.5" }
+        },
+        {
+          "text": "Because the critic estimates a genuine distance, its value correlates with sample quality, giving a loss curve you can read.",
+          "visual": { "type": "plot", "ys": [0.9, 0.7, 0.55, 0.4, 0.28, 0.2], "xlabel": "step", "ylabel": "W1 estimate" }
+        },
+        {
+          "text": "Across variants, WGAN and WGAN-GP swap Jensen-Shannon for Wasserstein and a probability output for a real-valued critic.",
+          "visual": { "type": "bars", "values": [1, 1, 2, 2], "labels": ["GAN", "DCGAN", "WGAN", "WGAN-GP"], "highlight": 3 }
+        }
+      ]
+    },
+    {
+      "id": "dl-06-gans-s5",
+      "chapter": "dl/06-gans",
+      "section": "s5",
+      "title": "StyleGAN & where GANs went",
+      "eyebrow": "DEEP LEARNING",
+      "beats": [
+        {
+          "text": "By 2018 GANs generated small images reliably; the open question was control and resolution.",
+          "visual": { "type": "title", "text": "StyleGAN & after", "sub": "Control and resolution" }
+        },
+        {
+          "text": "Progressive growing added resolution layers one at a time, reaching one thousand twenty four by one thousand twenty four images.",
+          "visual": { "type": "stat", "value": 1024, "label": "max resolution reached", "unit": "px" }
+        },
+        {
+          "text": "StyleGAN maps the latent into an intermediate code that modulates feature-map statistics at every resolution via adaptive instance norm.",
+          "visual": { "type": "equation", "tex": "\\mathrm{AdaIN}(x_i, w) = y_{s,i}(w)\\,\\frac{x_i - \\mu(x_i)}{\\sigma(x_i)} + y_{b,i}(w)", "note": "EQ N6.6" }
+        },
+        {
+          "text": "Coarse layers set pose and shape, middle layers set features, and fine layers set color and micro-texture.",
+          "visual": { "type": "bars", "values": [0.9, 0.6, 0.3], "labels": ["coarse: pose", "middle: features", "fine: texture"] }
+        },
+        {
+          "text": "After 2021 diffusion models largely displaced GANs for image synthesis, being easier to train and covering modes better.",
+          "visual": { "type": "plot", "ys": [0.8, 0.7, 0.6, 0.45, 0.35, 0.25], "dot": 5, "xlabel": "2018 to 2026", "ylabel": "GAN share" }
+        },
+        {
+          "text": "GANs survive where latency matters, generating in a single forward pass and distilling slow diffusion into one-step models.",
+          "visual": { "type": "stat", "value": 1, "label": "GAN forward passes per sample" }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,169 @@
+{
+  "concepts": [
+    {
+      "id": "dl-03-sequence-models-s1",
+      "chapter": "dl/03-sequence-models",
+      "section": "s1",
+      "title": "Recurrent networks — weights shared over time",
+      "eyebrow": "DEEP LEARNING",
+      "beats": [
+        {
+          "text": "A recurrent network reads a sequence one step at a time and carries a hidden state forward.",
+          "visual": { "type": "title", "text": "Recurrent Networks", "sub": "Weights shared over time" }
+        },
+        {
+          "text": "At each step the cell updates its hidden state from the current input and the previous state, then emits an output.",
+          "visual": { "type": "equation", "tex": "h_t = \\tanh(W_{xh}\\,x_t + W_{hh}\\,h_{t-1} + b_h)", "note": "the same weights at every step" }
+        },
+        {
+          "text": "The weights are tied across all T steps, so the cell reading token one is identical to the cell reading token one thousand.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "Unrolling the loop reveals a feed-forward network of depth T whose layers happen to share parameters.",
+          "visual": { "type": "bars", "values": [1, 1, 1, 1], "labels": ["t=1", "t=2", "t=3", "t=4"] }
+        },
+        {
+          "text": "With Wxh equal to 2 and a zero start, the first hidden state is tanh of one, about 0.7616.",
+          "visual": { "type": "stat", "value": 0.7616, "label": "first hidden state h1", "decimals": 4 }
+        },
+        {
+          "text": "The output head is flexible, from many-to-one sentiment to many-to-many tagging to one-to-many generation.",
+          "visual": { "type": "plot", "ys": [0.76, 0.55, 0.4, 0.28, 0.2], "dot": true, "xlabel": "step", "ylabel": "hidden state" }
+        }
+      ]
+    },
+    {
+      "id": "dl-03-sequence-models-s2",
+      "chapter": "dl/03-sequence-models",
+      "section": "s2",
+      "title": "The vanishing / exploding gradient problem",
+      "eyebrow": "DEEP LEARNING",
+      "beats": [
+        {
+          "text": "Recurrence promises long-range memory, but a vanilla RNN cannot reach back hundreds of tokens to fill a blank.",
+          "visual": { "type": "title", "text": "Vanishing & Exploding Gradients", "sub": "Why long-range training fails" }
+        },
+        {
+          "text": "The gradient of the final state with respect to a distant state is a long product of Jacobian factors.",
+          "visual": { "type": "equation", "tex": "\\frac{\\partial h_T}{\\partial h_k} = \\prod_{t=k+1}^{T} \\operatorname{diag}(\\tanh'(a_t))\\, W_{hh}^{\\top}", "note": "one factor per step" }
+        },
+        {
+          "text": "Each factor is bounded by the recurrent weight norm, so the whole product behaves like a power of distance.",
+          "visual": { "type": "equation", "tex": "\\left|\\frac{\\partial h_T}{\\partial h_k}\\right| \\approx \\lambda^{\\,T-k}", "note": "geometric in the gap T minus k" }
+        },
+        {
+          "text": "With an effective gain of 0.8, a gradient from fifty steps away is scaled by about fourteen millionths.",
+          "visual": { "type": "plot", "ys": [1, 0.41, 0.17, 0.07, 0.011, 0.0000142], "mark": "log", "xlabel": "distance", "ylabel": "gradient" }
+        },
+        {
+          "text": "At gain 0.9, traveling forty-four steps scales the gradient to about 0.0097, roughly one percent of its size.",
+          "visual": { "type": "stat", "value": 0.0097, "label": "gradient after 44 steps", "decimals": 4 }
+        },
+        {
+          "text": "Exploding gradients are clipped cheaply, but vanishing ones are silent and need an architectural cure.",
+          "visual": { "type": "bars", "values": [1, 0.0097], "labels": ["start", "44 steps"], "highlight": 1 }
+        }
+      ]
+    },
+    {
+      "id": "dl-03-sequence-models-s3",
+      "chapter": "dl/03-sequence-models",
+      "section": "s3",
+      "title": "LSTM — gates & the cell state",
+      "eyebrow": "DEEP LEARNING",
+      "beats": [
+        {
+          "text": "The LSTM adds a second memory track, the cell state, whose update is mostly additive rather than a repeated matrix multiply.",
+          "visual": { "type": "title", "text": "LSTM", "sub": "Gates and the cell state" }
+        },
+        {
+          "text": "Three sigmoid gates act as soft valves that decide what to keep, what to add, and what to read out.",
+          "visual": { "type": "equation", "tex": "f_t, i_t, o_t = \\sigma(W[h_{t-1},x_t]+b)", "note": "forget, input, output gates in (0,1)" }
+        },
+        {
+          "text": "The cell scales old memory by the forget gate, scales the candidate by the input gate, then adds them.",
+          "visual": { "type": "equation", "tex": "c_t = f_t \\odot c_{t-1} + i_t \\odot \\tilde{c}_t", "note": "the additive highway" }
+        },
+        {
+          "text": "When the forget gate is near one and the input gate near zero, the cell barely changes and the gradient flows back undecayed.",
+          "visual": { "type": "plot", "ys": [0.9, 0.9, 0.89, 0.89, 0.88, 0.88], "dot": true, "xlabel": "step", "ylabel": "cell state" }
+        },
+        {
+          "text": "Counting the sigmoid valves, forget, input, and output, a standard LSTM has exactly three gates.",
+          "visual": { "type": "stat", "value": 3, "label": "gates in an LSTM", "decimals": 0 }
+        },
+        {
+          "text": "The forget bias usually starts at plus one, so the network defaults to remembering and learns to forget only when needed.",
+          "visual": { "type": "bars", "values": [0.9, 0.5, 0.8], "labels": ["forget", "input", "output"], "highlight": 0 }
+        }
+      ]
+    },
+    {
+      "id": "dl-03-sequence-models-s4",
+      "chapter": "dl/03-sequence-models",
+      "section": "s4",
+      "title": "GRU — a lighter gate",
+      "eyebrow": "DEEP LEARNING",
+      "beats": [
+        {
+          "text": "The GRU asks how much LSTM machinery is essential and answers with one state vector and two gates.",
+          "visual": { "type": "title", "text": "GRU", "sub": "A lighter gate" }
+        },
+        {
+          "text": "The update gate interpolates between keeping the old state and overwriting it with the candidate.",
+          "visual": { "type": "equation", "tex": "h_t = (1-z_t)\\odot h_{t-1} + z_t \\odot \\tilde{h}_t", "note": "one knob blends keep and write" }
+        },
+        {
+          "text": "A single update gate does the work of the LSTM's separate forget and input gates, summing to one by construction.",
+          "visual": { "type": "bars", "values": [2, 3, 2], "labels": ["RNN", "LSTM", "GRU"], "highlight": 2 }
+        },
+        {
+          "text": "The GRU keeps one state vector against the LSTM's two, and roughly three weight matrices against four.",
+          "visual": { "type": "bars", "values": [1, 4, 3], "labels": ["RNN", "LSTM", "GRU"], "highlight": 2 }
+        },
+        {
+          "text": "On many tasks GRU and LSTM are statistically indistinguishable, and the gap is small and task-dependent.",
+          "visual": { "type": "stat", "value": 0, "label": "universal winner", "decimals": 0 }
+        },
+        {
+          "text": "What both share is the additive gated state path, and that idea resurfaces in modern state-space models like Mamba.",
+          "visual": { "type": "lattice" }
+        }
+      ]
+    },
+    {
+      "id": "dl-03-sequence-models-s5",
+      "chapter": "dl/03-sequence-models",
+      "section": "s5",
+      "title": "Backpropagation through time",
+      "eyebrow": "DEEP LEARNING",
+      "beats": [
+        {
+          "text": "Training unrolls the network into its depth-T equivalent and runs ordinary backpropagation through it.",
+          "visual": { "type": "title", "text": "Backprop Through Time", "sub": "Training the unrolled network" }
+        },
+        {
+          "text": "Because weights are shared, the gradient with respect to a weight is the sum of its contributions at every step.",
+          "visual": { "type": "equation", "tex": "\\frac{\\partial \\mathcal{L}}{\\partial W} = \\sum_{t=1}^{T} \\frac{\\partial \\mathcal{L}_t}{\\partial W}", "note": "summed over all output steps" }
+        },
+        {
+          "text": "The inner routing back through every earlier state uses the same Jacobian product that produces vanishing gradients.",
+          "visual": { "type": "equation", "tex": "\\frac{\\partial \\mathcal{L}_T}{\\partial W} = \\sum_{k=1}^{T} \\frac{\\partial \\mathcal{L}_T}{\\partial h_T}\\, \\frac{\\partial h_T}{\\partial h_k}\\, \\frac{\\partial h_k}{\\partial W}", "note": "where the pathologies are born" }
+        },
+        {
+          "text": "Truncated BPTT cuts the sequence into chunks of about sixty-four to two hundred fifty-six steps.",
+          "visual": { "type": "plot", "ys": [64, 128, 192, 256], "dot": true, "xlabel": "chunk", "ylabel": "steps" }
+        },
+        {
+          "text": "It backpropagates only within a chunk but carries the hidden state forward, so the forward pass still sees unlimited context.",
+          "visual": { "type": "bars", "values": [256, 100000], "labels": ["trained span", "remembered span"], "highlight": 1 }
+        },
+        {
+          "text": "Three ideas form one thread: recurrence makes a deep net, depth makes a long product, and gates give it a highway.",
+          "visual": { "type": "stat", "value": 3, "label": "ideas, one thread", "decimals": 0 }
+        }
+      ]
+    }
+  ]
+}

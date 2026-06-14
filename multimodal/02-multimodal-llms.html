@@ -1,0 +1,694 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Multimodal LLMs — AI Encyclopedia</title>
+<meta name="description" content="Teach a language model to see by turning images into tokens it can attend to — one transformer, many senses. Patch tokenization, projection, CLIP / Flamingo / LLaVA, early fusion vs cross-attention, and how vision-language models are trained and evaluated." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+<link rel="canonical" href="https://ai-encyclopedia.com/multimodal/02-multimodal-llms" />
+<meta property="og:url" content="https://ai-encyclopedia.com/multimodal/02-multimodal-llms" />
+</head>
+<body data-track="multimodal" data-level="core">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ MULTIMODAL / 02 / MULTIMODAL LLMs</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../multimodal/03-image-generation.html">NEXT: IMAGE &amp; VIDEO GEN →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">MULTIMODAL &amp; WORLD MODELS · CHAPTER 02 / 06</div>
+    <h1>Multimodal LLMs</h1>
+    <p class="lede">A transformer treats its tokens as vectors to attend over, regardless of what they encode. <strong>An image becomes attendable once it is sliced into patches and each patch is projected into the model's embedding space</strong>, after which self-attention mixes pixels and words in the same residual stream. This chapter covers the projection, the CLIP, Flamingo, and LLaVA lineage, the early-fusion versus cross-attention split, and how vision-language models are trained and evaluated.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 26 MIN</b></span>
+      <span>BUILDS ON<b>MULTIMODAL 01 · VOL II ATTENTION</b></span>
+      <span>INSTRUMENTS<b>PATCH PROJECTION · FUSION TOGGLE · PATCH ATTENTION</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">2.1</span>One model, many modalities</a>
+      <a href="#s2"><span class="n">2.2</span>Tokenizing images</a>
+      <a href="#s3"><span class="n">2.3</span>CLIP, Flamingo, LLaVA</a>
+      <a href="#s4"><span class="n">2.4</span>Cross-attention vs early fusion</a>
+      <a href="#s5"><span class="n">2.5</span>Training &amp; evaluating VLMs</a>
+      <a href="#s6"><span class="n">2.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 2.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">2.1</span><h2>Why one model for many modalities</h2></div>
+        <p>A language model is a function from a sequence of token embeddings to a sequence of token embeddings. It never sees characters or words directly — only vectors in \(\mathbb{R}^{d}\), the model width. Self-attention (Vol II · EQ 3.1) mixes those vectors according to how relevant they are to one another; it has no built-in notion of "text." That indifference is the whole opportunity. <strong>If you can turn an image into a handful of \(d\)-dimensional vectors, the transformer will attend to them exactly as it attends to words</strong> — no new mechanism required, just new tokens.</p>
+
+        <p>This is why the dominant design for vision-language models (VLMs) is not a separate vision network bolted to a separate text network with a translation layer between them. It is a <em>single</em> transformer whose context window holds image tokens and text tokens side by side. Asking "what is in this photo?" becomes one autoregressive generation over a sequence that begins with image tokens and continues with the question — the same next-token objective that trained the language model in the first place.</p>
+
+        <p>The alternative histories are instructive. Before this convergence, multimodal systems were pipelines: an object detector emitted labels, a caption model turned labels into a sentence, and a separate language model reasoned over the sentence. Every stage threw away information the next stage might have needed, and errors compounded. The transformer's contribution was to collapse the pipeline into one differentiable model where gradients flow from the final answer all the way back to the pixels. The cost is that you must commit, early, to a way of <em>encoding pixels as tokens</em> — and that single choice (covered next) determines almost everything about how the system behaves.</p>
+
+        <div class="callout">
+          <span class="co-icon">CLAIM</span>
+          <p><strong>"Multimodal" usually means vision-language, but the recipe is general.</strong> Anything you can chop into a sequence and embed into \(\mathbb{R}^{d}\) becomes attendable: audio via spectrogram patches or a learned codec (Whisper-style), video via space-time patches, even depth maps or robot-sensor streams. The transformer is modality-agnostic; the engineering is all in the <em>tokenizer</em> for each new sense. This chapter uses images as the worked example because they are where the field matured first.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 2.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">2.2</span><h2>Tokenizing images — patches &amp; projection</h2></div>
+        <p>Text tokenization splits a string into discrete units and looks each up in an embedding table. Images have no natural discrete units, so the Vision Transformer (ViT) recipe manufactures them: cut the image into a grid of fixed-size square <strong>patches</strong>, flatten each patch into a vector, and project that vector into the model's embedding space with a single learned linear map. A \(14\times 14\) RGB patch is \(14\cdot 14\cdot 3 = 588\) raw numbers; the projection turns it into one \(d\)-dimensional <strong>patch token</strong>, the visual analogue of a word embedding.</p>
+
+        <div class="eq"><span class="eq-tag">EQ MM2.1 — PATCH TOKENS BY LINEAR PROJECTION</span>
+        $$ z_p \;=\; W\, \mathrm{flatten}(x_p) \;+\; b \;\in\; \mathbb{R}^{d}, \qquad W \in \mathbb{R}^{d \times (P^2 C)}, \quad p = 1,\ldots,N, \quad N = \frac{HW}{P^2} $$
+        <div class="eq-note">\(x_p\) is one \(P\times P\) patch with \(C\) color channels; flattening gives a \(P^2 C\) vector. The same <b>shared</b> projection \(W\) maps every patch to a \(d\)-dimensional token — exactly the weight-sharing trick that makes convolution efficient, and indeed this projection <em>is</em> a stride-\(P\) convolution in disguise. An \(H\times W\) image yields <b>\(N = HW/P^2\) tokens</b>: a \(224\times 224\) image at \(P=14\) gives \((224/14)^2 = 16^2 = 256\) patch tokens. Patches carry no inherent order, so a learned <b>positional embedding</b> is added to each \(z_p\) — without it the model could not tell top-left from bottom-right.</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><div>Take a \(224\times 224\) RGB image and patch size \(P = 14\). Patches per side: \(224 / 14 = 16\), so \(N = 16 \times 16 = 256\) patches.</div></div>
+          <div class="x-step"><span class="x-n">02</span><div>Each patch flattens to \(P^2 C = 14^2 \times 3 = 196 \times 3 = 588\) raw numbers.</div></div>
+          <div class="x-step"><span class="x-n">03</span><div>Project into the LLM width \(d = 4096\): the map \(W\) is \(4096 \times 588\), turning each 588-vector into one 4096-d token. The image is now <b>256 tokens of width 4096</b> — speakable to the transformer.</div></div>
+          <div class="x-step"><span class="x-n">04</span><div>Those 256 tokens occupy 256 of the context window's slots, just like 256 words would. A 4K context can hold ~16 such images, or one image plus a long question.</div></div>
+          <span class="x-result">RESULT: a 224² image @ P=14 → 256 patch tokens of width 4096</span>
+        </div></div>
+        </div>
+
+        <p>Two design knobs dominate, and they trade off against each other. <strong>Patch size</strong> sets resolution: smaller patches mean more tokens, finer visual detail, and quadratically more attention cost (the token count scales as \(1/P^2\)). <strong>Image resolution</strong> sets how much the model can read at all — fine print, small objects, and dense charts demand high resolution, which is why modern VLMs (Qwen-VL, the "AnyRes" line in LLaVA-1.6, native-resolution ViTs) tile large images into many crops and feed hundreds or thousands of patch tokens per image. The honest tension: every patch token competes with text tokens for the same finite context budget, so "see more" and "read more text" are in direct conflict.</p>
+
+        <div class="exercise" data-answer="32" data-tol="0.001" data-hint="A linear projection maps each patch to exactly one token, so the token count equals the patch count.">
+          <div class="ex-q">A vision encoder produces \(32\) image patches, and each patch is projected by EQ MM2.1 into the language model's token width. How many <b>extra tokens</b> do these patches add to the context sequence?</div>
+          <div class="ex-reveal-src">The projection is one-to-one: every patch becomes exactly one token of width \(d\), regardless of the value of \(d\). So \(32\) patches add <b>32</b> tokens. (The width \(d\) changes each token's <em>size</em>, never the token <em>count</em>.)</div>
+        </div>
+
+        <div class="exercise" data-answer="256" data-tol="0.001" data-hint="Patches per side is H / P; total patches is that squared.">
+          <div class="ex-q">Using \(N = HW/P^2\): a \(224\times 224\) image is split into \(14\times 14\) patches. How many patch tokens \(N\) does the encoder emit?</div>
+          <div class="ex-reveal-src">Patches per side \(= 224/14 = 16\). Total \(N = 16 \times 16 = \dfrac{224 \times 224}{14^2} = \dfrac{50176}{196} = \) <b>256</b>. This is exactly the token count of CLIP's ViT-L/14 at \(224^2\).</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># EQ MM2.1: project image patch vectors into the LLM token space (linear)
+import numpy as np
+rng = np.random.default_rng(0)
+
+P, C, d = 2, 3, 8            # 2x2 patches, RGB, language-model width d = 8
+patch_dim = P * P * C        # flattened patch length = 4 * 3 = 12
+N = 4                        # this image was cut into 4 patches
+
+patches = rng.normal(0, 1, (N, patch_dim))   # N flattened patches
+W = rng.normal(0, 0.05, (d, patch_dim))      # shared projection, EQ MM2.1
+b = np.zeros(d)
+
+tokens = patches @ W.T + b                    # (N, patch_dim) @ (patch_dim, d)
+
+print("flattened patch length P*P*C :", patch_dim)
+print("patches in           :", patches.shape, "(N patches x patch_dim)")
+print("image tokens out     :", tokens.shape, "(N tokens x d) <- speakable")
+print("\none token (the 1st patch, width d):")
+print(np.round(tokens[0], 3))
+print("\nN patches -> N tokens: the projection never changes the COUNT.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="mllm-proj" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT MM2.1 — IMAGE-TO-TOKEN PROJECTION</span><span class="w-sub">PATCHIFY → FLATTEN → PROJECT · EQ MM2.1</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>IMAGE SIZE <output id="mllm-proj-img-out">224</output></label><input type="range" id="mllm-proj-img" min="112" max="448" step="56" value="224"/></div>
+              <div class="ctl"><label>PATCH SIZE P <output id="mllm-proj-patch-out">14</output></label><input type="range" id="mllm-proj-patch" min="0" max="3" step="1" value="1"/></div>
+              <div class="ctl"><label>MODEL WIDTH d <output id="mllm-proj-d-out">4096</output></label><input type="range" id="mllm-proj-d" min="9" max="13" step="1" value="12"/></div>
+            </div>
+            <canvas class="w-canvas" id="mllm-proj-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">PATCH TOKENS N = HW/P²</div><div class="r-value" id="mllm-proj-n">256</div></div>
+              <div class="readout"><div class="r-label">FLATTENED PATCH P²·C</div><div class="r-value" id="mllm-proj-flat">588</div></div>
+              <div class="readout acc"><div class="r-label">PROJECTION W (d × P²C)</div><div class="r-value" id="mllm-proj-w" style="font-size:11px;line-height:1.5;">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Left: the image cut into a patch grid. Right: each patch collapses to one column — a single \(d\)-dimensional token. Shrink the patch size and watch the token count explode (it scales as \(1/P^2\)); every one of those tokens then competes with your text for the context window. Raising the model width \(d\) makes each token <em>taller</em> but never adds tokens — count is set by the patch grid alone.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 2.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">2.3</span><h2>Architectures — CLIP, Flamingo, LLaVA</h2></div>
+        <p>Three landmark systems define the design space, and almost every production VLM is a descendant of one of them.</p>
+
+        <p><strong>CLIP (2021)</strong> is not a generative VLM at all — it is the <em>vision encoder</em> nearly all of them are built on. CLIP trains two towers, an image encoder and a text encoder, on 400M image–caption pairs with a <strong>contrastive</strong> objective: pull the embedding of an image toward the embedding of its true caption and push it away from every other caption in the batch. The result is a vision encoder whose features are already aligned with language — a patch that depicts a dog lands near the text "a dog." That alignment is why CLIP features are the standard input to the LLM-based VLMs that followed.</p>
+
+        <div class="eq"><span class="eq-tag">EQ MM2.2 — CLIP CONTRASTIVE OBJECTIVE (IMAGE→TEXT HALF)</span>
+        $$ \mathcal{L}_{i \to t} \;=\; -\frac{1}{B}\sum_{i=1}^{B} \log \frac{\exp\!\big(\langle u_i, v_i\rangle / \tau\big)}{\sum_{j=1}^{B} \exp\!\big(\langle u_i, v_j\rangle / \tau\big)} $$
+        <div class="eq-note">\(u_i\) is the L2-normalized embedding of image \(i\), \(v_j\) of caption \(j\); the score is a cosine similarity scaled by a learned temperature \(\tau\). For each image, this is just a softmax cross-entropy that treats <b>the matching caption as the correct class among all \(B\) captions in the batch</b> — so a big batch means many hard negatives and a sharper signal. The full CLIP loss symmetrizes this with the text→image half and averages the two. No labels are needed; the captions <em>are</em> the supervision.</div>
+        </div>
+
+        <p><strong>Flamingo (2022)</strong> showed how to graft vision onto a <em>frozen</em> language model without retraining it. A frozen vision encoder feeds a small "Perceiver Resampler" that compresses a variable number of patch features into a fixed set of visual tokens; these are injected into a frozen LLM through newly inserted <strong>gated cross-attention</strong> layers. The LLM's own weights never move — only the cross-attention adapters train. This is the canonical <em>cross-attention</em> design (§2.4) and it gave the first strong few-shot, interleaved image-and-text behavior.</p>
+
+        <p><strong>LLaVA (2023)</strong> is the design that won on simplicity. It takes a frozen CLIP vision encoder, runs its patch features through a tiny trainable projection (originally one linear layer, later a small MLP) into the LLM's embedding space — exactly EQ MM2.1 — and <strong>feeds those projected patches in as extra input tokens</strong>, prepended to the text tokens. No new attention layers, no architectural surgery: the LLM simply finds image tokens at the front of its context and attends to them with the self-attention it already has. This is the canonical <em>early-fusion</em> design, and its data recipe — GPT-4-generated visual instruction-following conversations — is what made it work.</p>
+
+        <table class="data">
+          <thead><tr><th>System</th><th>Year</th><th>How vision enters the LLM</th><th>Legacy</th></tr></thead>
+          <tbody>
+            <tr><td><strong>CLIP</strong></td><td class="m">2021</td><td>n/a — a contrastively trained encoder, not a chat model</td><td class="hl">the vision encoder everyone reuses</td></tr>
+            <tr><td><strong>Flamingo</strong></td><td class="m">2022</td><td>resampled visual tokens via gated <em>cross-attention</em> into a frozen LLM</td><td>cross-attention VLMs (IDEFICS, Llama&nbsp;3-V style)</td></tr>
+            <tr><td><strong>LLaVA</strong></td><td class="m">2023</td><td>projected patches prepended as <em>input tokens</em> (early fusion)</td><td class="hl">the dominant open-VLM recipe; visual instruction tuning</td></tr>
+            <tr><td><strong>BLIP-2</strong></td><td class="m">2023</td><td>a "Q-Former" learns query tokens that pull info from frozen vision</td><td>query-based bridging; efficient adapters</td></tr>
+          </tbody>
+        </table>
+
+        <div class="exercise" data-answer="true" data-tol="0" data-hint="LLaVA's projection prepends projected patches to the text — it adds tokens rather than new attention layers.">
+          <div class="ex-q">True or false: LLaVA feeds projected image patches into the language model as <b>extra input tokens</b> (prepended to the text), rather than through dedicated cross-attention layers. (Answer <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">LLaVA's only new module is the small projection of EQ MM2.1; the projected patch tokens are concatenated in front of the text tokens and consumed by the LLM's existing self-attention. It adds no cross-attention layers. That is precisely the early-fusion approach, so the statement is <b>true</b>. (Flamingo, by contrast, uses cross-attention.)</div>
+        </div>
+      </section>
+
+      <!-- ====================== 2.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">2.4</span><h2>Cross-attention vs early fusion</h2></div>
+        <p>Everything above reduces to one architectural fork: <em>where do image tokens meet text tokens?</em></p>
+
+        <ul>
+          <li><strong>Early fusion (LLaVA-style).</strong> Image tokens are concatenated with text tokens into one sequence; ordinary self-attention lets every text token attend to every image token and vice versa, in every layer. Maximum interaction, minimal new code — but the image tokens occupy real context-window slots and inflate the self-attention cost, which is quadratic in total sequence length.</li>
+          <li><strong>Cross-attention (Flamingo-style).</strong> Text tokens stay the only entries in the main sequence; image features are kept in a separate memory that the text attends <em>into</em> through dedicated cross-attention layers inserted between the LLM's blocks. The text sequence length is unchanged, so the language model's self-attention cost is untouched and a frozen LLM's weights can be preserved. The price is new parameters and a less symmetric flow of information.</li>
+        </ul>
+
+        <div class="eq"><span class="eq-tag">EQ MM2.3 — THE FORK: WHO ATTENDS TO WHOM</span>
+        $$ \textbf{early fusion:}\;\; \mathrm{SelfAttn}\big([\,z_{1:N}^{\text{img}};\, e_{1:T}^{\text{txt}}\,]\big), \qquad \textbf{cross-attention:}\;\; \mathrm{CrossAttn}\big(Q{=}e^{\text{txt}},\; K,V{=}z^{\text{img}}\big) $$
+        <div class="eq-note">In early fusion a single concatenated sequence of length \(N+T\) goes through self-attention, so attention cost grows as \((N+T)^2\) and the \(N\) image tokens are spent from the context budget. In cross-attention the queries come only from the \(T\) text tokens while keys and values come from the \(N\) image tokens, costing \(N\,T\) and leaving the text length \(T\) — and the base LLM — untouched. <b>Early fusion trades context budget for simplicity and tighter image↔text mixing; cross-attention trades extra parameters for an unmodified, context-cheap language model.</b> Most open models since 2023 chose early fusion for its simplicity; several large frontier systems use cross-attention to bolt vision onto an already-trained text model.</div>
+        </div>
+
+        <div class="widget" id="mllm-fusion" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT MM2.2 — EARLY FUSION vs CROSS-ATTENTION</span><span class="w-sub">TOGGLE THE WIRING · EQ MM2.3</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>FUSION STYLE</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-mllm-fuse="early">EARLY FUSION</button>
+                  <button class="w-btn ghost" data-mllm-fuse="cross">CROSS-ATTENTION</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="mllm-fusion-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">SEQUENCE INTO SELF-ATTN</div><div class="r-value" id="mllm-fusion-seq">N + T</div></div>
+              <div class="readout acc"><div class="r-label">ATTENTION COST</div><div class="r-value" id="mllm-fusion-cost">(N+T)²</div></div>
+              <div class="readout"><div class="r-label">BASE LLM</div><div class="r-value" id="mllm-fusion-llm">modified</div></div>
+            </div>
+          </div>
+          <div class="w-note">Toggle the two wirings. <b>Early fusion</b> drops image tokens straight into the one sequence the LLM already self-attends over — green and grey tokens share every layer. <b>Cross-attention</b> keeps the text sequence pure and lets it reach into a separate image memory through inserted layers, so the base model and its context length stay untouched. Watch the cost readout flip from \((N{+}T)^2\) to \(N\,T\).</div>
+        </div>
+
+        <p class="note">A third family sits between them: <strong>query-based resamplers</strong> (Flamingo's Perceiver Resampler, BLIP-2's Q-Former). These first <em>compress</em> hundreds of patch features into a small fixed number of learned query tokens, then feed that handful into the LLM — by cross-attention or as input tokens. The point is decoupling: the visual token count the LLM sees no longer scales with image resolution, which is the cleanest answer to the context-budget tension from §2.2. The contested part is quality — heavy compression can drop fine detail, and several 2024–2025 models reverted to feeding many raw patches because reading text-in-images demanded it.</p>
+      </section>
+
+      <!-- ====================== 2.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">2.5</span><h2>Training &amp; evaluating VLMs</h2></div>
+        <p>Whatever the wiring, the modern LLaVA-style recipe trains in two stages, almost always on top of a pre-trained language model and a pre-trained (usually CLIP) vision encoder — so the expensive learning is already paid for:</p>
+
+        <ul>
+          <li><strong>Stage 1 — alignment / pre-training.</strong> Freeze both the vision encoder and the LLM; train <em>only</em> the projection (EQ MM2.1) on a large pile of image–caption pairs, with the next-token objective on the caption. This teaches the projection to place visual tokens where the LLM expects related words to live — cheap, fast, and stabilizing.</li>
+          <li><strong>Stage 2 — visual instruction tuning.</strong> Unfreeze the projection and (usually) the LLM, and fine-tune on multimodal instruction-following data: image + question → answer, multi-turn visual chat, OCR, charts, grounding. This is where the model learns to <em>follow instructions about</em> images, not merely caption them. LLaVA's key insight was that you can bootstrap this data by prompting a strong text LLM with image annotations to write the conversations.</li>
+        </ul>
+
+        <p>The mechanics — autoregressive cross-entropy over the answer tokens only, image tokens masked out of the loss — are identical to text fine-tuning (Vol II · CH 06). The image tokens are context, not targets; you never ask the model to "predict the next patch."</p>
+
+        <p><strong>Evaluation is the genuinely hard part, and the field is openly uncomfortable with the state of it.</strong> The standard suites probe different skills: VQAv2 and GQA (visual question answering), TextVQA and DocVQA (reading text in images), ChartQA (chart reasoning), MMMU (college-level multimodal reasoning), MME and MMBench (broad capability batteries), and POPE (object-hallucination probing). Three caveats that experts will always raise: (1) many benchmarks are <em>contaminated</em> or leak into web-scale training data, inflating scores; (2) answer-matching is brittle — a correct free-form answer can be marked wrong for phrasing, so LLM-graded "judges" are increasingly used, with their own biases; and (3) the most consequential failure mode, <strong>hallucination</strong> — confidently describing objects that are not in the image — is precisely what the headline accuracy numbers hide, which is why POPE and similar adversarial probes exist. A VLM that scores well on VQA can still invent a clock on an empty wall.</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Fuse image tokens + text tokens into ONE sequence; print the shapes
+import numpy as np
+rng = np.random.default_rng(0)
+
+d = 8                                    # shared model width
+N, T = 32, 10                            # 32 image patch tokens, 10 text tokens
+
+img_tokens  = rng.normal(0, 1, (N, d))   # projected patches (EQ MM2.1 output)
+text_tokens = rng.normal(0, 1, (T, d))   # word embeddings, same width d
+
+# early fusion = concatenate along the sequence axis (axis 0)
+fused = np.concatenate([img_tokens, text_tokens], axis=0)
+
+print("image tokens :", img_tokens.shape,  "(N x d)")
+print("text  tokens :", text_tokens.shape, "(T x d)")
+print("fused seq    :", fused.shape, "( (N+T) x d ) <- one sequence")
+print("sequence length N + T :", N + T)
+print("self-attention matrix :", (N + T), "x", (N + T),
+      "=", (N + T) ** 2, "scores")
+print("\nthe LLM now attends over all", N + T,
+      "tokens with the SAME self-attention it uses for text.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="mllm-attn" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT MM2.3 — VLM ATTENTION OVER IMAGE PATCHES</span><span class="w-sub">A TEXT TOKEN LOOKS AT A 7×7 PATCH GRID · SOFTMAX</span></div>
+          <div class="w-body">
+            <div class="ctl-row" style="flex:0 0 auto;min-width:auto;">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>QUERY WORD</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-mllm-q="dog">"dog"</button>
+                  <button class="w-btn ghost" data-mllm-q="ball">"ball"</button>
+                  <button class="w-btn ghost" data-mllm-q="sky">"sky"</button>
+                </div>
+              </div>
+              <div class="ctl"><label>SOFTMAX TEMPERATURE <output id="mllm-attn-temp-out">1.00</output></label><input type="range" id="mllm-attn-temp" min="0.2" max="3" step="0.05" value="1"/></div>
+            </div>
+            <canvas class="w-canvas" id="mllm-attn-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">MASS ON TOP PATCH</div><div class="r-value" id="mllm-attn-top">—</div></div>
+              <div class="readout"><div class="r-label">PATCHES OVER 5%</div><div class="r-value" id="mllm-attn-count">—</div></div>
+              <div class="readout"><div class="r-label">ATTENTION ENTROPY</div><div class="r-value" id="mllm-attn-ent">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">A single text token (the query word) attends over a \(7\times 7\) grid of image patches; brighter = more attention. The weights are a softmax over patch relevance, so they always sum to 1 — attention <em>routes</em> the text token's read across the image, it never invents pixels. Pick a different word and the bright region moves to the matching object. Drop the temperature toward 0 and the read sharpens to a near-hard lookup of one patch; raise it and attention diffuses to a uniform blur over the whole image.</div>
+        </div>
+
+        <div class="callout warn">
+          <span class="co-icon">HONEST CAVEAT</span>
+          <p><strong>A high benchmark score is not the absence of hallucination.</strong> The cross-entropy objective rewards fluent, plausible answers; nothing in it grounds claims to actually-present pixels. Object-hallucination probes (POPE), grounding metrics, and human review of free-form outputs catch failures that VQA accuracy launders away. Treat any single multimodal number with suspicion — and never report one without a hallucination probe beside it.</p>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>So far the image only flowed in; next it flows out.</strong> Chapter 03 turns to generation — diffusion and autoregressive image/video models — where the same token-and-attention machinery is run in reverse to <em>produce</em> pixels rather than read them.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 2.R ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">2.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://arxiv.org/abs/2103.00020" target="_blank" rel="noopener">Radford, A. et al. (2021). <span class="ref-venue">Learning Transferable Visual Models From Natural Language Supervision (CLIP)</span>.</a> <span class="ref-meta">ICML 2021 — the contrastive image–text encoder (EQ MM2.2) that nearly every VLM reuses as its visual front end.</span></li>
+          <li><a href="https://arxiv.org/abs/2204.14198" target="_blank" rel="noopener">Alayrac, J.-B. et al. (2022). <span class="ref-venue">Flamingo: a Visual Language Model for Few-Shot Learning</span>.</a> <span class="ref-meta">NeurIPS 2022 — gated cross-attention into a frozen LLM; the canonical cross-attention design (§2.4).</span></li>
+          <li><a href="https://arxiv.org/abs/2304.08485" target="_blank" rel="noopener">Liu, H., Li, C., Wu, Q. &amp; Lee, Y. J. (2023). <span class="ref-venue">Visual Instruction Tuning (LLaVA)</span>.</a> <span class="ref-meta">NeurIPS 2023 — projected patches as input tokens (EQ MM2.1) plus LLM-bootstrapped instruction data; the dominant early-fusion recipe.</span></li>
+          <li><a href="https://arxiv.org/abs/2010.11929" target="_blank" rel="noopener">Dosovitskiy, A. et al. (2021). <span class="ref-venue">An Image Is Worth 16×16 Words: Transformers for Image Recognition at Scale (ViT)</span>.</a> <span class="ref-meta">ICLR 2021 — the patchify-and-project tokenization (§2.2) that makes images attendable.</span></li>
+          <li><a href="https://arxiv.org/abs/2301.12597" target="_blank" rel="noopener">Li, J., Li, D., Savarese, S. &amp; Hoi, S. (2023). <span class="ref-venue">BLIP-2: Bootstrapping Language-Image Pre-training with Frozen Image Encoders and LLMs</span>.</a> <span class="ref-meta">ICML 2023 — the Q-Former, a query-based bridge between frozen vision and frozen language.</span></li>
+          <li><a href="https://arxiv.org/abs/2305.10355" target="_blank" rel="noopener">Li, Y. et al. (2023). <span class="ref-venue">Evaluating Object Hallucination in Large Vision-Language Models (POPE)</span>.</a> <span class="ref-meta">EMNLP 2023 — the object-hallucination probe behind the §2.5 evaluation caveats.</span></li>
+          <li><a href="https://arxiv.org/abs/2311.16502" target="_blank" rel="noopener">Yue, X. et al. (2024). <span class="ref-venue">MMMU: A Massive Multi-discipline Multimodal Understanding and Reasoning Benchmark</span>.</a> <span class="ref-meta">CVPR 2024 — college-level multimodal reasoning, a current frontier evaluation.</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../multimodal/01-vision.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">01</span> Vision</div></a>
+        <a class="next" href="../multimodal/03-image-generation.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">03</span> Image &amp; Video Gen</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — MULTIMODAL · CH 02</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* chapter instruments — single IIFE, no globals */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  /* ============================================================
+     INSTRUMENT MM2.1 — IMAGE-TO-TOKEN PROJECTION
+     Patchify an image, flatten each patch, project to one token.
+     ============================================================ */
+  (function () {
+    var root = document.getElementById("mllm-proj");
+    if (!root) return;
+    var canvas = document.getElementById("mllm-proj-canvas");
+    var imgIn = document.getElementById("mllm-proj-img");
+    var patchIn = document.getElementById("mllm-proj-patch");
+    var dIn = document.getElementById("mllm-proj-d");
+    var imgOut = document.getElementById("mllm-proj-img-out");
+    var patchOut = document.getElementById("mllm-proj-patch-out");
+    var dOut = document.getElementById("mllm-proj-d-out");
+    var nOut = document.getElementById("mllm-proj-n");
+    var flatOut = document.getElementById("mllm-proj-flat");
+    var wOut = document.getElementById("mllm-proj-w");
+
+    var PATCH_SIZES = [7, 14, 28, 56];   // slider index 0..3
+    var C_CHANNELS = 3;
+
+    function render() {
+      var imgSz = parseInt(imgIn.value, 10);
+      var P = PATCH_SIZES[parseInt(patchIn.value, 10)];
+      var d = Math.pow(2, parseInt(dIn.value, 10));
+      /* patches per side (floor so it always tiles cleanly) */
+      var perSide = Math.max(1, Math.floor(imgSz / P));
+      var N = perSide * perSide;
+      var flat = P * P * C_CHANNELS;
+
+      imgOut.textContent = imgSz;
+      patchOut.textContent = P;
+      dOut.textContent = d.toLocaleString();
+      nOut.textContent = N.toLocaleString();
+      flatOut.textContent = flat.toLocaleString();
+      wOut.textContent = d.toLocaleString() + " × " + flat.toLocaleString();
+
+      var s = FM.setupCanvas(canvas, 300);
+      var ctx = s.ctx, W = s.w, H = s.h;
+      ctx.clearRect(0, 0, W, H);
+
+      var topPad = 26;
+      var leftHalf = W * 0.46;
+      /* ---- left: the patch grid (a stylized scene) ---- */
+      var gridPx = Math.min(leftHalf - 24, H - topPad - 30, 220);
+      var gx = (leftHalf - gridPx) / 2;
+      var gy = topPad + (H - topPad - gridPx) / 2;
+      var cell = gridPx / perSide;
+
+      ctx.font = C.MONO; ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+      ctx.fillStyle = C.SEC;
+      ctx.fillText("IMAGE  " + imgSz + "×" + imgSz + "  ·  " + perSide + "×" + perSide + " PATCHES",
+                   gx + gridPx / 2, topPad - 10);
+
+      /* a fake scene: green "ground" band low, mint "subject" blob center */
+      var i, j;
+      for (i = 0; i < perSide; i++) {
+        for (j = 0; j < perSide; j++) {
+          var fx = (j + 0.5) / perSide, fy = (i + 0.5) / perSide;
+          var dx = fx - 0.5, dy = fy - 0.55;
+          var rad = Math.sqrt(dx * dx + dy * dy);
+          var v;
+          if (fy > 0.78) v = 0.30;                          // ground
+          else if (rad < 0.26) v = 0.92 - rad;              // subject blob
+          else v = 0.10 + 0.12 * fy;                        // background
+          var g = Math.round(40 + v * 150);
+          ctx.fillStyle = "rgba(" + g + "," + Math.round(g * 1.05) + "," + Math.round(g * 0.95) + ",1)";
+          ctx.fillRect(gx + j * cell, gy + i * cell, cell - 1.2, cell - 1.2);
+        }
+      }
+      /* grid lines */
+      ctx.strokeStyle = "rgba(47,50,52,.9)"; ctx.lineWidth = 1;
+      ctx.strokeRect(gx, gy, gridPx, gridPx);
+
+      /* ---- arrow ---- */
+      var midY = gy + gridPx / 2;
+      var ax0 = leftHalf + 4, ax1 = W * 0.56;
+      ctx.strokeStyle = C.MUT; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(ax0, midY); ctx.lineTo(ax1 - 6, midY); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(ax1 - 6, midY); ctx.lineTo(ax1 - 12, midY - 4);
+      ctx.lineTo(ax1 - 12, midY + 4); ctx.closePath();
+      ctx.fillStyle = C.MUT; ctx.fill();
+      ctx.fillStyle = C.MUT; ctx.textAlign = "center";
+      ctx.fillText("W·flatten", (ax0 + ax1) / 2, midY - 9);
+
+      /* ---- right: token columns (each patch -> 1 column of height d) ---- */
+      var rx = W * 0.58, rw = W - rx - 14;
+      ctx.fillStyle = C.MINT; ctx.textAlign = "center";
+      ctx.fillText(N.toLocaleString() + " TOKENS  ·  WIDTH d = " + d.toLocaleString(),
+                   rx + rw / 2, topPad - 10);
+      var shown = Math.min(N, 18);
+      var colGap = rw / shown;
+      var colW = Math.max(2, colGap - 2);
+      var colH = Math.min(gridPx, 200);
+      var colY = midY - colH / 2;
+      for (i = 0; i < shown; i++) {
+        var alpha = 0.30 + 0.55 * ((i % 4) / 3);
+        ctx.fillStyle = "rgba(166,242,204," + alpha.toFixed(2) + ")";
+        ctx.fillRect(rx + i * colGap, colY, colW, colH);
+      }
+      if (N > shown) {
+        ctx.fillStyle = C.MUT; ctx.textAlign = "left"; ctx.textBaseline = "middle";
+        ctx.fillText("… +" + (N - shown), rx + shown * colGap + 2, midY);
+      }
+      ctx.fillStyle = C.SEC; ctx.textAlign = "center"; ctx.textBaseline = "top";
+      ctx.fillText("each column = one " + d.toLocaleString() + "-d token", rx + rw / 2, colY + colH + 8);
+    }
+
+    imgIn.addEventListener("input", render);
+    patchIn.addEventListener("input", render);
+    dIn.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ============================================================
+     INSTRUMENT MM2.2 — EARLY FUSION vs CROSS-ATTENTION
+     Toggle the two wirings; show the data flow + cost.
+     ============================================================ */
+  (function () {
+    var root = document.getElementById("mllm-fusion");
+    if (!root) return;
+    var canvas = document.getElementById("mllm-fusion-canvas");
+    var seqOut = document.getElementById("mllm-fusion-seq");
+    var costOut = document.getElementById("mllm-fusion-cost");
+    var llmOut = document.getElementById("mllm-fusion-llm");
+    var btns = root.querySelectorAll("[data-mllm-fuse]");
+    var mode = "early";
+
+    function token(ctx, x, y, w, h, fill, stroke) {
+      ctx.fillStyle = fill;
+      ctx.fillRect(x, y, w, h);
+      ctx.strokeStyle = stroke; ctx.lineWidth = 1;
+      ctx.strokeRect(x, y, w, h);
+    }
+
+    function render() {
+      var s = FM.setupCanvas(canvas, 320);
+      var ctx = s.ctx, W = s.w, H = s.h;
+      ctx.clearRect(0, 0, W, H);
+      ctx.font = C.MONO; ctx.textBaseline = "alphabetic";
+
+      var imgFill = "rgba(166,242,204,.20)", imgStroke = C.MINT;
+      var txtFill = "rgba(155,155,155,.16)", txtStroke = C.SEC;
+      var N = 4, T = 3;            // 4 image tokens, 3 text tokens (illustrative)
+      var tw = 30, th = 22, gap = 8;
+
+      if (mode === "early") {
+        /* one row: [img img img img | txt txt txt] -> one self-attn block */
+        var total = N + T;
+        var rowW = total * tw + (total - 1) * gap + 16;   // +16 separator
+        var x0 = (W - rowW) / 2, rowY = 60;
+        ctx.fillStyle = C.SEC; ctx.textAlign = "left";
+        ctx.fillText("ONE SEQUENCE  ·  image tokens + text tokens", x0, rowY - 14);
+        var x = x0, k;
+        for (k = 0; k < N; k++) { token(ctx, x, rowY, tw, th, imgFill, imgStroke); x += tw + gap; }
+        x += 8;
+        for (k = 0; k < T; k++) { token(ctx, x, rowY, tw, th, txtFill, txtStroke); x += tw + gap; }
+
+        /* big self-attention block beneath, fed by ALL tokens */
+        var bx = (W - rowW) / 2, bw = rowW, by = 150, bh = 64;
+        ctx.fillStyle = "rgba(78,138,247,.10)";
+        ctx.fillRect(bx, by, bw, bh);
+        ctx.strokeStyle = C.BLUE; ctx.lineWidth = 1.4;
+        ctx.strokeRect(bx, by, bw, bh);
+        ctx.fillStyle = C.BLUE; ctx.textAlign = "center";
+        ctx.fillText("SELF-ATTENTION  (every token sees every token)", bx + bw / 2, by + bh / 2 + 3);
+        /* arrows down from each token */
+        ctx.strokeStyle = "rgba(99,99,99,.7)"; ctx.lineWidth = 1;
+        var xs = x0;
+        for (k = 0; k < N; k++) { line(ctx, xs + tw / 2, rowY + th, xs + tw / 2, by); xs += tw + gap; }
+        xs += 8;
+        for (k = 0; k < T; k++) { line(ctx, xs + tw / 2, rowY + th, xs + tw / 2, by); xs += tw + gap; }
+
+        /* output: same length sequence */
+        ctx.fillStyle = C.SEC; ctx.textAlign = "center";
+        ctx.fillText("→ output sequence of length N + T = " + (N + T), W / 2, by + bh + 30);
+
+        seqOut.textContent = "N + T";
+        costOut.textContent = "(N+T)²";
+        llmOut.textContent = "modified";
+      } else {
+        /* text row only; image memory off to the side; cross-attn pulls into text */
+        var rowW2 = T * tw + (T - 1) * gap;
+        var tx0 = (W - rowW2) / 2 + 40, ty = 56;
+        ctx.fillStyle = C.SEC; ctx.textAlign = "left";
+        ctx.fillText("TEXT SEQUENCE ONLY  (length T, unchanged)", tx0, ty - 14);
+        var xq = tx0, q;
+        for (q = 0; q < T; q++) { token(ctx, xq, ty, tw, th, txtFill, txtStroke); xq += tw + gap; }
+
+        /* image memory block on the left */
+        var ix = 14, iy = 150, iw = 96, ih = 96;
+        ctx.fillStyle = "rgba(166,242,204,.10)";
+        ctx.fillRect(ix, iy, iw, ih);
+        ctx.strokeStyle = C.MINT; ctx.lineWidth = 1.2;
+        ctx.strokeRect(ix, iy, iw, ih);
+        ctx.fillStyle = C.MINT; ctx.textAlign = "center";
+        ctx.fillText("IMAGE MEMORY", ix + iw / 2, iy - 8);
+        ctx.fillText("(K, V = N patches)", ix + iw / 2, iy + ih + 14);
+        /* small patch squares inside */
+        var pi, pj;
+        for (pi = 0; pi < 2; pi++) for (pj = 0; pj < 2; pj++) {
+          ctx.fillStyle = "rgba(166,242,204,.30)";
+          ctx.fillRect(ix + 16 + pj * 36, iy + 16 + pi * 36, 28, 28);
+        }
+
+        /* cross-attention block under the text */
+        var cbx = (W - rowW2) / 2 + 40, cbw = rowW2, cby = 150, cbh = 64;
+        ctx.fillStyle = "rgba(78,138,247,.10)";
+        ctx.fillRect(cbx, cby, cbw, cbh);
+        ctx.strokeStyle = C.BLUE; ctx.lineWidth = 1.4;
+        ctx.strokeRect(cbx, cby, cbw, cbh);
+        ctx.fillStyle = C.BLUE; ctx.textAlign = "center";
+        ctx.fillText("CROSS-ATTN", cbx + cbw / 2, cby + cbh / 2 - 4);
+        ctx.fillStyle = C.SEC;
+        ctx.fillText("Q = text", cbx + cbw / 2, cby + cbh / 2 + 12);
+
+        /* arrows: text down into cross-attn */
+        ctx.strokeStyle = "rgba(99,99,99,.7)"; ctx.lineWidth = 1;
+        var xt = tx0;
+        for (q = 0; q < T; q++) { line(ctx, xt + tw / 2, ty + th, xt + tw / 2, cby); xt += tw + gap; }
+        /* arrow: image memory into cross-attn (K,V) */
+        ctx.strokeStyle = C.MINT; ctx.lineWidth = 1.3;
+        line(ctx, ix + iw, iy + ih / 2, cbx, cby + cbh / 2);
+        arrow(ctx, cbx, cby + cbh / 2, 1, 0);
+
+        ctx.fillStyle = C.SEC; ctx.textAlign = "center";
+        ctx.fillText("→ output sequence still length T = " + T + "  ·  base LLM untouched",
+                     W / 2, cby + cbh + 30);
+
+        seqOut.textContent = "T (text only)";
+        costOut.textContent = "N · T";
+        llmOut.textContent = "frozen / untouched";
+      }
+    }
+
+    function line(ctx, x1, y1, x2, y2) {
+      ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+    }
+    function arrow(ctx, x, y, dx, dy) {
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x - 6 * dx - 4 * dy, y - 6 * dy - 4 * dx);
+      ctx.lineTo(x - 6 * dx + 4 * dy, y - 6 * dy + 4 * dx);
+      ctx.closePath(); ctx.fillStyle = C.MINT; ctx.fill();
+    }
+
+    btns.forEach(function (b) {
+      b.addEventListener("click", function () {
+        mode = b.getAttribute("data-mllm-fuse");
+        btns.forEach(function (x) { x.classList.remove("on"); });
+        b.classList.add("on");
+        render();
+      });
+    });
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ============================================================
+     INSTRUMENT MM2.3 — VLM ATTENTION OVER IMAGE PATCHES
+     A text token's softmax attention over a 7x7 patch grid.
+     ============================================================ */
+  (function () {
+    var root = document.getElementById("mllm-attn");
+    if (!root) return;
+    var canvas = document.getElementById("mllm-attn-canvas");
+    var tempIn = document.getElementById("mllm-attn-temp");
+    var tempOut = document.getElementById("mllm-attn-temp-out");
+    var topOut = document.getElementById("mllm-attn-top");
+    var cntOut = document.getElementById("mllm-attn-count");
+    var entOut = document.getElementById("mllm-attn-ent");
+    var btns = root.querySelectorAll("[data-mllm-q]");
+    var G = 7;                         // 7x7 patch grid
+    var query = "dog";
+
+    /* per-word relevance "logits" over the 7x7 grid: a center of mass + falloff.
+       grid is row-major, row 0 = top. */
+    var FOCUS = {
+      dog:  { cx: 2.0, cy: 4.2, sig: 1.4 },   // subject, lower-left
+      ball: { cx: 5.0, cy: 4.6, sig: 1.0 },   // small object, lower-right
+      sky:  { cx: 3.0, cy: 0.9, sig: 1.8 }    // broad band across the top
+    };
+
+    function logits() {
+      var f = FOCUS[query], out = [], r, c;
+      for (r = 0; r < G; r++) for (c = 0; c < G; c++) {
+        var dx = c - f.cx, dy = r - f.cy;
+        out.push(-(dx * dx + dy * dy) / (2 * f.sig * f.sig));
+      }
+      return out;
+    }
+
+    function render() {
+      var temp = parseFloat(tempIn.value);
+      tempOut.textContent = temp.toFixed(2);
+      var w = FM.softmax(logits(), temp);
+
+      var s = FM.setupCanvas(canvas, 320);
+      var ctx = s.ctx, W = s.w, H = s.h;
+      ctx.clearRect(0, 0, W, H);
+      ctx.font = C.MONO; ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+
+      var topPad = 26;
+      var gridPx = Math.min(W - 40, H - topPad - 24, 250);
+      var gx = (W - gridPx) / 2, gy = topPad;
+      var cell = gridPx / G;
+
+      ctx.fillStyle = C.SEC;
+      ctx.fillText('TEXT TOKEN  "' + query + '"  ATTENDS OVER 7×7 = 49 PATCHES', W / 2, topPad - 10);
+
+      /* find max weight for normalization of brightness + the top patch */
+      var maxW = 0, topIdx = 0, i;
+      for (i = 0; i < w.length; i++) { if (w[i] > maxW) { maxW = w[i]; topIdx = i; } }
+      var over = 0, ent = 0;
+      for (i = 0; i < w.length; i++) {
+        if (w[i] > 0.05) over++;
+        if (w[i] > 1e-12) ent -= w[i] * Math.log(w[i]);
+      }
+
+      var r, c, idx = 0;
+      for (r = 0; r < G; r++) for (c = 0; c < G; c++) {
+        var t = w[idx] / (maxW || 1);
+        ctx.fillStyle = "rgba(166,242,204," + (0.06 + 0.94 * t).toFixed(3) + ")";
+        ctx.fillRect(gx + c * cell, gy + r * cell, cell - 1.5, cell - 1.5);
+        idx++;
+      }
+      /* outline the top patch */
+      var tr = Math.floor(topIdx / G), tc = topIdx % G;
+      ctx.strokeStyle = C.BRIGHT; ctx.lineWidth = 1.6;
+      ctx.strokeRect(gx + tc * cell + 0.5, gy + tr * cell + 0.5, cell - 2.5, cell - 2.5);
+
+      /* grid border */
+      ctx.strokeStyle = "rgba(47,50,52,.9)"; ctx.lineWidth = 1;
+      ctx.strokeRect(gx, gy, gridPx, gridPx);
+
+      ctx.fillStyle = C.MUT; ctx.textBaseline = "top";
+      ctx.fillText("bright = more attention  ·  white box = peak patch  ·  weights sum to 1",
+                   W / 2, gy + gridPx + 8);
+
+      topOut.textContent = (maxW * 100).toFixed(1) + "%";
+      cntOut.textContent = over + " / 49";
+      entOut.textContent = ent.toFixed(2) + " nats";
+    }
+
+    btns.forEach(function (b) {
+      b.addEventListener("click", function () {
+        query = b.getAttribute("data-mllm-q");
+        btns.forEach(function (x) { x.classList.remove("on"); });
+        b.classList.add("on");
+        render();
+      });
+    });
+    tempIn.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

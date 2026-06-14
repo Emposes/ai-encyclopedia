@@ -1,0 +1,169 @@
+{
+  "concepts": [
+    {
+      "id": "data-02-missing-data-s1",
+      "chapter": "data/02-missing-data",
+      "section": "s1",
+      "title": "Missingness mechanisms: MCAR, MAR, MNAR",
+      "eyebrow": "DATA",
+      "beats": [
+        {
+          "text": "Before you fill a single empty cell, the first question is why that value went missing in the first place.",
+          "visual": { "type": "title", "text": "MCAR, MAR, MNAR", "sub": "Rubin's three missingness mechanisms" }
+        },
+        {
+          "text": "Rubin's framework sorts the reason into three cases by what the probability of being missing actually depends on.",
+          "visual": { "type": "equation", "tex": "P(R \\mid X_{\\text{obs}}, X_{\\text{mis}})", "note": "R is the missingness indicator" }
+        },
+        {
+          "text": "MCAR means the holes are pure coincidence; missingness depends on nothing you observed or hid.",
+          "visual": { "type": "equation", "tex": "\\textbf{MCAR:}\\quad P(R \\mid X_{\\text{obs}}, X_{\\text{mis}}) = P(R)" }
+        },
+        {
+          "text": "MAR means missingness depends only on data you did record, like older respondents skipping the income question.",
+          "visual": { "type": "equation", "tex": "\\textbf{MAR:}\\quad P(R \\mid X_{\\text{obs}}, X_{\\text{mis}}) = P(R \\mid X_{\\text{obs}})" }
+        },
+        {
+          "text": "MNAR means the value hides itself; high earners refuse to state income precisely because it is high.",
+          "visual": { "type": "bars", "values": [0.2, 4.1], "labels": ["MCAR bias", "MNAR bias"], "highlight": 1 }
+        },
+        {
+          "text": "You cannot test MAR against MNAR from data alone, so you assume MAR and probe sensitivity with what-if models.",
+          "visual": { "type": "stat", "value": 3, "label": "mechanisms, only one is testable from data", "unit": "" }
+        }
+      ]
+    },
+    {
+      "id": "data-02-missing-data-s2",
+      "chapter": "data/02-missing-data",
+      "section": "s2",
+      "title": "Simple imputation — and what it costs",
+      "eyebrow": "DATA",
+      "beats": [
+        {
+          "text": "The reflex fix replaces every missing entry with one constant: the mean, the median, or the mode.",
+          "visual": { "type": "title", "text": "Simple imputation", "sub": "One constant per column, and its hidden cost" }
+        },
+        {
+          "text": "Mean imputation fills every hole with the average of the observed entries, which is one line of code.",
+          "visual": { "type": "equation", "tex": "\\hat{x}_i = \\bar{x}_{\\text{obs}} = \\frac{1}{|O|}\\sum_{j \\in O} x_j", "note": "every hole gets the same number" }
+        },
+        {
+          "text": "It commits two quiet crimes: it shrinks the variance and it destroys the column's correlations.",
+          "visual": { "type": "equation", "tex": "\\mathrm{Var}_{\\text{filled}} = \\frac{n-m}{n}\\,\\mathrm{Var}_{\\text{obs}}", "note": "variance scales by the share of real data" }
+        },
+        {
+          "text": "Mean imputing the column 2, 4, NA, 8 fills the hole with the average of the three observed values.",
+          "visual": { "type": "stat", "value": 4.67, "label": "fill value for 2, 4, NA, 8", "decimals": 2 }
+        },
+        {
+          "text": "The collapse is linear in the missing fraction, so a column that is forty percent empty loses forty percent of its spread.",
+          "visual": { "type": "plot", "ys": [1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2], "dot": 4, "xlabel": "missing fraction", "ylabel": "variance multiplier" }
+        },
+        {
+          "text": "Median and mode share the flaw of a single constant, but resist outliers and apply to categories.",
+          "visual": { "type": "bars", "values": [1.0, 0.6], "labels": ["true spread", "after 40% fill"], "highlight": 1 }
+        }
+      ]
+    },
+    {
+      "id": "data-02-missing-data-s3",
+      "chapter": "data/02-missing-data",
+      "section": "s3",
+      "title": "kNN imputation: borrow from your neighbours",
+      "eyebrow": "DATA",
+      "beats": [
+        {
+          "text": "The first real upgrade stops filling with a global constant and starts filling with a local one.",
+          "visual": { "type": "title", "text": "kNN imputation", "sub": "Fill each hole from its nearest neighbours" }
+        },
+        {
+          "text": "k-nearest-neighbour imputation finds the k most similar rows and fills the hole with their average.",
+          "visual": { "type": "equation", "tex": "\\hat{x}_{ic} = \\frac{\\sum_{j \\in N_k(i)} w_{ij}\\, x_{jc}}{\\sum_{j \\in N_k(i)} w_{ij}}", "note": "a distance-weighted neighbour average" }
+        },
+        {
+          "text": "Distance is measured only over columns both rows observe, so missingness never poisons the metric.",
+          "visual": { "type": "equation", "tex": "d(i,j) = \\sqrt{\\sum_{c' \\in O_{ij}} (x_{ic'} - x_{jc'})^2}", "note": "computed over jointly observed columns" }
+        },
+        {
+          "text": "Because each fill is conditioned on a local neighbourhood, kNN preserves the correlation a flat mean erases.",
+          "visual": { "type": "bars", "values": [0.0, 0.78], "labels": ["mean corr", "kNN corr"], "highlight": 1 }
+        },
+        {
+          "text": "Small k is flexible but noisy; large k smooths toward the global mean and reintroduces shrinkage.",
+          "visual": { "type": "plot", "ys": [4.2, 2.6, 2.0, 1.9, 2.1, 2.4, 2.8, 3.2], "dot": 3, "xlabel": "k neighbours", "ylabel": "fill error" }
+        },
+        {
+          "text": "You must scale features first, or the nearest neighbours become an artifact of whichever column has the largest units.",
+          "visual": { "type": "stat", "value": 2, "label": "O(n^2) scoring cost in the naive form", "unit": "n" }
+        }
+      ]
+    },
+    {
+      "id": "data-02-missing-data-s4",
+      "chapter": "data/02-missing-data",
+      "section": "s4",
+      "title": "MICE: multiple imputation by chained equations",
+      "eyebrow": "DATA",
+      "beats": [
+        {
+          "text": "Every method so far fills one best guess and proceeds as if it were ground truth, hiding all uncertainty.",
+          "visual": { "type": "title", "text": "MICE", "sub": "Multiple imputation by chained equations" }
+        },
+        {
+          "text": "Multiple imputation generates several complete datasets with different fills, analyses each, and pools the results.",
+          "visual": { "type": "stat", "value": 20, "label": "imputations typically beat one perfect fill", "unit": "M" }
+        },
+        {
+          "text": "Each sweep regresses every missing column on all the others and draws fresh imputations from that conditional model.",
+          "visual": { "type": "equation", "tex": "x^{(t+1)}_{\\cdot c\\,\\in\\,\\text{mis}} \\sim P\\!\\left(x_{\\cdot c} \\mid x_{\\cdot 1}, \\ldots, x_{\\cdot p};\\ \\hat{\\theta}_c\\right)", "note": "one fully conditional sweep" }
+        },
+        {
+          "text": "Drawing from the distribution rather than its mean is what injects the honest uncertainty MICE exists to preserve.",
+          "visual": { "type": "plot", "ys": [0.42, 0.21, 0.11, 0.06, 0.03, 0.02, 0.01, 0.01], "dot": 7, "xlabel": "sweep", "ylabel": "mean change in fills" }
+        },
+        {
+          "text": "Rubin's rules pool the estimates by adding within-imputation and between-imputation variance into one total.",
+          "visual": { "type": "equation", "tex": "T = \\bar{U} + \\left(1 + \\tfrac{1}{M}\\right) B", "note": "between-imputation spread B is what single fills throw away" }
+        },
+        {
+          "text": "Chained equations have no joint-distribution guarantee, yet they are the default in R's mice and scikit-learn.",
+          "visual": { "type": "bars", "values": [1, 5, 20], "labels": ["single", "M=5", "M=20"], "highlight": 2 }
+        }
+      ]
+    },
+    {
+      "id": "data-02-missing-data-s5",
+      "chapter": "data/02-missing-data",
+      "section": "s5",
+      "title": "Model-based & indicator strategies; choosing in practice",
+      "eyebrow": "DATA",
+      "beats": [
+        {
+          "text": "Two more tools round out the kit: model-based imputation and the missing-indicator method.",
+          "visual": { "type": "title", "text": "Choosing in practice", "sub": "Model-based fills, indicators, and the rules" }
+        },
+        {
+          "text": "Model-based imputation fits one probabilistic model of the whole matrix and reads the missing values off it.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "The missing-indicator method adds a binary was-this-missing column, which is often predictive under MNAR.",
+          "visual": { "type": "bars", "values": [1, 0], "labels": ["was missing", "was present"], "highlight": 0 }
+        },
+        {
+          "text": "Always impute inside the cross-validation fold, never before, or test information leaks into training.",
+          "visual": { "type": "stat", "value": 4, "label": "common ways imputation goes wrong", "unit": "" }
+        },
+        {
+          "text": "Match the method to the mechanism: MCAR forgives anything, MAR rewards conditioning, MNAR demands an explicit model.",
+          "visual": { "type": "bars", "values": [1, 2, 3], "labels": ["MCAR", "MAR", "MNAR"], "highlight": 2 }
+        },
+        {
+          "text": "Gradient-boosted trees handle NaN natively by learning a default split, often the strongest baseline of all.",
+          "visual": { "type": "plot", "ys": [3.1, 2.4, 1.9, 1.5, 1.3, 1.2], "dot": 5, "xlabel": "method strength", "ylabel": "error to truth" }
+        }
+      ]
+    }
+  ]
+}
