@@ -1,0 +1,165 @@
+{
+  "concepts": [
+    {
+      "id": "dl-02-cnn-s1",
+      "chapter": "dl/02-cnn",
+      "section": "s1",
+      "title": "The convolution operation",
+      "eyebrow": "DEEP LEARNING",
+      "beats": [
+        {
+          "text": "A dense layer flattens an image and wastes weights, so a convolution slides one small kernel across every location instead.",
+          "visual": { "type": "title", "text": "The convolution operation", "sub": "Local connectivity and weight sharing" }
+        },
+        {
+          "text": "A 224 by 224 RGB picture becomes 150,528 inputs, and a single dense unit reading all of them owns that many weights.",
+          "visual": { "type": "stat", "value": 150528, "label": "inputs from one 224x224 RGB image", "unit": "weights/unit" }
+        },
+        {
+          "text": "The output at each position is the sum of element-wise products between the kernel and the patch it overlaps, plus a bias.",
+          "visual": { "type": "equation", "tex": "S(i,j) = \\sum_{m=0}^{k-1}\\sum_{n=0}^{k-1} I(i+m,\\,j+n)\\,W(m,n) + b", "note": "Discrete 2D convolution (cross-correlation)" }
+        },
+        {
+          "text": "A dense 32 by 32 to 32 by 32 map needs about a million weights, while a 3 by 3 convolution needs only nine plus a bias.",
+          "visual": { "type": "bars", "values": [1048576, 10], "labels": ["dense", "3x3 conv"], "highlight": 1 }
+        },
+        {
+          "text": "With no padding the feature map shrinks: an N by N input convolved with a k by k kernel yields an N minus k plus one output.",
+          "visual": { "type": "equation", "tex": "(N - k + 1) \\times (N - k + 1)", "note": "Valid padding shrinks the map" }
+        },
+        {
+          "text": "Weight sharing forces position-independence, the prior that lets convolutional networks generalize from far less data.",
+          "visual": { "type": "lattice" }
+        }
+      ]
+    },
+    {
+      "id": "dl-02-cnn-s2",
+      "chapter": "dl/02-cnn",
+      "section": "s2",
+      "title": "Pooling & translation invariance",
+      "eyebrow": "DEEP LEARNING",
+      "beats": [
+        {
+          "text": "Convolution is equivariant, but classification wants invariance, so pooling converts a little equivariance into a little invariance.",
+          "visual": { "type": "title", "text": "Pooling and translation invariance", "sub": "Summarize each window with one number" }
+        },
+        {
+          "text": "Max-pooling slides a p by p window with stride s and reports only the strongest activation inside each region.",
+          "visual": { "type": "equation", "tex": "P(i,j) = \\max_{0\\le m<p,\\;0\\le n<p} S(i\\cdot s + m,\\; j\\cdot s + n)", "note": "Max-pooling, usually p = s = 2" }
+        },
+        {
+          "text": "A stride-2 pool halves each dimension, cutting the feature map to a quarter of its area and cheapening every layer above.",
+          "visual": { "type": "plot", "ys": [16, 8, 4, 2, 1], "xlabel": "pool layers", "ylabel": "relative side", "mark": "down" }
+        },
+        {
+          "text": "Because the max ignores where the peak occurred, a small shift that keeps it in the same window leaves the output unchanged.",
+          "visual": { "type": "stat", "value": 75, "label": "area discarded by one 2x2 max-pool", "unit": "%" }
+        },
+        {
+          "text": "Pooling can hurt tasks that need position, so many architectures since the mid-2010s downsample with strided convolutions instead.",
+          "visual": { "type": "bars", "values": [4, 1], "labels": ["before pool", "after 2x2 pool"], "highlight": 1 }
+        }
+      ]
+    },
+    {
+      "id": "dl-02-cnn-s3",
+      "chapter": "dl/02-cnn",
+      "section": "s3",
+      "title": "Channels, stride & padding",
+      "eyebrow": "DEEP LEARNING",
+      "beats": [
+        {
+          "text": "A color photo is height by width by three channels, so each kernel takes the same depth and dots over all channels at once.",
+          "visual": { "type": "title", "text": "Channels, stride and padding", "sub": "Depth is where capacity lives" }
+        },
+        {
+          "text": "A layer's parameter count and output height follow directly from kernel size, channels, padding, and stride.",
+          "visual": { "type": "equation", "tex": "\\#\\text{params} = (k\\cdot k\\cdot C_{\\text{in}} + 1)\\,C_{\\text{out}}, \\quad H_{\\text{out}} = \\left\\lfloor \\frac{H_{\\text{in}} - k + 2P}{S} \\right\\rfloor + 1", "note": "Conv layer parameters and output geometry" }
+        },
+        {
+          "text": "A 3 by 3 conv with 256 input and 256 output channels has about 590,000 parameters, independent of the image size.",
+          "visual": { "type": "stat", "value": 590000, "label": "params for a 256-to-256 channel 3x3 conv", "unit": "weights" }
+        },
+        {
+          "text": "As pooling shrinks the spatial grid, channel counts rise to compensate, trading where for what as the network goes deeper.",
+          "visual": { "type": "plot", "ys": [64, 128, 256, 512], "xlabel": "stage", "ylabel": "channels", "mark": "up" }
+        },
+        {
+          "text": "A typical backbone runs from 224 squared with 3 channels down to 7 squared with 512, small and deep before the classifier.",
+          "visual": { "type": "bars", "values": [224, 56, 28, 14, 7], "labels": ["in", "s1", "s2", "s3", "s4"], "highlight": 4 }
+        },
+        {
+          "text": "A 1 by 1 convolution does no spatial mixing, acting as a per-pixel linear layer that cheaply changes channel depth.",
+          "visual": { "type": "equation", "tex": "k = 1 \\;\\Rightarrow\\; \\text{per-pixel linear mix across channels}", "note": "The 1x1 bottleneck convolution" }
+        }
+      ]
+    },
+    {
+      "id": "dl-02-cnn-s4",
+      "chapter": "dl/02-cnn",
+      "section": "s4",
+      "title": "Classic architectures — LeNet to ResNet",
+      "eyebrow": "DEEP LEARNING",
+      "beats": [
+        {
+          "text": "The CNN's history is a tight sequence of ideas, each one fixing the ceiling the previous generation ran into.",
+          "visual": { "type": "title", "text": "LeNet to ResNet", "sub": "Each idea fixed the last one's ceiling" }
+        },
+        {
+          "text": "Depth climbed from LeNet's 7 layers in 1998 to ResNet's 152 in 2015, the span that defines the modern backbone.",
+          "visual": { "type": "bars", "values": [7, 8, 19, 22, 152], "labels": ["LeNet", "AlexNet", "VGG", "GoogLeNet", "ResNet"], "highlight": 4 }
+        },
+        {
+          "text": "Through 2014 deeper meant better, yet past about twenty layers accuracy got worse from an optimization failure, not overfitting.",
+          "visual": { "type": "plot", "ys": [20, 12, 8, 10, 16], "xlabel": "depth", "ylabel": "error", "mark": "min" }
+        },
+        {
+          "text": "The residual block fixes it with one change: learn only the residual and add the original input back at the end.",
+          "visual": { "type": "equation", "tex": "\\mathbf{y} = \\mathcal{F}(\\mathbf{x}; \\{W_i\\}) + \\mathbf{x}", "note": "The residual block (He et al., 2015)" }
+        },
+        {
+          "text": "The additive shortcut gives gradients a clean plus-one path back to early layers, enabling networks up to 152 layers deep.",
+          "visual": { "type": "stat", "value": 152, "label": "layers unlocked by the skip connection", "unit": "deep" }
+        },
+        {
+          "text": "Two stacked 3 by 3 convs cover a 5 by 5 field with 18 weights instead of 25, so 3 by 3 became the field's default kernel.",
+          "visual": { "type": "bars", "values": [18, 25], "labels": ["two 3x3", "one 5x5"], "highlight": 0 }
+        }
+      ]
+    },
+    {
+      "id": "dl-02-cnn-s5",
+      "chapter": "dl/02-cnn",
+      "section": "s5",
+      "title": "Transfer learning",
+      "eyebrow": "DEEP LEARNING",
+      "beats": [
+        {
+          "text": "The most practically important fact about CNNs is that the features they learn transfer to entirely new tasks.",
+          "visual": { "type": "title", "text": "Transfer learning", "sub": "Reuse a pre-trained visual vocabulary" }
+        },
+        {
+          "text": "A backbone trained on ImageNet's 1.2 million photos learns a near-universal vocabulary of edges, textures, and object parts.",
+          "visual": { "type": "stat", "value": 1.2, "label": "ImageNet photos used to pre-train", "unit": "million", "decimals": 1 }
+        },
+        {
+          "text": "Feature extraction freezes all convolutional weights and trains only a fresh classifier on top of the final feature vector.",
+          "visual": { "type": "bars", "values": [0, 100], "labels": ["backbone trained", "head trained"], "highlight": 1 }
+        },
+        {
+          "text": "Fine-tuning unfreezes part of the backbone at a learning rate 10 to 100 times lower, nudging the weights rather than erasing them.",
+          "visual": { "type": "equation", "tex": "\\eta_{\\text{fine-tune}} \\approx \\frac{\\eta_{\\text{scratch}}}{10\\text{ to }100}", "note": "Small learning rate preserves pre-trained weights" }
+        },
+        {
+          "text": "Feature transferability falls with depth, so early layers transfer almost perfectly while the last layers stay task-specific.",
+          "visual": { "type": "plot", "ys": [0.98, 0.92, 0.8, 0.6, 0.4], "xlabel": "layer depth", "ylabel": "transferability", "mark": "down" }
+        },
+        {
+          "text": "Match the preprocessing first, since mismatched resolution, normalization, or channel order is the most common silent failure.",
+          "visual": { "type": "lattice" }
+        }
+      ]
+    }
+  ]
+}

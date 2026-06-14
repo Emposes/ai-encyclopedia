@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>The Data Problem — AI Encyclopedia</title>
+<meta name="description" content="Quality, leakage, and splits: the most expensive bugs in machine learning live in the data pipeline, not the loss function." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+</head>
+<body data-track="data" data-level="intro">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ DATA / 01 / THE DATA PROBLEM</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../data/02-missing-data.html">NEXT: MISSING DATA →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">DATA &amp; FEATURE ENGINEERING · CHAPTER 01 / 05</div>
+    <h1>The Data Problem — Quality, Leakage &amp; Splits</h1>
+    <p class="lede">Most experiments are decided before a single gradient is computed. <strong>A model is only as trustworthy as its data split, and the most expensive bugs in machine learning are leakage rather than math.</strong> This chapter covers what counts as good data, the train/validation/test contract that makes a measurement defensible, and the three families of leakage that inflate scores until deployment.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>INTRO</b></span>
+      <span>READING TIME<b>≈ 22 MIN</b></span>
+      <span>BUILDS ON<b>STATS 01–08</b></span>
+      <span>INSTRUMENTS<b>LEAKAGE · SPLITS · ALLOCATOR</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">1.1</span>Garbage in, gospel out</a>
+      <a href="#s2"><span class="n">1.2</span>The train/val/test contract</a>
+      <a href="#s3"><span class="n">1.3</span>Data leakage</a>
+      <a href="#s4"><span class="n">1.4</span>Sampling &amp; shift</a>
+      <a href="#s5"><span class="n">1.5</span>Building the dataset</a>
+      <a href="#s6"><span class="n">1.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 1.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">1.1</span><h2>Garbage in, gospel out — the data-quality dimensions</h2></div>
+        <p>The old slogan is "garbage in, garbage out." The modern danger is worse: <em>garbage in, gospel out</em>. A model trained on broken data does not announce its brokenness — it produces a confident number, a clean dashboard, a benchmark you can put in a slide. The failure is invisible precisely because the machinery downstream is so good at manufacturing certainty. So the first skill is not modelling; it is auditing the inputs along a handful of concrete dimensions.</p>
+
+        <table class="data">
+          <thead><tr><th>Dimension</th><th>The question it asks</th><th>How it bites a model</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Accuracy</strong></td><td>Do recorded values match reality?</td><td>Mislabeled targets cap achievable accuracy; the model learns the error.</td></tr>
+            <tr><td><strong>Completeness</strong></td><td>Are values present where they should be?</td><td>Missingness is rarely random (Chapter 02); naïve imputation injects bias.</td></tr>
+            <tr><td><strong>Consistency</strong></td><td>Do the same facts agree across sources?</td><td>"NY" vs "New York" vs "N.Y." fractures a category into noise.</td></tr>
+            <tr><td><strong>Timeliness</strong></td><td>Was the value knowable when the prediction is made?</td><td>A value that arrives <em>after</em> the decision point is temporal leakage (§1.3).</td></tr>
+            <tr><td><strong>Uniqueness</strong></td><td>Are records deduplicated?</td><td>Duplicates that straddle the split leak the answer and inflate the score.</td></tr>
+            <tr><td><strong>Validity</strong></td><td>Do values obey their schema and range?</td><td>An age of <span class="m">−3</span> or <span class="m">999</span> is a sentinel masquerading as data.</td></tr>
+            <tr><td><strong>Representativeness</strong></td><td>Does the sample resemble deployment?</td><td>If train ≠ production, every metric is measuring the wrong world (§1.4).</td></tr>
+          </tbody>
+        </table>
+
+        <p>None of these is exotic, and that is the point. The expensive mistakes in machine learning are almost never a missing regularizer or the wrong learning rate — they are a duplicated row, a label that encodes the answer, a timestamp read in the wrong direction. The rest of this chapter is a tour of how those mistakes hide, and the protocol that smokes them out.</p>
+
+        <p class="note"><strong>Labels are data too — and often the worst of it.</strong> Benchmark audits have found error rates of a few percent in the <em>test sets</em> of canonical datasets such as ImageNet and the others surveyed by Northcutt et al. (2021). When the yardstick itself is bent, two models a percentage point apart may simply be fitting different label mistakes. Read your data by hand before you trust any number computed from it.</p>
+      </section>
+
+      <!-- ====================== 1.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">1.2</span><h2>The train / validation / test contract</h2></div>
+        <p>Machine learning makes one promise — <em>this model will generalize to data it has never seen</em> — and that promise is only credible if you have held some data genuinely unseen. The standard protocol splits the dataset into three disjoint roles, and the discipline is in keeping them disjoint:</p>
+        <ul>
+          <li><strong>Training set</strong> — the model fits its parameters here. It is allowed to memorize this.</li>
+          <li><strong>Validation set</strong> — used to <em>choose</em> things the training does not: hyperparameters, model family, when to stop. Every decision you make from it spends a little of its independence.</li>
+          <li><strong>Test set</strong> — touched <em>once</em>, at the very end, to estimate generalization. The moment you tune against it, it stops being a test set and becomes a second validation set.</li>
+        </ul>
+
+        <div class="eq"><span class="eq-tag">EQ D1.1 — THE THREE-WAY SPLIT</span>
+        $$ \mathcal{D} = \mathcal{D}_{\text{train}} \,\sqcup\, \mathcal{D}_{\text{val}} \,\sqcup\, \mathcal{D}_{\text{test}}, \qquad N = N_{\text{train}} + N_{\text{val}} + N_{\text{test}} $$
+        <div class="eq-note">The \(\sqcup\) is a <b>disjoint</b> union: no row, and no information about a row, may appear in more than one part. A common allocation is 70 / 15 / 15, but the right ratio depends on size — at \(N = 10^6\) a 1% test set already holds 10,000 rows, plenty to measure with. <b>The split is a contract, not a suggestion: the entire value of the test number is that nothing downstream of it ever saw the test data.</b></div>
+        </div>
+
+        <p>Why three and not two? Because evaluating on the same data you used to <em>select</em> a model is optimistic in exactly the way it is convenient. Each time you peek at the validation set and pick the better-scoring option, you fit a little to its particular noise. After fifty such peeks, the validation number is part wisdom, part overfitting to that one sample — so you keep a separate test set, used once, to get an honest read.</p>
+
+        <div class="exercise" data-answer="150" data-tol="0.001" data-unit="rows" data-hint="the test fraction times the row count">
+          <div class="ex-q">You have a dataset of <b>1000 rows</b> and use a <b>70 / 15 / 15</b> train/validation/test split. How many rows land in the <b>test</b> set?</div>
+          <div class="ex-reveal-src">The test fraction is \(15\% = 0.15\), so \(N_{\text{test}} = 0.15 \times 1000 = \) <b>150</b> rows. (Train gets \(0.70 \times 1000 = 700\); validation the remaining \(150\). They sum back to 1000 — a disjoint union, EQ D1.1.)</div>
+        </div>
+
+        <p>The estimate you read off the test set is itself a random quantity — a different test sample would give a slightly different number. For a metric that is an average over the test rows (accuracy is the mean of correct/incorrect indicators), the spread of that estimate shrinks with the test-set size:</p>
+
+        <div class="eq"><span class="eq-tag">EQ D1.2 — STANDARD ERROR OF A TEST METRIC</span>
+        $$ \mathrm{SE}(\hat{a}) = \sqrt{\frac{\hat{a}\,(1 - \hat{a})}{N_{\text{test}}}} $$
+        <div class="eq-note">\(\hat{a}\) is a measured proportion (e.g. accuracy); \(N_{\text{test}}\) is the number of test rows. The error falls like \(1/\sqrt{N_{\text{test}}}\): to <b>halve</b> your uncertainty you must <b>quadruple</b> the test set. This is the real trade in EQ D1.1 — every row you move into the test set sharpens the measurement but starves the model, and vice versa. The allocator instrument below makes that tension tangible.</div>
+        </div>
+
+        <p class="note"><strong>When data is scarce, fold instead of waste.</strong> A single small validation set is itself a noisy sample. <strong>\(k\)-fold cross-validation</strong> rotates the validation role across \(k\) disjoint folds, trains \(k\) times, and averages — turning one anxious split into \(k\) estimates and using every row for both training and validation (never simultaneously). It costs \(k\times\) the compute and assumes the rows are exchangeable, an assumption §1.3 and §1.4 will complicate. A held-out test set still sits outside the whole cross-validation loop.</p>
+
+        <div class="widget" id="dp-alloc" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT D1.3 — TRAIN / VAL / TEST ALLOCATOR</span><span class="w-sub">EQ D1.1 · EQ D1.2 · SE READOUT</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>DATASET SIZE N <output id="dp-alloc-n-out">10,000</output></label><input type="range" id="dp-alloc-n" min="3" max="6.3" step="0.1" value="4"/></div>
+              <div class="ctl"><label>TRAIN % <output id="dp-alloc-tr-out">70</output></label><input type="range" id="dp-alloc-tr" min="40" max="90" step="1" value="70"/></div>
+              <div class="ctl"><label>TEST % (of the rest) <output id="dp-alloc-te-out">50</output></label><input type="range" id="dp-alloc-te" min="10" max="90" step="1" value="50"/></div>
+            </div>
+            <div style="border:1px solid var(--hairline);border-radius:4px;padding:14px;margin-top:4px;">
+              <div style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.16em;color:#636363;margin-bottom:8px;">SPLIT OF THE DATASET</div>
+              <div style="height:22px;display:flex;border-radius:2px;overflow:hidden;background:rgba(47,50,52,.4);">
+                <div id="dp-alloc-bar-tr" style="height:100%;width:70%;background:#a6f2cc;transition:width .2s ease-in-out;"></div>
+                <div id="dp-alloc-bar-va" style="height:100%;width:15%;background:#4e8af7;transition:width .2s ease-in-out;"></div>
+                <div id="dp-alloc-bar-te" style="height:100%;width:15%;background:#565656;transition:width .2s ease-in-out;"></div>
+              </div>
+              <div style="display:flex;justify-content:space-between;font-family:ui-monospace,Menlo,monospace;font-size:9px;letter-spacing:.12em;color:#9b9b9b;margin-top:6px;">
+                <span style="color:#a6f2cc;">■ TRAIN</span><span style="color:#4e8af7;">■ VAL</span><span style="color:#9b9b9b;">■ TEST</span>
+              </div>
+            </div>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">TRAIN / VAL / TEST ROWS</div><div class="r-value" id="dp-alloc-rows" style="font-size:13px;">—</div></div>
+              <div class="readout acc"><div class="r-label">TEST SE @ a = 0.85</div><div class="r-value" id="dp-alloc-se">—</div></div>
+              <div class="readout acc"><div class="r-label">95% CI HALF-WIDTH</div><div class="r-value" id="dp-alloc-ci">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Drag the size and the two percentages. The bar shows the disjoint split (EQ D1.1); the readouts apply EQ D1.2 to a model measured at 85% accuracy. Shrink the test set and watch the standard error — and the ±95% confidence band — balloon: a 100-row test set cannot tell an 85% model from an 80% one. Quadruple <i>N</i> and the band halves.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 1.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">1.3</span><h2>Data leakage — the most expensive bug in ML</h2></div>
+        <p><strong>Leakage</strong> is any path by which information from outside the training data — most dangerously, information that will not exist at prediction time — reaches the model and inflates its measured performance. It is the canonical reason a model scores beautifully in the notebook and falls apart in production. Kaufman et al. (2012) gave the field its working definition and taxonomy; the failure has not gotten rarer since. Three families cover almost every case.</p>
+
+        <h3>Target leakage</h3>
+        <p>A feature is a proxy for the answer because it is a <em>consequence</em> of the label, not a cause available beforehand. The classic example: predicting whether a patient has a disease, with <span class="m">prescribed_treatment_for_that_disease</span> sitting in the feature table. The feature is enormously predictive and completely useless — at prediction time, the diagnosis hasn't happened, so the treatment doesn't exist yet. The model has learned to read the answer key.</p>
+
+        <div class="eq"><span class="eq-tag">EQ D1.3 — THE LEAKAGE CRITERION</span>
+        $$ \text{feature } x_j \text{ is admissible} \iff x_j \text{ is knowable at prediction time } t_{\text{pred}}, \text{ before } y \text{ is realized} $$
+        <div class="eq-note">The single test that catches most leakage: <b>for every feature, ask whether its value would actually be available, with that value, at the moment the model must predict.</b> If the feature is computed from the future, from the label, or from the test rows, it fails. This is a question about your <em>process</em>, not your statistics — no correlation analysis substitutes for it.</div>
+        </div>
+
+        <h3>Temporal leakage</h3>
+        <p>Information from the future bleeds into the past. The subtle version isn't an obvious "future" column — it's a statistic computed over the whole dataset and then used on early rows. <strong>Fitting a scaler, an imputer, an encoder, or any preprocessing on the full data before splitting</strong> lets the training rows "see" the mean, variance, or category set of the test rows. The leak is small per feature and devastating in aggregate, because it happens silently inside a one-line call.</p>
+
+        <div class="callout warn">
+          <span class="co-icon">SILENT KILLER</span>
+          <p><strong>Fit preprocessing inside the split, never across it.</strong> <span class="m">scaler.fit(X)</span> then <span class="m">train_test_split(...)</span> is leakage: the scaler's mean and variance were computed using test rows. The correct order is split first, then <span class="m">scaler.fit(X_train)</span> and <span class="m">scaler.transform(X_test)</span> with the <em>training</em> statistics. Inside cross-validation, the scaler must be re-fit on each fold's training portion — which is exactly what an sklearn <span class="m">Pipeline</span> does for you, and why pipelines exist.</p>
+        </div>
+
+        <h3>Group leakage</h3>
+        <p>Rows are not independent — several belong to the same entity (the same patient, user, document, or molecule), and a random split scatters that entity across train and test. The model then "generalizes" to a test patient it has already met under a different row. The fix is a <em>grouped</em> split: partition by the group key so an entire entity lands wholly in one side. The instrument below shows random, time-based, and grouped splits side by side.</p>
+
+        <div class="exercise" data-answer="yes" data-hint="were the test rows used to compute the mean you scaled with?">
+          <div class="ex-q">You compute the <b>mean of a feature over the full dataset</b> and use it to standardize every value, <i>then</i> split into train and test. Is this data leakage? (Answer <b>yes</b> or <b>no</b>.)</div>
+          <div class="ex-reveal-src">The full-data mean was computed using the test rows, so the training rows were transformed with information about the test set — a textbook case of temporal/preprocessing leakage. The honest procedure splits first, fits the mean on \(\mathcal{D}_{\text{train}}\) only, and applies that same mean to the test rows. Answer: <b>yes</b>.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Target leakage: a feature that is a consequence of the label
+# A logistic model fit WITH vs WITHOUT the leaked column.
+import numpy as np
+rng = np.random.default_rng(0)
+N = 600
+y = rng.integers(0, 2, N)                       # the label
+honest = 0.6*y + rng.normal(0, 1.0, N)          # a weak, legitimate signal
+leak   = y + rng.normal(0, 0.05, N)             # a near-copy of the label (leak!)
+
+def fit_score(cols):
+    X = np.column_stack(cols + [np.ones(N)])     # add bias
+    tr, te = slice(0, 400), slice(400, N)        # honest holdout
+    w = np.zeros(X.shape[1])
+    for _ in range(400):                          # gradient-descent logistic fit
+        p = 1/(1+np.exp(-X[tr] @ w))
+        w -= 0.05 * X[tr].T @ (p - y[tr]) / 400
+    pred = (1/(1+np.exp(-X[te] @ w))) > 0.5
+    return (pred == y[te]).mean()
+
+print(f"honest features only      : {fit_score([honest]):.3f} test accuracy")
+print(f"+ leaked 'future' feature : {fit_score([honest, leak]):.3f} test accuracy")
+print("\nThe leak looks like a miracle feature -- because it IS the answer.")
+print("On real holdout where 'leak' is unavailable, that gain evaporates.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Scaling-before-split leakage: same model, two preprocessing orders.
+# Manual 5-fold CV; the only difference is WHERE the scaler is fit.
+import numpy as np
+rng = np.random.default_rng(1)
+N, d = 400, 8
+X = rng.normal(0, 1, (N, d))
+y = (X[:, 0] + 0.5*rng.normal(0, 1, N) > 0).astype(float)   # weak signal
+
+def cv(leaky):
+    folds = np.array_split(rng.permutation(N), 5); accs = []
+    for k in range(5):
+        te = folds[k]; tr = np.concatenate([folds[j] for j in range(5) if j != k])
+        rows = slice(None) if leaky else tr     # WRONG vs RIGHT: which rows scale?
+        mu, sd = X[rows].mean(0), X[rows].std(0) + 1e-9
+        Xb = np.column_stack([(X - mu) / sd, np.ones(N)])
+        w = np.zeros(d + 1)
+        for _ in range(300):
+            p = 1/(1+np.exp(-Xb[tr] @ w)); w -= 0.1*Xb[tr].T @ (p - y[tr])/len(tr)
+        accs.append(((1/(1+np.exp(-Xb[te] @ w)) > 0.5) == y[te]).mean())
+    return np.mean(accs)
+
+print(f"scaler fit on FULL data (leaky) : CV acc {cv(True):.3f}")
+print(f"scaler fit INSIDE each fold     : CV acc {cv(False):.3f}")
+print("\nThe gap is the leak. It is tiny per feature and pure illusion;")
+print("a Pipeline re-fits the scaler per fold so the honest number is all you see.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="dp-leak" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT D1.1 — LEAKAGE DEMONSTRATOR</span><span class="w-sub">VALIDATION (LEAKY) vs TRUE HOLDOUT · EQ D1.3</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>LEAKY FEATURE</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost" data-leak-on="0">OFF</button>
+                  <button class="w-btn ghost on" data-leak-on="1">ON</button>
+                </div>
+              </div>
+              <div class="ctl"><label>LEAK STRENGTH <output id="dp-leak-str-out">0.90</output></label><input type="range" id="dp-leak-str" min="0" max="0.99" step="0.01" value="0.90"/></div>
+            </div>
+            <canvas class="w-canvas" id="dp-leak-canvas" height="220"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">VALIDATION ACC (REPORTED)</div><div class="r-value" id="dp-leak-val">—</div></div>
+              <div class="readout"><div class="r-label">TRUE HOLDOUT ACC</div><div class="r-value" id="dp-leak-test">—</div></div>
+              <div class="readout"><div class="r-label">ILLUSION (THE DROP)</div><div class="r-value" id="dp-leak-gap">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">With the leak OFF, both bars sit at the model's honest skill (~0.82). Turn the leak ON and the <span style="color:var(--accent);">validation</span> bar climbs toward 1.0 as you raise leak strength — because the validation rows share the leaked feature — while the <span style="color:var(--blue);">true holdout</span> bar barely moves, since the leaked column is unavailable at real prediction time (EQ D1.3). The gap between the bars is the size of the lie you would have shipped.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 1.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">1.4</span><h2>Sampling, representativeness &amp; distribution shift</h2></div>
+        <p>A split keeps the test data unseen, but it does not guarantee the data resembles the world the model will face. The whole evaluation rests on one assumption — that training, test, and deployment data are drawn from the <em>same</em> distribution. When that fails, even a flawless split measures the wrong thing.</p>
+
+        <div class="eq"><span class="eq-tag">EQ D1.4 — THE i.i.d. ASSUMPTION (AND ITS FAILURE)</span>
+        $$ \text{evaluation is valid} \iff p_{\text{train}}(x, y) \approx p_{\text{test}}(x, y) \approx p_{\text{deploy}}(x, y) $$
+        <div class="eq-note">"i.i.d." = independent and identically distributed. <b>Covariate shift</b> moves \(p(x)\) (the input mix changes — new users, new regions); <b>label shift</b> moves \(p(y)\) (the base rate changes — fraud surges); <b>concept drift</b> moves \(p(y\mid x)\) (the rule itself changes — last year's spam looks innocuous today). A random split hides all three, because it makes train and test identical by construction while deployment quietly diverges.</div>
+        </div>
+
+        <p>The remedy depends on the structure of the data. When time matters — anything forecasting, anything where today's model predicts tomorrow — a random split is a lie, because it lets the model train on the future and test on the past. The honest protocol is a <strong>time-based split</strong>: train on the past, validate and test on strictly later periods, exactly as deployment will run. When records cluster by entity, use a <strong>grouped split</strong> so no entity straddles the boundary (§1.3). Sometimes you need both at once.</p>
+
+        <p class="note"><strong>Sampling bias is upstream of all of this.</strong> If the data was collected in a way that over- or under-represents part of the world — survivorship bias, self-selection, a sensor that only logged failures — no split or model can recover what was never sampled. Stratified sampling (preserving class or subgroup proportions in every split) protects measurement when classes are imbalanced, but it cannot conjure a population that was never observed. The cheapest fix to a representativeness problem is almost always collecting better data, not a cleverer estimator.</p>
+
+        <div class="widget" id="dp-split" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT D1.2 — SPLIT VISUALIZER</span><span class="w-sub">RANDOM · TIME-BASED · GROUPED</span></div>
+          <div class="w-body">
+            <div class="ctl-row" style="margin-bottom:10px;">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>SPLIT STRATEGY</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-split-mode="random">RANDOM</button>
+                  <button class="w-btn ghost" data-split-mode="time">TIME-BASED</button>
+                  <button class="w-btn ghost" data-split-mode="group">GROUPED</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="dp-split-canvas" height="190"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">STRATEGY</div><div class="r-value" id="dp-split-name" style="font-size:13px;">—</div></div>
+              <div class="readout acc"><div class="r-label">ENTITIES SPANNING THE SPLIT</div><div class="r-value" id="dp-split-leak">—</div></div>
+              <div class="readout"><div class="r-label">FUTURE→PAST ORDER VIOLATIONS</div><div class="r-value" id="dp-split-order">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Each cell is one row, ordered left-to-right by time, its letter the entity it belongs to. <b>RANDOM</b> scatters train (mint) and test (grey) freely — and the readouts flag both group leakage (an entity in both sets) and time violations (test rows earlier than train rows). <b>TIME-BASED</b> puts every test row strictly after every train row: zero order violations. <b>GROUPED</b> keeps each lettered entity wholly on one side: zero spanning entities. Notice no single strategy zeroes out every risk — that is the real lesson.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 1.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">1.5</span><h2>Building the modeling dataset — a protocol</h2></div>
+        <p>Pulling the pieces together, here is the order of operations that keeps every later number honest. The sequence matters more than any single step: most leakage is an ordering bug, a transformation that happened one line too early.</p>
+
+        <pre><code><span class="c"># A leakage-safe pipeline. The ORDER is the point, not any one line.</span>
+<span class="k">1 define</span>:     the prediction target y AND the exact moment t_pred it is made
+<span class="k">2 audit</span>:      every feature against EQ D1.3 — knowable at t_pred? drop if not
+<span class="k">3 dedup</span>:      remove duplicate / near-duplicate rows BEFORE splitting
+<span class="k">4 split</span>:      choose random / time-based / grouped to match the real task
+             (split FIRST — everything below sees only its own partition)
+<span class="k">5 fit prep</span>:   fit scalers / imputers / encoders on TRAIN only
+<span class="k">6 transform</span>:  apply TRAIN-fitted statistics to val and test
+<span class="k">7 decontaminate</span>: check no train row (or its duplicate) is in val/test
+<span class="k">8 evaluate</span>:   tune on val; touch test ONCE; report with EQ D1.2 error bars</code></pre>
+
+        <p>Two habits make this durable. First, wrap steps 5–6 in a single object — an sklearn <span class="m">Pipeline</span> or its equivalent — so the preprocessing is re-fit automatically inside every cross-validation fold and can never accidentally span the split. Second, treat <strong>decontamination</strong> as a first-class step: hash your rows and confirm no training example (or a trivial variant of one) appears in validation or test. This is the same discipline that fine-tuning a language model demands against its eval sets (Vol II · CH 06), and the same arithmetic that information theory gives the loss it minimizes (STATS · 08).</p>
+
+        <div class="exercise" data-answer="700" data-tol="0.001" data-unit="rows" data-hint="the train fraction times the row count">
+          <div class="ex-q">Same 70 / 15 / 15 split on the <b>1000-row</b> dataset from §1.2. After you correctly split <i>first</i> and will fit your scaler on training data only, how many rows is that scaler fit on — i.e. how many <b>training</b> rows are there?</div>
+          <div class="ex-reveal-src">The training fraction is \(70\% = 0.70\), so \(N_{\text{train}} = 0.70 \times 1000 = \) <b>700</b> rows. The scaler's mean and variance are computed from these 700 rows alone (step 5), then applied unchanged to the 150 validation and 150 test rows (step 6) — never the reverse.</div>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>This chapter assumed your rows were at least present. They rarely are.</strong> The most common quality defect — the empty cell — turns out to carry information of its own: <em>why</em> a value is missing often predicts the value itself, and the wrong imputation quietly biases everything downstream. Next: <em>Data · 02 — Missing Data</em>, where we make the absence itself a feature.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 1.R — References ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">1.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://doi.org/10.1145/2382577.2382579" target="_blank" rel="noopener">Kaufman, S., Rosset, S., Perlich, C. &amp; Stitelman, O. (2012). <span class="ref-venue">Leakage in Data Mining: Formulation, Detection, and Avoidance</span>.</a> <span class="ref-meta">ACM TKDD 6(4) — the field's working definition and taxonomy of leakage (§1.3, EQ D1.3).</span></li>
+          <li><a href="https://hastie.su.domains/ElemStatLearn/" target="_blank" rel="noopener">Hastie, T., Tibshirani, R. &amp; Friedman, J. (2009). <span class="ref-venue">The Elements of Statistical Learning</span> (2nd ed.).</a> <span class="ref-meta">Springer — free online; cross-validation, the train/test contract, and the right vs wrong way to cross-validate (§1.2, §1.5).</span></li>
+          <li><a href="https://arxiv.org/abs/2103.14749" target="_blank" rel="noopener">Northcutt, C. G., Athalye, A. &amp; Mueller, J. (2021). <span class="ref-venue">Pervasive Label Errors in Test Sets Destabilize Machine Learning Benchmarks</span>.</a> <span class="ref-meta">NeurIPS Datasets &amp; Benchmarks — measured label-error rates in ImageNet and nine other canonical test sets (§1.1).</span></li>
+          <li><a href="https://doi.org/10.1126/science.aax2342" target="_blank" rel="noopener">Obermeyer, Z., Powers, B., Vogeli, C. &amp; Mullainathan, S. (2019). <span class="ref-venue">Dissecting Racial Bias in an Algorithm Used to Manage the Health of Populations</span>.</a> <span class="ref-meta">Science 366(6464) — a real-world label / proxy that leaked the wrong target into a deployed model (§1.1, §1.4).</span></li>
+          <li><a href="https://www.jmlr.org/papers/v15/cawley14a.html" target="_blank" rel="noopener">Cawley, G. C. &amp; Talbot, N. L. C. (2010). <span class="ref-venue">On Over-fitting in Model Selection and Subsequent Selection Bias in Performance Evaluation</span>.</a> <span class="ref-meta">JMLR 11 — why tuning on the test set inflates results, and nested cross-validation as the fix (§1.2).</span></li>
+          <li><a href="https://doi.org/10.1007/978-3-030-21810-2" target="_blank" rel="noopener">Quiñonero-Candela, J., Sugiyama, M., Schwaighofer, A. &amp; Lawrence, N. D. (2009). <span class="ref-venue">Dataset Shift in Machine Learning</span>.</a> <span class="ref-meta">MIT Press — covariate shift, label shift, and concept drift formalized (§1.4, EQ D1.4).</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../stats/08-information-theory.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">08</span> Stats · Information Theory</div></a>
+        <a class="next" href="../data/02-missing-data.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">02</span> Missing Data</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — DATA · CH 01</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* ============================================================
+   The Data Problem — chapter instruments
+   Single IIFE, no globals. setTimeout for any deferred work.
+   D1.1 Leakage demonstrator · D1.2 Split visualizer
+   D1.3 Train/val/test allocator with SE readout.
+   ============================================================ */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  function fnum(x, d) { d = d === undefined ? 3 : d; return x.toFixed(d); }
+  function commas(n) { return Math.round(n).toLocaleString("en-US"); }
+
+  /* ========================================================
+     INSTRUMENT D1.1 — Leakage demonstrator
+     A model with honest skill BASE. A leaked feature is
+     perfectly available in validation (which shares it) but
+     decorrelated at real prediction time. Validation accuracy
+     interpolates toward 1.0 with leak strength; true holdout
+     barely moves. All values are computed, not random.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("dp-leak");
+    if (!root) return;
+    var canvas = document.getElementById("dp-leak-canvas");
+    var strEl = document.getElementById("dp-leak-str");
+    var strOut = document.getElementById("dp-leak-str-out");
+    var valEl = document.getElementById("dp-leak-val");
+    var testEl = document.getElementById("dp-leak-test");
+    var gapEl = document.getElementById("dp-leak-gap");
+    var btns = root.querySelectorAll("[data-leak-on]");
+    var BASE = 0.82;          // honest skill of the model
+    var leakOn = true;
+    var strength = 0.90;
+
+    function accs() {
+      // Validation shares the leak: accuracy climbs from BASE toward ~1.0.
+      // True holdout: leaked feature is unavailable, so a tiny noise effect only.
+      var s = leakOn ? strength : 0;
+      var valAcc = BASE + (0.995 - BASE) * s;          // inflates with leak
+      var testAcc = BASE - 0.02 * s;                   // mild real-world drag
+      if (testAcc < 0) testAcc = 0;
+      return { val: valAcc, test: testAcc };
+    }
+    function render() {
+      strOut.textContent = fnum(strength, 2);
+      var a = accs();
+      var c = FM.setupCanvas(canvas, 220);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      ctx.clearRect(0, 0, w, h);
+      var padL = 38, padR = 16, padT = 18, padB = 28;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      function py(v) { return y0 - v * (y0 - y1); }
+      // gridlines 0..1
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      var g;
+      for (g = 0; g <= 5; g++) {
+        var gv = g / 5, gy = py(gv);
+        ctx.strokeStyle = "rgba(47,50,52,.55)"; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(x0, gy); ctx.lineTo(x1, gy); ctx.stroke();
+        ctx.fillText(gv.toFixed(1), x0 - 6, gy);
+      }
+      // baseline marker (honest skill)
+      var by = py(BASE);
+      ctx.strokeStyle = C.MUT; ctx.setLineDash([4, 4]); ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x0, by); ctx.lineTo(x1, by); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = C.MUT; ctx.textAlign = "left"; ctx.textBaseline = "bottom";
+      ctx.fillText("HONEST SKILL " + BASE.toFixed(2), x0 + 2, by - 3);
+      // two bars
+      var bars = [
+        { v: a.val, color: C.MINT, label: "VALIDATION" },
+        { v: a.test, color: C.BLUE, label: "TRUE HOLDOUT" }
+      ];
+      var gap = 36;
+      var bw = (x1 - x0 - gap) / 2 - 14;
+      var i;
+      for (i = 0; i < 2; i++) {
+        var bx = x0 + 16 + i * (bw + gap);
+        var bvy = py(bars[i].v);
+        ctx.fillStyle = bars[i].color;
+        ctx.fillRect(bx, bvy, bw, y0 - bvy);
+        ctx.fillStyle = C.BRIGHT; ctx.font = "bold 12px ui-monospace, Menlo, monospace";
+        ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+        ctx.fillText(bars[i].v.toFixed(3), bx + bw / 2, bvy - 4);
+        ctx.fillStyle = C.SEC; ctx.font = C.MONO; ctx.textBaseline = "top";
+        ctx.fillText(bars[i].label, bx + bw / 2, y0 + 7);
+      }
+      valEl.textContent = a.val.toFixed(3);
+      testEl.textContent = a.test.toFixed(3);
+      var d = a.val - a.test;
+      gapEl.textContent = (d > 0 ? "+" : "") + d.toFixed(3);
+      gapEl.style.color = d > 0.05 ? C.RED : C.SEC;
+    }
+    btns.forEach(function (b) {
+      b.addEventListener("click", function () {
+        leakOn = b.getAttribute("data-leak-on") === "1";
+        btns.forEach(function (o) { o.classList.toggle("on", o === b); });
+        render();
+      });
+    });
+    strEl.addEventListener("input", function () {
+      strength = +strEl.value; render();
+    });
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT D1.2 — Split visualizer
+     24 rows in time order, each tagged with one of 8 entities.
+     Random / time / grouped split; readouts count entities that
+     span the split and future->past order violations.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("dp-split");
+    if (!root) return;
+    var canvas = document.getElementById("dp-split-canvas");
+    var nameEl = document.getElementById("dp-split-name");
+    var leakEl = document.getElementById("dp-split-leak");
+    var orderEl = document.getElementById("dp-split-order");
+    var btns = root.querySelectorAll("[data-split-mode]");
+    var mode = "random";
+    var N = 24, NG = 8;
+    // deterministic layout: row i has time = i, entity = fixed pattern
+    var rng = FM.mulberry32(7);
+    var entity = [];
+    var i;
+    for (i = 0; i < N; i++) entity.push(Math.floor(rng() * NG));
+    // random split assignment, deterministic
+    var rsplit = [];
+    var rng2 = FM.mulberry32(13);
+    for (i = 0; i < N; i++) rsplit.push(rng2() < 0.7 ? 0 : 1); // 0 train, 1 test
+
+    function assignment() {
+      var a = new Array(N), j;
+      if (mode === "random") {
+        for (j = 0; j < N; j++) a[j] = rsplit[j];
+      } else if (mode === "time") {
+        var cut = Math.round(N * 0.7);
+        for (j = 0; j < N; j++) a[j] = j < cut ? 0 : 1;   // past=train, future=test
+      } else { // group: entities 0..4 -> train, 5..7 -> test (whole entity)
+        for (j = 0; j < N; j++) a[j] = entity[j] < 5 ? 0 : 1;
+      }
+      return a;
+    }
+    function metrics(a) {
+      // spanning entities: an entity that appears in both train and test
+      var inTrain = {}, inTest = {}, e;
+      for (e = 0; e < N; e++) {
+        if (a[e] === 0) inTrain[entity[e]] = 1; else inTest[entity[e]] = 1;
+      }
+      var span = 0, k;
+      for (k = 0; k < NG; k++) if (inTrain[k] && inTest[k]) span++;
+      // order violations: a TEST row earlier in time than some TRAIN row
+      var maxTrainTime = -1, idx;
+      for (idx = 0; idx < N; idx++) if (a[idx] === 0 && idx > maxTrainTime) maxTrainTime = idx;
+      var viol = 0;
+      for (idx = 0; idx < N; idx++) if (a[idx] === 1 && idx < maxTrainTime) viol++;
+      return { span: span, viol: viol };
+    }
+    function render() {
+      var a = assignment();
+      var c = FM.setupCanvas(canvas, 190);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      ctx.clearRect(0, 0, w, h);
+      var padL = 14, padR = 14, padT = 24, padB = 30;
+      var cols = N, gap = 4;
+      var cw = (w - padL - padR - gap * (cols - 1)) / cols;
+      var ch = h - padT - padB;
+      var letters = "ABCDEFGH";
+      // header
+      ctx.font = C.MONO; ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillStyle = C.MUT;
+      ctx.fillText("TIME →   (cell = row · letter = entity)", padL, 6);
+      var j;
+      for (j = 0; j < N; j++) {
+        var x = padL + j * (cw + gap);
+        var isTest = a[j] === 1;
+        ctx.fillStyle = isTest ? "#565656" : C.MINT;
+        ctx.fillRect(x, padT, cw, ch);
+        ctx.fillStyle = isTest ? C.SEC : "#0b0d0c";
+        ctx.font = "bold 11px ui-monospace, Menlo, monospace";
+        ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText(letters[entity[j]], x + cw / 2, padT + ch / 2);
+      }
+      // legend
+      ctx.textAlign = "left"; ctx.textBaseline = "top"; ctx.font = C.MONO;
+      ctx.fillStyle = C.MINT; ctx.fillText("■ TRAIN", padL, h - padB + 10);
+      ctx.fillStyle = "#9b9b9b"; ctx.fillText("■ TEST", padL + 70, h - padB + 10);
+
+      var m = metrics(a);
+      nameEl.textContent = mode === "random" ? "RANDOM"
+                         : mode === "time" ? "TIME-BASED" : "GROUPED";
+      leakEl.textContent = m.span;
+      leakEl.style.color = m.span > 0 ? C.RED : C.MINT;
+      orderEl.textContent = m.viol;
+      orderEl.style.color = m.viol > 0 ? C.RED : C.MINT;
+    }
+    btns.forEach(function (b) {
+      b.addEventListener("click", function () {
+        mode = b.getAttribute("data-split-mode");
+        btns.forEach(function (o) { o.classList.toggle("on", o === b); });
+        render();
+      });
+    });
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT D1.3 — Train/val/test allocator + SE readout
+     N (log slider) split into train% and (test% of remainder).
+     SE of a proportion at a = 0.85 via EQ D1.2; 95% CI = 1.96*SE.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("dp-alloc");
+    if (!root) return;
+    var nEl = document.getElementById("dp-alloc-n");
+    var trEl = document.getElementById("dp-alloc-tr");
+    var teEl = document.getElementById("dp-alloc-te");
+    var nOut = document.getElementById("dp-alloc-n-out");
+    var trOut = document.getElementById("dp-alloc-tr-out");
+    var teOut = document.getElementById("dp-alloc-te-out");
+    var barTr = document.getElementById("dp-alloc-bar-tr");
+    var barVa = document.getElementById("dp-alloc-bar-va");
+    var barTe = document.getElementById("dp-alloc-bar-te");
+    var rowsEl = document.getElementById("dp-alloc-rows");
+    var seEl = document.getElementById("dp-alloc-se");
+    var ciEl = document.getElementById("dp-alloc-ci");
+    var A = 0.85; // accuracy we measure SE for
+
+    function render() {
+      var N = Math.round(Math.pow(10, +nEl.value));
+      var trainFrac = +trEl.value / 100;            // of total
+      var restFrac = 1 - trainFrac;                 // val + test
+      var testOfRest = +teEl.value / 100;           // test share of the rest
+      var testFrac = restFrac * testOfRest;
+      var valFrac = restFrac * (1 - testOfRest);
+
+      nOut.textContent = commas(N);
+      trOut.textContent = Math.round(trainFrac * 100);
+      teOut.textContent = Math.round(testOfRest * 100);
+
+      barTr.style.width = (trainFrac * 100) + "%";
+      barVa.style.width = (valFrac * 100) + "%";
+      barTe.style.width = (testFrac * 100) + "%";
+
+      var nTrain = Math.round(N * trainFrac);
+      var nVal = Math.round(N * valFrac);
+      var nTest = N - nTrain - nVal;                // exact remainder
+      if (nTest < 1) nTest = 1;
+      rowsEl.textContent = commas(nTrain) + " / " + commas(nVal) + " / " + commas(nTest);
+
+      var se = Math.sqrt(A * (1 - A) / nTest);      // EQ D1.2
+      var ci = 1.96 * se;                           // 95% half-width
+      seEl.textContent = "±" + (se * 100).toFixed(2) + " pp";
+      ciEl.textContent = "±" + (ci * 100).toFixed(2) + " pp";
+      ciEl.style.color = ci > 0.03 ? C.RED : C.MINT;
+    }
+    nEl.addEventListener("input", render);
+    trEl.addEventListener("input", render);
+    teEl.addEventListener("input", render);
+    render();
+  })();
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

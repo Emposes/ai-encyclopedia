@@ -1,0 +1,169 @@
+{
+  "concepts": [
+    {
+      "id": "mlops-01-resampling-cv-s1",
+      "chapter": "mlops/01-resampling-cv",
+      "section": "s1",
+      "title": "Why a single split lies",
+      "eyebrow": "MODEL RISK",
+      "beats": [
+        {
+          "text": "A single train-test split gives you one accuracy number, but that number is itself a random draw from the data.",
+          "visual": { "type": "title", "text": "Why a single split lies", "sub": "One number, no error bars" }
+        },
+        {
+          "text": "The honest target is generalization error, the expected loss over the whole distribution, which you can only estimate from a finite sample.",
+          "visual": { "type": "equation", "tex": "\\mathrm{Err} = \\mathbb{E}_{(x,y)\\sim\\mathcal{D}}\\big[\\,L(y,\\, \\hat{f}(x))\\,\\big]", "note": "True error: expected loss over the data distribution" }
+        },
+        {
+          "text": "For a 0-1 loss the holdout accuracy carries a binomial standard error that shrinks only as one over the square root of the test size.",
+          "visual": { "type": "equation", "tex": "\\mathrm{SE}(\\hat{p}) = \\sqrt{\\frac{p\\,(1-p)}{m}}", "note": "Standard error of a holdout accuracy" }
+        },
+        {
+          "text": "At 85 percent accuracy on 200 test rows the standard error is about 0.025, giving a 95 percent interval near plus or minus five points.",
+          "visual": { "type": "stat", "value": 0.025, "label": "Standard error at p=0.85, m=200", "decimals": 3 }
+        },
+        {
+          "text": "Repeated holdouts of the same data and model wander widely, so two unlucky splits can disagree by several points on luck alone.",
+          "visual": { "type": "plot", "ys": [0.76, 0.80, 0.83, 0.85, 0.86, 0.88, 0.91], "xlabel": "sorted splits", "ylabel": "accuracy", "mark": true }
+        },
+        {
+          "text": "A point estimate with no spread is an anecdote, not a result, so cross-validation replaces the single split with repeated resampling.",
+          "visual": { "type": "bars", "values": [0.76, 0.91], "labels": ["unlucky split", "lucky split"], "highlight": 1 }
+        }
+      ]
+    },
+    {
+      "id": "mlops-01-resampling-cv-s2",
+      "chapter": "mlops/01-resampling-cv",
+      "section": "s2",
+      "title": "k-fold cross-validation",
+      "eyebrow": "MODEL RISK",
+      "beats": [
+        {
+          "text": "k-fold cross-validation partitions the data into k equal disjoint folds and validates on each fold exactly once.",
+          "visual": { "type": "title", "text": "k-fold cross-validation", "sub": "Every row tested once" }
+        },
+        {
+          "text": "The estimate is the average of the k fold scores, with a standard error equal to the fold spread divided by the square root of k.",
+          "visual": { "type": "equation", "tex": "\\widehat{\\mathrm{CV}} = \\frac{1}{k}\\sum_{i=1}^{k} \\frac{1}{|F_i|}\\sum_{(x,y)\\in F_i} L\\big(y,\\, \\hat{f}^{\\,(-i)}(x)\\big)", "note": "The k-fold CV estimate" }
+        },
+        {
+          "text": "The choice of k is a bias-variance dial: small k trains on less data and biases pessimistically, while leave-one-out is nearly unbiased but high variance.",
+          "visual": { "type": "bars", "values": [2, 5, 10, 100], "labels": ["k=2", "k=5", "k=10", "LOOCV"], "highlight": 1 }
+        },
+        {
+          "text": "The empirical sweet spot, established by Kohavi and unchanged in 2026, is five or ten folds: low bias, manageable variance, affordable compute.",
+          "visual": { "type": "stat", "value": 5, "label": "common default folds", "decimals": 0 }
+        },
+        {
+          "text": "On 100 rows under five-fold CV each validation fold holds 20 rows, leaving the other 80 for training that round.",
+          "visual": { "type": "stat", "value": 20, "label": "validation rows per fold", "unit": "rows", "decimals": 0 }
+        },
+        {
+          "text": "Total compute is exactly k model fits, and that multiplier is the price you pay for the error bars the single split could not give.",
+          "visual": { "type": "plot", "ys": [0.84, 0.82, 0.85, 0.83, 0.84], "xlabel": "fold", "ylabel": "accuracy", "mark": true }
+        }
+      ]
+    },
+    {
+      "id": "mlops-01-resampling-cv-s3",
+      "chapter": "mlops/01-resampling-cv",
+      "section": "s3",
+      "title": "Stratified & grouped k-fold",
+      "eyebrow": "MODEL RISK",
+      "beats": [
+        {
+          "text": "Plain k-fold shuffles rows and cuts blindly, which fails under class imbalance and when rows are not independent.",
+          "visual": { "type": "title", "text": "Stratified & grouped k-fold", "sub": "Smarter partitions, no extra cost" }
+        },
+        {
+          "text": "Stratified k-fold partitions within each class so every fold mirrors the overall label distribution up to rounding.",
+          "visual": { "type": "equation", "tex": "\\frac{|\\{(x,y)\\in F_i : y = c\\}|}{|F_i|} \\;\\approx\\; \\frac{|\\{(x,y)\\in \\mathcal{D} : y = c\\}|}{N}", "note": "Each fold matches the dataset's class proportions" }
+        },
+        {
+          "text": "A dataset of 20,000 rows at a 1 percent positive rate holds only 200 positives in total.",
+          "visual": { "type": "stat", "value": 200, "label": "total positive rows", "unit": "positives", "decimals": 0 }
+        },
+        {
+          "text": "Stratified five-fold splits those 200 positives evenly, so each fold carries 40 minority examples and produces a meaningful score.",
+          "visual": { "type": "bars", "values": [40, 40, 40, 40, 40], "labels": ["F1", "F2", "F3", "F4", "F5"] }
+        },
+        {
+          "text": "Grouped k-fold keeps every shared identity entirely on one side of the split, since a sibling row across the boundary leaks the answer.",
+          "visual": { "type": "bars", "values": [0.99, 0.71], "labels": ["leaked groups", "honest groups"], "highlight": 0 }
+        },
+        {
+          "text": "The two compose into stratified group k-fold, the standard recipe for imbalanced clustered data, with transforms fit inside the training fold only.",
+          "visual": { "type": "lattice" }
+        }
+      ]
+    },
+    {
+      "id": "mlops-01-resampling-cv-s4",
+      "chapter": "mlops/01-resampling-cv",
+      "section": "s4",
+      "title": "Time-series cross-validation",
+      "eyebrow": "MODEL RISK",
+      "beats": [
+        {
+          "text": "For temporally ordered data shuffling is not harmless, because it lets the model train on the future and validate on the past.",
+          "visual": { "type": "title", "text": "Time-series cross-validation", "sub": "The future never trains the past" }
+        },
+        {
+          "text": "The forward-chaining constraint demands that every training timestamp precede every validation timestamp in every fold.",
+          "visual": { "type": "equation", "tex": "\\max_{t \\in \\text{train}_i} t \\;<\\; \\min_{t \\in \\text{val}_i} t", "note": "Forward-chaining constraint, for every fold i" }
+        },
+        {
+          "text": "Standard k-fold violates this on roughly half of its train-validation pairs and is therefore invalid for any series with temporal structure.",
+          "visual": { "type": "stat", "value": 50, "label": "k-fold pairs that look ahead", "unit": "%", "decimals": 0 }
+        },
+        {
+          "text": "An expanding window keeps all history up to the cut and validates on the next block, growing the training set each fold.",
+          "visual": { "type": "plot", "ys": [4, 8, 12, 16, 20], "xlabel": "fold", "ylabel": "train size", "mark": true }
+        },
+        {
+          "text": "A rolling window slides a fixed-length training block forward, dropping the oldest data and adapting to non-stationarity and concept drift.",
+          "visual": { "type": "bars", "values": [8, 8, 8, 8, 8], "labels": ["F1", "F2", "F3", "F4", "F5"] }
+        },
+        {
+          "text": "A further refinement inserts an embargo gap between train and validation to kill leakage from overlapping feature windows or label horizons.",
+          "visual": { "type": "lattice" }
+        }
+      ]
+    },
+    {
+      "id": "mlops-01-resampling-cv-s5",
+      "chapter": "mlops/01-resampling-cv",
+      "section": "s5",
+      "title": "Nested CV for honest tuning",
+      "eyebrow": "MODEL RISK",
+      "beats": [
+        {
+          "text": "If you tune hyperparameters and report on the same cross-validation folds, the reported number is biased upward.",
+          "visual": { "type": "title", "text": "Nested CV for honest tuning", "sub": "Select and score on disjoint data" }
+        },
+        {
+          "text": "Selecting the best of many noisy estimates selects partly for noise, so the winner's score is optimistic by construction.",
+          "visual": { "type": "equation", "tex": "\\mathbb{E}\\Big[\\min_{\\theta\\in\\Theta}\\widehat{\\mathrm{CV}}(\\theta)\\Big] \\;\\le\\; \\min_{\\theta\\in\\Theta}\\,\\mathbb{E}\\big[\\widehat{\\mathrm{CV}}(\\theta)\\big]", "note": "The optimism of selection grows with the grid size" }
+        },
+        {
+          "text": "Nested CV uses an outer loop only to score and a separate inner loop inside each outer training set to search and refit.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "On pure-noise labels the naive best-CV score climbs above 0.5 while the nested outer mean honestly hugs the true 0.5.",
+          "visual": { "type": "bars", "values": [0.50, 0.62, 0.50], "labels": ["truth", "naive best CV", "nested CV"], "highlight": 1 }
+        },
+        {
+          "text": "The cost is outer times inner times grid model fits, which is why nested CV is reserved for when an honest number is non-negotiable.",
+          "visual": { "type": "equation", "tex": "\\text{fits} = k_{\\text{outer}} \\times k_{\\text{inner}} \\times |\\Theta|", "note": "Total model fits for nested CV" }
+        },
+        {
+          "text": "Chapter 02 opens the inner loop with grid and random search, Bayesian optimization, and the budget arithmetic behind expensive fits.",
+          "visual": { "type": "title", "text": "Next: hyperparameter tuning", "sub": "Which configurations to try" }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,672 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Sequence Models — RNN, LSTM &amp; GRU — AI Encyclopedia</title>
+<meta name="description" content="Recurrence lets a network carry memory across time — but the vanishing gradient nearly killed it, until LSTM and GRU gates gave the signal a highway through the sequence." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+</head>
+<body data-track="dl" data-level="core">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ DEEP LEARNING / 03 / SEQUENCE MODELS</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../dl/04-seq2seq-attention.html">NEXT: SEQ2SEQ &amp; ATTENTION →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">DEEP LEARNING · CHAPTER 03 / 07</div>
+    <h1>Sequence Models — RNN, LSTM &amp; GRU</h1>
+    <p class="lede">A feed-forward network takes one fixed-size input and retains nothing between examples. A recurrent network reads a sequence one step at a time and carries a hidden state forward, so the present can depend on the past. <strong>Recurrence lets a network carry memory across time, but vanishing gradients made long-range training fail until gating cells restored it.</strong> This chapter builds the vanilla RNN, shows why training over long sequences breaks down, then derives the LSTM and GRU cells that addressed it.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 26 MIN</b></span>
+      <span>BUILDS ON<b>DEEP LEARNING 01–02</b></span>
+      <span>INSTRUMENTS<b>RNN UNROLL · LSTM GATES · GRADIENT DECAY</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">3.1</span>Recurrent networks</a>
+      <a href="#s2"><span class="n">3.2</span>Vanishing/exploding gradients</a>
+      <a href="#s3"><span class="n">3.3</span>LSTM — gates &amp; cell state</a>
+      <a href="#s4"><span class="n">3.4</span>GRU — a lighter gate</a>
+      <a href="#s5"><span class="n">3.5</span>Backprop through time</a>
+      <a href="#s6"><span class="n">3.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 3.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">3.1</span><h2>Recurrent networks — weights shared over time</h2></div>
+        <p>Many of the things we want a model to read have no fixed length and no fixed structure except <em>order</em>: a sentence, an audio clip, a stock-price tape, a stream of sensor readings. A recurrent neural network (RNN) processes such a sequence \(x_1, x_2, \ldots, x_T\) one step at a time, maintaining a <strong>hidden state</strong> \(h_t\) — a running summary of everything seen so far — and updating it with the <em>same</em> weights at every step.</p>
+
+        <div class="eq"><span class="eq-tag">EQ N3.1 — THE RECURRENT CELL</span>
+        $$ h_t = \tanh\!\big( W_{xh}\,x_t + W_{hh}\,h_{t-1} + b_h \big), \qquad \hat{y}_t = W_{hy}\,h_t + b_y $$
+        <div class="eq-note">\(W_{hh}\) feeds the previous state back into the present — the loop that makes the network <em>recurrent</em>. Crucially, \(W_{xh}, W_{hh}, W_{hy}\) are <b>shared across all \(T\) time steps</b>: the cell that reads token 1 is the identical cell that reads token 1,000. That weight tying is what lets one fixed-size model consume sequences of any length, and what makes the gradient a long product (§3.2). \(h_0\) is usually the zero vector. The \(\tanh\) keeps each state bounded in \((-1,1)\).</div>
+        </div>
+
+        <p>It is easier to reason about an RNN once you <strong>unroll</strong> it: copy the cell once per time step and lay the copies in a row, threading \(h_t\) from each copy into the next. The unrolled graph is just a very deep feed-forward network — depth \(T\) — whose layers happen to share parameters. Everything we know about training deep nets (Deep Learning 02) applies, including the failure mode that dominates §3.2.</p>
+
+        <div class="figure">
+          <svg viewBox="0 0 720 200" role="img" aria-label="An RNN unrolled across four time steps, with the hidden state threaded from one cell to the next.">
+            <g class="dg-label-g">
+              <text x="20" y="30" class="dg-label">UNROLLED RNN — ONE SHARED CELL, COPIED PER STEP</text>
+            </g>
+            <!-- hidden line -->
+            <line x1="40" y1="105" x2="700" y2="105" class="dg-line" data-draw />
+            <g data-pop>
+              <rect x="70"  y="80" width="90" height="50" rx="5" class="dg-box-accent"/>
+              <text x="115" y="110" class="dg-label" text-anchor="middle">CELL · t=1</text>
+              <rect x="240" y="80" width="90" height="50" rx="5" class="dg-box-accent"/>
+              <text x="285" y="110" class="dg-label" text-anchor="middle">CELL · t=2</text>
+              <rect x="410" y="80" width="90" height="50" rx="5" class="dg-box-accent"/>
+              <text x="455" y="110" class="dg-label" text-anchor="middle">CELL · t=3</text>
+              <rect x="580" y="80" width="90" height="50" rx="5" class="dg-box-accent"/>
+              <text x="625" y="110" class="dg-label" text-anchor="middle">CELL · t=4</text>
+            </g>
+            <g data-pop>
+              <text x="115" y="175" class="dg-label" text-anchor="middle">x₁</text>
+              <text x="285" y="175" class="dg-label" text-anchor="middle">x₂</text>
+              <text x="455" y="175" class="dg-label" text-anchor="middle">x₃</text>
+              <text x="625" y="175" class="dg-label" text-anchor="middle">x₄</text>
+              <text x="115" y="62" class="dg-label" text-anchor="middle">ŷ₁</text>
+              <text x="285" y="62" class="dg-label" text-anchor="middle">ŷ₂</text>
+              <text x="455" y="62" class="dg-label" text-anchor="middle">ŷ₃</text>
+              <text x="625" y="62" class="dg-label" text-anchor="middle">ŷ₄</text>
+              <text x="200" y="98" class="dg-label" text-anchor="middle">h₁→</text>
+              <text x="370" y="98" class="dg-label" text-anchor="middle">h₂→</text>
+              <text x="540" y="98" class="dg-label" text-anchor="middle">h₃→</text>
+            </g>
+            <line x1="115" y1="160" x2="115" y2="132" class="dg-line" data-draw />
+            <line x1="285" y1="160" x2="285" y2="132" class="dg-line" data-draw />
+            <line x1="455" y1="160" x2="455" y2="132" class="dg-line" data-draw />
+            <line x1="625" y1="160" x2="625" y2="132" class="dg-line" data-draw />
+          </svg>
+        </div>
+
+        <p>The output head is flexible. A <em>many-to-one</em> RNN reads the whole sequence and emits a single prediction from \(h_T\) (sentiment of a review). A <em>many-to-many</em> RNN emits a label at every step (part-of-speech tags). A <em>one-to-many</em> RNN runs a single input forward into a generated sequence (image captioning). The recurrence is the same; only where you read the head changes.</p>
+
+        <div class="exercise" data-answer="0.7616" data-tol="0.01" data-hint="No recurrent input on the first step (h0 = 0): h1 = tanh(W_xh · x1).">
+          <div class="ex-q">A scalar RNN has \(W_{xh}=2\), \(W_{hh}=0.5\), \(b_h=0\), and starts from \(h_0=0\). The first input is \(x_1=0.5\). What is \(h_1=\tanh(W_{xh}x_1 + W_{hh}h_0)\)? (Use \(\tanh(1)=0.7616\).)</div>
+          <div class="ex-reveal-src">With \(h_0=0\) the recurrent term vanishes: \(W_{xh}x_1 + W_{hh}h_0 = 2(0.5) + 0.5(0) = 1\). So \(h_1=\tanh(1)=\) <b>0.7616</b>.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># EQ N3.1: a vanilla RNN cell, forward pass over a toy sequence
+import numpy as np
+rng = np.random.default_rng(0)
+H, D, T = 4, 3, 6                       # hidden size, input size, seq length
+
+Wxh = rng.normal(0, 0.5, (H, D))       # input  -> hidden
+Whh = rng.normal(0, 0.5, (H, H))       # hidden -> hidden (the recurrent loop)
+bh  = np.zeros(H)
+X   = rng.normal(0, 1, (T, D))         # a length-6 input sequence
+
+h = np.zeros(H)                        # h_0 = 0
+print("step    ||h_t||   (running summary grows then stabilises)")
+for t in range(T):
+    h = np.tanh(Wxh @ X[t] + Whh @ h + bh)   # the recurrence, same weights each step
+    print(f"  t={t}   {np.linalg.norm(h):.4f}")
+
+print("\nfinal hidden state h_T:", h.round(3))
+print("every step reused the SAME Wxh, Whh -- that is what 'recurrent' means.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="rnn-unroll" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT N3.1 — RNN UNROLL VISUALIZER</span><span class="w-sub">SCALAR CELL · EQ N3.1 · LIVE</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>INPUT WEIGHT W<sub>xh</sub> <output id="rnn-wxh-out">1.00</output></label><input type="range" id="rnn-wxh" min="-2" max="2" step="0.05" value="1"/></div>
+              <div class="ctl"><label>RECURRENT WEIGHT W<sub>hh</sub> <output id="rnn-whh-out">0.60</output></label><input type="range" id="rnn-whh" min="-1.2" max="1.2" step="0.05" value="0.6"/></div>
+            </div>
+            <canvas class="w-canvas" id="rnn-unroll-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">SEQUENCE LENGTH</div><div class="r-value" id="rnn-unroll-len">10</div></div>
+              <div class="readout acc"><div class="r-label">FINAL STATE h₁₀</div><div class="r-value" id="rnn-unroll-final">—</div></div>
+              <div class="readout"><div class="r-label">REGIME</div><div class="r-value" id="rnn-unroll-regime">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The cell reads a fixed input pulse (1 at \(t=1\), then 0) so you can watch memory decay. Push \(W_{hh}\) toward 0 and the state forgets the pulse within a step or two; push it toward \(\pm1\) and the memory lingers across the whole sequence — but go past 1 and \(\tanh\) saturates and the state pins to its extreme. This single knob previews the stability problem of §3.2.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 3.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">3.2</span><h2>The vanishing / exploding gradient problem</h2></div>
+        <p>The promise of recurrence is long-range memory: a model that, after reading "I grew up in France … so I speak fluent ___", can reach back hundreds of tokens to fill the blank with <em>French</em>. In practice a vanilla RNN cannot. The reason is in the gradient. To train, we backpropagate the loss at step \(T\) through every earlier step. By the chain rule, the gradient of \(h_T\) with respect to a distant \(h_k\) is a <strong>product of Jacobians</strong>:</p>
+
+        <div class="eq"><span class="eq-tag">EQ N3.2 — GRADIENT IS A LONG PRODUCT</span>
+        $$ \frac{\partial h_T}{\partial h_k} \;=\; \prod_{t=k+1}^{T} \frac{\partial h_t}{\partial h_{t-1}} \;=\; \prod_{t=k+1}^{T} \operatorname{diag}\!\big(\tanh'(a_t)\big)\, W_{hh}^{\top}, \qquad a_t = W_{xh}x_t + W_{hh}h_{t-1} + b_h $$
+        <div class="eq-note">Each factor multiplies by \(W_{hh}\) (through its transpose) and by the diagonal of \(\tanh'\), which never exceeds 1 and is usually well below it. Multiplying \(T-k\) such factors makes the whole product behave like a <b>power</b>. If the factors are typically smaller than 1, the gradient <b>vanishes</b> geometrically with distance; if larger, it <b>explodes</b>. Either way the model cannot learn dependencies that span many steps.</div>
+        </div>
+
+        <p>The controlling quantity is the <strong>largest singular value</strong> (spectral norm) of the recurrent Jacobian. Bound it loosely: \(\tanh'\le 1\), so each factor has norm at most \(\|W_{hh}\|\). A sufficient condition for vanishing is therefore \(\|W_{hh}\| &lt; 1\); a necessary condition for exploding is \(\|W_{hh}\| &gt; 1/\max\tanh'\). In the clean scalar case the whole product collapses to \((w\,\tanh'(a))^{\,T-k}\), which is exactly geometric in the distance \(T-k\).</p>
+
+        <div class="eq"><span class="eq-tag">EQ N3.3 — SCALAR DECAY RATE</span>
+        $$ \left| \frac{\partial h_T}{\partial h_k} \right| \;\approx\; \big| w_{hh} \cdot \overline{\tanh'} \big|^{\,T-k} \;=\; \lambda^{\,T-k}, \qquad \lambda &lt; 1 \Rightarrow \text{vanish}, \quad \lambda &gt; 1 \Rightarrow \text{explode} $$
+        <div class="eq-note">\(\lambda\) is the effective per-step gain. With \(\lambda=0.8\), the gradient from 50 steps away is scaled by \(0.8^{50}\approx 1.4\times10^{-5}\) — for all practical purposes zero. <b>This is why a plain RNN's effective memory is only a handful of steps</b>, no matter how long the sequence. Bengio, Simard &amp; Frasconi proved in 1994 that this trade-off is fundamental: the same contraction that gives a vanilla RNN <em>stable</em> dynamics is what starves the long-range gradient.</div>
+        </div>
+
+        <p class="note"><strong>Exploding gradients have a cheap fix; vanishing ones do not.</strong> When \(\lambda &gt; 1\) the gradient blows up to NaN, but you can simply <em>clip</em> its norm to a ceiling before the optimizer step — a standard, robust trick. Vanishing gradients are insidious because nothing crashes: training proceeds, the loss even falls, but the model is silently blind to anything more than a few steps back. No clipping can manufacture a signal that has decayed to numerical zero. The real cure is architectural — change the cell so the gradient has a path that does <em>not</em> get multiplied down. That is §3.3.</p>
+
+        <div class="exercise" data-answer="0.0097" data-tol="0.05" data-hint="Geometric decay: lambda^(T-k) with lambda = 0.9 over 44 steps.">
+          <div class="ex-q">An RNN has effective per-step gain \(\lambda = 0.9\) (from EQ N3.3). By what factor is the gradient scaled when it travels from step \(k\) to step \(T\) that are \(T-k = 44\) steps apart, i.e. \(0.9^{44}\)?</div>
+          <div class="ex-reveal-src">\(0.9^{44} = e^{44\ln 0.9} = e^{44(-0.10536)} = e^{-4.636} \approx\) <b>0.0097</b> (≈ 0.01). A signal one percent of its original size is, for learning purposes, gone — even though only 44 steps separate the two positions.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Vanishing vs exploding: measure backprop gradient norm vs distance
+import numpy as np
+
+def grad_norm(w_hh, length):
+    # scalar RNN, fixed input pulse; product of Jacobian factors (EQ N3.2)
+    h, a = 0.0, []
+    for t in range(length):
+        x = 1.0 if t == 0 else 0.0
+        pre = w_hh * h + 1.0 * x          # W_xh = 1
+        h = np.tanh(pre); a.append(pre)
+    g = 1.0                                # d h_T / d h_0
+    for t in range(length - 1, -1, -1):
+        g *= (1 - np.tanh(a[t])**2) * w_hh # tanh'(a) * W_hh
+    return abs(g)
+
+for w in (0.5, 0.9, 1.1):
+    norms = [grad_norm(w, L) for L in range(1, 61)]
+    tag = "VANISH" if norms[-1] < 1e-3 else ("EXPLODE" if norms[-1] > 1e3 else "ok")
+    print(f"W_hh={w}: grad@1={norms[0]:.3f}  grad@60={norms[-1]:.3e}  [{tag}]")
+
+print("\n|d h_T / d h_0| over distance for W_hh = 0.9 (geometric decay):")
+plot_xy(list(range(1, 61)), [grad_norm(0.9, L) for L in range(1, 61)])</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="rnn-vanish" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT N3.2 — VANISHING-GRADIENT DECAY</span><span class="w-sub">|∂hₜ/∂h₀| VS DISTANCE · EQ N3.3</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>RECURRENT GAIN W<sub>hh</sub> <output id="rnn-vg-w-out">0.90</output></label><input type="range" id="rnn-vg-w" min="0.3" max="1.4" step="0.02" value="0.9"/></div>
+              <div class="ctl"><label>SEQUENCE LENGTH <output id="rnn-vg-len-out">60</output></label><input type="range" id="rnn-vg-len" min="10" max="120" step="5" value="60"/></div>
+            </div>
+            <canvas class="w-canvas" id="rnn-vanish-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">EFFECTIVE GAIN λ</div><div class="r-value" id="rnn-vg-lambda">—</div></div>
+              <div class="readout acc"><div class="r-label">GRADIENT AT FULL DISTANCE</div><div class="r-value" id="rnn-vg-far">—</div></div>
+              <div class="readout"><div class="r-label">REGIME</div><div class="r-value" id="rnn-vg-regime">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The curve is the magnitude of the gradient flowing back from the final step to step 0, plotted on a log axis against distance. Below \(W_{hh}=1\) it plunges to the floor (white "VANISH" line at \(10^{-3}\)) within a few dozen steps; above 1 it climbs off the top (EXPLODE). Only a hairline near \(W_{hh}\approx 1\) keeps the gradient alive across the whole sequence — and a vanilla RNN cannot stay on that knife-edge while also fitting the data. That dilemma is the entire motivation for gates.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 3.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">3.3</span><h2>LSTM — gates &amp; the cell state</h2></div>
+        <p>Hochreiter &amp; Schmidhuber's 1997 <strong>Long Short-Term Memory</strong> attacks EQ N3.2 head-on. It adds a second, parallel memory track — the <strong>cell state</strong> \(c_t\) — whose update is (mostly) <em>additive</em> rather than a repeated matrix multiply. Information can ride that track across many steps almost untouched, so the gradient flowing back along it is multiplied by numbers near 1, not by a contracting Jacobian. Three learned <strong>gates</strong> — sigmoids in \((0,1)\) that act as soft, differentiable valves — decide what to keep, what to add, and what to read out.</p>
+
+        <div class="eq"><span class="eq-tag">EQ N3.4 — THE THREE GATES &amp; CANDIDATE</span>
+        $$ \begin{aligned}
+        f_t &amp;= \sigma\!\big(W_f[h_{t-1},x_t]+b_f\big) &amp;\text{(forget)} \\
+        i_t &amp;= \sigma\!\big(W_i[h_{t-1},x_t]+b_i\big) &amp;\text{(input)} \\
+        o_t &amp;= \sigma\!\big(W_o[h_{t-1},x_t]+b_o\big) &amp;\text{(output)} \\
+        \tilde{c}_t &amp;= \tanh\!\big(W_c[h_{t-1},x_t]+b_c\big) &amp;\text{(candidate)}
+        \end{aligned} $$
+        <div class="eq-note">Each gate is a sigmoid, so its entries live in \((0,1)\): 0 means "block this channel completely", 1 means "let it through untouched". \([h_{t-1},x_t]\) is the previous state concatenated with the current input. \(\tilde c_t\) is the <em>candidate</em> new content (a \(\tanh\), so in \((-1,1)\)) that the input gate may write. <b>An LSTM has exactly three gates</b> — forget, input, output — plus this candidate, which is not itself a gate.</div>
+        </div>
+
+        <div class="eq"><span class="eq-tag">EQ N3.5 — CELL &amp; HIDDEN UPDATE (THE HIGHWAY)</span>
+        $$ c_t = f_t \odot c_{t-1} + i_t \odot \tilde{c}_t, \qquad h_t = o_t \odot \tanh(c_t) $$
+        <div class="eq-note">\(\odot\) is element-wise product. The cell update is the heart of the design: the old memory \(c_{t-1}\) is scaled by the forget gate and the candidate is scaled by the input gate, then they are <b>added</b>. When \(f_t\approx 1\) and \(i_t\approx 0\), \(c_t\approx c_{t-1}\) — memory persists and \(\partial c_t/\partial c_{t-1}\approx 1\), so the gradient flows back with <em>no</em> geometric decay. This near-identity path is the "constant error carousel" that defeats EQ N3.2. The hidden state \(h_t\) is a gated, squashed <em>view</em> of the cell — what the rest of the network gets to see.</div>
+        </div>
+
+        <p>Read the gates as operations on memory. The <strong>forget gate</strong> \(f_t\) erases: an entry near 0 zeroes that slot of \(c_{t-1}\). The <strong>input gate</strong> \(i_t\) writes: it decides how much of the fresh candidate \(\tilde c_t\) to commit. The <strong>output gate</strong> \(o_t\) reads: it exposes a filtered copy of the cell as the hidden state. A practical detail that matters in real training: the forget-gate bias \(b_f\) is usually initialized to \(+1\) or higher, so the network <em>defaults to remembering</em> and only learns to forget when the data demands it.</p>
+
+        <div class="exercise" data-answer="3" data-tol="0" data-hint="Count the sigmoid valves: one to forget, one to write, one to read.">
+          <div class="ex-q">Counting the sigmoid valves in EQ N3.4 — forget, input, and output — how many <b>gates</b> does a standard LSTM cell have? (The \(\tanh\) candidate \(\tilde c_t\) is content, not a gate.)</div>
+          <div class="ex-reveal-src">The three sigmoid gates are the forget gate \(f_t\), the input gate \(i_t\), and the output gate \(o_t\). The candidate \(\tilde c_t\) is a \(\tanh\), not a gate. So an LSTM has <b>3</b> gates.</div>
+        </div>
+
+        <div class="exercise" data-answer="true" data-tol="0" data-hint="In EQ N3.5 the old memory enters as f_t ⊙ c_{t-1}. What does multiplying by ~0 do?">
+          <div class="ex-q">True or false: in EQ N3.5 the previous cell state enters as \(f_t \odot c_{t-1}\), so a forget gate whose entries are near 0 erases (nearly zeroes) the cell's stored memory. (Answer <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">Multiplying \(c_{t-1}\) element-wise by a gate near 0 drives those entries toward 0, discarding the corresponding memory before the new candidate is added. The statement is <b>true</b> — that is precisely the forget gate's job, and why a stuck-closed forget gate is a known cause of memory loss.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># EQ N3.4-N3.5: one LSTM cell forward step; print gates and cell state
+import numpy as np
+rng = np.random.default_rng(1)
+H, D = 3, 2
+def sig(z): return 1 / (1 + np.exp(-z))
+
+# stacked weights for [forget, input, output, candidate]; bias_f starts at +1
+Wx = rng.normal(0, 0.6, (4 * H, D))
+Wh = rng.normal(0, 0.6, (4 * H, H))
+b  = np.zeros(4 * H); b[:H] = 1.0          # forget-gate bias = +1 (default remember)
+
+x  = np.array([1.0, -0.5])                 # one input vector
+h  = np.zeros(H); c = np.array([0.4, -0.2, 0.9])   # carried-in state
+
+z  = Wx @ x + Wh @ h + b
+f, i, o = sig(z[:H]), sig(z[H:2*H]), sig(z[2*H:3*H])
+g  = np.tanh(z[3*H:])                       # candidate c~
+c_new = f * c + i * g                       # the additive highway
+h_new = o * np.tanh(c_new)
+
+np.set_printoptions(precision=3, suppress=True)
+print("forget gate f :", f)
+print("input  gate i :", i)
+print("output gate o :", o)
+print("candidate  g~ :", g)
+print("old cell   c  :", c)
+print("new cell   c' = f*c + i*g~ :", c_new)
+print("hidden     h' = o*tanh(c') :", h_new)</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="rnn-lstm" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT N3.3 — LSTM GATE EXPLORER</span><span class="w-sub">ONE SCALAR CELL · EQ N3.5 · LIVE</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>FORGET GATE f <output id="rnn-lstm-f-out">0.90</output></label><input type="range" id="rnn-lstm-f" min="0" max="1" step="0.02" value="0.9"/></div>
+              <div class="ctl"><label>INPUT GATE i <output id="rnn-lstm-i-out">0.50</output></label><input type="range" id="rnn-lstm-i" min="0" max="1" step="0.02" value="0.5"/></div>
+              <div class="ctl"><label>OUTPUT GATE o <output id="rnn-lstm-o-out">0.80</output></label><input type="range" id="rnn-lstm-o" min="0" max="1" step="0.02" value="0.8"/></div>
+            </div>
+            <canvas class="w-canvas" id="rnn-lstm-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">CELL HALF-LIFE (STEPS)</div><div class="r-value" id="rnn-lstm-hl">—</div></div>
+              <div class="readout"><div class="r-label">FINAL CELL c</div><div class="r-value" id="rnn-lstm-c">—</div></div>
+              <div class="readout"><div class="r-label">FINAL HIDDEN h</div><div class="r-value" id="rnn-lstm-h">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">A single value is written into the cell at \(t=1\) (with gate \(i\)), then the cell runs free under the forget gate \(f\) while the output gate \(o\) controls what leaks into \(h\). Set \(f=1,\ i=0\): the memory is held flat forever — the constant error carousel, half-life \(\infty\). Drop \(f\) to 0.5 and the memory halves every step. Close \(o\) and the cell still remembers internally while \(h\) shows nothing — memory and exposure are separate, which a vanilla RNN cannot do.</div>
+        </div>
+
+        <p class="note">A common worry: doesn't the additive cell state grow without bound? It can — which is why \(h_t=o_t\odot\tanh(c_t)\) squashes the readout, and why a well-trained forget gate occasionally dips below 1 to bleed off stale magnitude. Modern variants add a forget on the candidate too, and <em>peephole</em> connections let the gates see \(c_{t-1}\) directly; both are refinements, not changes to the core highway.</p>
+      </section>
+
+      <!-- ====================== 3.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">3.4</span><h2>GRU — a lighter gate</h2></div>
+        <p>The LSTM works, but it carries two state vectors and four weight matrices per cell. Cho et al. (2014) asked how much of that machinery is essential and arrived at the <strong>Gated Recurrent Unit</strong>: a single state vector, two gates, and a clever trick that ties "forget" and "input" into one decision.</p>
+
+        <div class="eq"><span class="eq-tag">EQ N3.6 — THE GRU CELL</span>
+        $$ \begin{aligned}
+        z_t &amp;= \sigma\!\big(W_z[h_{t-1},x_t]\big) &amp;\text{(update gate)} \\
+        r_t &amp;= \sigma\!\big(W_r[h_{t-1},x_t]\big) &amp;\text{(reset gate)} \\
+        \tilde{h}_t &amp;= \tanh\!\big(W_h[\,r_t\odot h_{t-1},\,x_t\,]\big) &amp;\text{(candidate)} \\
+        h_t &amp;= (1-z_t)\odot h_{t-1} + z_t \odot \tilde{h}_t &amp;\text{(blend)}
+        \end{aligned} $$
+        <div class="eq-note">The <b>update gate</b> \(z_t\) interpolates between keeping the old state and overwriting it with the candidate — one knob does the work of the LSTM's separate forget and input gates, which is why their weights sum to 1 by construction \((1-z_t)+z_t\). The <b>reset gate</b> \(r_t\) decides how much past state feeds the candidate, letting the cell drop irrelevant history when composing new content. There is no separate cell state and no output gate: \(h_t\) <em>is</em> the memory. When \(z_t\approx 0\), \(h_t\approx h_{t-1}\) — the same near-identity skip that protects the gradient.</div>
+        </div>
+
+        <table class="data">
+          <thead><tr><th>Property</th><th>Vanilla RNN</th><th>LSTM</th><th>GRU</th></tr></thead>
+          <tbody>
+            <tr><td>Gates</td><td class="m">0</td><td class="m">3 (f, i, o)</td><td class="m">2 (z, r)</td></tr>
+            <tr><td>State vectors</td><td class="m">1 (h)</td><td class="m">2 (h, c)</td><td class="m">1 (h)</td></tr>
+            <tr><td>Params / cell</td><td class="m hl">~1×</td><td class="m">~4×</td><td class="m">~3×</td></tr>
+            <tr><td>Long-range gradient</td><td>vanishes</td><td class="hl">protected</td><td class="hl">protected</td></tr>
+            <tr><td>Separate read-out gate</td><td>—</td><td>yes (o)</td><td>no</td></tr>
+          </tbody>
+        </table>
+
+        <p>Which to use? On many tasks GRU and LSTM are statistically indistinguishable, and GRU's smaller parameter count trains a little faster and needs less data — so it is often the better first choice. LSTM tends to edge ahead when very long-range memory or precise readout control matters, partly because the output gate and dedicated cell state give it one more degree of freedom. The honest answer, repeated across the literature since the 2014–2017 comparisons: <strong>there is no universal winner; the gap is task-dependent and usually small.</strong> What both share — and what actually mattered — is the additive, gated state path that keeps the gradient alive.</p>
+
+        <p class="note">Historical footnote, important for honesty: this entire family has been largely displaced for language by the Transformer (Deep Learning 04 onward), whose attention removes recurrence and parallelizes across the sequence. RNNs persist where streaming or strict left-to-right causality with small state is an advantage — on-device speech, low-latency control, some time-series — and the gating idea itself resurfaced in 2023–2025 in linear-recurrent and state-space models (S4, Mamba) that reclaim \(O(T)\) inference while approaching Transformer quality.</p>
+      </section>
+
+      <!-- ====================== 3.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">3.5</span><h2>Backpropagation through time</h2></div>
+        <p>How is any of this trained? By unrolling the network into its depth-\(T\) feed-forward equivalent (§3.1) and running ordinary backpropagation through it — a procedure named <strong>backpropagation through time</strong> (BPTT). Because the weights are shared across steps, the gradient with respect to a weight is the <em>sum</em> of its contributions at every step:</p>
+
+        <div class="eq"><span class="eq-tag">EQ N3.7 — THE BPTT GRADIENT</span>
+        $$ \frac{\partial \mathcal{L}}{\partial W} \;=\; \sum_{t=1}^{T} \frac{\partial \mathcal{L}_t}{\partial W}, \qquad \frac{\partial \mathcal{L}_T}{\partial W} \;=\; \sum_{k=1}^{T} \frac{\partial \mathcal{L}_T}{\partial h_T}\, \frac{\partial h_T}{\partial h_k}\, \frac{\partial h_k}{\partial W} $$
+        <div class="eq-note">The outer sum collects the loss from every output step; the inner sum routes each loss back through every earlier state via the Jacobian product \(\partial h_T/\partial h_k\) — the <em>same</em> product as EQ N3.2. So BPTT is exactly where vanishing and exploding gradients are born: the cure of §3.3 (an additive cell path) makes the \(k\)-distant term survive instead of decaying to zero.</div>
+        </div>
+
+        <p><strong>Truncated BPTT</strong> is the practical version. Backpropagating through a 100,000-token sequence would cost prohibitive memory (every intermediate state must be stored for the backward pass) and re-incur the gradient pathologies. So we cut the sequence into chunks of length \(k\) (say 64–256), backpropagate only within each chunk, but <em>carry the hidden state forward</em> between chunks so the forward pass still sees unlimited context. The model can therefore <em>remember</em> arbitrarily far while only being <em>trained</em> on gradients that span \(k\) steps — a deliberate bias toward shorter-range credit assignment that keeps training tractable.</p>
+
+        <div class="callout">
+          <span class="co-icon">KEY</span>
+          <p><strong>Three ideas, one thread.</strong> (1) Recurrence shares weights over time, turning a sequence into a deep net. (2) That depth makes the gradient a long product, which vanishes or explodes (EQ N3.2–N3.3). (3) Gates with an additive state path (LSTM/GRU) give the gradient a near-identity highway, and truncated BPTT makes training that highway affordable. Everything else in sequence modeling is variation on this.</p>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>Gates let a single state carry the past; the next leap lets every step look back at every other step directly.</strong> Chapter 04 builds the encoder–decoder (seq2seq) framework and the attention mechanism that frees a model from squeezing a whole sequence through one fixed-size bottleneck — the idea that, taken to its limit, becomes the Transformer.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 3.R — REFERENCES ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">3.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://doi.org/10.1162/neco.1997.9.8.1735" target="_blank" rel="noopener">Hochreiter, S. &amp; Schmidhuber, J. (1997). <span class="ref-venue">Long Short-Term Memory</span>.</a> <span class="ref-meta">Neural Computation 9(8) — introduces the LSTM cell, the constant error carousel, and the gating scheme of EQ N3.4–N3.5.</span></li>
+          <li><a href="https://arxiv.org/abs/1406.1078" target="_blank" rel="noopener">Cho, K., van Merriënboer, B., Gulcehre, C., Bahdanau, D., Bougares, F., Schwenk, H. &amp; Bengio, Y. (2014). <span class="ref-venue">Learning Phrase Representations using RNN Encoder–Decoder for Statistical Machine Translation</span>.</a> <span class="ref-meta">EMNLP 2014 — introduces the GRU (EQ N3.6) and the encoder–decoder framing carried into Chapter 04.</span></li>
+          <li><a href="https://doi.org/10.1109/72.279181" target="_blank" rel="noopener">Bengio, Y., Simard, P. &amp; Frasconi, P. (1994). <span class="ref-venue">Learning Long-Term Dependencies with Gradient Descent is Difficult</span>.</a> <span class="ref-meta">IEEE Transactions on Neural Networks 5(2) — the formal analysis of vanishing/exploding gradients behind EQ N3.2–N3.3.</span></li>
+          <li><a href="https://arxiv.org/abs/1211.5063" target="_blank" rel="noopener">Pascanu, R., Mikolov, T. &amp; Bengio, Y. (2013). <span class="ref-venue">On the Difficulty of Training Recurrent Neural Networks</span>.</a> <span class="ref-meta">ICML 2013 — the spectral-norm view of the gradient product and the gradient-clipping remedy for explosion (§3.2).</span></li>
+          <li><a href="https://arxiv.org/abs/1503.04069" target="_blank" rel="noopener">Greff, K., Srivastava, R. K., Koutník, J., Steunebrink, B. R. &amp; Schmidhuber, J. (2017). <span class="ref-venue">LSTM: A Search Space Odyssey</span>.</a> <span class="ref-meta">IEEE TNNLS 28(10) — systematic ablation of LSTM components, including the value of the forget gate and forget-bias initialization (§3.3).</span></li>
+          <li><a href="https://arxiv.org/abs/1412.3555" target="_blank" rel="noopener">Chung, J., Gulcehre, C., Cho, K. &amp; Bengio, Y. (2014). <span class="ref-venue">Empirical Evaluation of Gated Recurrent Neural Networks on Sequence Modeling</span>.</a> <span class="ref-meta">NIPS 2014 Deep Learning Workshop — the LSTM-vs-GRU comparison underpinning the "no universal winner" claim (§3.4).</span></li>
+          <li><a href="https://arxiv.org/abs/2312.00752" target="_blank" rel="noopener">Gu, A. &amp; Dao, T. (2023). <span class="ref-venue">Mamba: Linear-Time Sequence Modeling with Selective State Spaces</span>.</a> <span class="ref-meta">arXiv 2312.00752 — the modern selective state-space model reviving gated linear recurrence at scale (§3.4 footnote).</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../dl/02-cnn.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">02</span> CNNs</div></a>
+        <a class="next" href="../dl/04-seq2seq-attention.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">04</span> Seq2Seq &amp; Attention</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — DEEP LEARNING · CH 03</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* ============================================================
+   Sequence Models — RNN, LSTM & GRU — chapter instruments
+   Single IIFE, no globals. setTimeout-only animation.
+   Every widget guarded by element existence; meaningful
+   initial render with zero interaction.
+   ============================================================ */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  function clamp(x, lo, hi) { return x < lo ? lo : x > hi ? hi : x; }
+  function fnum(x, d) { d = d === undefined ? 2 : d; return x.toFixed(d); }
+
+  /* ========================================================
+     INSTRUMENT N3.1 — RNN unroll visualizer
+     A scalar recurrent cell reads a unit pulse then zeros;
+     bars show h_t decaying/holding across 10 steps.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("rnn-unroll");
+    if (!root) return;
+    var canvas = document.getElementById("rnn-unroll-canvas");
+    var wxhIn = document.getElementById("rnn-wxh");
+    var whhIn = document.getElementById("rnn-whh");
+    var wxhOut = document.getElementById("rnn-wxh-out");
+    var whhOut = document.getElementById("rnn-whh-out");
+    var lenEl = document.getElementById("rnn-unroll-len");
+    var finEl = document.getElementById("rnn-unroll-final");
+    var regEl = document.getElementById("rnn-unroll-regime");
+    var N = 10;
+
+    function states(wxh, whh) {
+      var h = 0, hs = [];
+      for (var t = 0; t < N; t++) {
+        var x = (t === 0) ? 1 : 0;             // a single input pulse
+        h = Math.tanh(wxh * x + whh * h);      // EQ N3.1, scalar, b = 0
+        hs.push(h);
+      }
+      return hs;
+    }
+
+    function render() {
+      var wxh = +wxhIn.value, whh = +whhIn.value;
+      wxhOut.textContent = fnum(wxh);
+      whhOut.textContent = fnum(whh);
+      var hs = states(wxh, whh);
+      lenEl.textContent = N;
+      finEl.textContent = fnum(hs[N - 1], 3);
+      var a = Math.abs(whh);
+      regEl.textContent = a < 0.5 ? "FAST FORGET" : a < 0.95 ? "DECAYING" : a <= 1.05 ? "HELD" : "SATURATING";
+      regEl.style.color = a < 0.5 ? C.MUT : a <= 1.05 ? C.MINT : C.RED;
+
+      var s = FM.setupCanvas(canvas, 300), ctx = s.ctx, w = s.w, h = s.h;
+      ctx.clearRect(0, 0, w, h);
+      var padL = 38, padR = 14, padT = 22, padB = 34;
+      var plotW = w - padL - padR, plotH = h - padT - padB;
+      var mid = padT + plotH / 2;
+      /* zero axis */
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(padL, mid); ctx.lineTo(w - padR, mid); ctx.stroke();
+      ctx.fillStyle = C.MUT; ctx.font = C.MONO; ctx.textAlign = "right";
+      ctx.fillText("+1", padL - 6, padT + 4);
+      ctx.fillText(" 0", padL - 6, mid + 3);
+      ctx.fillText("-1", padL - 6, padT + plotH + 3);
+      ctx.textAlign = "left";
+      ctx.fillText("HIDDEN STATE hₜ ACROSS STEPS (INPUT PULSE AT t=1)", padL, 12);
+
+      var bw = plotW / N;
+      for (var t = 0; t < N; t++) {
+        var hv = clamp(hs[t], -1, 1);
+        var bx = padL + t * bw + bw * 0.18;
+        var bwid = bw * 0.64;
+        var bh = (hv / 1) * (plotH / 2);
+        ctx.fillStyle = t === 0 ? C.BLUE : (Math.abs(hv) > 0.02 ? C.MINT : C.MUT);
+        if (hv >= 0) ctx.fillRect(bx, mid - bh, bwid, bh);
+        else ctx.fillRect(bx, mid, bwid, -bh);
+        ctx.fillStyle = C.MUT; ctx.font = C.MONO; ctx.textAlign = "center";
+        ctx.fillText(String(t + 1), bx + bwid / 2, h - padB + 16);
+      }
+      ctx.textAlign = "left";
+    }
+
+    wxhIn.addEventListener("input", render);
+    whhIn.addEventListener("input", render);
+    window.addEventListener("resize", render);
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT N3.2 — Vanishing-gradient decay
+     |d h_T / d h_0| vs distance, log axis, for scalar RNN.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("rnn-vanish");
+    if (!root) return;
+    var canvas = document.getElementById("rnn-vanish-canvas");
+    var wIn = document.getElementById("rnn-vg-w");
+    var lenIn = document.getElementById("rnn-vg-len");
+    var wOut = document.getElementById("rnn-vg-w-out");
+    var lenOut = document.getElementById("rnn-vg-len-out");
+    var lamEl = document.getElementById("rnn-vg-lambda");
+    var farEl = document.getElementById("rnn-vg-far");
+    var regEl = document.getElementById("rnn-vg-regime");
+    var FLOOR = 1e-3, CEIL = 1e3;
+
+    /* gradient product back from step L to step 0 for a unit pulse */
+    function gradCurve(whh, L) {
+      var h = 0, a = [];
+      for (var t = 0; t < L; t++) {
+        var x = (t === 0) ? 1 : 0;
+        var pre = whh * h + 1 * x;             // W_xh = 1
+        h = Math.tanh(pre); a.push(pre);
+      }
+      /* cumulative product of Jacobian factors, recorded per distance */
+      var g = 1, curve = [];
+      for (var d = 0; d < L; d++) {
+        var idx = L - 1 - d;
+        g *= (1 - Math.pow(Math.tanh(a[idx]), 2)) * whh;  // tanh'(a) * W_hh
+        curve.push(Math.abs(g));
+      }
+      return curve;                            // curve[d] = |grad| at distance d+1
+    }
+
+    function render() {
+      var whh = +wIn.value, L = parseInt(lenIn.value, 10);
+      wOut.textContent = fnum(whh);
+      lenOut.textContent = L;
+      var curve = gradCurve(whh, L);
+      var far = curve[curve.length - 1];
+      /* effective gain lambda from the geometric tail */
+      var lam = curve.length > 5 ? Math.pow(curve[curve.length - 1] / curve[4], 1 / (curve.length - 1 - 4)) : whh;
+      lamEl.textContent = fnum(Math.abs(lam), 3);
+      farEl.textContent = far < 1e-4 ? far.toExponential(1) : far < 1 ? far.toFixed(4) : FM.siFormat(far, 1);
+      var reg = far < FLOOR ? "VANISHED" : far > CEIL ? "EXPLODED" : "ALIVE";
+      regEl.textContent = reg;
+      regEl.style.color = reg === "ALIVE" ? C.MINT : C.RED;
+
+      var s = FM.setupCanvas(canvas, 300), ctx = s.ctx, w = s.w, h = s.h;
+      ctx.clearRect(0, 0, w, h);
+      var padL = 46, padR = 14, padT = 20, padB = 30;
+      var plotW = w - padL - padR, plotH = h - padT - padB;
+      /* log10 axis from CEIL (top) to a low floor (bottom) */
+      var logTop = 4, logBot = -8;            // 10^4 .. 10^-8
+      function y(v) {
+        var lg = Math.log(Math.max(v, 1e-30)) / Math.LN10;
+        lg = clamp(lg, logBot, logTop);
+        return padT + (logTop - lg) / (logTop - logBot) * plotH;
+      }
+      /* gridlines + labels at powers of 10 */
+      ctx.font = C.MONO; ctx.textAlign = "right";
+      for (var p = logTop; p >= logBot; p -= 2) {
+        var gy = padT + (logTop - p) / (logTop - logBot) * plotH;
+        ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(padL, gy); ctx.lineTo(w - padR, gy); ctx.stroke();
+        ctx.fillStyle = C.MUT; ctx.fillText("1e" + p, padL - 6, gy + 3);
+      }
+      /* vanish threshold line at 1e-3 */
+      var ty = y(FLOOR);
+      ctx.strokeStyle = C.BRIGHT; ctx.setLineDash([4, 4]); ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(padL, ty); ctx.lineTo(w - padR, ty); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.textAlign = "left"; ctx.fillStyle = C.SEC;
+      ctx.fillText("VANISH FLOOR 1e-3", padL + 4, ty - 4);
+      ctx.fillText("|∂hₜ/∂h₀| VS DISTANCE (LOG)", padL, 12);
+
+      /* the decay curve */
+      ctx.strokeStyle = reg === "ALIVE" ? C.MINT : C.RED; ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (var d = 0; d < curve.length; d++) {
+        var px = padL + (d / (curve.length - 1)) * plotW;
+        var py = y(curve[d]);
+        if (d === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+      ctx.fillStyle = C.MUT; ctx.font = C.MONO; ctx.textAlign = "center";
+      ctx.fillText("0", padL, h - 8);
+      ctx.fillText("DISTANCE  T-k", padL + plotW / 2, h - 8);
+      ctx.textAlign = "right"; ctx.fillText(String(L), w - padR, h - 8);
+      ctx.textAlign = "left";
+    }
+
+    wIn.addEventListener("input", render);
+    lenIn.addEventListener("input", render);
+    window.addEventListener("resize", render);
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT N3.3 — LSTM gate explorer
+     Scalar cell: write a value at t=1 with gate i, hold it
+     under forget gate f, read out through gate o. 24 steps.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("rnn-lstm");
+    if (!root) return;
+    var canvas = document.getElementById("rnn-lstm-canvas");
+    var fIn = document.getElementById("rnn-lstm-f");
+    var iIn = document.getElementById("rnn-lstm-i");
+    var oIn = document.getElementById("rnn-lstm-o");
+    var fOut = document.getElementById("rnn-lstm-f-out");
+    var iOut = document.getElementById("rnn-lstm-i-out");
+    var oOut = document.getElementById("rnn-lstm-o-out");
+    var hlEl = document.getElementById("rnn-lstm-hl");
+    var cEl = document.getElementById("rnn-lstm-c");
+    var hEl = document.getElementById("rnn-lstm-h");
+    var N = 24, CAND = 0.9;                     // candidate value written once
+
+    function run(f, i, o) {
+      var c = 0, cs = [], hs = [];
+      for (var t = 0; t < N; t++) {
+        var inp = (t === 0) ? 1 : 0;            // input present only at step 1
+        c = f * c + (i * inp) * CAND;           // EQ N3.5 cell update
+        var hv = o * Math.tanh(c);              // gated readout
+        cs.push(c); hs.push(hv);
+      }
+      return { cs: cs, hs: hs };
+    }
+
+    function render() {
+      var f = +fIn.value, i = +iIn.value, o = +oIn.value;
+      fOut.textContent = fnum(f); iOut.textContent = fnum(i); oOut.textContent = fnum(o);
+      var r = run(f, i, o);
+      cEl.textContent = fnum(r.cs[N - 1], 3);
+      hEl.textContent = fnum(r.hs[N - 1], 3);
+      /* half-life of the cell decay: f^k = 0.5 -> k = ln.5 / ln f */
+      var hl = (f >= 0.999) ? Infinity : (f <= 0.001 ? 0 : Math.log(0.5) / Math.log(f));
+      hlEl.textContent = hl === Infinity ? "∞ (HELD)" : hl < 0.05 ? "≈ 0" : fnum(hl, 1);
+      hlEl.style.color = hl === Infinity ? C.MINT : (hl > 5 ? C.MINT : C.SEC);
+
+      var s = FM.setupCanvas(canvas, 300), ctx = s.ctx, w = s.w, hC = s.h;
+      ctx.clearRect(0, 0, w, hC);
+      var padL = 38, padR = 14, padT = 22, padB = 30;
+      var plotW = w - padL - padR, plotH = hC - padT - padB;
+      var base = padT + plotH;
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(padL, base); ctx.lineTo(w - padR, base); ctx.stroke();
+      ctx.fillStyle = C.MUT; ctx.font = C.MONO; ctx.textAlign = "right";
+      ctx.fillText("1.0", padL - 6, padT + 4);
+      ctx.fillText("0.0", padL - 6, base + 3);
+      ctx.textAlign = "left";
+      ctx.fillText("CELL c (MINT) · HIDDEN h (BLUE) OVER 24 STEPS", padL, 12);
+
+      function yv(v) { return base - clamp(v, 0, 1) * plotH; }
+      function plot(arr, col) {
+        ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.beginPath();
+        for (var t = 0; t < N; t++) {
+          var px = padL + (t / (N - 1)) * plotW;
+          var py = yv(arr[t]);
+          if (t === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+        }
+        ctx.stroke();
+        for (var k = 0; k < N; k++) {
+          var qx = padL + (k / (N - 1)) * plotW;
+          ctx.fillStyle = col; ctx.beginPath(); ctx.arc(qx, yv(arr[k]), 2, 0, 6.2832); ctx.fill();
+        }
+      }
+      plot(r.cs, C.MINT);
+      plot(r.hs, C.BLUE);
+      ctx.fillStyle = C.MUT; ctx.font = C.MONO; ctx.textAlign = "center";
+      ctx.fillText("write @ t=1", padL + plotW * (0 / (N - 1)) + 30, base + 16);
+      ctx.textAlign = "left";
+    }
+
+    fIn.addEventListener("input", render);
+    iIn.addEventListener("input", render);
+    oIn.addEventListener("input", render);
+    window.addEventListener("resize", render);
+    render();
+  })();
+
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

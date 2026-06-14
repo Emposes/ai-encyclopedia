@@ -1,0 +1,876 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Model-Free Value Methods — TD &amp; Q-Learning — AI Encyclopedia</title>
+<meta name="description" content="Learn the value of actions from experience alone. Monte-Carlo prediction, temporal-difference learning that bootstraps a guess from a guess, and the off-policy Q-learning and on-policy SARSA control algorithms." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+</head>
+<body data-track="rl" data-level="core">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ REINFORCEMENT LEARNING / 03 / MODEL-FREE</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../rl/04-policy-gradients.html">NEXT: POLICY GRADIENTS →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">REINFORCEMENT LEARNING · CHAPTER 03 / 06</div>
+    <h1>Model-Free Value Methods — TD &amp; Q-Learning</h1>
+    <p class="lede">Dynamic programming could solve any MDP, provided you handed it the transition probabilities and rewards. Real agents are not handed the model. They are dropped into a world and must learn from what happens to them. This chapter covers <strong>learning the value of actions from experience alone: temporal-difference learning bootstraps a guess from a guess, and it works</strong>. From that one idea follow Q-learning and SARSA, the algorithms that put the <em>learning</em> in reinforcement learning.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 28 MIN</b></span>
+      <span>BUILDS ON<b>RL 01–02 · MARKOV CHAINS</b></span>
+      <span>INSTRUMENTS<b>Q-GRIDWORLD · TD vs MC · ε-DECAY</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">3.1</span>Learning without a model</a>
+      <a href="#s2"><span class="n">3.2</span>Monte-Carlo prediction</a>
+      <a href="#s3"><span class="n">3.3</span>Temporal-difference — TD(0)</a>
+      <a href="#s4"><span class="n">3.4</span>Q-learning (off-policy)</a>
+      <a href="#s5"><span class="n">3.5</span>SARSA &amp; exploration</a>
+      <a href="#s6"><span class="n">3.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 3.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">3.1</span><h2>Learning without a model</h2></div>
+        <p>Chapter 02 was a luxury we will now give up. There, the agent <em>knew</em> the environment — the transition function \(P(s' \mid s, a)\) and the reward \(R(s, a)\) — and could compute the optimal policy by pure thought, sweeping the Bellman equations until they converged. That is <strong>planning</strong>, and it is exactly the engine behind the Gridworld instrument of Chapter 01. But knowing \(P\) and \(R\) is a strong assumption that almost never holds. A robot does not have a probability table for how its motors slip on a given floor. A game-playing agent is not handed the rules as equations. The model is missing, and the agent must work without it.</p>
+
+        <p>This is the regime of <strong>model-free</strong> reinforcement learning: the agent never builds or is given a model of the world. Instead it learns directly from <em>samples</em> — actual transitions \((s, a, r, s')\) it experiences by acting. Where dynamic programming computes an expectation over all possible next states by summing against \(P\), model-free methods <em>replace that expectation with sampled experience</em>. They do not ask "what is the average outcome of this action?"; they take the action, see one outcome, and nudge their estimate toward it. Average enough samples and you recover the expectation the model would have given you — the law of large numbers doing the work the model used to do.</p>
+
+        <div class="figure" id="td-mf-fig">
+          <svg viewBox="0 0 660 196" role="img" aria-label="Model-based planning versus model-free learning">
+            <defs>
+              <marker id="td-arrow" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
+                <path d="M0,0 L7,3 L0,6 Z" fill="#9b9b9b"></path>
+              </marker>
+            </defs>
+            <g class="dg-box" data-pop>
+              <rect x="36" y="44" width="246" height="108" rx="6" fill="#1e2124" stroke="#565656" stroke-width="1.2"></rect>
+              <text x="159" y="70" text-anchor="middle" fill="#e5e5e5" font-family="ui-monospace,Menlo,monospace" font-size="12">MODEL-BASED (CH 02)</text>
+              <text x="159" y="96" text-anchor="middle" fill="#9b9b9b" font-family="ui-monospace,Menlo,monospace" font-size="9.5">knows P(s′|s,a), R(s,a)</text>
+              <text x="159" y="114" text-anchor="middle" fill="#9b9b9b" font-family="ui-monospace,Menlo,monospace" font-size="9.5">sum over all next states</text>
+              <text x="159" y="134" text-anchor="middle" fill="#4e8af7" font-family="ui-monospace,Menlo,monospace" font-size="9.5">PLAN — no acting needed</text>
+            </g>
+            <g class="dg-box-accent" data-pop>
+              <rect x="378" y="44" width="246" height="108" rx="6" fill="rgba(166,242,204,0.05)" stroke="#2b5945" stroke-width="1.2"></rect>
+              <text x="501" y="70" text-anchor="middle" fill="#e5e5e5" font-family="ui-monospace,Menlo,monospace" font-size="12">MODEL-FREE (THIS CH)</text>
+              <text x="501" y="96" text-anchor="middle" fill="#9b9b9b" font-family="ui-monospace,Menlo,monospace" font-size="9.5">knows nothing — only samples</text>
+              <text x="501" y="114" text-anchor="middle" fill="#9b9b9b" font-family="ui-monospace,Menlo,monospace" font-size="9.5">one (s,a,r,s′) at a time</text>
+              <text x="501" y="134" text-anchor="middle" fill="#a6f2cc" font-family="ui-monospace,Menlo,monospace" font-size="9.5">LEARN — must act to learn</text>
+            </g>
+            <path data-draw d="M282,98 L378,98" fill="none" stroke="#9b9b9b" stroke-width="1.4" marker-end="url(#td-arrow)"></path>
+            <text x="330" y="88" text-anchor="middle" fill="#636363" font-family="ui-monospace,Menlo,monospace" font-size="9">drop the model</text>
+          </svg>
+          <div class="fig-cap">Same goal — the optimal value function and policy — reached two ways. Planning sums against a known model; learning averages sampled experience. This chapter lives entirely on the right.</div>
+        </div>
+
+        <p>Two questions organize everything that follows, and they map onto two classical problems. <strong>Prediction</strong> (also called <em>policy evaluation</em>): given a fixed policy \(\pi\), estimate its value function \(V^\pi\) — how good is this way of behaving? <strong>Control</strong>: find a good policy in the first place, typically by estimating action-values \(Q^\pi\) and improving the policy toward them. Sections 3.2 and 3.3 solve prediction two different ways; Sections 3.4 and 3.5 turn the better of them into control.</p>
+
+        <p>One design choice cuts across all of it and deserves naming now. A method is <strong>on-policy</strong> if it learns about the very policy it is using to act, and <strong>off-policy</strong> if it can learn about one policy (say, the greedy optimal one) while behaving according to another (say, an exploratory one). It sounds like a technicality. It is the single most consequential distinction in this chapter — it is exactly what separates Q-learning from SARSA — and we will see it decide how an agent behaves on the edge of a cliff.</p>
+
+        <p class="note">A useful sanity check on the whole enterprise: a model-free agent can become superhuman at a game without ever being able to <em>describe</em> the game. It learns which moves are worth what, not why. That is a strength — no modeling effort — and a weakness — no transfer, no planning ahead, every new world relearned from scratch. The model-based methods of later chapters trade sample efficiency back for exactly that missing structure.</p>
+      </section>
+
+      <!-- ====================== 3.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">3.2</span><h2>Monte-Carlo prediction</h2></div>
+        <p>The most direct way to estimate a value from experience is to take the definition literally. The value \(V^\pi(s)\) <em>is</em> the expected return from \(s\) (Chapter 01, EQ R1.6). So play out complete episodes under \(\pi\), and for each state record the actual return that followed it. Average those returns and you have a sample estimate of the expectation. This is the <strong>Monte-Carlo (MC)</strong> method: estimate an expectation by averaging samples of it.</p>
+
+        <div class="eq"><span class="eq-tag">EQ R3.1 — MONTE-CARLO VALUE ESTIMATE</span>
+        $$ V(s) \;\leftarrow\; V(s) + \alpha\,\big[\, G_t - V(s) \,\big], \qquad G_t = \sum_{k=0}^{\infty} \gamma^k\, R_{t+k+1} $$
+        <div class="eq-note">After an episode ends, compute the actual return \(G_t\) that followed each visit to \(s\), and move the estimate a fraction \(\alpha\) of the way toward it. With \(\alpha = 1/N(s)\) — one over the number of visits — this is exactly the running sample mean. <b>The target \(G_t\) is the true, observed return: no model, no bootstrap, nothing estimated stands in for it.</b> That purity is MC's defining virtue and its defining limitation.</div>
+        </div>
+
+        <p>The error term \(G_t - V(s)\) is worth dwelling on, because the same shape recurs in every update rule in this chapter. It is a <em>prediction error</em>: the gap between what actually happened (\(G_t\)) and what we predicted would happen (\(V(s)\)). Learning is nothing but repeatedly shrinking that gap, with \(\alpha\) setting how aggressively. A large \(\alpha\) chases the latest sample; a small \(\alpha\) averages patiently over many. Set \(\alpha\) too high and the estimate jitters with noise; too low and it crawls.</p>
+
+        <p>MC's strengths are real. It is <strong>unbiased</strong> — \(G_t\) is an honest sample of the return, so the estimate converges to the true \(V^\pi\) with no systematic error. It makes <strong>no Markov assumption</strong> — it never reasons about next-state values, only whole returns, so it works even where the state representation is imperfect. And it is simple to state. But it has a hard limitation that motivates the rest of the chapter: <strong>you must wait until the episode ends</strong> to compute \(G_t\). In a long episode that is slow; in a <em>continuing</em> task that never terminates, it is impossible. MC also tends to have <strong>high variance</strong>, because \(G_t\) is the sum of a long chain of random rewards and random transitions — one unlucky tail can swing it wildly.</p>
+
+        <div class="exercise" data-answer="2.71" data-tol="0.01" data-hint="The MC target is the full observed return G = r1 + γ·r2 + γ²·r3, here with all rewards 1 and γ = 0.9.">
+          <div class="ex-q">An episode from state \(s\) yields rewards \(1, 1, 1\) on three successive steps and then terminates. With \(\gamma = 0.9\), what is the Monte-Carlo target \(G_t\) used to update \(V(s)\) in EQ R3.1?</div>
+          <div class="ex-reveal-src">The MC target is the full observed return: \(G_t = 1 + 0.9\cdot 1 + 0.9^2\cdot 1 = 1 + 0.9 + 0.81 = \) <b>2.71</b>. MC waits for the whole episode and uses this actual number — never an estimate of it.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Monte-Carlo prediction on the 5-state random walk (Sutton & Barto, ex. 6.2)
+# True values are linear: V(s) = s / 6.  Start every estimate at 0.5.
+import numpy as np
+rng = np.random.default_rng(1)
+
+def episode():                         # random walk; left of 1 -> 0 (r=0), right of 5 -> 6 (r=1)
+    s, traj = 3, []
+    while 1 &lt;= s &lt;= 5:
+        s2 = s + (1 if rng.random() &lt; 0.5 else -1)
+        traj.append((s, 1.0 if s2 == 6 else 0.0))
+        s = s2
+    return traj
+
+V = np.full(7, 0.5); V[0] = V[6] = 0.0    # terminals have value 0
+alpha = 0.05
+for _ in range(200):
+    traj = episode()
+    G = traj[-1][1]                       # gamma = 1, so every state's return = final reward
+    for (s, _r) in traj:
+        V[s] += alpha * (G - V[s])        # EQ R3.1: nudge toward the actual return
+
+true = np.array([s / 6 for s in range(1, 6)])
+print("MC estimate V[1..5] :", V[1:6].round(3))
+print("true value  V[1..5] :", true.round(3))
+print("mean abs error      :", round(float(np.abs(V[1:6] - true).mean()), 4))</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 3.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">3.3</span><h2>Temporal-difference learning — TD(0)</h2></div>
+        <p>Here is the idea this chapter is built around, and it is one of the most beautiful in machine learning. MC waits for the full return \(G_t\). But recall the recursive form of the return (Chapter 01, EQ R1.4): \(G_t = R_{t+1} + \gamma\, G_{t+1}\). We do not have \(G_{t+1}\) — the episode has not finished — but we do have an <em>estimate</em> of it: \(V(s_{t+1})\), our current guess for the value of the next state. So substitute the guess in for the unknown return. The update becomes:</p>
+
+        <div class="eq"><span class="eq-tag">EQ R3.2 — TD(0) UPDATE</span>
+        $$ V(s_t) \;\leftarrow\; V(s_t) + \alpha\,\big[\, \underbrace{R_{t+1} + \gamma\, V(s_{t+1})}_{\text{TD target}} - V(s_t) \,\big] $$
+        <div class="eq-note">The target is no longer the full return but <b>one real reward plus the discounted estimate of the rest</b>. This is <em>bootstrapping</em>: updating an estimate from another estimate. <b>It means you can learn from a single step, online, before the episode is anywhere near over — even in a task that never ends.</b> The bracket is the TD error \(\delta_t\), the surprise between what you expected and what one step of reality plus your own forecast now suggests.</div>
+        </div>
+
+        <p>The bracketed quantity is named: the <strong>temporal-difference error</strong>, \(\delta_t = R_{t+1} + \gamma\, V(s_{t+1}) - V(s_t)\). It is the difference between two successive predictions of the same return — one made before seeing \(R_{t+1}\), one after — hence "temporal difference". When \(\delta_t = 0\) everywhere, predictions are self-consistent and learning stops; this is the sampled, online cousin of the Bellman fixed point from Chapter 02. The TD error is not merely an algorithmic device: dopamine neurons in the brain encode a signal strikingly close to \(\delta_t\), which is part of why TD learning is one of the rare ideas that crossed from machine learning into neuroscience.</p>
+
+        <div class="eq"><span class="eq-tag">EQ R3.3 — THE TD ERROR</span>
+        $$ \delta_t \;=\; R_{t+1} + \gamma\, V(s_{t+1}) - V(s_t) $$
+        <div class="eq-note">\(\delta_t > 0\): the step went better than predicted — raise \(V(s_t)\). \(\delta_t < 0\): worse than predicted — lower it. <b>Every value method in modern RL, up to and including the critics inside today's policy-gradient and RLHF stacks, is ultimately driving a TD error to zero.</b> MC's error \(G_t - V(s_t)\) is the special case where you wait for the whole return instead of bootstrapping after one step.</div>
+        </div>
+
+        <p>The trade-off between MC and TD is a genuine one, not a free lunch, and the honest framing is bias versus variance. The TD target \(R_{t+1} + \gamma V(s_{t+1})\) is <strong>biased</strong>: it leans on \(V(s_{t+1})\), which is only a guess and is wrong early in training, so TD is "learning from a guess". But it has much <strong>lower variance</strong> than MC, because it depends on only one random reward and one transition rather than an entire random trajectory. In practice TD's lower variance usually wins — it converges faster on most problems — but MC's lack of bias and its independence from the Markov assumption keep it relevant, and the two are endpoints of a spectrum (TD(\(\lambda\)), \(n\)-step returns) that interpolates between them. There is no universal winner; which is better is genuinely problem-dependent, a point Sutton &amp; Barto are careful to make and which remains true today.</p>
+
+        <table class="data">
+          <thead><tr><th>Property</th><th>Monte-Carlo</th><th>TD(0)</th></tr></thead>
+          <tbody>
+            <tr><td>Target</td><td class="m">G_t (full return)</td><td class="m">R + γ·V(s′) (one step + bootstrap)</td></tr>
+            <tr><td>Updates</td><td>at episode end only</td><td class="hl">every step, online</td></tr>
+            <tr><td>Continuing tasks</td><td>cannot (needs termination)</td><td class="hl">yes</td></tr>
+            <tr><td>Bias</td><td class="hl">unbiased</td><td>biased (bootstraps)</td></tr>
+            <tr><td>Variance</td><td>high</td><td class="hl">low</td></tr>
+            <tr><td>Needs Markov state</td><td class="hl">no</td><td>yes (relies on V(s′))</td></tr>
+          </tbody>
+        </table>
+
+        <div class="exercise" data-answer="0.5" data-tol="0.001" data-hint="δ = r + γ·V(s′) − V(s); plug in r = 0, γ = 1, V(s′) = 1, V(s) = 0.5.">
+          <div class="ex-q">A TD(0) agent in state \(s\) takes a step, gets reward \(R_{t+1} = 0\), and lands in \(s'\) with current estimate \(V(s') = 1\). The old estimate is \(V(s) = 0.5\) and \(\gamma = 1\). What is the TD error \(\delta_t\) (EQ R3.3)?</div>
+          <div class="ex-reveal-src">\(\delta_t = R_{t+1} + \gamma\,V(s') - V(s) = 0 + 1\cdot 1 - 0.5 = \) <b>0.5</b>. Positive, so the step beat expectations and \(V(s)\) gets raised by \(\alpha\cdot 0.5\) — even though the episode has not ended and no real return was ever observed.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># TD(0) value estimation vs Monte-Carlo on the same random walk
+import numpy as np
+rng = np.random.default_rng(1)
+
+def episode():
+    s, traj = 3, []
+    while 1 &lt;= s &lt;= 5:
+        s2 = s + (1 if rng.random() &lt; 0.5 else -1)
+        traj.append((s, 1.0 if s2 == 6 else 0.0, s2))
+        s = s2
+    return traj
+
+true = np.array([s / 6 for s in range(1, 6)])
+Vtd = np.full(7, 0.5); Vtd[0] = Vtd[6] = 0.0      # TD(0)
+Vmc = np.full(7, 0.5); Vmc[0] = Vmc[6] = 0.0      # Monte-Carlo
+a = 0.05
+for _ in range(150):
+    traj = episode()
+    for (s, r, s2) in traj:                         # TD: bootstrap every step (EQ R3.2)
+        Vtd[s] += a * (r + 1.0 * Vtd[s2] - Vtd[s])
+    G = traj[-1][1]
+    for (s, r, s2) in traj:                         # MC: wait for the return (EQ R3.1)
+        Vmc[s] += a * (G - Vmc[s])
+
+print("state         :", list(range(1, 6)))
+print("TD(0) estimate:", Vtd[1:6].round(3).tolist())
+print("MC    estimate:", Vmc[1:6].round(3).tolist())
+print("true value    :", true.round(3).tolist())
+plot_xy(list(range(1, 6)), Vtd[1:6].tolist())      # TD curve vs the linear truth</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="td-cmp" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT R3.1 — TD vs MC UPDATE</span><span class="w-sub">ONE STEP · TD TARGET = R + γV(s′) · MC TARGET = G</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>OLD ESTIMATE V(s) <output id="td-cmp-v-out">0.50</output></label><input type="range" id="td-cmp-v" min="-1" max="2" step="0.05" value="0.5"/></div>
+              <div class="ctl"><label>REWARD R <output id="td-cmp-r-out">0.00</output></label><input type="range" id="td-cmp-r" min="-1" max="2" step="0.05" value="0"/></div>
+            </div>
+            <div class="ctl-row">
+              <div class="ctl"><label>NEXT-STATE V(s′) <output id="td-cmp-vn-out">1.00</output></label><input type="range" id="td-cmp-vn" min="-1" max="2" step="0.05" value="1"/></div>
+              <div class="ctl"><label>FULL RETURN G <output id="td-cmp-g-out">1.50</output></label><input type="range" id="td-cmp-g" min="-1" max="3" step="0.05" value="1.5"/></div>
+            </div>
+            <div class="ctl-row">
+              <div class="ctl"><label>LEARNING RATE α <output id="td-cmp-a-out">0.50</output></label><input type="range" id="td-cmp-a" min="0.05" max="1" step="0.05" value="0.5"/></div>
+              <div class="ctl"><label>DISCOUNT γ <output id="td-cmp-gam-out">0.90</output></label><input type="range" id="td-cmp-gam" min="0" max="0.99" step="0.01" value="0.9"/></div>
+            </div>
+            <canvas class="w-canvas" id="td-cmp-canvas" height="240"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">TD TARGET R+γV(s′)</div><div class="r-value" id="td-cmp-tdtarget">—</div></div>
+              <div class="readout acc"><div class="r-label">TD ERROR δ</div><div class="r-value" id="td-cmp-delta">—</div></div>
+              <div class="readout acc"><div class="r-label">NEW V(s) — TD</div><div class="r-value" id="td-cmp-tdnew">—</div></div>
+              <div class="readout"><div class="r-label">NEW V(s) — MC</div><div class="r-value" id="td-cmp-mcnew">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The two markers are the targets each method aims at from the same old estimate (the dashed line): <span style="color:var(--accent);">mint</span> is the bootstrapped TD target \(R+\gamma V(s')\), <span style="color:var(--blue);">blue</span> is the full Monte-Carlo return \(G\). The arrow shows the step \(\alpha\,[\text{target}-V(s)]\) each takes. Slide \(V(s')\) and only the TD target moves — that dependence on a guess is the bias TD pays for learning online. Slide \(G\) and only MC moves — that swing is the variance MC pays for being unbiased. Set \(\alpha = 1\) and each estimate jumps straight onto its target in a single step.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 3.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">3.4</span><h2>Q-learning (off-policy)</h2></div>
+        <p>Prediction estimates the value of a <em>given</em> policy. Control finds a good policy. To do control without a model we need <strong>action</strong>-values \(Q(s, a)\), not state-values \(V(s)\) — because, as Chapter 01 argued, you cannot act greedily from \(V\) without knowing where actions lead, but greedy action selection from \(Q\) is trivial: take \(\arg\max_a Q(s, a)\), no model required. So we run TD on \(Q\) instead of \(V\). The most famous instance is <strong>Q-learning</strong> (Watkins, 1989), and it has a remarkable property hidden in one symbol.</p>
+
+        <div class="eq"><span class="eq-tag">EQ R3.4 — Q-LEARNING UPDATE</span>
+        $$ Q(s_t, a_t) \;\leftarrow\; Q(s_t, a_t) + \alpha\,\Big[\, R_{t+1} + \gamma\, \underbrace{\max_{a'} Q(s_{t+1}, a')}_{\text{greedy bootstrap}} - Q(s_t, a_t) \,\Big] $$
+        <div class="eq-note">The bootstrap uses \(\max_{a'} Q(s_{t+1}, a')\) — the value of the <em>best</em> next action, regardless of what the agent actually does next. <b>This is what makes Q-learning off-policy: it learns the optimal action-value function \(Q^*\) while behaving with any sufficiently exploratory policy.</b> The agent can blunder around ε-greedily, even act randomly, and still converge to \(Q^*\) — provided every state–action pair keeps getting visited and \(\alpha\) decays appropriately. This decoupling of <em>behavior</em> from <em>learning</em> is the property that made deep Q-networks possible.</div>
+        </div>
+
+        <p>The convergence guarantee is one of the cornerstone results of the field. Watkins &amp; Dayan (1992) proved that for a finite MDP, tabular Q-learning converges to the optimal \(Q^*\) with probability 1, under two conditions: every state–action pair is visited infinitely often, and the learning rate satisfies the Robbins–Monro conditions \(\sum_t \alpha_t = \infty,\ \sum_t \alpha_t^2 < \infty\) (informally: \(\alpha\) must shrink, but not too fast). It is worth being honest about the gap between theory and practice here: those conditions are about the <em>tabular</em> case. The moment \(Q\) is approximated by a neural network — as in deep Q-learning — the guarantee evaporates, and the combination of bootstrapping, off-policy learning, and function approximation (the "deadly triad") can diverge. Much of deep RL engineering is heuristics to tame that triad; it is contested territory, not settled.</p>
+
+        <p>One more honest caveat that motivated a whole follow-up algorithm: the \(\max\) operator introduces <strong>maximization bias</strong>. Because \(\max\) over noisy estimates systematically picks the ones that happen to be overestimated, Q-learning tends to overestimate action-values. Double Q-learning (van Hasselt, 2010) fixes this by decoupling the action selected by the max from the value used to evaluate it — the idea behind Double DQN. Q-learning is foundational, not flawless.</p>
+
+        <div class="exercise" data-answer="0.5" data-tol="0.001" data-hint="Apply EQ R3.4 once: new Q = Q + α[r + γ·maxQ′ − Q].">
+          <div class="ex-q">Apply a single Q-learning update (EQ R3.4) with \(\alpha = 0.5\), reward \(r = 1\), discount \(\gamma = 0\), current \(Q(s,a) = 0\), and \(\max_{a'} Q(s', a') = 0\). What is the new \(Q(s,a)\)?</div>
+          <div class="ex-reveal-src">\(Q \leftarrow 0 + 0.5\big[\,1 + 0\cdot 0 - 0\,\big] = 0.5 \times 1 = \) <b>0.5</b>. With \(\gamma = 0\) the bootstrap term drops out entirely, so the update is purely a half-step toward the immediate reward — exactly the myopic, one-step learning a zero discount implies.</div>
+        </div>
+
+        <div class="exercise" data-answer="true" data-tol="0" data-hint="Look at which policy's action appears in each bootstrap: max (greedy) vs the actually-taken action.">
+          <div class="ex-q">True or false: Q-learning is <em>off-policy</em> — it learns about the greedy optimal policy via the \(\max_{a'}\) bootstrap while behaving with a different, exploratory policy — whereas SARSA is <em>on-policy</em>, bootstrapping from the action it actually takes next. (Answer <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">Q-learning's target uses \(\max_{a'} Q(s', a')\), the value of the best next action irrespective of what the agent does — so it learns \(Q^*\) regardless of the behavior policy: off-policy. SARSA's target uses \(Q(s', a')\) for the action \(a'\) the agent will actually take under its current (e.g. ε-greedy) policy — so it learns the value of that very policy: on-policy. The statement is <b>true</b>.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Tabular Q-learning on a 1x4 corridor: states 0..3, state 3 is the goal (+1)
+import numpy as np
+rng = np.random.default_rng(0)
+n, gamma, alpha, eps = 4, 0.9, 0.5, 0.2
+Q = np.zeros((n, 2))                        # actions: 0 = left, 1 = right
+
+def step(s, a):
+    s2 = min(s + 1, n - 1) if a == 1 else max(s - 1, 0)
+    return s2, (1.0 if s2 == 3 else 0.0), s2 == 3
+
+for ep in range(2000):                      # learn by acting eps-greedily
+    s = 0
+    for _ in range(50):
+        a = rng.integers(2) if rng.random() &lt; eps else int(np.argmax(Q[s]))
+        s2, r, done = step(s, a)
+        target = r + (0.0 if done else gamma * Q[s2].max())   # EQ R3.4: greedy bootstrap
+        Q[s, a] += alpha * (target - Q[s, a])
+        s = s2
+        if done: break
+
+print("learned Q-values (rows = states 0..3, cols = [left, right]):")
+print(Q.round(3))
+print("greedy policy   :", ["L R"[int(np.argmax(Q[s])) * 2] for s in range(n)])
+print("optimal V*(0)   :", round(gamma ** 3, 3), "(= gamma^3, 3 steps to the goal)")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="td-grid" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT R3.2 — Q-LEARNING GRIDWORLD</span><span class="w-sub">THE Q-TABLE &amp; GREEDY POLICY FORM LIVE · EQ R3.4</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>LEARNING RATE α <output id="td-grid-a-out">0.50</output></label><input type="range" id="td-grid-a" min="0.05" max="1" step="0.05" value="0.5"/></div>
+              <div class="ctl"><label>EXPLORATION ε <output id="td-grid-e-out">0.20</output></label><input type="range" id="td-grid-e" min="0" max="1" step="0.05" value="0.2"/></div>
+              <div class="ctl"><label>DISCOUNT γ <output id="td-grid-g-out">0.95</output></label><input type="range" id="td-grid-g" min="0.5" max="0.99" step="0.01" value="0.95"/></div>
+            </div>
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>RUN</label>
+                <div class="seg-row">
+                  <button class="w-btn" id="td-grid-train">TRAIN 200 EPISODES</button>
+                  <button class="w-btn ghost" id="td-grid-step">+20</button>
+                  <button class="w-btn ghost" id="td-grid-reset">RESET</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="td-grid-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">EPISODES TRAINED</div><div class="r-value" id="td-grid-eps">0</div></div>
+              <div class="readout acc"><div class="r-label">max_a Q AT START</div><div class="r-value" id="td-grid-vstart">—</div></div>
+              <div class="readout"><div class="r-label">GREEDY PATH LENGTH</div><div class="r-value" id="td-grid-path">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">A 4×4 gridworld with a <span style="color:var(--accent);">goal</span> (+1, top-right), a <span style="color:var(--danger);">trap</span> (−1), a step cost, and stochastic-free moves. Each cell shows its greedy action and \(\max_a Q(s,a)\); the shading is that value. Press <b>TRAIN</b> and watch the Q-table fill in from the goal outward — value propagates one cell per episode-batch, exactly as the bootstrap in EQ R3.4 carries reward backward through the chain. Drop ε toward 0 and the agent stops exploring: it may lock onto a decent-but-suboptimal path because it never tried the alternatives. Raise it and the table fills more completely but the agent wanders. Unlike Chapter 01's instrument, <b>this learns purely from sampled steps — it is never told where the goal is.</b></div>
+        </div>
+      </section>
+
+      <!-- ====================== 3.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">3.5</span><h2>SARSA (on-policy) &amp; exploration</h2></div>
+        <p>Change one symbol in the Q-learning update and you get a different algorithm with a different personality. Instead of bootstrapping from the <em>best</em> next action, bootstrap from the action the agent <em>actually takes</em> next under its current policy. The update now uses the quintuple \((s_t, a_t, r_{t+1}, s_{t+1}, a_{t+1})\) — state, action, reward, state, action — which is exactly where the name <strong>SARSA</strong> comes from.</p>
+
+        <div class="eq"><span class="eq-tag">EQ R3.5 — SARSA UPDATE</span>
+        $$ Q(s_t, a_t) \;\leftarrow\; Q(s_t, a_t) + \alpha\,\Big[\, R_{t+1} + \gamma\, \underbrace{Q(s_{t+1}, a_{t+1})}_{\text{action actually taken}} - Q(s_t, a_t) \,\Big] $$
+        <div class="eq-note">The only change from EQ R3.4 is \(\max_{a'} Q(s_{t+1}, a') \to Q(s_{t+1}, a_{t+1})\), where \(a_{t+1}\) is drawn from the agent's own (e.g. ε-greedy) policy. <b>SARSA therefore learns the value of the policy it is actually following — including the cost of its own exploration — which is exactly what "on-policy" means.</b> Q-learning evaluates a greedy policy it does not follow; SARSA evaluates the noisy policy it does.</div>
+        </div>
+
+        <p>That difference is not academic, and the cleanest illustration is the <strong>cliff-walking</strong> example from Sutton &amp; Barto. An agent must walk from start to goal along the edge of a cliff; stepping off costs a large penalty. Both algorithms use ε-greedy exploration. <strong>Q-learning learns the optimal path — right along the cliff edge — because its \(\max\) bootstrap evaluates the greedy policy, which never falls.</strong> But because it still <em>explores</em> while following that knife-edge route, its random ε-steps occasionally pitch it off the cliff, so its online reward during training is worse. <strong>SARSA learns a safer path one row back from the edge</strong>, because its on-policy target accounts for the fact that it sometimes takes random actions — so it learns the value of behaving exploratorily and routes around the risk. Q-learning finds the better policy; SARSA earns more reward while learning. Which you want depends on whether failures during training are cheap or catastrophic — a real engineering decision, not a theoretical curiosity.</p>
+
+        <div class="callout">
+          <span class="co-icon">INTUITION</span>
+          <p><strong>Q-learning is an optimist; SARSA is a realist.</strong> Q-learning assumes it will act greedily from the next state on, so it learns the value of the best-case continuation. SARSA assumes it will keep exploring like it currently does, so it learns the value of its actual, imperfect behavior. As \(\varepsilon \to 0\) the two converge — with no exploration there is no difference between "best next action" and "action actually taken".</p>
+        </div>
+
+        <p>Both algorithms lean on the exploration we met in Chapter 01: ε-greedy with an annealed \(\varepsilon\). The annealing is not optional polish — it is what reconciles two requirements that pull in opposite directions. Convergence <em>needs</em> every state–action pair visited infinitely often (so \(\varepsilon\) must stay positive), but a good final policy needs the agent to eventually stop throwing away reward on random moves (so \(\varepsilon\) must vanish). The resolution is GLIE — <em>Greedy in the Limit with Infinite Exploration</em> — schedules that keep \(\varepsilon > 0\) forever but send it to 0, the textbook example being \(\varepsilon_t = 1/t\). A practical schedule decays \(\varepsilon\) from near 1 toward a small floor; the shape of that decay is one of the most-tuned knobs in applied RL.</p>
+
+        <div class="eq"><span class="eq-tag">EQ R3.6 — EXPONENTIAL ε-DECAY</span>
+        $$ \varepsilon_t \;=\; \varepsilon_{\min} + (\varepsilon_0 - \varepsilon_{\min})\, e^{-t/\tau} $$
+        <div class="eq-note">Start at \(\varepsilon_0\) (often 1.0), decay with time constant \(\tau\) toward a floor \(\varepsilon_{\min}\) (often 0.01–0.05). <b>Early on the agent explores widely and fills in its Q-table; late on it exploits what it has learned.</b> The floor matters: a small permanent \(\varepsilon\) hedges against a non-stationary world where the best action can change. Too fast a decay and the agent commits before it has seen enough — premature exploitation, the most common silent failure in applied value-based RL.</div>
+        </div>
+
+        <div class="exercise" data-answer="0.05" data-tol="0.001" data-hint="At t → ∞ the exponential term vanishes, leaving only the floor ε_min.">
+          <div class="ex-q">An exponential ε-decay schedule (EQ R3.6) uses \(\varepsilon_0 = 1.0\), \(\varepsilon_{\min} = 0.05\), and time constant \(\tau = 500\). As \(t \to \infty\), what value does \(\varepsilon_t\) approach?</div>
+          <div class="ex-reveal-src">As \(t \to \infty\), \(e^{-t/\tau} \to 0\), so the decaying term \((\varepsilon_0 - \varepsilon_{\min})\,e^{-t/\tau} \to 0\) and only the floor survives: \(\varepsilon_t \to \varepsilon_{\min} = \) <b>0.05</b>. The agent never stops exploring entirely — it keeps a 5% random-action rate forever, a hedge against a changing world.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Exponential epsilon-decay (EQ R3.6) and what fraction of moves stay random
+import numpy as np
+
+eps0, eps_min, tau = 1.0, 0.05, 500.0
+t = np.arange(0, 3000)
+eps = eps_min + (eps0 - eps_min) * np.exp(-t / tau)   # EQ R3.6
+
+for step in (0, 250, 500, 1000, 3000 - 1):
+    print(f"t = {step:5d}   epsilon = {eps[step]:.3f}   "
+          f"P(random move) = {eps[step]:.1%}")
+
+print(f"\nfloor approached as t -> inf : {eps_min}")
+print(f"epsilon at one time-constant : {eps[int(tau)]:.3f}  "
+      f"(~ eps_min + 0.368*(eps0-eps_min))")
+plot_xy(t.tolist(), eps.tolist())                     # the classic decay curve</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="td-eps" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT R3.3 — ε-DECAY EXPLORER</span><span class="w-sub">EXPLORE-THEN-EXPLOIT · EQ R3.6</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>START ε₀ <output id="td-eps-e0-out">1.00</output></label><input type="range" id="td-eps-e0" min="0.2" max="1" step="0.05" value="1"/></div>
+              <div class="ctl"><label>FLOOR ε_min <output id="td-eps-emin-out">0.05</output></label><input type="range" id="td-eps-emin" min="0" max="0.3" step="0.01" value="0.05"/></div>
+              <div class="ctl"><label>TIME CONSTANT τ <output id="td-eps-tau-out">500</output></label><input type="range" id="td-eps-tau" min="50" max="1500" step="50" value="500"/></div>
+            </div>
+            <canvas class="w-canvas" id="td-eps-canvas" height="260"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">ε AT STEP 0</div><div class="r-value" id="td-eps-r0">—</div></div>
+              <div class="readout acc"><div class="r-label">ε AT τ (1 e-fold)</div><div class="r-value" id="td-eps-rtau">—</div></div>
+              <div class="readout"><div class="r-label">STEP TO REACH ε = 0.1</div><div class="r-value" id="td-eps-r10">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The curve is \(\varepsilon_t\) over training steps: a high-exploration <span style="color:var(--accent);">mint</span> region early, decaying to a thin <span style="color:var(--blue);">blue</span> floor. The shaded area under the curve is roughly the total "exploration budget" the agent spends. Shrink \(\tau\) and the agent commits fast — efficient if the world is simple, premature if it is not. Raise the floor and it never fully exploits — wasteful in a fixed world, prudent in a changing one. There is no universally right curve; this is a budget you allocate against how hard the problem is and how costly mistakes are.</div>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>Value methods learn what every action is worth, then act greedily — but they choke when actions are continuous or the state space is too vast to tabulate.</strong> Chapter 04 takes the other road: <em>policy gradients</em>, which parameterize the policy directly and push its parameters up the gradient of expected return. We will meet REINFORCE, the variance problem that nearly sinks it, and the actor–critic methods that put a TD-learned value function (everything you just built) back to work as the critic.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 3.R — References ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">3.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://doi.org/10.1007/BF00992698" target="_blank" rel="noopener">Watkins, C. J. C. H. &amp; Dayan, P. (1992). <span class="ref-venue">Q-learning</span>.</a> <span class="ref-meta">Machine Learning 8 — the off-policy control algorithm of EQ R3.4 and its convergence proof to \(Q^*\).</span></li>
+          <li><a href="https://doi.org/10.1007/BF00115009" target="_blank" rel="noopener">Sutton, R. S. (1988). <span class="ref-venue">Learning to Predict by the Methods of Temporal Differences</span>.</a> <span class="ref-meta">Machine Learning 3 — the original TD(0) and TD(λ) prediction methods (EQ R3.2, EQ R3.3) and the bootstrapping idea at the heart of this chapter.</span></li>
+          <li><a href="http://incompleteideas.net/book/the-book-2nd.html" target="_blank" rel="noopener">Sutton, R. S. &amp; Barto, A. G. (2018). <span class="ref-venue">Reinforcement Learning: An Introduction</span> (2nd ed.).</a> <span class="ref-meta">MIT Press — the canonical treatment of MC, TD, Q-learning, SARSA, the cliff-walking comparison, and GLIE exploration.</span></li>
+          <li><a href="https://doi.org/10.1038/nature14236" target="_blank" rel="noopener">Mnih, V. et al. (2015). <span class="ref-venue">Human-level control through deep reinforcement learning</span>.</a> <span class="ref-meta">Nature 518 — deep Q-networks; off-policy Q-learning (EQ R3.4) with a neural Q-function, experience replay, and a target network.</span></li>
+          <li><a href="https://proceedings.neurips.cc/paper/2010/hash/091d584fced301b442654dd8c23b3fc9-Abstract.html" target="_blank" rel="noopener">van Hasselt, H. (2010). <span class="ref-venue">Double Q-learning</span>.</a> <span class="ref-meta">NeurIPS 23 — diagnoses and corrects the maximization bias of the \(\max\) operator in EQ R3.4.</span></li>
+          <li><a href="https://link.springer.com/article/10.1023/A:1018076709321" target="_blank" rel="noopener">Singh, S., Jaakkola, T., Littman, M. L. &amp; Szepesvári, C. (2000). <span class="ref-venue">Convergence Results for Single-Step On-Policy Reinforcement-Learning Algorithms</span>.</a> <span class="ref-meta">Machine Learning 38 — convergence of SARSA (EQ R3.5) and the GLIE exploration conditions of §3.5.</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../rl/02-dynamic-programming.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">02</span> Dynamic Programming</div></a>
+        <a class="next" href="../rl/04-policy-gradients.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">04</span> Policy Gradients</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — REINFORCEMENT LEARNING · CH 03</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* ============================================================
+   Model-Free Value Methods — TD & Q-Learning — chapter instruments
+   Single IIFE, no globals. setTimeout-only animation.
+   Every widget guarded by element existence; meaningful
+   initial render with zero interaction.
+   ============================================================ */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  function fnum(x, d) { d = d === undefined ? 2 : d; return (+x).toFixed(d); }
+  function signed(x, d) { return (x >= 0 ? "+" : "") + fnum(x, d); }
+
+  /* ========================================================
+     INSTRUMENT R3.1 — TD vs MC update
+     One step from a shared old estimate V(s). Shows the two
+     targets (TD = r + gamma*V(s'), MC = G) on a value axis and
+     the alpha-scaled step each method takes toward its target.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("td-cmp");
+    if (!root) return;
+    var canvas = document.getElementById("td-cmp-canvas");
+    var ins = {
+      v: document.getElementById("td-cmp-v"),
+      r: document.getElementById("td-cmp-r"),
+      vn: document.getElementById("td-cmp-vn"),
+      g: document.getElementById("td-cmp-g"),
+      a: document.getElementById("td-cmp-a"),
+      gam: document.getElementById("td-cmp-gam")
+    };
+    var outs = {
+      v: document.getElementById("td-cmp-v-out"),
+      r: document.getElementById("td-cmp-r-out"),
+      vn: document.getElementById("td-cmp-vn-out"),
+      g: document.getElementById("td-cmp-g-out"),
+      a: document.getElementById("td-cmp-a-out"),
+      gam: document.getElementById("td-cmp-gam-out")
+    };
+    var tdTgtEl = document.getElementById("td-cmp-tdtarget");
+    var deltaEl = document.getElementById("td-cmp-delta");
+    var tdNewEl = document.getElementById("td-cmp-tdnew");
+    var mcNewEl = document.getElementById("td-cmp-mcnew");
+
+    function render() {
+      var v = +ins.v.value, r = +ins.r.value, vn = +ins.vn.value,
+          g = +ins.g.value, a = +ins.a.value, gam = +ins.gam.value;
+      outs.v.textContent = fnum(v, 2);
+      outs.r.textContent = fnum(r, 2);
+      outs.vn.textContent = fnum(vn, 2);
+      outs.g.textContent = fnum(g, 2);
+      outs.a.textContent = fnum(a, 2);
+      outs.gam.textContent = fnum(gam, 2);
+
+      var tdTarget = r + gam * vn;
+      var tdDelta = tdTarget - v;
+      var mcDelta = g - v;
+      var tdNew = v + a * tdDelta;
+      var mcNew = v + a * mcDelta;
+
+      tdTgtEl.textContent = fnum(tdTarget, 3);
+      deltaEl.textContent = signed(tdDelta, 3);
+      deltaEl.style.color = tdDelta >= 0 ? C.MINT : C.RED;
+      tdNewEl.textContent = fnum(tdNew, 3);
+      mcNewEl.textContent = fnum(mcNew, 3);
+
+      var c = FM.setupCanvas(canvas, 240);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      ctx.clearRect(0, 0, w, h);
+
+      // value axis spans all the quantities in play
+      var vals = [v, tdTarget, g, tdNew, mcNew];
+      var lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
+      var pad = (hi - lo) * 0.25 + 0.4;
+      lo -= pad; hi += pad;
+      var x0 = 54, x1 = w - 24;
+      function X(val) { return x0 + (val - lo) / (hi - lo) * (x1 - x0); }
+
+      var yTD = h * 0.40, yMC = h * 0.74;
+
+      // axis ticks
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "center"; ctx.textBaseline = "top";
+      for (var t = 0; t <= 4; t++) {
+        var val = lo + (hi - lo) * t / 4, xx = X(val);
+        ctx.beginPath(); ctx.moveTo(xx, h * 0.16); ctx.lineTo(xx, h * 0.86); ctx.stroke();
+        ctx.fillText(fnum(val, 1), xx, h * 0.88);
+      }
+
+      // shared old-estimate vertical guide
+      ctx.strokeStyle = "rgba(155,155,155,.6)"; ctx.setLineDash([4, 4]); ctx.lineWidth = 1.4;
+      ctx.beginPath(); ctx.moveTo(X(v), h * 0.14); ctx.lineTo(X(v), h * 0.88); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = C.SEC; ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+      ctx.fillText("V(s) = " + fnum(v, 2), X(v), h * 0.13);
+
+      function lane(y, label, oldX, tgtX, newX, col) {
+        // label
+        ctx.font = "9px ui-monospace, Menlo, monospace";
+        ctx.fillStyle = C.MUT; ctx.textAlign = "left"; ctx.textBaseline = "middle";
+        ctx.fillText(label, 6, y);
+        // step arrow old -> new
+        ctx.strokeStyle = col; ctx.lineWidth = 2.4;
+        ctx.beginPath(); ctx.moveTo(oldX, y); ctx.lineTo(newX, y); ctx.stroke();
+        var dir = newX >= oldX ? 1 : -1;
+        ctx.fillStyle = col;
+        ctx.beginPath();
+        ctx.moveTo(newX, y);
+        ctx.lineTo(newX - dir * 8, y - 4);
+        ctx.lineTo(newX - dir * 8, y + 4);
+        ctx.closePath(); ctx.fill();
+        // target marker (hollow)
+        ctx.strokeStyle = col; ctx.lineWidth = 1.6;
+        ctx.beginPath(); ctx.arc(tgtX, y, 5, 0, 2 * Math.PI); ctx.stroke();
+        ctx.font = C.MONO; ctx.fillStyle = col;
+        ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+        ctx.fillText("target", tgtX, y - 9);
+      }
+
+      lane(yTD, "TD", X(v), X(tdTarget), X(tdNew), C.MINT);
+      lane(yMC, "MC", X(v), X(g), X(mcNew), C.BLUE);
+    }
+
+    Object.keys(ins).forEach(function (k) { ins[k].addEventListener("input", render); });
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT R3.2 — Q-learning gridworld
+     4x4 grid, goal +1 (top-right), trap -1, step cost. Tabular
+     Q-learning learns from sampled eps-greedy episodes; cells
+     show greedy action + max_a Q(s,a). Trains in setTimeout
+     batches so the UI stays responsive (no rAF chains).
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("td-grid");
+    if (!root) return;
+    var canvas = document.getElementById("td-grid-canvas");
+    var aIn = document.getElementById("td-grid-a");
+    var eIn = document.getElementById("td-grid-e");
+    var gIn = document.getElementById("td-grid-g");
+    var aOut = document.getElementById("td-grid-a-out");
+    var eOut = document.getElementById("td-grid-e-out");
+    var gOut = document.getElementById("td-grid-g-out");
+    var epsEl = document.getElementById("td-grid-eps");
+    var vstartEl = document.getElementById("td-grid-vstart");
+    var pathEl = document.getElementById("td-grid-path");
+    var trainBtn = document.getElementById("td-grid-train");
+    var stepBtn = document.getElementById("td-grid-step");
+    var resetBtn = document.getElementById("td-grid-reset");
+
+    var R = 4, Cc = 4, nS = R * Cc, nA = 4;
+    var ACT = [[-1, 0], [1, 0], [0, -1], [0, 1]]; // up, down, left, right
+    var ARROW = ["↑", "↓", "←", "→"];
+    var goal = 0 * Cc + (Cc - 1);     // top-right
+    var trap = 1 * Cc + (Cc - 1);     // just below goal
+    var start = (R - 1) * Cc + 0;     // bottom-left
+    var stepCost = -0.04;
+
+    var Q, episodes, rng, lastGeom;
+
+    function idx(r, c) { return r * Cc + c; }
+    function reset() {
+      Q = [];
+      for (var i = 0; i < nS; i++) Q.push([0, 0, 0, 0]);
+      episodes = 0;
+      rng = FM.mulberry32(12345);
+    }
+    function terminal(s) { return s === goal || s === trap; }
+
+    function nextState(s, a) {
+      var r = (s / Cc) | 0, c = s % Cc;
+      var nr = r + ACT[a][0], nc = c + ACT[a][1];
+      if (nr < 0 || nr >= R || nc < 0 || nc >= Cc) return s; // bump wall: stay
+      return idx(nr, nc);
+    }
+    function rewardOf(s) {
+      if (s === goal) return 1;
+      if (s === trap) return -1;
+      return stepCost;
+    }
+    function argmaxQ(s) {
+      var b = 0, bv = Q[s][0];
+      for (var a = 1; a < nA; a++) if (Q[s][a] > bv) { bv = Q[s][a]; b = a; }
+      return b;
+    }
+    function maxQ(s) {
+      var m = Q[s][0];
+      for (var a = 1; a < nA; a++) if (Q[s][a] > m) m = Q[s][a];
+      return m;
+    }
+
+    function runEpisode(alpha, eps, gamma) {
+      var s = start, steps = 0;
+      while (!terminal(s) && steps < 80) {
+        var a;
+        if (rng() < eps) a = (rng() * nA) | 0;
+        else a = argmaxQ(s);
+        var s2 = nextState(s, a);
+        var r = rewardOf(s2);
+        var target = r + (terminal(s2) ? 0 : gamma * maxQ(s2)); // EQ R3.4
+        Q[s][a] += alpha * (target - Q[s][a]);
+        s = s2; steps++;
+      }
+    }
+
+    function greedyPathLen(gamma) {
+      var s = start, n = 0, seen = {};
+      while (!terminal(s) && n < 40) {
+        if (seen[s]) return -1;       // cycling: no clean path yet
+        seen[s] = 1;
+        s = nextState(s, argmaxQ(s));
+        n++;
+      }
+      return s === goal ? n : -1;
+    }
+
+    function render() {
+      var gamma = +gIn.value;
+      aOut.textContent = fnum(+aIn.value, 2);
+      eOut.textContent = fnum(+eIn.value, 2);
+      gOut.textContent = fnum(gamma, 2);
+      epsEl.textContent = episodes + "";
+      vstartEl.textContent = fnum(maxQ(start), 3);
+      var pl = greedyPathLen(gamma);
+      pathEl.textContent = pl < 0 ? "— (no path)" : pl + " steps";
+
+      var c = FM.setupCanvas(canvas, 320);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      ctx.clearRect(0, 0, w, h);
+
+      var pad = 10, gw = w - pad * 2, gh = h - pad * 2;
+      var cw = gw / Cc, ch = gh / R;
+      lastGeom = { pad: pad, cw: cw, ch: ch };
+
+      // value range over non-terminal cells for shading
+      var vmin = Infinity, vmax = -Infinity;
+      for (var i = 0; i < nS; i++) {
+        if (terminal(i)) continue;
+        var mv = maxQ(i);
+        if (mv < vmin) vmin = mv;
+        if (mv > vmax) vmax = mv;
+      }
+      if (!isFinite(vmin)) { vmin = 0; vmax = 1; }
+      if (vmax - vmin < 1e-6) vmax = vmin + 1e-6;
+
+      for (var r = 0; r < R; r++) {
+        for (var col = 0; col < Cc; col++) {
+          var s = idx(r, col);
+          var x = pad + col * cw, y = pad + r * ch;
+          if (s === goal) {
+            ctx.fillStyle = "rgba(166,242,204,.30)";
+          } else if (s === trap) {
+            ctx.fillStyle = "rgba(255,65,54,.22)";
+          } else {
+            var mv2 = maxQ(s);
+            var norm = (mv2 - vmin) / (vmax - vmin);
+            if (mv2 >= 0) ctx.fillStyle = "rgba(166,242,204," + (0.05 + 0.30 * norm).toFixed(3) + ")";
+            else ctx.fillStyle = "rgba(255,65,54," + (0.04 + 0.16 * (1 - norm)).toFixed(3) + ")";
+          }
+          ctx.fillRect(x + 1, y + 1, cw - 2, ch - 2);
+          ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+          ctx.strokeRect(x + 1, y + 1, cw - 2, ch - 2);
+
+          var cx = x + cw / 2, cy = y + ch / 2;
+          if (s === goal) {
+            ctx.font = "13px ui-monospace, Menlo, monospace";
+            ctx.fillStyle = C.MINT; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+            ctx.fillText("+1", cx, cy);
+          } else if (s === trap) {
+            ctx.font = "13px ui-monospace, Menlo, monospace";
+            ctx.fillStyle = C.RED; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+            ctx.fillText("−1", cx, cy);
+          } else {
+            ctx.font = "16px ui-monospace, Menlo, monospace";
+            ctx.fillStyle = "rgba(255,255,255,.82)";
+            ctx.textAlign = "center"; ctx.textBaseline = "middle";
+            ctx.fillText(ARROW[argmaxQ(s)], cx, cy - 4);
+            ctx.font = "8.5px ui-monospace, Menlo, monospace";
+            ctx.fillStyle = C.MUT;
+            ctx.fillText(maxQ(s).toFixed(2), cx, cy + 13);
+          }
+          if (s === start) {
+            ctx.strokeStyle = C.BLUE; ctx.lineWidth = 1.6;
+            ctx.strokeRect(x + 3, y + 3, cw - 6, ch - 6);
+          }
+        }
+      }
+    }
+
+    var training = false;
+    function trainBatch(total) {
+      if (training) return;
+      training = true;
+      trainBtn.disabled = true; stepBtn.disabled = true;
+      var done = 0, chunk = 10;
+      function tick() {
+        var alpha = +aIn.value, eps = +eIn.value, gamma = +gIn.value;
+        for (var k = 0; k < chunk && done < total; k++) { runEpisode(alpha, eps, gamma); done++; episodes++; }
+        render();
+        if (done < total) {
+          setTimeout(tick, 16);
+        } else {
+          training = false;
+          trainBtn.disabled = false; stepBtn.disabled = false;
+        }
+      }
+      tick();
+    }
+
+    trainBtn.addEventListener("click", function () { trainBatch(200); });
+    stepBtn.addEventListener("click", function () { trainBatch(20); });
+    resetBtn.addEventListener("click", function () { if (training) return; reset(); render(); });
+    aIn.addEventListener("input", render);
+    eIn.addEventListener("input", render);
+    gIn.addEventListener("input", render);
+
+    canvas.addEventListener("click", function () { /* display-only; training via buttons */ });
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+
+    reset();
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT R3.3 — epsilon-decay explorer
+     Plots eps_t = eps_min + (eps0 - eps_min) * exp(-t/tau) over
+     training steps; shades the exploration budget; reports the
+     value at t=0, at one time-constant, and the step to eps=0.1.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("td-eps");
+    if (!root) return;
+    var canvas = document.getElementById("td-eps-canvas");
+    var e0In = document.getElementById("td-eps-e0");
+    var eminIn = document.getElementById("td-eps-emin");
+    var tauIn = document.getElementById("td-eps-tau");
+    var e0Out = document.getElementById("td-eps-e0-out");
+    var eminOut = document.getElementById("td-eps-emin-out");
+    var tauOut = document.getElementById("td-eps-tau-out");
+    var r0El = document.getElementById("td-eps-r0");
+    var rtauEl = document.getElementById("td-eps-rtau");
+    var r10El = document.getElementById("td-eps-r10");
+
+    var STEPS = 3000;
+    function epsAt(t, e0, emin, tau) { return emin + (e0 - emin) * Math.exp(-t / tau); }
+
+    function render() {
+      var e0 = +e0In.value, emin = +eminIn.value, tau = +tauIn.value;
+      if (emin > e0) emin = e0; // keep floor below start
+      e0Out.textContent = fnum(e0, 2);
+      eminOut.textContent = fnum(emin, 2);
+      tauOut.textContent = tau + "";
+
+      r0El.textContent = fnum(epsAt(0, e0, emin, tau), 3);
+      rtauEl.textContent = fnum(epsAt(tau, e0, emin, tau), 3);
+      // step to reach eps = 0.1, if reachable above the floor
+      var target = 0.1, stepTo;
+      if (emin >= target) stepTo = "never (floor ≥ 0.1)";
+      else if (e0 <= target) stepTo = "0";
+      else {
+        var tt = -tau * Math.log((target - emin) / (e0 - emin));
+        stepTo = tt > STEPS ? "> " + STEPS : Math.round(tt) + "";
+      }
+      r10El.textContent = stepTo;
+
+      var c = FM.setupCanvas(canvas, 260);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      ctx.clearRect(0, 0, w, h);
+      var padL = 40, padR = 16, padT = 16, padB = 28;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+
+      // frame + y gridlines (eps 0..1)
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(x0, y1, x1 - x0, y0 - y1);
+      ctx.font = C.MONO; ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      for (var gl = 0; gl <= 4; gl++) {
+        var gv = gl / 4, gy = y0 - gv * (y0 - y1);
+        ctx.strokeStyle = "rgba(47,50,52,.5)";
+        ctx.beginPath(); ctx.moveTo(x0, gy); ctx.lineTo(x1, gy); ctx.stroke();
+        ctx.fillStyle = C.MUT; ctx.fillText(gv.toFixed(2), x0 - 6, gy);
+      }
+
+      function X(t) { return x0 + (t / STEPS) * (x1 - x0); }
+      function Y(e) { return y0 - e * (y0 - y1); }
+
+      // shaded exploration budget (area under the curve)
+      ctx.beginPath();
+      ctx.moveTo(X(0), Y(0));
+      for (var t = 0; t <= STEPS; t += 30) ctx.lineTo(X(t), Y(epsAt(t, e0, emin, tau)));
+      ctx.lineTo(X(STEPS), Y(0));
+      ctx.closePath();
+      ctx.fillStyle = "rgba(166,242,204,.10)";
+      ctx.fill();
+
+      // floor line (blue)
+      ctx.strokeStyle = C.BLUE; ctx.setLineDash([4, 4]); ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.moveTo(x0, Y(emin)); ctx.lineTo(x1, Y(emin)); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = C.BLUE; ctx.textAlign = "left"; ctx.textBaseline = "bottom";
+      ctx.fillText("ε_min", x0 + 4, Y(emin) - 2);
+
+      // decay curve (mint)
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (var tt2 = 0; tt2 <= STEPS; tt2 += 12) {
+        var px = X(tt2), py = Y(epsAt(tt2, e0, emin, tau));
+        if (tt2 === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+
+      // time-constant marker
+      if (tau < STEPS) {
+        var tx = X(tau);
+        ctx.strokeStyle = "rgba(155,155,155,.6)"; ctx.setLineDash([3, 3]); ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(tx, y1); ctx.lineTo(tx, y0); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = C.SEC; ctx.textAlign = "center"; ctx.textBaseline = "top";
+        ctx.fillText("τ", tx, y1 + 2);
+      }
+
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText("training steps →", x0 + 2, y0 + 6);
+      ctx.textAlign = "left"; ctx.fillStyle = C.MINT;
+      ctx.fillText("ε_t  EXPLORATION RATE", x0 + 6, y1 + 4);
+    }
+
+    e0In.addEventListener("input", render);
+    eminIn.addEventListener("input", render);
+    tauIn.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

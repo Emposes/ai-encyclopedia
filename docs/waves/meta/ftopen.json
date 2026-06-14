@@ -1,0 +1,67 @@
+{
+  "file": "openmodels/03-finetuning-open.html",
+  "glossary": [
+    {
+      "term": "Fine-tuning (vs prompting vs RAG)",
+      "def": "Continuing to train a pretrained model on task-specific examples so the desired behavior is baked into the weights. It is the third lever to reach for, after prompting and retrieval: prompting changes nothing, RAG changes the context, fine-tuning changes the weights. Use it for behavior, format, tone, domain dialect, or a narrow skill — not to inject facts, which RAG handles without going stale."
+    },
+    {
+      "term": "Supervised fine-tuning (SFT)",
+      "def": "The standard instruction fine-tuning step: next-token prediction over example conversations, with the cross-entropy loss masked so it scores only the assistant's completion tokens, not the prompt. The model becomes exactly as good as the curated examples and no better, which is why dataset quality dominates everything else."
+    },
+    {
+      "term": "Chat template",
+      "def": "The exact set of special tokens and role delimiters a model uses to frame system, user, and assistant turns (for example the <|im_start|>role ... <|im_end|> of ChatML). Training and serving must use the identical template; a mismatch is the single most common fine-tuning bug — the model answers correctly but emits malformed output because the turn boundaries no longer line up."
+    },
+    {
+      "term": "LoRA (Low-Rank Adaptation)",
+      "def": "A parameter-efficient fine-tuning method that freezes the pretrained weight W0 and learns the update as a product of two thin matrices, W = W0 + (alpha/r)BA. For a square d x d layer it trains 2dr parameters instead of d-squared — a tiny fraction — so optimizer state and memory shrink proportionally. The adapter can be merged into W0 for zero inference overhead or kept separate and hot-swapped."
+    },
+    {
+      "term": "QLoRA",
+      "def": "LoRA stacked on a 4-bit-quantized frozen base: the base weights are stored in NF4 (a data type whose 16 levels sit at the quantiles of a Gaussian), bf16 LoRA adapters train on top with dequantization per matmul, and optimizer state pages to CPU on spikes. It lets a 65-70B model fine-tune on a single 48 GB GPU at quality close to 16-bit LoRA — the result that made serious fine-tuning a consumer-hardware activity."
+    },
+    {
+      "term": "LoRA rank (r)",
+      "def": "The inner dimension of a LoRA adapter, which sets its capacity and trainable-parameter count: a layer adds r*(d_in + d_out) parameters, growing linearly in r. Ranks 8-64 cover most tasks — style and format adaptations sit low, genuine new skills sit higher — with alpha = 2r a common scaling starting point and all linear layers the modern attachment default."
+    },
+    {
+      "term": "Catastrophic forgetting",
+      "def": "The loss of general capability that occurs when fine-tuning over-specializes a model on one narrow task, sharpening that task while dulling skills the base model already had. The mitigation is to mix in some general instruction data and to always run a forgetting probe — a small general benchmark the base model passed — alongside the target metric, so any regression is measured rather than silent."
+    },
+    {
+      "term": "Multi-LoRA serving",
+      "def": "Holding one base model in GPU memory and swapping or batching many small LoRA adapters over it, so a single card can host hundreds of per-task or per-customer fine-tunes. Because a rank-16 adapter is a few hundred MB versus tens of GB for the base, frameworks like S-LoRA and vLLM multi-LoRA keep the VRAM bill flat as the number of fine-tunes grows — the alternative to merging an adapter for lowest single-model latency."
+    }
+  ],
+  "refs": [
+    {
+      "cite": "Hu, E. J., Shen, Y., Wallis, P., Allen-Zhu, Z., Li, Y., Wang, S., Wang, L. & Chen, W. (2021). LoRA: Low-Rank Adaptation of Large Language Models. ICLR 2022.",
+      "url": "https://arxiv.org/abs/2106.09685"
+    },
+    {
+      "cite": "Dettmers, T., Pagnoni, A., Holtzman, A. & Zettlemoyer, L. (2023). QLoRA: Efficient Finetuning of Quantized LLMs. NeurIPS 2023.",
+      "url": "https://arxiv.org/abs/2305.14314"
+    },
+    {
+      "cite": "Zhou, C., Liu, P., Xu, P. et al. (2023). LIMA: Less Is More for Alignment. NeurIPS 2023.",
+      "url": "https://arxiv.org/abs/2305.11206"
+    },
+    {
+      "cite": "Aghajanyan, A., Zettlemoyer, L. & Gupta, S. (2021). Intrinsic Dimensionality Explains the Effectiveness of Language Model Fine-Tuning. ACL 2021.",
+      "url": "https://arxiv.org/abs/2012.13255"
+    },
+    {
+      "cite": "Liu, S.-Y., Wang, C.-Y., Yin, H. et al. (2024). DoRA: Weight-Decomposed Low-Rank Adaptation. ICML 2024.",
+      "url": "https://arxiv.org/abs/2402.09353"
+    },
+    {
+      "cite": "Sheng, Y., Cao, S., Li, D. et al. (2023). S-LoRA: Serving Thousands of Concurrent LoRA Adapters. MLSys 2024.",
+      "url": "https://arxiv.org/abs/2311.03285"
+    },
+    {
+      "cite": "Hugging Face. PEFT: Parameter-Efficient Fine-Tuning. Official documentation.",
+      "url": "https://huggingface.co/docs/peft"
+    }
+  ]
+}

@@ -1,0 +1,169 @@
+{
+  "concepts": [
+    {
+      "id": "ml-13-matrix-factorization-s1",
+      "chapter": "ml/13-matrix-factorization",
+      "section": "s1",
+      "title": "Low-rank structure in real data",
+      "eyebrow": "MACHINE LEARNING",
+      "beats": [
+        {
+          "text": "Most large matrices that show up in practice are not full-rank, they are low-rank, with a few hidden factors explaining almost everything.",
+          "visual": { "type": "title", "text": "Low-rank structure", "sub": "A few factors explain the data" }
+        },
+        {
+          "text": "An m by n matrix can hold up to m times n numbers, but its rank counts how many independent patterns are actually present.",
+          "visual": { "type": "equation", "tex": "A = U V^{\\top}, \\quad \\operatorname{rank}(A) = r \\le \\min(m,n)", "note": "U is m by r, V is r by n" }
+        },
+        {
+          "text": "A rank-r matrix carries only r times m plus n degrees of freedom, so when r is small the saving is enormous.",
+          "visual": { "type": "equation", "tex": "mn \\;\\to\\; r(m+n)", "note": "parameter count collapses" }
+        },
+        {
+          "text": "For a ten thousand square matrix of rank twenty, that is a hundred million numbers collapsing to four hundred thousand.",
+          "visual": { "type": "stat", "value": 250, "label": "compression at rank 20", "unit": "x" }
+        },
+        {
+          "text": "Real data is rarely exactly low-rank because of noise, but it is very often approximately low-rank, with a sharp drop then a long tail.",
+          "visual": { "type": "plot", "ys": [50, 22, 9, 4, 2, 1, 0.6, 0.4], "xlabel": "component", "ylabel": "singular value", "mark": 2 }
+        },
+        {
+          "text": "Factoring a ten by ten matrix at rank two uses two times twenty, or forty parameters, against one hundred in the dense form.",
+          "visual": { "type": "bars", "values": [100, 40], "labels": ["dense", "rank-2"], "highlight": 1 }
+        }
+      ]
+    },
+    {
+      "id": "ml-13-matrix-factorization-s2",
+      "chapter": "ml/13-matrix-factorization",
+      "section": "s2",
+      "title": "SVD recap & truncation",
+      "eyebrow": "MACHINE LEARNING",
+      "beats": [
+        {
+          "text": "The singular value decomposition is the factorization that always exists, for every real matrix, and is in a precise sense the best one.",
+          "visual": { "type": "title", "text": "SVD and truncation", "sub": "The factorization that always exists" }
+        },
+        {
+          "text": "It writes the matrix as a rotation, a non-negative scaling, and another rotation, summing rank-one layers ordered most important first.",
+          "visual": { "type": "equation", "tex": "A = U\\Sigma V^{\\top} = \\sum_{i=1}^{r} \\sigma_i\\, u_i v_i^{\\top}", "note": "sigma_1 >= sigma_2 >= ... >= 0" }
+        },
+        {
+          "text": "Keep only the top k layers and the Eckart-Young theorem says this truncation is the best possible rank-k approximation.",
+          "visual": { "type": "equation", "tex": "\\min_{\\operatorname{rank}(B)\\le k} \\lVert A - B\\rVert_F = \\sqrt{\\sum_{i=k+1}^{r}\\sigma_i^{2}}", "note": "leftover error is the discarded energy" }
+        },
+        {
+          "text": "The singular values are always non-negative, since they are stretch lengths and a length can never be negative.",
+          "visual": { "type": "bars", "values": [6, 3, 2, 1], "labels": ["1", "2", "3", "4"], "highlight": 0 }
+        },
+        {
+          "text": "For singular values six, three, two, one, the energy is the squares, so rank two keeps forty-five over fifty, ninety percent.",
+          "visual": { "type": "stat", "value": 90, "label": "energy retained at rank 2", "unit": "%" }
+        },
+        {
+          "text": "Choose k by plotting cumulative energy retained and cutting at the elbow where the curve flattens between signal and noise.",
+          "visual": { "type": "plot", "ys": [0.72, 0.9, 0.98, 1.0, 1.0], "dot": 1, "xlabel": "k", "ylabel": "energy retained" }
+        }
+      ]
+    },
+    {
+      "id": "ml-13-matrix-factorization-s3",
+      "chapter": "ml/13-matrix-factorization",
+      "section": "s3",
+      "title": "Recommender systems — latent factors",
+      "eyebrow": "MACHINE LEARNING",
+      "beats": [
+        {
+          "text": "The canonical application, made famous by the Netflix Prize, is collaborative filtering on a sparse ratings matrix that is mostly missing.",
+          "visual": { "type": "title", "text": "Latent-factor recommenders", "sub": "Filling in the blanks" }
+        },
+        {
+          "text": "Assign every user and every item a latent vector in k dimensions, then predict the rating as a dot product plus biases.",
+          "visual": { "type": "equation", "tex": "\\hat r_{ui} = \\mu + b_u + b_i + p_u^{\\top} q_i", "note": "p_u, q_i live in R^k" }
+        },
+        {
+          "text": "A typical user has rated about a tenth of a percent of the catalog, so the matrix is almost entirely holes.",
+          "visual": { "type": "stat", "value": 0.1, "label": "catalog a user rates", "unit": "%", "decimals": 1 }
+        },
+        {
+          "text": "You cannot run plain SVD here, so you fit only the observed entries by minimizing regularized squared error with gradient descent.",
+          "visual": { "type": "equation", "tex": "\\min_{P,Q,b} \\sum_{(u,i)\\in\\mathcal{K}} (r_{ui} - \\hat r_{ui})^2 + \\lambda(\\lVert p_u\\rVert^2 + \\lVert q_i\\rVert^2)", "note": "the sum skips every missing cell" }
+        },
+        {
+          "text": "With the example biases and vectors, the dot product is half a point and the prediction comes out to three point nine.",
+          "visual": { "type": "bars", "values": [3.5, -0.2, 0.1, 0.5], "labels": ["mu", "b_u", "b_i", "p.q"], "highlight": 3 }
+        },
+        {
+          "text": "Cold start remains the honest caveat, a new user with no ratings has no factors and the model can only guess the average.",
+          "visual": { "type": "plot", "ys": [3.5, 3.5, 3.6, 3.7, 3.9], "dot": 4, "xlabel": "ratings seen", "ylabel": "prediction quality" }
+        }
+      ]
+    },
+    {
+      "id": "ml-13-matrix-factorization-s4",
+      "chapter": "ml/13-matrix-factorization",
+      "section": "s4",
+      "title": "Non-negative Matrix Factorization",
+      "eyebrow": "MACHINE LEARNING",
+      "beats": [
+        {
+          "text": "SVD factors mix positive and negative entries, which is optimal but often uninterpretable, since components add and subtract.",
+          "visual": { "type": "title", "text": "Non-negative MF", "sub": "Build data by adding parts" }
+        },
+        {
+          "text": "Non-negative matrix factorization forces every entry of both factors to be at least zero, so the only way to build data is to add parts.",
+          "visual": { "type": "equation", "tex": "A \\approx W H, \\quad W \\ge 0,\\; H \\ge 0", "note": "A is m by n, W is m by k, H is k by n" }
+        },
+        {
+          "text": "Lee and Seung showed that on face images NMF discovers localized features, a nose, an eyebrow, a mouth, because a face is a sum of parts.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "NMF is fit by multiplicative updates, element-wise rules that keep factors non-negative automatically and lower the error.",
+          "visual": { "type": "equation", "tex": "H \\leftarrow H \\odot \\frac{W^{\\top}A}{W^{\\top}WH}, \\quad W \\leftarrow W \\odot \\frac{A H^{\\top}}{W H H^{\\top}}", "note": "element-wise multiply and divide" }
+        },
+        {
+          "text": "The error falls steadily as iterations run, converging to a local minimum, so initialization matters and NNDSVD is the common fix.",
+          "visual": { "type": "plot", "ys": [9, 5, 2.8, 1.6, 1.0, 0.7, 0.6], "xlabel": "iteration", "ylabel": "reconstruction error" }
+        },
+        {
+          "text": "The honest trade, SVD gives the best fit with orthogonal ordered factors, NMF gives a worse fit but interpretable additive parts.",
+          "visual": { "type": "bars", "values": [1.0, 1.4], "labels": ["SVD fit", "NMF fit"], "highlight": 0 }
+        }
+      ]
+    },
+    {
+      "id": "ml-13-matrix-factorization-s5",
+      "chapter": "ml/13-matrix-factorization",
+      "section": "s5",
+      "title": "PCA as SVD; the connections",
+      "eyebrow": "MACHINE LEARNING",
+      "beats": [
+        {
+          "text": "The secret this chapter shares with Principal Component Analysis is that PCA is just the SVD of the centered data matrix.",
+          "visual": { "type": "title", "text": "PCA as SVD", "sub": "One decomposition, three tools" }
+        },
+        {
+          "text": "Center each column to mean zero, then the principal components are the right singular vectors of the result.",
+          "visual": { "type": "equation", "tex": "X_c = U\\Sigma V^{\\top} \\;\\Longrightarrow\\; \\tfrac{1}{m-1}X_c^{\\top}X_c = V\\,\\frac{\\Sigma^2}{m-1}\\,V^{\\top}", "note": "covariance eigenvectors are V" }
+        },
+        {
+          "text": "The variance captured by each component is the squared singular value divided by the sample count minus one.",
+          "visual": { "type": "equation", "tex": "\\lambda_i = \\frac{\\sigma_i^2}{m-1}", "note": "explained variance per component" }
+        },
+        {
+          "text": "Directions of maximum variance and best low-rank approximation are the same computation, read two different ways.",
+          "visual": { "type": "plot", "ys": [0.6, 0.85, 0.95, 0.99, 1.0], "dot": 2, "xlabel": "component", "ylabel": "explained variance" }
+        },
+        {
+          "text": "The same decomposition becomes four tools, compression, principal directions, recommendation, and interpretable additive parts.",
+          "visual": { "type": "bars", "values": [4, 3, 2, 1], "labels": ["SVD", "PCA", "Funk", "NMF"] }
+        },
+        {
+          "text": "The low-rank prior, that a few hidden factors explain most of the data, is one of the most reusable assumptions in machine learning.",
+          "visual": { "type": "lattice" }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Exponential Smoothing &amp; Holt-Winters — AI Encyclopedia</title>
+<meta name="description" content="Weight the recent past more than the distant past — a one-line idea that grows into Holt's trend, Holt-Winters seasonality, and the ETS state-space framework that still wins forecasting competitions." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+</head>
+<body data-track="timeseries" data-level="core">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ TIME SERIES / 03 / SMOOTHING</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../timeseries/04-volatility-garch.html">NEXT: 04 VOLATILITY &amp; GARCH →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">TIME SERIES &amp; ECONOMETRICS · CHAPTER 03 / 06</div>
+    <h1>Exponential Smoothing &amp; Holt-Winters</h1>
+    <p class="lede">Where ARIMA works through correlations of past errors, exponential smoothing makes a simpler assumption and performs well on it. <strong>It weights the recent past more heavily than the distant past, a single idea that still places near the top of forecasting competitions.</strong> Three short recurrences for level, trend, and season turn that idea into a method that runs in one pass over the data and forecasts millions of series a day in retail, supply-chain, and energy systems.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 24 MIN</b></span>
+      <span>BUILDS ON<b>TIME SERIES 01–02</b></span>
+      <span>INSTRUMENTS<b>SES WEIGHTS · HOLT-WINTERS · α OPTIMIZER</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">3.1</span>Simple exponential smoothing</a>
+      <a href="#s2"><span class="n">3.2</span>Holt's linear trend</a>
+      <a href="#s3"><span class="n">3.3</span>Holt-Winters seasonal</a>
+      <a href="#s4"><span class="n">3.4</span>The ETS state-space framework</a>
+      <a href="#s5"><span class="n">3.5</span>Choosing the parameters</a>
+      <a href="#s6"><span class="n">3.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 3.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">3.1</span><h2>Simple exponential smoothing</h2></div>
+        <p>Start with a series that has no trend and no season — just a level that wanders, buried in noise. A naïve forecast uses only the last value; a long moving average uses many values but weights them all equally, which is plainly wrong: a reading from a year ago should not count as much as yesterday's. <strong>Simple exponential smoothing (SES)</strong> resolves the tension with one parameter. Maintain a running estimate of the level \(\ell_t\) and, at every new observation, nudge it toward the latest value by a fraction \(\alpha\):</p>
+
+        <div class="eq"><span class="eq-tag">EQ T3.1 — THE SMOOTHING RECURRENCE</span>
+        $$ \ell_t \;=\; \alpha\, y_t + (1-\alpha)\,\ell_{t-1}, \qquad 0 &lt; \alpha &lt; 1, \qquad \hat{y}_{t+1\mid t} = \ell_t $$
+        <div class="eq-note">\(\ell_t\) is the smoothed level after seeing \(y_t\); the one-step-ahead forecast is simply that level, and so is the forecast for <em>every</em> horizon (a flat line — SES has no trend). \(\alpha\) is the <b>learning rate</b>: \(\alpha \to 1\) recovers the naïve "repeat the last value" forecast; \(\alpha \to 0\) freezes the level at its initial estimate, a long-run average. The whole method is this single line, applied once per observation — \(O(n)\) time, \(O(1)\) memory.</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><div>Take \(\alpha = 0.3\) and a current level \(\ell_{t-1} = 10\). A new observation arrives: \(y_t = 20\).</div></div>
+          <div class="x-step"><span class="x-n">02</span><div>Apply EQ T3.1: \(\ell_t = 0.3 \times 20 + 0.7 \times 10 = 6 + 7\).</div></div>
+          <div class="x-step"><span class="x-n">03</span><div>So \(\ell_t = 13\). The level moved 3 of the way from 10 toward the new reading of 20 — exactly \(\alpha = 30\%\) of the \(10\)-point gap.</div></div>
+          <span class="x-result">RESULT: updated level \(\ell_t = 13\); next forecast \(\hat{y}_{t+1} = 13\)</span>
+        </div></div>
+        </div>
+
+        <p>The error-correction form makes the "learning rate" reading explicit. Rearranging EQ T3.1 around the one-step forecast error \(e_t = y_t - \ell_{t-1}\):</p>
+
+        <div class="eq"><span class="eq-tag">EQ T3.2 — ERROR-CORRECTION FORM</span>
+        $$ \ell_t \;=\; \ell_{t-1} + \alpha\,(y_t - \ell_{t-1}) \;=\; \ell_{t-1} + \alpha\, e_t $$
+        <div class="eq-note">Read it as gradient descent on squared error with step size \(\alpha\): each forecast miss \(e_t\) pulls the level a fraction \(\alpha\) of the way toward correcting it. This is the same shape as the perceptron and Widrow-Hoff (LMS) update — exponential smoothing is, quite literally, <b>online learning of a moving level</b>, decades before that name existed.</div>
+        </div>
+
+        <p>Why "exponential"? Unrolling the recurrence shows the forecast is a weighted average of <em>all</em> past observations, with weights that decay geometrically into the past:</p>
+
+        <div class="eq"><span class="eq-tag">EQ T3.3 — GEOMETRIC WEIGHTING OF THE PAST</span>
+        $$ \hat{y}_{t+1\mid t} \;=\; \alpha \sum_{k=0}^{t-1} (1-\alpha)^{k}\, y_{t-k} \;+\; (1-\alpha)^{t}\,\ell_0, \qquad \sum_{k=0}^{\infty} \alpha\,(1-\alpha)^{k} = 1 $$
+        <div class="eq-note">The weight on the observation \(k\) steps back is \(\alpha(1-\alpha)^k\) — largest for the most recent point and shrinking by a constant factor \((1-\alpha)\) each step. The weights are a geometric series that sums to one, so the forecast is a genuine weighted average. <b>This is the entire idea of the chapter in one line: the past is never thrown away, it just fades.</b> A small \(\alpha\) means a long memory (slow fade); a large \(\alpha\) means a short one. The instrument below draws this decay.</div>
+        </div>
+
+        <div class="exercise" data-answer="13" data-tol="0.001" data-unit="" data-hint="apply EQ T3.1: alpha times the new value plus (1 - alpha) times the old level.">
+          <div class="ex-q">Simple exponential smoothing with \(\alpha = 0.3\). The current level is \(\ell_{t-1} = 10\) and a new observation arrives, \(y_t = 20\). What is the updated level \(\ell_t\)?</div>
+          <div class="ex-reveal-src">EQ T3.1: \(\ell_t = \alpha\,y_t + (1-\alpha)\,\ell_{t-1} = 0.3 \times 20 + 0.7 \times 10 = 6 + 7 = \) <b>13</b>. The level moves 30% of the way from 10 toward the new reading.</div>
+        </div>
+
+        <div class="exercise" data-answer="0.147" data-tol="0.02" data-hint="weight on the observation k steps back is alpha (1 - alpha)^k, with k = 2.">
+          <div class="ex-q">With \(\alpha = 0.3\), what weight does EQ T3.3 place on the observation <b>two</b> steps in the past, \(y_{t-2}\)? (Use \(k = 2\): \(\alpha(1-\alpha)^k\).)</div>
+          <div class="ex-reveal-src">\(\alpha(1-\alpha)^2 = 0.3 \times 0.7^2 = 0.3 \times 0.49 = \) <b>0.147</b>. Compare \(y_t\)'s weight of \(0.30\) and \(y_{t-1}\)'s of \(0.21\): each step back loses a factor of \(0.7\).</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Simple exponential smoothing in numpy: fit a level, print fitted vs actual
+import numpy as np
+rng = np.random.default_rng(0)
+
+# a wandering level (random walk) plus observation noise -- no trend, no season
+n = 24
+level_true = 50 + np.cumsum(rng.normal(0, 1.2, n))
+y = level_true + rng.normal(0, 2.0, n)
+
+alpha = 0.3
+ell = y[0]                       # initialise the level at the first observation
+fitted = np.empty(n)
+fitted[0] = ell
+for t in range(1, n):
+    fitted[t] = ell             # one-step forecast BEFORE seeing y[t] is the old level
+    ell = alpha * y[t] + (1 - alpha) * ell   # EQ T3.1 update
+
+sse = np.sum((y[1:] - fitted[1:]) ** 2)
+print(f"alpha = {alpha},  one-step SSE = {sse:.2f},  final level = {ell:.2f}")
+print(" t   actual   forecast   error")
+for t in range(1, 8):
+    print(f"{t:2d}  {y[t]:7.2f}  {fitted[t]:8.2f}  {y[t]-fitted[t]:+7.2f}")
+plot_xy(list(range(n)), list(y))    # the noisy series; fitted line tracks its level</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="ets-ses-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT T3.1 — EXPONENTIAL-SMOOTHING EXPLORER</span><span class="w-sub">GEOMETRIC WEIGHTS · EQ T3.3 · LIVE</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>SMOOTHING α <output id="ets-ses-alpha-out">0.30</output></label><input type="range" id="ets-ses-alpha" min="0.02" max="0.98" step="0.02" value="0.3"/></div>
+            </div>
+            <canvas class="w-canvas" id="ets-ses-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">WEIGHT ON LAST OBS</div><div class="r-value" id="ets-ses-w0">—</div></div>
+              <div class="readout"><div class="r-label">EFFECTIVE MEMORY (½-LIFE)</div><div class="r-value" id="ets-ses-half">—</div></div>
+              <div class="readout"><div class="r-label">WEIGHT IN LAST 5 OBS</div><div class="r-value" id="ets-ses-tail">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Each <span style="color:var(--accent);">mint</span> bar is the weight EQ T3.3 places on an observation that many steps in the past; they form a geometric decay that sums to one. Drag α toward 1 and the forecast collapses onto the most recent point (a spike at lag 0 — short memory, twitchy). Drag it toward 0 and the bars flatten into a long, even tail — the method becomes a slow long-run average. The <em>half-life</em> readout, \(\ln 2 / -\ln(1-\alpha)\), is how many steps back the cumulative weight reaches 50%.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 3.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">3.2</span><h2>Holt's linear trend method</h2></div>
+        <p>SES forecasts a flat line, so it lags badly on any series that is climbing or falling: it is forever chasing a level that has already moved on. <strong>Holt (1957)</strong> added a second smoothed component — a <em>trend</em> \(b_t\), the estimated change per period — updated by its own smoothing parameter \(\beta\). Now two recurrences run in lockstep, and the forecast extrapolates the trend forward:</p>
+
+        <div class="eq"><span class="eq-tag">EQ T3.4 — HOLT'S LINEAR (DOUBLE) SMOOTHING</span>
+        $$ \begin{aligned}
+        \ell_t &amp;= \alpha\, y_t + (1-\alpha)\,(\ell_{t-1} + b_{t-1}) \\
+        b_t &amp;= \beta\,(\ell_t - \ell_{t-1}) + (1-\beta)\,b_{t-1} \\
+        \hat{y}_{t+h\mid t} &amp;= \ell_t + h\, b_t
+        \end{aligned} $$
+        <div class="eq-note">The level update now smooths toward \(y_t\) but starts from \(\ell_{t-1}+b_{t-1}\) — last level plus where the trend said it would go. The trend update smooths the latest observed slope \((\ell_t - \ell_{t-1})\) against the old trend. The forecast is no longer flat: it is a <b>straight line of slope \(b_t\)</b>, projected \(h\) steps out. Set \(\beta = 0\) (constant trend) or \(b_0 = 0\) and Holt degenerates back to SES.</div>
+        </div>
+
+        <p>One honest caveat: a linear trend projected far into the future is usually too aggressive — real series flatten. The standard fix is the <strong>damped trend</strong> of Gardner &amp; McKenzie (1985), which multiplies the trend by a damping factor \(0 &lt; \phi &lt; 1\) so the forecast bends toward a horizontal asymptote:</p>
+
+        <div class="eq"><span class="eq-tag">EQ T3.5 — DAMPED TREND</span>
+        $$ \hat{y}_{t+h\mid t} \;=\; \ell_t + (\phi + \phi^2 + \cdots + \phi^{h})\,b_t, \qquad \lim_{h\to\infty} \hat{y}_{t+h\mid t} = \ell_t + \frac{\phi}{1-\phi}\,b_t $$
+        <div class="eq-note">With \(\phi = 1\) this is exactly Holt's undamped line; with \(\phi &lt; 1\) the per-step contribution of the trend shrinks geometrically and the forecast saturates at a finite ceiling. <b>The damped-trend method is one of the most reliable automatic forecasters known</b> — it was the benchmark to beat across the M-competitions, and a hard one.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Holt's linear method: vary alpha and beta, forecast h steps ahead (EQ T3.4)
+import numpy as np
+
+# a trending series: level rises ~1.5/period with a little noise
+n = 30
+y = 10 + 1.5 * np.arange(n) + np.array([0,1,-1,2,0,-2,1,3,-1,0,
+                                        2,-1,1,0,-2,1,2,-1,0,1,
+                                        -1,2,0,1,-2,0,1,-1,2,0], float)
+
+def holt(y, alpha, beta, h=4):
+    ell, b = y[0], y[1] - y[0]          # init: level=y0, trend=first difference
+    for t in range(1, len(y)):
+        prev = ell
+        ell = alpha * y[t] + (1 - alpha) * (ell + b)   # level
+        b   = beta * (ell - prev) + (1 - beta) * b     # trend
+    fc = [ell + (i + 1) * b for i in range(h)]         # straight-line forecast
+    return ell, b, fc
+
+print(" alpha  beta | final level   trend   4-step forecast")
+for alpha, beta in [(0.8, 0.2), (0.5, 0.1), (0.3, 0.05)]:
+    ell, b, fc = holt(y, alpha, beta)
+    print(f"  {alpha:4.2f}  {beta:4.2f} | {ell:9.2f}  {b:6.3f}   "
+          + " ".join(f"{v:6.1f}" for v in fc))
+print("\nhigher beta -> trend reacts faster to slope changes (and to noise).")
+plot_xy(list(range(n)), list(y))</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <p class="note"><strong>A naming map for the confused.</strong> SES is "single" smoothing; Holt is "double"; Holt-Winters (next) is "triple". The labels just count how many recurrences run — one per component you choose to track: level, then trend, then season.</p>
+      </section>
+
+      <!-- ====================== 3.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">3.3</span><h2>Holt-Winters seasonal method</h2></div>
+        <p>Most operational series breathe on a calendar: weekly retail, daily electricity, monthly tourism. <strong>Winters (1960)</strong> completed Holt's method by adding a third smoothed component — a vector of \(m\) <em>seasonal</em> indices \(s_t\) (one per position in the cycle, \(m=12\) for monthly, \(m=7\) for daily-of-week), each updated by its own parameter \(\gamma\). The result, Holt-Winters, smooths level, trend, and season simultaneously. There are two flavours, depending on whether seasonal swings are a fixed <em>amount</em> or a fixed <em>fraction</em> of the level.</p>
+
+        <div class="eq"><span class="eq-tag">EQ T3.6 — HOLT-WINTERS (ADDITIVE SEASONALITY)</span>
+        $$ \begin{aligned}
+        \ell_t &amp;= \alpha\,(y_t - s_{t-m}) + (1-\alpha)\,(\ell_{t-1} + b_{t-1}) \\
+        b_t &amp;= \beta\,(\ell_t - \ell_{t-1}) + (1-\beta)\,b_{t-1} \\
+        s_t &amp;= \gamma\,(y_t - \ell_t) + (1-\gamma)\,s_{t-m} \\
+        \hat{y}_{t+h\mid t} &amp;= \ell_t + h\, b_t + s_{t+h-m(k+1)}
+        \end{aligned} $$
+        <div class="eq-note">Compared with Holt (EQ T3.4), the level now smooths the <b>deseasonalised</b> observation \(y_t - s_{t-m}\), and a third recurrence smooths the seasonal index from the detrended residual \(y_t - \ell_t\). The forecast adds back the matching seasonal index, where \(k = \lfloor (h-1)/m \rfloor\) just selects the right slot in the last estimated cycle. The seasonal indices are conventionally normalised to sum to zero each cycle so they do not absorb the level.</div>
+        </div>
+
+        <div class="eq"><span class="eq-tag">EQ T3.7 — HOLT-WINTERS (MULTIPLICATIVE SEASONALITY)</span>
+        $$ \ell_t = \alpha\,\frac{y_t}{s_{t-m}} + (1-\alpha)(\ell_{t-1}+b_{t-1}), \qquad s_t = \gamma\,\frac{y_t}{\ell_t} + (1-\gamma)\,s_{t-m}, \qquad \hat{y}_{t+h\mid t} = (\ell_t + h\,b_t)\, s_{t+h-m(k+1)} $$
+        <div class="eq-note">Here seasonal indices are <em>multipliers</em> around 1 (e.g. December = 1.4× the level), normalised to average one per cycle. <b>Use additive when the seasonal swing is a constant size; use multiplicative when the swing grows with the level</b> — the classic airline-passengers series, whose December peaks balloon as traffic grows, is the textbook case for multiplicative.</div>
+        </div>
+
+        <div class="exercise" data-answer="seasonal" data-hint="Holt tracks level and trend; the third recurrence Winters added handles the calendar.">
+          <div class="ex-q">Holt's method (EQ T3.4) smooths two components: a level and a trend. Holt-Winters adds a third recurrence. Which component does it add? (one word)</div>
+          <div class="ex-reveal-src">Winters added a <b>seasonal</b> component — the vector of indices \(s_t\) updated by \(\gamma\) in EQ T3.6/T3.7. SES (single) tracks level; Holt (double) adds trend; Holt-Winters (triple) adds season.</div>
+        </div>
+
+        <div class="exercise" data-answer="1.4" data-tol="0.01" data-hint="multiplicative forecast = (level + trend) times the seasonal multiplier; here trend is 0.">
+          <div class="ex-q">A multiplicative Holt-Winters model has level \(\ell_t = 200\), zero trend, and a December seasonal multiplier \(s = 1.4\). What is the one-step December forecast \(\hat{y} = \ell_t \cdot s\), expressed as a multiple of the level (i.e. give \(s\))? Equivalently: the forecast is 280, which is the level times what factor?</div>
+          <div class="ex-reveal-src">\(\hat{y} = \ell_t \cdot s = 200 \times 1.4 = 280\). The factor relative to the level is \(280/200 = \) <b>1.4</b> — December runs 40% above the deseasonalised level.</div>
+        </div>
+
+        <div class="widget" id="ets-hw-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT T3.2 — HOLT-WINTERS DECOMPOSITION</span><span class="w-sub">SEASONAL SERIES · m = 12 · EQ T3.6</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>LEVEL α <output id="ets-hw-alpha-out">0.30</output></label><input type="range" id="ets-hw-alpha" min="0.02" max="0.9" step="0.02" value="0.3"/></div>
+              <div class="ctl"><label>TREND β <output id="ets-hw-beta-out">0.10</output></label><input type="range" id="ets-hw-beta" min="0" max="0.6" step="0.01" value="0.1"/></div>
+              <div class="ctl"><label>SEASON γ <output id="ets-hw-gamma-out">0.30</output></label><input type="range" id="ets-hw-gamma" min="0.02" max="0.9" step="0.02" value="0.3"/></div>
+            </div>
+            <canvas class="w-canvas" id="ets-hw-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">IN-SAMPLE SSE</div><div class="r-value" id="ets-hw-sse">—</div></div>
+              <div class="readout"><div class="r-label">FINAL LEVEL · TREND</div><div class="r-value" id="ets-hw-lb" style="font-size:13px;">—</div></div>
+              <div class="readout"><div class="r-label">SEASON AMPLITUDE</div><div class="r-value" id="ets-hw-amp">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The <span style="color:var(--secondary);">grey</span> line is a synthetic monthly series (rising trend + 12-month season + noise); the <span style="color:var(--accent);">mint</span> line is the Holt-Winters one-step fit, and the <span style="color:var(--blue);">blue</span> segment past the divider is its 12-step seasonal forecast. Push γ up and the seasonal indices chase every wobble (overfit); push it down and the model holds a stable seasonal shape. Watch the SSE readout: the seasonal recurrence is what lets the fit hug the peaks and troughs an SES line would slice straight through.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 3.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">3.4</span><h2>The ETS state-space framework</h2></div>
+        <p>For forty years exponential smoothing was a bag of recurrences with no probability model behind them — you could forecast, but you could not say how uncertain the forecast was, nor choose a method by a principled criterion. <strong>Hyndman, Koehler, Ord &amp; Snyder (2002, 2008)</strong> fixed that by showing every smoothing method is the point forecast of an underlying <strong>state-space model</strong> with a single source of error. This is the <strong>ETS</strong> family: <em>Error · Trend · Season</em>.</p>
+
+        <div class="eq"><span class="eq-tag">EQ T3.8 — ETS AS A STATE-SPACE MODEL (additive-error, "innovations" form)</span>
+        $$ \underbrace{y_t = \ell_{t-1} + b_{t-1} + s_{t-m} + \varepsilon_t}_{\text{measurement}}, \qquad \underbrace{\ell_t = \ell_{t-1} + b_{t-1} + \alpha\,\varepsilon_t,\;\; b_t = b_{t-1} + \beta\,\varepsilon_t,\;\; s_t = s_{t-m} + \gamma\,\varepsilon_t}_{\text{state update}} $$
+        <div class="eq-note">A <b>single</b> shock \(\varepsilon_t \sim \mathcal{N}(0,\sigma^2)\) drives both the observation and every state update — hence "single source of error". Recover EQ T3.6's smoothing constants by substituting \(\varepsilon_t = y_t - \hat{y}_{t\mid t-1}\). The payoff is enormous: a likelihood you can maximise, AIC/BIC for model selection, and — most importantly — <b>exact prediction intervals</b>, which the old recurrences could never produce.</div>
+        </div>
+
+        <p>ETS classifies a model by a three-letter code: <em>Error</em> ∈ {A, M}, <em>Trend</em> ∈ {N, A, A<sub>d</sub>}, <em>Season</em> ∈ {N, A, M}. So <code>ETS(A,N,N)</code> is SES with additive noise, <code>ETS(A,A,N)</code> is Holt, <code>ETS(A,A,A)</code> is additive Holt-Winters, and <code>ETS(M,A,M)</code> is the multiplicative-error airline model. There are 30 admissible combinations; the practical recipe is to let software fit all of them and pick by AIC.</p>
+
+        <table class="data">
+          <thead><tr><th>Method</th><th>Components (E,T,S)</th><th>ETS code</th><th>Forecast shape</th></tr></thead>
+          <tbody>
+            <tr><td><strong>SES</strong></td><td class="m">level only</td><td class="m">(A,N,N)</td><td>flat line</td></tr>
+            <tr><td><strong>Holt</strong></td><td class="m">level + trend</td><td class="m">(A,A,N)</td><td>straight line</td></tr>
+            <tr><td><strong>Damped Holt</strong></td><td class="m">level + damped trend</td><td class="m">(A,A<sub>d</sub>,N)</td><td class="hl">bends to asymptote</td></tr>
+            <tr><td><strong>Additive HW</strong></td><td class="m">level + trend + season</td><td class="m">(A,A,A)</td><td>line + fixed season</td></tr>
+            <tr><td><strong>Multiplicative HW</strong></td><td class="m">level + trend + ×season</td><td class="m">(M,A,M)</td><td class="hl">line × growing season</td></tr>
+          </tbody>
+        </table>
+
+        <p class="note"><strong>The empirical verdict.</strong> In the M3 competition (3,003 series) and again in M4 (100,000 series), simple exponential-smoothing and ETS variants — especially damped trend — were brutally hard to beat; the M4 winner was a <em>hybrid</em> that combined exponential smoothing with a neural net (Smyl's ES-RNN). The lesson the field keeps relearning: <b>for a single, short, noisy series, a one-parameter smoother often beats a deep model</b>, and any serious forecaster keeps ETS as the baseline that earns its keep.</p>
+      </section>
+
+      <!-- ====================== 3.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">3.5</span><h2>Choosing the smoothing parameters</h2></div>
+        <p>You do not set \(\alpha, \beta, \gamma\) by hand. The standard procedure picks them — together with the initial states \(\ell_0, b_0, s_0\) — by minimising the in-sample sum of squared one-step errors (equivalently, maximising the Gaussian likelihood of EQ T3.8):</p>
+
+        <div class="eq"><span class="eq-tag">EQ T3.9 — PARAMETER ESTIMATION BY MINIMISING SSE</span>
+        $$ (\hat{\alpha}, \hat{\beta}, \hat{\gamma},\, \hat{\ell}_0, \hat{b}_0, \hat{s}_0) \;=\; \arg\min \; \sum_{t=1}^{n} \big(y_t - \hat{y}_{t\mid t-1}\big)^2 \;=\; \arg\min \; \sum_{t=1}^{n} e_t^2 $$
+        <div class="eq-note">Each \(\hat{y}_{t\mid t-1}\) is the model's one-step forecast computed from the recurrences, so the objective is a nonlinear function of the parameters — solved by numerical optimisation (Nelder-Mead, L-BFGS). The smoothing parameters are box-constrained to \((0,1)\); some references add an "admissible region" constraint that keeps the implied state-space model stable. <b>SSE is minimised on one-step errors, not on the long-horizon forecast</b> — a subtlety that matters when the two disagree.</div>
+        </div>
+
+        <p>Two cautions experts will raise. First, <strong>do not minimise SSE on the data you will also report accuracy on</strong>; hold out the tail of the series, or use time-series cross-validation (rolling-origin evaluation, Time Series 01), or trust the AIC from the likelihood. Second, an optimiser will happily push \(\alpha \to 1\) on a series that is really a random walk — a correct answer that looks like overfitting but is not. The instrument below traces the SSE objective for SES so you can see its shape: usually convex with a clear minimum, occasionally flat (the data barely constrains \(\alpha\)).</p>
+
+        <div class="widget" id="ets-opt-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT T3.3 — SMOOTHING-PARAMETER OPTIMIZER</span><span class="w-sub">SES · SSE(α) CURVE · EQ T3.9</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>NOISE LEVEL σ <output id="ets-opt-noise-out">2.0</output></label><input type="range" id="ets-opt-noise" min="0.3" max="6" step="0.1" value="2"/></div>
+              <div class="ctl"><label>LEVEL DRIFT <output id="ets-opt-drift-out">1.0</output></label><input type="range" id="ets-opt-drift" min="0" max="3" step="0.1" value="1"/></div>
+              <div class="ctl"><label>YOUR α <output id="ets-opt-alpha-out">0.30</output></label><input type="range" id="ets-opt-alpha" min="0.02" max="0.98" step="0.02" value="0.3"/></div>
+            </div>
+            <canvas class="w-canvas" id="ets-opt-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">SSE AT YOUR α</div><div class="r-value" id="ets-opt-yoursse">—</div></div>
+              <div class="readout acc"><div class="r-label">OPTIMAL α*</div><div class="r-value" id="ets-opt-best">—</div></div>
+              <div class="readout"><div class="r-label">SSE AT α*</div><div class="r-value" id="ets-opt-bestsse">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The <span style="color:var(--accent);">mint</span> curve is the SES objective SSE(α) swept across the whole \((0,1)\) range on a freshly simulated series; the <span style="color:var(--blue);">blue</span> dot marks the grid-search minimum α* and the <span style="color:var(--secondary);">grey</span> dot marks your slider's α. Crank the noise up and the minimum slides <em>left</em> (a smoother level filters out observation noise); crank the drift up and it slides <em>right</em> (the level is genuinely moving, so trust recent data more). When the curve goes flat, the data simply does not pin α down — the honest answer is "any value in this basin forecasts about the same".</div>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>Exponential smoothing models the mean of a series and treats the variance as a constant nuisance.</strong> For financial returns that assumption is exactly backwards: the mean is near-unforecastable but the <em>variance</em> clusters — calm begets calm, a shock begets shocks. Time Series 04 turns the smoothing machinery loose on the variance itself: ARCH, GARCH, and the volatility models that price risk.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 3.R — References ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">3.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://doi.org/10.1016/j.ijforecast.2003.09.015" target="_blank" rel="noopener">Holt, C. C. (2004, orig. 1957). <span class="ref-venue">Forecasting seasonals and trends by exponentially weighted moving averages</span>.</a> <span class="ref-meta">International Journal of Forecasting 20(1) — reprint of the 1957 ONR memorandum that introduced double smoothing (EQ T3.4).</span></li>
+          <li><a href="https://doi.org/10.1287/mnsc.6.3.324" target="_blank" rel="noopener">Winters, P. R. (1960). <span class="ref-venue">Forecasting sales by exponentially weighted moving averages</span>.</a> <span class="ref-meta">Management Science 6(3) — adds the seasonal component, completing Holt-Winters (EQ T3.6/T3.7).</span></li>
+          <li><a href="https://doi.org/10.1007/978-3-540-71918-2" target="_blank" rel="noopener">Hyndman, R. J., Koehler, A. B., Ord, J. K. &amp; Snyder, R. D. (2008). <span class="ref-venue">Forecasting with Exponential Smoothing: The State Space Approach</span>.</a> <span class="ref-meta">Springer — the definitive treatment of the ETS innovations state-space framework (EQ T3.8).</span></li>
+          <li><a href="https://doi.org/10.1016/S0169-2070(01)00110-8" target="_blank" rel="noopener">Hyndman, R. J., Koehler, A. B., Snyder, R. D. &amp; Grose, S. (2002). <span class="ref-venue">A state space framework for automatic forecasting using exponential smoothing methods</span>.</a> <span class="ref-meta">International Journal of Forecasting 18(3) — the taxonomy of 30 ETS models and automatic AIC selection (§3.4).</span></li>
+          <li><a href="https://doi.org/10.1287/mnsc.31.10.1237" target="_blank" rel="noopener">Gardner, E. S. &amp; McKenzie, E. (1985). <span class="ref-venue">Forecasting trends in time series</span>.</a> <span class="ref-meta">Management Science 31(10) — the damped-trend method (EQ T3.5), a perennial competition benchmark.</span></li>
+          <li><a href="https://doi.org/10.1016/j.ijforecast.2019.04.014" target="_blank" rel="noopener">Makridakis, S., Spiliotis, E. &amp; Assimakopoulos, V. (2020). <span class="ref-venue">The M4 Competition: 100,000 time series and 61 forecasting methods</span>.</a> <span class="ref-meta">International Journal of Forecasting 36(1) — the modern evidence that exponential smoothing remains a top baseline (§3.4).</span></li>
+          <li><a href="https://otexts.com/fpp3/expsmooth.html" target="_blank" rel="noopener">Hyndman, R. J. &amp; Athanasopoulos, G. (2021). <span class="ref-venue">Forecasting: Principles and Practice (3rd ed.), Ch. 8</span>.</a> <span class="ref-meta">OTexts — the freely available standard textbook treatment of SES, Holt-Winters, and ETS.</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../timeseries/02-arima.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">02</span> ARIMA</div></a>
+        <a class="next" href="../timeseries/04-volatility-garch.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">04</span> Volatility &amp; GARCH</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — TIME SERIES &amp; ECONOMETRICS · CH 03</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* ============================================================
+   Exponential Smoothing & Holt-Winters — chapter instruments
+   Single IIFE, no globals. Three widgets, each guarded by the
+   existence of its root/canvas element. Animations use
+   setTimeout (resize debounce only); initial render is static.
+   ============================================================ */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  function fnum(x, d) { d = d === undefined ? 2 : d; return x.toFixed(d); }
+
+  /* deterministic synthetic series builders, shared by the widgets ----- */
+  function sesSeries(n, drift, noise, seed) {
+    var rnd = FM.mulberry32(seed);
+    function gauss() {                 // Box-Muller from the uniform RNG
+      var u = 1 - rnd(), v = rnd();
+      return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+    }
+    var y = [], lvl = 50, i;
+    for (i = 0; i < n; i++) {
+      lvl += drift * gauss();          // a wandering level
+      y.push(lvl + noise * gauss());   // plus observation noise
+    }
+    return y;
+  }
+  /* one-step SES SSE for a given alpha (level init = y[0]) -------------- */
+  function sesSSE(y, alpha) {
+    var ell = y[0], sse = 0, t, fc;
+    for (t = 1; t < y.length; t++) {
+      fc = ell;                        // forecast before seeing y[t]
+      sse += (y[t] - fc) * (y[t] - fc);
+      ell = alpha * y[t] + (1 - alpha) * ell;
+    }
+    return sse;
+  }
+
+  /* ========================================================
+     INSTRUMENT T3.1 — Exponential-smoothing explorer
+     Draws the geometric weights alpha*(1-alpha)^k (EQ T3.3).
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("ets-ses-demo");
+    if (!root) return;
+    var canvas = document.getElementById("ets-ses-canvas");
+    var aInp = document.getElementById("ets-ses-alpha");
+    var aOut = document.getElementById("ets-ses-alpha-out");
+    var w0El = document.getElementById("ets-ses-w0");
+    var halfEl = document.getElementById("ets-ses-half");
+    var tailEl = document.getElementById("ets-ses-tail");
+    var NLAG = 26;
+
+    function render() {
+      var alpha = +aInp.value;
+      aOut.textContent = fnum(alpha, 2);
+      var weights = [], k, wmax = 0;
+      for (k = 0; k < NLAG; k++) {
+        var wk = alpha * Math.pow(1 - alpha, k);
+        weights.push(wk);
+        if (wk > wmax) wmax = wk;
+      }
+      /* readouts */
+      var tail5 = 0;
+      for (k = 0; k < 5; k++) tail5 += weights[k];
+      var halfLife = Math.log(2) / -Math.log(1 - alpha);
+      w0El.textContent = fnum(weights[0] * 100, 1) + "%";
+      halfEl.textContent = fnum(halfLife, 1) + " steps";
+      tailEl.textContent = fnum(tail5 * 100, 1) + "%";
+
+      var c = FM.setupCanvas(canvas, 300);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      var padL = 44, padR = 14, padT = 18, padB = 32;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      ctx.clearRect(0, 0, w, h);
+      /* frame + y grid */
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(x0, y1, x1 - x0, y0 - y1);
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      var i;
+      for (i = 0; i <= 4; i++) {
+        var gv = wmax * i / 4, gy = y0 - (y0 - y1) * i / 4;
+        ctx.strokeStyle = "rgba(47,50,52,.55)";
+        ctx.beginPath(); ctx.moveTo(x0, gy); ctx.lineTo(x1, gy); ctx.stroke();
+        ctx.fillStyle = C.MUT;
+        ctx.fillText((gv * 100).toFixed(0) + "%", x0 - 6, gy);
+      }
+      /* bars */
+      var bw = (x1 - x0) / NLAG;
+      for (k = 0; k < NLAG; k++) {
+        var bh = (weights[k] / wmax) * (y0 - y1);
+        var bx = x0 + k * bw;
+        ctx.fillStyle = C.MINT;
+        ctx.fillRect(bx + 1, y0 - bh, Math.max(1, bw - 2), bh);
+      }
+      /* x labels */
+      ctx.fillStyle = C.SEC; ctx.textAlign = "center"; ctx.textBaseline = "top";
+      ctx.fillText("lag 0 (now)", x0 + bw * 0.5, y0 + 6);
+      ctx.fillText("← further into the past", x0 + (x1 - x0) * 0.62, y0 + 6);
+      ctx.fillStyle = C.MINT; ctx.textAlign = "left";
+      ctx.fillText("WEIGHT α(1−α)^k", x0 + 6, y1 + 4);
+    }
+    aInp.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT T3.2 — Holt-Winters decomposition (additive)
+     Fits EQ T3.6 to a synthetic seasonal series; draws fit +
+     a 12-step seasonal forecast.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("ets-hw-demo");
+    if (!root) return;
+    var canvas = document.getElementById("ets-hw-canvas");
+    var aInp = document.getElementById("ets-hw-alpha");
+    var bInp = document.getElementById("ets-hw-beta");
+    var gInp = document.getElementById("ets-hw-gamma");
+    var aOut = document.getElementById("ets-hw-alpha-out");
+    var bOut = document.getElementById("ets-hw-beta-out");
+    var gOut = document.getElementById("ets-hw-gamma-out");
+    var sseEl = document.getElementById("ets-hw-sse");
+    var lbEl = document.getElementById("ets-hw-lb");
+    var ampEl = document.getElementById("ets-hw-amp");
+    var m = 12, H = 12;
+
+    /* deterministic seasonal series: trend + season + noise */
+    var rnd = FM.mulberry32(7);
+    function gauss() {
+      var u = 1 - rnd(), v = rnd();
+      return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+    }
+    var N = 48, y = [], i;
+    var seasonShape = [];
+    for (i = 0; i < m; i++) seasonShape.push(12 * Math.sin(2 * Math.PI * i / m));
+    for (i = 0; i < N; i++) {
+      y.push(40 + 0.8 * i + seasonShape[i % m] + 2.2 * gauss());
+    }
+
+    /* additive Holt-Winters fit (EQ T3.6); returns fit, forecast, states */
+    function holtWinters(alpha, beta, gamma) {
+      /* init: level = mean of first cycle, trend from first two cycles,
+         seasonals = first-cycle deviations from that level */
+      var c0 = 0, c1 = 0, k;
+      for (k = 0; k < m; k++) { c0 += y[k]; c1 += y[k + m]; }
+      c0 /= m; c1 /= m;
+      var ell = c0;
+      var b = (c1 - c0) / m;
+      var s = [];
+      for (k = 0; k < m; k++) s.push(y[k] - c0);
+      var fit = [], sse = 0, t, sIdx, prevEll, fc;
+      for (t = 0; t < N; t++) {
+        sIdx = t % m;
+        if (t < m) { fit.push(ell + b + s[sIdx]); }
+        else {
+          fc = ell + b + s[sIdx];          // one-step forecast
+          fit.push(fc);
+          sse += (y[t] - fc) * (y[t] - fc);
+        }
+        prevEll = ell;
+        ell = alpha * (y[t] - s[sIdx]) + (1 - alpha) * (ell + b);
+        b   = beta * (ell - prevEll) + (1 - beta) * b;
+        s[sIdx] = gamma * (y[t] - ell) + (1 - gamma) * s[sIdx];
+      }
+      var fcst = [];
+      for (t = 0; t < H; t++) fcst.push(ell + (t + 1) * b + s[(N + t) % m]);
+      var amp = 0;
+      for (k = 0; k < m; k++) amp = Math.max(amp, Math.abs(s[k]));
+      return { fit: fit, fcst: fcst, ell: ell, b: b, amp: amp, sse: sse };
+    }
+
+    function render() {
+      var alpha = +aInp.value, beta = +bInp.value, gamma = +gInp.value;
+      aOut.textContent = fnum(alpha, 2);
+      bOut.textContent = fnum(beta, 2);
+      gOut.textContent = fnum(gamma, 2);
+      var R = holtWinters(alpha, beta, gamma);
+      sseEl.textContent = R.sse.toFixed(0);
+      lbEl.textContent = fnum(R.ell, 1) + " · " + (R.b >= 0 ? "+" : "") + fnum(R.b, 2);
+      ampEl.textContent = "±" + fnum(R.amp, 1);
+
+      var c = FM.setupCanvas(canvas, 320);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      var padL = 40, padR = 14, padT = 18, padB = 28;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      ctx.clearRect(0, 0, w, h);
+
+      var total = N + H, lo = Infinity, hi = -Infinity, t;
+      for (t = 0; t < N; t++) { lo = Math.min(lo, y[t]); hi = Math.max(hi, y[t]); }
+      for (t = 0; t < H; t++) { lo = Math.min(lo, R.fcst[t]); hi = Math.max(hi, R.fcst[t]); }
+      var pad = (hi - lo) * 0.1; lo -= pad; hi += pad;
+      function px(idx) { return x0 + idx / (total - 1) * (x1 - x0); }
+      function py(v) { return y0 - (v - lo) / (hi - lo) * (y0 - y1); }
+
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(x0, y1, x1 - x0, y0 - y1);
+      /* forecast divider */
+      var dv = px(N - 0.5);
+      ctx.strokeStyle = C.MUT; ctx.setLineDash([3, 3]); ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(dv, y1); ctx.lineTo(dv, y0); ctx.stroke();
+      ctx.setLineDash([]);
+      /* actual series (grey) */
+      ctx.strokeStyle = C.SEC; ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      for (t = 0; t < N; t++) { var X = px(t), Y = py(y[t]); if (t === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y); }
+      ctx.stroke();
+      /* in-sample fit (mint) */
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      for (t = 0; t < N; t++) { var X2 = px(t), Y2 = py(R.fit[t]); if (t === 0) ctx.moveTo(X2, Y2); else ctx.lineTo(X2, Y2); }
+      ctx.stroke();
+      /* forecast (blue), connected from last level */
+      ctx.strokeStyle = C.BLUE; ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(px(N - 1), py(R.fit[N - 1]));
+      for (t = 0; t < H; t++) ctx.lineTo(px(N + t), py(R.fcst[t]));
+      ctx.stroke();
+      /* legend */
+      ctx.font = C.MONO; ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillStyle = C.SEC; ctx.fillText("■ ACTUAL", x0 + 6, y1 + 4);
+      ctx.fillStyle = C.MINT; ctx.fillText("■ HW FIT", x0 + 66, y1 + 4);
+      ctx.fillStyle = C.BLUE; ctx.fillText("■ FORECAST", x0 + 126, y1 + 4);
+    }
+    aInp.addEventListener("input", render);
+    bInp.addEventListener("input", render);
+    gInp.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT T3.3 — Smoothing-parameter optimizer
+     Sweeps SSE(alpha) for SES over (0,1) (EQ T3.9), grid-finds
+     the minimum, marks it and the user's alpha.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("ets-opt-demo");
+    if (!root) return;
+    var canvas = document.getElementById("ets-opt-canvas");
+    var nInp = document.getElementById("ets-opt-noise");
+    var dInp = document.getElementById("ets-opt-drift");
+    var aInp = document.getElementById("ets-opt-alpha");
+    var nOut = document.getElementById("ets-opt-noise-out");
+    var dOut = document.getElementById("ets-opt-drift-out");
+    var aOut = document.getElementById("ets-opt-alpha-out");
+    var yourEl = document.getElementById("ets-opt-yoursse");
+    var bestEl = document.getElementById("ets-opt-best");
+    var bestSseEl = document.getElementById("ets-opt-bestsse");
+    var NGRID = 99;
+
+    function render() {
+      var noise = +nInp.value, drift = +dInp.value, ua = +aInp.value;
+      nOut.textContent = fnum(noise, 1);
+      dOut.textContent = fnum(drift, 1);
+      aOut.textContent = fnum(ua, 2);
+      /* fixed seed per (noise,drift) so the curve is stable as you drag YOUR α */
+      var seed = 1000 + Math.round(noise * 37) * 101 + Math.round(drift * 53);
+      var y = sesSeries(80, drift, noise, seed);
+      /* sweep SSE(alpha) on a grid */
+      var alphas = [], sses = [], i, a, s, lo = Infinity, hi = -Infinity, bestA = 0, bestS = Infinity;
+      for (i = 1; i <= NGRID; i++) {
+        a = i / (NGRID + 1);
+        s = sesSSE(y, a);
+        alphas.push(a); sses.push(s);
+        if (s < lo) lo = s; if (s > hi) hi = s;
+        if (s < bestS) { bestS = s; bestA = a; }
+      }
+      var yourSSE = sesSSE(y, ua);
+      yourEl.textContent = yourSSE.toFixed(0);
+      bestEl.textContent = fnum(bestA, 2);
+      bestSseEl.textContent = bestS.toFixed(0);
+
+      var c = FM.setupCanvas(canvas, 300);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      var padL = 50, padR = 14, padT = 18, padB = 30;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      ctx.clearRect(0, 0, w, h);
+      var span = (hi - lo) || 1; var plo = lo - span * 0.08, phi = hi + span * 0.08;
+      function px(a) { return x0 + a * (x1 - x0); }
+      function py(v) { return y0 - (v - plo) / (phi - plo) * (y0 - y1); }
+
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(x0, y1, x1 - x0, y0 - y1);
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      for (i = 0; i <= 4; i++) {
+        var gv = plo + (phi - plo) * i / 4, gy = py(gv);
+        ctx.strokeStyle = "rgba(47,50,52,.55)";
+        ctx.beginPath(); ctx.moveTo(x0, gy); ctx.lineTo(x1, gy); ctx.stroke();
+        ctx.fillStyle = C.MUT; ctx.fillText(gv.toFixed(0), x0 - 6, gy);
+      }
+      ctx.fillStyle = C.SEC; ctx.textAlign = "center"; ctx.textBaseline = "top";
+      ctx.fillText("α = 0", x0, y0 + 6);
+      ctx.fillText("α = 0.5", (x0 + x1) / 2, y0 + 6);
+      ctx.fillText("α = 1", x1, y0 + 6);
+      /* SSE(alpha) curve */
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (i = 0; i < alphas.length; i++) {
+        var X = px(alphas[i]), Y = py(sses[i]);
+        if (i === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y);
+      }
+      ctx.stroke();
+      /* optimum (blue) */
+      ctx.fillStyle = C.BLUE;
+      ctx.beginPath(); ctx.arc(px(bestA), py(bestS), 4.2, 0, 2 * Math.PI); ctx.fill();
+      ctx.strokeStyle = C.BLUE; ctx.setLineDash([2, 3]); ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(px(bestA), py(bestS)); ctx.lineTo(px(bestA), y0); ctx.stroke();
+      ctx.setLineDash([]);
+      /* user's alpha (grey) */
+      ctx.fillStyle = C.SEC;
+      ctx.beginPath(); ctx.arc(px(ua), py(yourSSE), 3.6, 0, 2 * Math.PI); ctx.fill();
+      /* labels */
+      ctx.font = C.MONO; ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillStyle = C.MINT; ctx.fillText("SSE(α)", x0 + 6, y1 + 4);
+      ctx.fillStyle = C.BLUE; ctx.fillText("● α* = " + fnum(bestA, 2), x0 + 6, y1 + 18);
+    }
+    nInp.addEventListener("input", render);
+    dInp.addEventListener("input", render);
+    aInp.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

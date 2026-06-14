@@ -1,0 +1,865 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Feature Engineering &amp; Selection — AI Encyclopedia</title>
+<meta name="description" content="The right feature can make a linear model beat a neural net. Building interaction, ratio, polynomial, datetime, text and aggregation features; filter, wrapper and embedded selection; mutual information, correlation and VIF; and the selection-bias trap that nested cross-validation exists to close." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+</head>
+<body data-track="data" data-level="core">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ DATA / 04 / FEATURE ENGINEERING</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../data/05-imbalanced.html">NEXT: IMBALANCED DATA →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">DATA &amp; FEATURE ENGINEERING · CHAPTER 04 / 05</div>
+    <h1>Feature Engineering &amp; Selection</h1>
+    <p class="lede">The right feature can let a linear model beat a neural net. <strong>Feature engineering is the point where domain knowledge enters the math.</strong> This chapter works from both ends: how to <em>create</em> features that expose structure a model cannot find on its own, and how to <em>select</em> from the resulting flood the few that carry signal, without contaminating your own evaluation in the process.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 26 MIN</b></span>
+      <span>BUILDS ON<b>DATA 01–03</b></span>
+      <span>INSTRUMENTS<b>INTERACTION · SELECTION RACE · VIF</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">4.1</span>Creating features</a>
+      <a href="#s2"><span class="n">4.2</span>Datetime, text &amp; aggregation</a>
+      <a href="#s3"><span class="n">4.3</span>Selection: filter · wrapper · embedded</a>
+      <a href="#s4"><span class="n">4.4</span>Importance &amp; redundancy</a>
+      <a href="#s5"><span class="n">4.5</span>Selection bias &amp; nested CV</a>
+      <a href="#s6"><span class="n">4.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 4.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">4.1</span><h2>Creating features: interactions, ratios, polynomials</h2></div>
+        <p>A model can only learn relationships its inputs make <em>expressible</em>. A linear model on raw columns \(x_1, x_2\) can fit only \(w_0 + w_1 x_1 + w_2 x_2\) — a flat hyperplane. If the truth lives on a curve, or in the <em>product</em> of two variables, no amount of training data and no clever optimizer will recover it: the hypothesis class simply does not contain the answer. Feature engineering changes the hypothesis class by changing the inputs. You are doing, by hand and with domain knowledge, the representation learning that a deep network would otherwise have to discover from scratch — and on tabular data you will frequently win, because you know things about the problem that the data alone does not say.</p>
+
+        <p>The three workhorse transforms each inject a specific kind of structure:</p>
+
+        <table class="data">
+          <thead><tr><th>Transform</th><th>New feature</th><th>What it expresses</th><th>Reach for it when…</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Interaction</strong></td><td class="m">x₁ · x₂</td><td>The effect of one variable depends on another (non-additivity)</td><td>Effects are conditional: a drug works only at a certain dose <em>and</em> age</td></tr>
+            <tr><td><strong>Ratio</strong></td><td class="m">x₁ / x₂</td><td>Scale-free intensity; a rate rather than a level</td><td>Density, price-per-area, debt-to-income — the meaningful quantity is normalized</td></tr>
+            <tr><td><strong>Polynomial</strong></td><td class="m">x², x³, …</td><td>Smooth curvature in a single variable</td><td>Diminishing or accelerating returns; a clear bend in the partial-dependence plot</td></tr>
+          </tbody>
+        </table>
+
+        <p>The interaction is the most important and the most underused. Consider the exclusive-or pattern: a point is positive when its two coordinates share a sign and negative otherwise. The two classes are perfectly determined, yet <em>completely inseparable</em> by any line in the \((x_1, x_2)\) plane — every straight cut puts roughly half of each class on each side. Add one feature, the product \(x_1 x_2\), and the problem collapses to a single threshold: \(x_1 x_2 > 0\). A linear model — a <em>linear</em> model — now solves it exactly. That is the whole thesis of this chapter in one example.</p>
+
+        <div class="eq"><span class="eq-tag">EQ D4.1 — INTERACTION LINEARIZES XOR</span>
+        $$ y = \operatorname{sign}(x_1 x_2), \qquad \hat{y} = \operatorname{sign}\!\big(w\,(x_1 x_2)\big) \quad\text{is exact, while}\quad \hat{y} = \operatorname{sign}(w_1 x_1 + w_2 x_2 + b) \text{ cannot exceed } 50\%. $$
+        <div class="eq-note">The raw inputs carry all the information, but in a form no linear decision boundary can read. The engineered product \(z = x_1 x_2\) is a <em>change of coordinates</em> in which the same data becomes linearly separable on one axis. <b>The model did not get smarter — the representation did.</b> A neural net would have learned an equivalent product inside a hidden layer; you supplied it directly, with one multiplication and zero training.</div>
+        </div>
+
+        <p>Polynomials generalize this. <strong>Polynomial feature expansion</strong> of degree \(d\) emits every monomial up to total degree \(d\): for two inputs at degree 2 that is \(\{1,\ x_1,\ x_2,\ x_1^2,\ x_1 x_2,\ x_2^2\}\). The number of terms grows combinatorially — and that growth is the central danger of the technique.</p>
+
+        <div class="eq"><span class="eq-tag">EQ D4.2 — SIZE OF A POLYNOMIAL EXPANSION</span>
+        $$ \#\text{terms} = \binom{n + d}{d}, \qquad \#\text{(degree-2, no bias, } n \text{ inputs)} = n + \binom{n}{2} + n = \underbrace{n}_{\text{linear}} + \underbrace{\binom{n}{2}}_{\text{interactions}} + \underbrace{n}_{\text{squares}} $$
+        <div class="eq-note">\(\binom{n+d}{d}\) counts all monomials of total degree \(\le d\) in \(n\) variables, including the constant. For \(n=2,\ d=2\) that is \(\binom{4}{2}=6\) terms; the squared-plus-interaction part alone (dropping the bias and the two linear terms) is \(x_1^2, x_1 x_2, x_2^2\) — exactly <b>3</b>. At \(n=100,\ d=2\) you already have \(\binom{102}{2}=5151\) features; at degree 3 the count explodes into the hundreds of thousands. <b>Curvature is cheap; the curse of dimensionality it buys is not.</b> This is precisely why §4.3 (selection) is not optional once you start §4.1 (creation).</div>
+        </div>
+
+        <div class="exercise" data-answer="3" data-tol="0.001" data-hint="Count only the squared and interaction monomials for two inputs at degree 2 — exclude the bias and the two linear terms.">
+          <div class="ex-q">You take two raw features \( x_1, x_2 \) and apply a <b>degree-2</b> polynomial expansion. Excluding the bias term and the two original linear terms, how many <b>squared-plus-interaction</b> features does it add?</div>
+          <div class="ex-reveal-src">The degree-2 monomials beyond linear are the two squares \( x_1^2,\ x_2^2 \) and the single interaction \( x_1 x_2 \). That is \( 2 + 1 = \) <b>3</b> new features — matching the squares-plus-interactions decomposition in EQ D4.2 with \( n = 2 \): \( n + \binom{n}{2} = 2 + 1 = 3 \).</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># EQ D4.1: one interaction feature lets a LINEAR model solve XOR-like data.
+import numpy as np
+rng = np.random.default_rng(0)
+n = 400
+X = rng.uniform(-1, 1, (n, 2))            # two raw features in [-1, 1]
+y = (X[:, 0] * X[:, 1] > 0).astype(float) # XOR pattern: same-sign => class 1
+
+def fit_logreg(F, y, steps=400, lr=0.5):
+    w = np.zeros(F.shape[1]); b = 0.0
+    for _ in range(steps):
+        p = 1 / (1 + np.exp(-(F @ w + b)))
+        g = p - y
+        w -= lr * (F.T @ g) / len(y);  b -= lr * g.mean()
+    return w, b
+
+def acc(F, w, b): return ((F @ w + b > 0) == (y > 0.5)).mean()
+
+raw  = X                                  # [x1, x2]                -> a flat plane
+poly = np.column_stack([X, X[:, 0]*X[:, 1]])   # add the x1*x2 interaction
+
+wr, br = fit_logreg(raw,  y);  wp, bp = fit_logreg(poly, y)
+print(f"linear on [x1, x2]            : accuracy {acc(raw,  wr, br):.3f}  (~chance)")
+print(f"linear on [x1, x2, x1*x2]     : accuracy {acc(poly, wp, bp):.3f}  (solved)")
+print(f"learned weight on x1*x2       : {wp[2]:+.2f}  <- it found the product")
+plot_scatter(X[:, 0], X[:, 1], y.astype(int))  # the XOR checkerboard</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="feat-xor" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT D4.1 — THE INTERACTION FEATURE</span><span class="w-sub">XOR DATA · TOGGLE x₁·x₂ · EQ D4.1</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>LABEL NOISE <output id="feat-xor-noise-out">0.05</output></label><input type="range" id="feat-xor-noise" min="0" max="0.30" step="0.01" value="0.05"/></div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>FEATURES THE MODEL SEES</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-feat-view="raw">[ x₁, x₂ ]</button>
+                  <button class="w-btn ghost" data-feat-view="inter">[ x₁, x₂, x₁·x₂ ]</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="feat-xor-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">TRAIN ACCURACY</div><div class="r-value" id="feat-xor-acc">—</div></div>
+              <div class="readout"><div class="r-label">DECISION RULE</div><div class="r-value" id="feat-xor-rule" style="font-size:12px;">—</div></div>
+              <div class="readout"><div class="r-label">SEPARABLE?</div><div class="r-value" id="feat-xor-sep" style="font-size:13px;">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The four quadrants form a checkerboard: same-sign points are one class, opposite-sign the other. With <b>[ x₁, x₂ ]</b> the best straight boundary the logistic model can draw is hopeless — accuracy hovers near 50%, and the canvas shows the flat shaded half-planes failing. Flip to <b>[ x₁, x₂, x₁·x₂ ]</b> and the very same model snaps to ~100%: the engineered product turns the checkerboard into a single threshold (the boundary becomes the two axes). Raising label noise is the only thing that can hurt it now.</div>
+        </div>
+
+        <p class="note"><strong>A practical warning.</strong> Engineered features are not free: each one is another dimension in which the model can overfit, another column to compute and store at serving time, and — for ratios — another place a zero denominator can blow up your pipeline. The discipline is to create with intent (a hypothesis about <em>why</em> this feature should matter) and then prune hard (§4.3). Create generously in the lab; ship parsimoniously.</p>
+      </section>
+
+      <!-- ====================== 4.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">4.2</span><h2>Datetime, text &amp; aggregation features</h2></div>
+        <p>Most real-world signal does not arrive as tidy numeric columns. It arrives as timestamps, free text, and one-to-many relationships between tables. Each demands its own family of feature transforms — and each is where domain knowledge pays off most.</p>
+
+        <h3>Datetime</h3>
+        <p>A raw timestamp is nearly useless to a model: as a single monotonically increasing integer it can only express "later". The information lives in its <em>components</em> — hour of day, day of week, month, is-weekend, is-holiday, days-since-last-event — extracted into separate features. The subtlety is that several of these are <strong>cyclical</strong>: hour 23 and hour 0 are adjacent, not maximally distant, yet a plain integer encoding tells the model they are 23 apart. The fix is a sine/cosine pair that wraps the cycle onto a circle.</p>
+
+        <div class="eq"><span class="eq-tag">EQ D4.3 — CYCLICAL ENCODING</span>
+        $$ x_{\sin} = \sin\!\left(\frac{2\pi\,t}{P}\right), \qquad x_{\cos} = \cos\!\left(\frac{2\pi\,t}{P}\right) $$
+        <div class="eq-note">\(t\) is the position within the cycle (e.g. the hour, \(0\ldots23\)) and \(P\) its period (here \(24\)). The pair places each time on a unit circle, so the Euclidean distance between hour 23 and hour 0 is small — as it should be — while opposite hours sit far apart. <b>One number cannot encode a cycle without a discontinuity; two can.</b> Both features are needed: \(\sin\) alone is ambiguous (it gives the same value at 6:00 and 18:00), and the \(\cos\) component breaks the tie. Tree models, which split on thresholds, often do fine with the raw integer components and need this trick less than linear models and neural nets.</div>
+        </div>
+
+        <h3>Text</h3>
+        <p>Free text is turned into features along a spectrum of sophistication. The classical baseline is the <strong>bag of words</strong> / <strong>TF-IDF</strong> representation: count each term, then down-weight terms that appear in many documents so that common words contribute little and distinctive words contribute much.</p>
+
+        <div class="eq"><span class="eq-tag">EQ D4.4 — TF-IDF</span>
+        $$ \text{tfidf}(t, d) = \underbrace{\text{tf}(t, d)}_{\text{count in doc}} \times \underbrace{\log\!\frac{N}{1 + \text{df}(t)}}_{\text{inverse doc frequency}} $$
+        <div class="eq-note">\(\text{tf}(t,d)\) is how often term \(t\) appears in document \(d\); \(\text{df}(t)\) is how many of the \(N\) documents contain it. A term in every document (\(\text{df}\approx N\)) gets an IDF near zero and is effectively ignored; a rare, document-specific term gets a large weight. The \(1+\) in the denominator avoids division by zero for unseen terms. TF-IDF is still a strong, cheap, fully interpretable baseline for classification; <b>dense embeddings (Vol II) beat it on meaning but lose the per-term transparency</b> that makes TF-IDF easy to debug. Simpler text features — length, digit count, punctuation ratio, sentiment lexicon hits — are often surprisingly predictive and cost almost nothing.</div>
+        </div>
+
+        <h3>Aggregation</h3>
+        <p>When the unit of prediction (a customer) maps to many rows in another table (their transactions), you must <strong>aggregate</strong> the many into features of the one: count, sum, mean, min, max, standard deviation, recency, and ratios of these over time windows. "Mean transaction value over the last 30 days," "number of distinct merchants this week," "ratio of this month's spend to the trailing-6-month average" — these grouped statistics are typically the most predictive features in churn, fraud, and recommendation systems, and they are exactly what automated tooling (featuretools' deep feature synthesis, modern feature stores) was built to manufacture and serve consistently between training and production.</p>
+
+        <div class="callout warn">
+          <span class="co-icon">LEAKAGE</span>
+          <p><strong>Aggregation and time features are the two richest sources of target leakage.</strong> If an aggregate is computed over a window that includes the prediction moment — "average outcome for this customer," "total refunds <em>including</em> the one you are trying to predict" — your offline metric will be spectacular and your production model will fail. Every windowed feature must be computed strictly from information available <em>before</em> the prediction timestamp. The discipline is a <em>point-in-time correct</em> join: as-of each event, use only rows that existed then. Leakage through aggregation is the single most common reason a model that "worked" in a notebook collapses on deployment.</p>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># EQ D4.3: cyclical hour encoding keeps midnight next to 11pm.
+import numpy as np
+hours = np.arange(24)
+P = 24
+hs = np.sin(2*np.pi*hours/P)
+hc = np.cos(2*np.pi*hours/P)
+
+def dist(a, b, vec):                       # Euclidean distance in feature space
+    return np.hypot(vec[0][a]-vec[0][b], vec[1][a]-vec[1][b])
+
+raw = (hours[None, :], np.zeros((1, 24)))  # raw integer "encoding" (1-D)
+cyc = (hs, hc)                             # sin/cos pair (2-D, on a circle)
+
+print("       raw-integer dist   cyclical dist")
+for a, b, name in [(23, 0, "23h -> 00h"), (0, 12, "00h -> 12h"), (6, 18, "06h -> 18h")]:
+    print(f"{name:14s}  {abs(hours[a]-hours[b]):>8.2f}        {dist(a, b, cyc):>8.3f}")
+
+print("\nraw says 23h and 00h are 23 apart (max); cyclical says they are adjacent.")
+print("00h<->12h and 06h<->18h are the true opposites -> largest cyclical distance.")
+plot_xy(hs, hc)                            # the 24 hours laid out on a circle</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 4.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">4.3</span><h2>Feature selection: filter, wrapper, embedded</h2></div>
+        <p>§4.1 generates features by the hundred; §4.3 throws most of them away. Selection matters for three reasons that compound: fewer features means less overfitting (especially when \(p\) approaches or exceeds \(n\)), faster and cheaper models in training and serving, and — often most valuable — a model a human can actually read. The three families of methods trade compute against fidelity to the final model.</p>
+
+        <table class="data">
+          <thead><tr><th>Family</th><th>How it scores features</th><th>Cost</th><th>Blind spot</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Filter</strong></td><td>Univariate statistic vs the target (correlation, MI, χ², ANOVA F), model-agnostic</td><td class="hl">cheap</td><td>Judges each feature alone — misses interactions and redundancy</td></tr>
+            <tr><td><strong>Wrapper</strong></td><td>Train the model on candidate subsets, search for the best (forward, backward, RFE)</td><td class="m">expensive</td><td>Combinatorial; prone to overfitting the search itself</td></tr>
+            <tr><td><strong>Embedded</strong></td><td>Selection happens <em>inside</em> training (L1/Lasso zeros weights; trees rank by gain)</td><td class="m">moderate</td><td>Tied to one model family; unstable under collinearity</td></tr>
+          </tbody>
+        </table>
+
+        <p><strong>Filter methods</strong> score every feature against the target independently and keep the top \(k\). They are blisteringly fast and a fine first pass, but their independence assumption is exactly their weakness: a filter ranks each feature in isolation, so it will happily keep ten copies of the same signal and discard a feature that is useless alone yet decisive in combination (the XOR product of §4.1 has zero univariate correlation with the label, yet is the whole answer).</p>
+
+        <p><strong>Wrapper methods</strong> close that gap by judging features through the actual model. <strong>Recursive feature elimination (RFE)</strong> is the canonical example: train the model on all features, drop the least important one, refit, and repeat until the target count remains. Because the model sees feature combinations at every step, RFE can keep the XOR product and discard the redundant copies — at the cost of training the model many times.</p>
+
+        <div class="eq"><span class="eq-tag">EQ D4.5 — RECURSIVE FEATURE ELIMINATION</span>
+        $$ S_0 = \{1,\dots,p\}, \qquad j^\star = \arg\min_{j \in S_t} \text{importance}_j\big(\text{fit on } S_t\big), \qquad S_{t+1} = S_t \setminus \{j^\star\} $$
+        <div class="eq-note">Start with all \(p\) features. At each step, fit the model on the surviving set \(S_t\), find the feature \(j^\star\) the <em>refit</em> model ranks lowest, and remove it. Repeat until \(|S| = k\). Importance is whatever the model exposes — \(|\text{coefficient}|\) for a linear model, split-gain for a tree. <b>The recursion is the point:</b> a feature that looks weak among all \(p\) may become essential once its redundant partners are gone, so importances are recomputed after every elimination rather than ranked once. RFE is \(O(p)\) model fits — far cheaper than the \(2^p\) of exhaustive subset search, far more faithful than a single filter pass.</div>
+        </div>
+
+        <p><strong>Embedded methods</strong> fold selection into the fit itself. <strong>L1 regularization (the Lasso)</strong> adds a penalty proportional to the sum of absolute weights; the geometry of that penalty drives many coefficients to <em>exactly</em> zero, performing selection and fitting in a single optimization.</p>
+
+        <div class="eq"><span class="eq-tag">EQ D4.6 — LASSO: SELECTION BY L1 PENALTY</span>
+        $$ \hat{\beta} = \arg\min_{\beta}\ \tfrac{1}{2n}\,\lVert y - X\beta \rVert_2^2 \;+\; \lambda \sum_{j=1}^{p} \lvert \beta_j \rvert $$
+        <div class="eq-note">The squared-error loss pulls toward the least-squares fit; the L1 term \(\lambda\sum|\beta_j|\) pulls toward zero. Because the L1 ball has <em>corners</em> on the axes (unlike the round L2 ball of ridge regression), the optimum tends to land <em>on</em> an axis — i.e. with some \(\beta_j = 0\) exactly. Larger \(\lambda\) zeros more coefficients; sweep \(\lambda\) and you trace a selection path. <b>L1 selects; L2 only shrinks.</b> The caveat experts will raise: among a group of highly correlated features the Lasso tends to pick one arbitrarily and zero the rest, which is unstable — the elastic net (L1+L2) was invented precisely to tame that, and tree-based importances (§4.4) suffer a related instability.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># EQ D4.5: recursive feature elimination by hand on a linear model.
+# 3 of 12 features are real signal; RFE should recover exactly those 3.
+import numpy as np
+rng = np.random.default_rng(1)
+n, p, k = 300, 12, 3
+X = rng.normal(0, 1, (n, p))
+X /= X.std(0)                              # standardize so |coef| is comparable
+true = [2, 5, 9]                           # the only features that matter
+y = 3.0*X[:, 2] - 2.0*X[:, 5] + 1.5*X[:, 9] + 0.3*rng.normal(0, 1, n)
+
+def ridge_coef(Xs, y, lam=1.0):           # closed-form ridge => stable importances
+    A = Xs.T @ Xs + lam*np.eye(Xs.shape[1])
+    return np.linalg.solve(A, Xs.T @ y)
+
+kept = list(range(p))
+while len(kept) > k:
+    w = ridge_coef(X[:, kept], y)
+    drop = int(np.argmin(np.abs(w)))      # j* : smallest |coef| in the refit model
+    print(f"have {len(kept):2d} -> drop original feature #{kept[drop]:2d} (|coef|={abs(w[drop]):.3f})")
+    kept.pop(drop)
+
+print("\nRFE kept :", sorted(kept))
+print("truth    :", true)
+print("match    :", sorted(kept) == true)</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="feat-race" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT D4.2 — FEATURE-SELECTION RACE</span><span class="w-sub">FILTER vs WRAPPER vs L1 · 5 SIGNAL + NOISE</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>NOISE FEATURES <output id="feat-race-noise-out">25</output></label><input type="range" id="feat-race-noise" min="5" max="60" step="5" value="25"/></div>
+              <div class="ctl"><label>SIGNAL STRENGTH <output id="feat-race-snr-out">1.8</output></label><input type="range" id="feat-race-snr" min="0.4" max="3" step="0.1" value="1.8"/></div>
+            </div>
+            <div style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.16em;color:#636363;margin:6px 0 6px;">RECALL — TRUE FEATURES RECOVERED IN THE TOP-5 (5 = PERFECT)</div>
+            <canvas class="w-canvas" id="feat-race-canvas" height="220"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">FILTER (|CORR|)</div><div class="r-value" id="feat-race-filter">—</div></div>
+              <div class="readout"><div class="r-label">WRAPPER (RFE)</div><div class="r-value" id="feat-race-wrap">—</div></div>
+              <div class="readout acc"><div class="r-label">EMBEDDED (L1)</div><div class="r-value" id="feat-race-l1">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Five true features drive the target; the rest are pure noise. Each method picks its top 5; the bars show how many of the real ones it recovered. With strong signal and little noise all three score 5/5. Drive <b>NOISE FEATURES</b> up and <b>SIGNAL STRENGTH</b> down: the univariate <b>filter</b> degrades first — it cannot tell a true feature from a noise feature that happens to correlate by chance — while the model-aware <b>RFE</b> and <b>L1</b> hold on longer. This is the cheap-vs-faithful trade-off made visible.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 4.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">4.4</span><h2>Importance &amp; redundancy: MI, correlation, VIF</h2></div>
+        <p>"Is this feature useful?" splits into two distinct questions that beginners conflate. <em>Importance</em>: how much does this feature tell me about the target? <em>Redundancy</em>: how much of this feature is already told by the others? You want features that score high on the first and low on the second — informative and non-overlapping. Three measures cover the ground.</p>
+
+        <p><strong>Correlation</strong> is the cheap importance measure, but it sees only linear association (Vol &amp; DATA 03). A feature with a perfect quadratic relationship to the target can have correlation zero. <strong>Mutual information</strong> fixes this: it measures <em>any</em> statistical dependence, linear or not, in bits.</p>
+
+        <div class="eq"><span class="eq-tag">EQ D4.7 — MUTUAL INFORMATION</span>
+        $$ I(X; Y) = \sum_{x}\sum_{y} p(x, y)\,\log\frac{p(x, y)}{p(x)\,p(y)} \;=\; H(Y) - H(Y \mid X) $$
+        <div class="eq-note">MI is zero if and only if \(X\) and \(Y\) are statistically independent, and it grows with <em>any</em> form of dependence — capturing the curved relationships correlation is blind to. The second form reads it as the reduction in the uncertainty (entropy) of \(Y\) once you know \(X\): how many bits the feature buys you about the target. <b>MI catches non-linear importance that correlation misses</b>; the price is that estimating it from continuous data needs binning or a \(k\)-nearest-neighbour estimator, and noisy estimates can over-rank features in small samples. Used as a filter score, MI is strictly more general than correlation.</div>
+        </div>
+
+        <p>Redundancy is the other axis, and it has its own canonical diagnostic. When several features are linear combinations of one another — <strong>multicollinearity</strong> — a linear model can still <em>predict</em> fine, but its coefficients become unstable and uninterpretable: the model cannot decide how to split credit between the duplicates, so tiny data changes swing the weights wildly (and sometimes flip their signs). The <strong>variance inflation factor (VIF)</strong> quantifies exactly how badly each feature is explained by the rest.</p>
+
+        <div class="eq"><span class="eq-tag">EQ D4.8 — VARIANCE INFLATION FACTOR</span>
+        $$ \text{VIF}_j = \frac{1}{1 - R_j^2}, \qquad R_j^2 = \text{the } R^2 \text{ from regressing feature } x_j \text{ on all the other features.} $$
+        <div class="eq-note">Regress feature \(x_j\) on every <em>other</em> feature and read off the \(R_j^2\). If the others explain none of \(x_j\) (\(R_j^2 = 0\)) then \(\text{VIF}_j = 1\) — no inflation. As \(R_j^2 \to 1\) the feature becomes a near-perfect combination of the others and \(\text{VIF}_j \to \infty\). The name is literal: the variance of the estimated coefficient \(\hat\beta_j\) is multiplied by exactly \(\text{VIF}_j\) relative to the no-collinearity case. <b>Rules of thumb: VIF &gt; 5 warrants a look, VIF &gt; 10 signals serious collinearity</b> — though these thresholds are conventions, not laws, and high VIF only hurts coefficient interpretation, not pure predictive accuracy. At \(R_j^2 = 0.8\), \(\text{VIF}_j = 1/(1-0.8) = 5\): the borderline case.</div>
+        </div>
+
+        <div class="exercise" data-answer="5" data-tol="0.001" data-hint="VIF = 1 / (1 - R^2). Plug in R^2 = 0.8.">
+          <div class="ex-q">Regressing feature \( x_j \) on all the other features gives \( R_j^2 = 0.8 \) — the rest of the design explains 80% of its variance. What is its variance inflation factor \( \text{VIF}_j \)?</div>
+          <div class="ex-reveal-src">By EQ D4.8, \( \text{VIF}_j = \dfrac{1}{1 - R_j^2} = \dfrac{1}{1 - 0.8} = \dfrac{1}{0.2} = \) <b>5</b>. The coefficient's variance is inflated 5×, and \( R_j^2 = 0.8 \) sits right at the conventional "warrants a look" threshold — a feature this redundant is a prime candidate to drop or combine.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># EQ D4.8: variance inflation factor, computed directly from R^2.
+import numpy as np
+rng = np.random.default_rng(0)
+n = 600
+x1 = rng.normal(0, 1, n)
+x2 = rng.normal(0, 1, n)
+x3 = 0.9*x1 + 0.1*rng.normal(0, 1, n)     # x3 is almost a copy of x1 -> high VIF
+X = np.column_stack([x1, x2, x3])
+names = ["x1", "x2", "x3 (~x1)"]
+
+def vif(X, j):                            # regress column j on the others, read R^2
+    y = X[:, j]
+    others = np.delete(X, j, axis=1)
+    A = np.column_stack([np.ones(len(y)), others])
+    beta, *_ = np.linalg.lstsq(A, y, rcond=None)
+    resid = y - A @ beta
+    r2 = 1 - resid.var() / y.var()
+    return 1.0 / (1.0 - r2), r2
+
+for j, nm in enumerate(names):
+    v, r2 = vif(X, j)
+    flag = "  <- collinear!" if v > 5 else ""
+    print(f"{nm:10s}  R^2={r2:5.3f}   VIF={v:6.2f}{flag}")
+
+print("\nx1 and x3 inflate each other; x2 is independent and sits near VIF=1.")
+print("check: R^2=0.80 -> VIF = 1/(1-0.80) =", round(1/(1-0.80), 2))</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="feat-vif" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT D4.3 — MULTICOLLINEARITY / VIF EXPLORER</span><span class="w-sub">TWO FEATURES · TUNE THEIR CORRELATION · EQ D4.8</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>corr(x₁, x₂) = ρ <output id="feat-vif-rho-out">0.80</output></label><input type="range" id="feat-vif-rho" min="0" max="0.99" step="0.01" value="0.80"/></div>
+            </div>
+            <canvas class="w-canvas" id="feat-vif-canvas" height="280"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">R² (x₁ ~ x₂)</div><div class="r-value" id="feat-vif-r2">—</div></div>
+              <div class="readout acc"><div class="r-label">VIF = 1/(1−R²)</div><div class="r-value" id="feat-vif-vif">—</div></div>
+              <div class="readout"><div class="r-label">VERDICT</div><div class="r-value" id="feat-vif-verdict" style="font-size:13px;">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Two features with a tunable correlation ρ. With two features, \(R^2 = \rho^2\) exactly, so VIF \(= 1/(1-\rho^2)\) — the curve plotted on the canvas. Slide ρ up: at ρ = 0 the cloud is round and VIF = 1 (no inflation); at ρ = 0.80, R² = 0.64 and VIF ≈ 2.8; past ρ ≈ 0.89 you cross VIF = 5 and the verdict flips to the warning zone; as ρ → 1 the cloud collapses to a line and VIF blows up toward infinity. The reading is the coefficient-variance multiplier the collinearity is costing you.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 4.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">4.5</span><h2>Selection bias &amp; nested cross-validation</h2></div>
+        <p>Here is the most expensive mistake in applied machine learning, and it is committed daily by people who know better. You have 10,000 features and 200 samples. You score every feature against the target on the <em>full</em> dataset, keep the 20 that correlate best, then run cross-validation on those 20 — and report a beautiful cross-validated accuracy. The number is a fiction. You have already let the test folds influence which features survive, so every fold's "held-out" data was used to choose the model. This is <strong>feature-selection bias</strong>, and with enough noise features it can manufacture impressive cross-validated accuracy out of pure noise.</p>
+
+        <div class="eq"><span class="eq-tag">EQ D4.9 — WHY SELECTION-ON-ALL-DATA LEAKS</span>
+        $$ \widehat{\text{acc}}_{\text{biased}} = \text{CV}\Big(\text{model} \,\big|\, \underbrace{\text{features chosen using all } (X, y)}_{\text{test folds already seen}}\Big) \;\gg\; \widehat{\text{acc}}_{\text{honest}} $$
+        <div class="eq-note">The selection step is part of the model-fitting procedure, so it must live <em>inside</em> the cross-validation loop, not before it. Pick features on the full data and the labels of every eventual test fold have leaked into the choice; the CV estimate is then biased upward — sometimes wildly. <b>With \(p \gg n\) and only noise, selecting the top-\(k\) "best" features on all the data and then cross-validating can report accuracy far above chance for data with no signal whatsoever.</b> The rule is absolute: <em>every</em> data-dependent decision — imputation statistics, scaling parameters, feature selection, hyperparameters — must be fit on the training portion of each fold alone.</div>
+        </div>
+
+        <p>The fix has two layers. First, put feature selection <em>inside</em> the cross-validation: each fold selects its own features from its own training data, and the held-out fold judges that whole pipeline honestly. Second — when you are also <em>tuning</em> something (which \(k\), which \(\lambda\)) — you need <strong>nested cross-validation</strong>: an inner loop selects features and tunes hyperparameters, an outer loop estimates the performance of that entire selection-and-tuning procedure. The outer fold never touches anything the inner loop saw.</p>
+
+        <div class="callout">
+          <span class="co-icon">THE RULE</span>
+          <p><strong>Anything you learn from the data is part of the model and must be cross-validated as a unit.</strong> If a step looks at \(y\) — selecting features, fitting an imputer's means, choosing a scaling, tuning \(\lambda\) — it belongs inside the resampling loop. Fit it once on the whole dataset "to save time" and you have leaked the test set into training. The honest pipeline is more code and a smaller, truer number; the biased one is less code and a lie. Nested CV is simply this rule applied twice: once for selection/tuning (inner), once for honest performance estimation (outer).</p>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># EQ D4.9: selection bias on PURE NOISE. There is no signal at all,
+# yet selecting features on all the data fakes high CV accuracy.
+import numpy as np
+rng = np.random.default_rng(3)
+n, p, k = 120, 4000, 20                    # p >> n: a leakage trap
+X = rng.normal(0, 1, (n, p))
+y = (rng.random(n) > 0.5).astype(float)    # label is a COIN FLIP -- zero signal
+
+def cv_acc(Xs, y, folds=4):
+    idx = np.array_split(rng.permutation(len(y)), folds); accs = []
+    for f in range(folds):
+        te = idx[f]; tr = np.concatenate([idx[g] for g in range(folds) if g != f])
+        w = np.linalg.lstsq(np.column_stack([np.ones(len(tr)), Xs[tr]]), y[tr]-0.5, rcond=None)[0]
+        pred = (np.column_stack([np.ones(len(te)), Xs[te]]) @ w > 0)
+        accs.append((pred == (y[te] > 0.5)).mean())
+    return np.mean(accs)
+
+corr = np.array([abs(np.corrcoef(X[:, j], y)[0, 1]) for j in range(p)])
+top = np.argsort(corr)[-k:]                # <- chosen using ALL of y : the leak
+print(f"BIASED  (select on all data) : CV acc = {cv_acc(X[:, top], y):.3f}")
+
+# honest: re-select inside each fold (no peeking at the test fold's labels)
+acc_h = []
+fold = np.array_split(rng.permutation(n), 4)
+for f in range(4):
+    te = fold[f]; tr = np.concatenate([fold[g] for g in range(4) if g != f])
+    c = np.array([abs(np.corrcoef(X[tr, j], y[tr])[0, 1]) for j in range(p)])
+    t = np.argsort(c)[-k:]
+    w = np.linalg.lstsq(np.column_stack([np.ones(len(tr)), X[tr][:, t]]), y[tr]-0.5, rcond=None)[0]
+    pred = (np.column_stack([np.ones(len(te)), X[te][:, t]]) @ w > 0)
+    acc_h.append((pred == (y[te] > 0.5)).mean())
+print(f"HONEST  (select inside folds): CV acc = {np.mean(acc_h):.3f}  (~0.50, the truth)")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>Good features and honest selection assume your classes are balanced enough to learn from.</strong> They often are not: fraud, disease, and defaults are rare by definition, and a 99%-accurate model that always predicts "no" is worthless. Chapter 05 — <em>Imbalanced Data</em> — covers resampling (SMOTE and friends), class weighting, threshold moving, and the precision/recall-based metrics that tell the truth when accuracy lies.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 4.R ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">4.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://jmlr.org/papers/v3/guyon03a.html" target="_blank" rel="noopener">Guyon, I. &amp; Elisseeff, A. (2003). <span class="ref-venue">An Introduction to Variable and Feature Selection</span>.</a> <span class="ref-meta">Journal of Machine Learning Research 3 — the canonical survey of filter, wrapper and embedded selection (§4.3).</span></li>
+          <li><a href="http://www.feat.engineering/" target="_blank" rel="noopener">Kuhn, M. &amp; Johnson, K. (2019). <span class="ref-venue">Feature Engineering and Selection: A Practical Approach for Predictive Models</span>.</a> <span class="ref-meta">CRC Press / open web edition — interactions, encodings, resampling-aware selection and leakage (§4.1–4.5).</span></li>
+          <li><a href="https://doi.org/10.1111/j.2517-6161.1996.tb02080.x" target="_blank" rel="noopener">Tibshirani, R. (1996). <span class="ref-venue">Regression Shrinkage and Selection via the Lasso</span>.</a> <span class="ref-meta">Journal of the Royal Statistical Society B 58(1) — the L1 penalty that performs embedded selection (EQ D4.6).</span></li>
+          <li><a href="https://doi.org/10.1073/pnas.102102699" target="_blank" rel="noopener">Ambroise, C. &amp; McLachlan, G. J. (2002). <span class="ref-venue">Selection Bias in Gene Extraction on the Basis of Microarray Gene-Expression Data</span>.</a> <span class="ref-meta">PNAS 99(10) — the definitive demonstration of feature-selection bias and why selection must sit inside cross-validation (§4.5).</span></li>
+          <li><a href="https://doi.org/10.1023/A:1012487302797" target="_blank" rel="noopener">Guyon, I., Weston, J., Barnhill, S. &amp; Vapnik, V. (2002). <span class="ref-venue">Gene Selection for Cancer Classification using Support Vector Machines</span>.</a> <span class="ref-meta">Machine Learning 46 — recursive feature elimination, EQ D4.5.</span></li>
+          <li><a href="https://doi.org/10.1111/j.1467-9868.2005.00503.x" target="_blank" rel="noopener">Zou, H. &amp; Hastie, T. (2005). <span class="ref-venue">Regularization and Variable Selection via the Elastic Net</span>.</a> <span class="ref-meta">Journal of the Royal Statistical Society B 67(2) — the L1+L2 fix for Lasso's instability under collinearity (EQ D4.6 note).</span></li>
+          <li><a href="https://doi.org/10.1103/PhysRevE.69.066138" target="_blank" rel="noopener">Kraskov, A., Stögbauer, H. &amp; Grassberger, P. (2004). <span class="ref-venue">Estimating Mutual Information</span>.</a> <span class="ref-meta">Physical Review E 69(6) — the k-nearest-neighbour estimator behind practical MI feature scores (EQ D4.7).</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../data/03-encoding-scaling.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">03</span> Encoding &amp; Scaling</div></a>
+        <a class="next" href="../data/05-imbalanced.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">05</span> Imbalanced Data</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — DATA · CH 04</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* ============================================================
+   Feature Engineering & Selection — chapter instruments
+   Single IIFE, no globals. Shared: a seeded Gaussian sampler,
+   a tiny logistic-regression fitter, ranks/correlation, and a
+   canvas frame helper used by all three widgets.
+   ============================================================ */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  /* ---- shared helpers ---- */
+  function mean(a) { var s = 0, i; for (i = 0; i < a.length; i++) s += a[i]; return s / a.length; }
+  function pearson(x, y) {
+    var mx = mean(x), my = mean(y), sxy = 0, sxx = 0, syy = 0, i, dx, dy;
+    for (i = 0; i < x.length; i++) { dx = x[i] - mx; dy = y[i] - my; sxy += dx * dy; sxx += dx * dx; syy += dy * dy; }
+    if (sxx <= 1e-12 || syy <= 1e-12) return 0;
+    return sxy / Math.sqrt(sxx * syy);
+  }
+  /* Box–Muller on a mulberry32 stream → reproducible standard normals */
+  function gaussFactory(seed) {
+    var rng = FM.mulberry32(seed), spare = null;
+    return function () {
+      if (spare !== null) { var s = spare; spare = null; return s; }
+      var u = 0, v = 0;
+      while (u <= 1e-12) u = rng();
+      v = rng();
+      var mag = Math.sqrt(-2 * Math.log(u));
+      spare = mag * Math.sin(2 * Math.PI * v);
+      return mag * Math.cos(2 * Math.PI * v);
+    };
+  }
+  function drawFrame(ctx, b) { ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1; ctx.strokeRect(b.x0, b.y1, b.x1 - b.x0, b.y0 - b.y1); }
+  function axisBox(c, padL, padR, padT, padB) { return { x0: padL, x1: c.w - padR, y0: c.h - padB, y1: padT }; }
+
+  /* batch logistic regression by gradient descent (shared by D4.1 / D4.2) */
+  function fitLogReg(F, y, steps, lr) {
+    var n = F.length, p = F[0].length, w = new Array(p), b = 0, i, j, s, t;
+    for (j = 0; j < p; j++) w[j] = 0;
+    for (t = 0; t < steps; t++) {
+      var gw = new Array(p), gb = 0;
+      for (j = 0; j < p; j++) gw[j] = 0;
+      for (i = 0; i < n; i++) {
+        s = b; for (j = 0; j < p; j++) s += w[j] * F[i][j];
+        var pr = 1 / (1 + Math.exp(-s));
+        var e = pr - y[i];
+        for (j = 0; j < p; j++) gw[j] += e * F[i][j];
+        gb += e;
+      }
+      for (j = 0; j < p; j++) w[j] -= lr * gw[j] / n;
+      b -= lr * gb / n;
+    }
+    return { w: w, b: b };
+  }
+
+  /* ========================================================
+     INSTRUMENT D4.1 — The interaction feature
+     XOR-like data. With [x1,x2] a linear model is stuck near
+     50%; adding x1*x2 makes it separable on one axis. (EQ D4.1)
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("feat-xor");
+    if (!root) return;
+    var canvas = document.getElementById("feat-xor-canvas");
+    var noise = document.getElementById("feat-xor-noise");
+    var noiseOut = document.getElementById("feat-xor-noise-out");
+    var accEl = document.getElementById("feat-xor-acc");
+    var ruleEl = document.getElementById("feat-xor-rule");
+    var sepEl = document.getElementById("feat-xor-sep");
+    var viewBtns = root.querySelectorAll("[data-feat-view]");
+    var view = "raw";
+
+    var N = 240, DR = 1;                       /* data range [-1, 1] */
+    var g = gaussFactory(7), rflip = FM.mulberry32(101);
+    var base = [];
+    for (var i = 0; i < N; i++) base.push({ x1: (g() > 0 ? 1 : -1) * Math.abs(g()) * 0.6, x2: (g() > 0 ? 1 : -1) * Math.abs(g()) * 0.6, f: rflip() });
+    /* clamp into [-1,1] */
+    for (i = 0; i < N; i++) { base[i].x1 = Math.max(-DR, Math.min(DR, base[i].x1)); base[i].x2 = Math.max(-DR, Math.min(DR, base[i].x2)); }
+
+    function dataset() {
+      var nz = +noise.value, F = [], Y = [], k;
+      for (k = 0; k < N; k++) {
+        var lab = (base[k].x1 * base[k].x2 > 0) ? 1 : 0;
+        if (base[k].f < nz) lab = 1 - lab;        /* flip a fraction of labels */
+        var row = view === "raw" ? [base[k].x1, base[k].x2]
+                                 : [base[k].x1, base[k].x2, base[k].x1 * base[k].x2];
+        F.push(row); Y.push(lab);
+      }
+      return { F: F, Y: Y };
+    }
+
+    function render() {
+      var nz = +noise.value;
+      noiseOut.textContent = nz.toFixed(2);
+      var d = dataset();
+      var m = fitLogReg(d.F, d.Y, 500, 0.6);
+      var correct = 0, k;
+      for (k = 0; k < N; k++) {
+        var s = m.b, j; for (j = 0; j < d.F[k].length; j++) s += m.w[j] * d.F[k][j];
+        if ((s > 0 ? 1 : 0) === d.Y[k]) correct++;
+      }
+      var acc = correct / N;
+      accEl.textContent = (acc * 100).toFixed(1) + "%";
+      accEl.style.color = acc > 0.85 ? C.MINT : (acc < 0.62 ? C.RED : C.SEC);
+      if (view === "raw") {
+        ruleEl.textContent = "sign(w₁x₁ + w₂x₂ + b)";
+        sepEl.textContent = "NO — flat plane"; sepEl.style.color = C.RED;
+      } else {
+        ruleEl.textContent = "sign(w·x₁x₂ + …)";
+        sepEl.textContent = "YES — via x₁x₂"; sepEl.style.color = C.MINT;
+      }
+
+      var c = FM.setupCanvas(canvas, 320);
+      var ctx = c.ctx;
+      var b = axisBox(c, 36, 16, 16, 26);
+      ctx.clearRect(0, 0, c.w, c.h);
+
+      function px(x) { return b.x0 + (x + DR) / (2 * DR) * (b.x1 - b.x0); }
+      function py(y) { return b.y0 - (y + DR) / (2 * DR) * (b.y0 - b.y1); }
+
+      /* decision-region shading on a coarse grid in raw (x1,x2) space */
+      var G = 44, gx, gy;
+      for (gx = 0; gx < G; gx++) for (gy = 0; gy < G; gy++) {
+        var X1 = -DR + 2 * DR * (gx + 0.5) / G;
+        var X2 = -DR + 2 * DR * (gy + 0.5) / G;
+        var row = view === "raw" ? [X1, X2] : [X1, X2, X1 * X2];
+        var s = m.b, jj; for (jj = 0; jj < row.length; jj++) s += m.w[jj] * row[jj];
+        ctx.fillStyle = s > 0 ? "rgba(166,242,204,.10)" : "rgba(78,138,247,.10)";
+        var cw = (b.x1 - b.x0) / G + 1, ch = (b.y0 - b.y1) / G + 1;
+        ctx.fillRect(px(X1) - cw / 2, py(X2) - ch / 2, cw, ch);
+      }
+
+      drawFrame(ctx, b);
+      ctx.strokeStyle = C.MUT; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(b.x0, py(0)); ctx.lineTo(b.x1, py(0)); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(px(0), b.y1); ctx.lineTo(px(0), b.y0); ctx.stroke();
+
+      /* points coloured by their (possibly flipped) label */
+      for (k = 0; k < N; k++) {
+        ctx.fillStyle = d.Y[k] === 1 ? C.MINT : C.BLUE;
+        ctx.beginPath(); ctx.arc(px(base[k].x1), py(base[k].x2), 2.9, 0, 2 * Math.PI); ctx.fill();
+      }
+
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText("x₁ →", b.x1 - 30, b.y0 - 14);
+      ctx.fillText("↑ x₂", b.x0 + 4, b.y1 + 4);
+      ctx.fillStyle = C.MINT; ctx.fillText("● class 1 (same sign)", b.x0 + 4, b.y1 + 18);
+      ctx.fillStyle = C.BLUE; ctx.fillText("● class 0 (opp. sign)", b.x0 + 150, b.y1 + 18);
+    }
+
+    viewBtns.forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        view = btn.getAttribute("data-feat-view");
+        viewBtns.forEach(function (o) { o.classList.toggle("on", o === btn); });
+        render();
+      });
+    });
+    noise.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT D4.2 — Feature-selection race
+     5 true features + noise. Filter (|corr|), wrapper (RFE on a
+     ridge fit), embedded (L1-ish soft-threshold) each pick top-5;
+     bars show how many true features each recovered. (§4.3)
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("feat-race");
+    if (!root) return;
+    var canvas = document.getElementById("feat-race-canvas");
+    var noise = document.getElementById("feat-race-noise");
+    var snr = document.getElementById("feat-race-snr");
+    var noiseOut = document.getElementById("feat-race-noise-out");
+    var snrOut = document.getElementById("feat-race-snr-out");
+    var fEl = document.getElementById("feat-race-filter");
+    var wEl = document.getElementById("feat-race-wrap");
+    var lEl = document.getElementById("feat-race-l1");
+
+    var N = 160, K = 5;
+    var gE = gaussFactory(202), gN = gaussFactory(303), gNoise = gaussFactory(404);
+
+    function buildData() {
+      var nNoise = +noise.value, snrV = +snr.value;
+      var p = K + nNoise;
+      var X = [], i, j;
+      for (i = 0; i < N; i++) { var r = []; for (j = 0; j < p; j++) r.push(gN()); X.push(r); }
+      var trueIdx = [0, 1, 2, 3, 4];                  /* first K columns are signal */
+      var coef = [1.0, -0.9, 0.8, -0.7, 0.6];
+      var y = [];
+      for (i = 0; i < N; i++) {
+        var s = 0; for (j = 0; j < K; j++) s += snrV * coef[j] * X[i][j];
+        y.push(s + gE());                            /* additive noise variance 1 */
+      }
+      return { X: X, y: y, p: p, trueIdx: trueIdx };
+    }
+
+    /* ridge coefficients via normal equations (Gauss elimination) */
+    function ridge(cols, X, y, lam) {
+      var p = cols.length, n = X.length, A = [], bb = [], a, i, j, k;
+      for (a = 0; a < p; a++) { A.push(new Array(p).fill(0)); bb.push(0); }
+      for (i = 0; i < n; i++) {
+        for (a = 0; a < p; a++) {
+          var xa = X[i][cols[a]];
+          bb[a] += xa * y[i];
+          for (j = a; j < p; j++) A[a][j] += xa * X[i][cols[j]];
+        }
+      }
+      for (a = 0; a < p; a++) { A[a][a] += lam; for (j = 0; j < a; j++) A[a][j] = A[j][a]; }
+      /* solve A w = bb */
+      for (k = 0; k < p; k++) {
+        var piv = A[k][k] || 1e-9;
+        for (j = k; j < p; j++) A[k][j] /= piv; bb[k] /= piv;
+        for (i = 0; i < p; i++) if (i !== k) {
+          var f = A[i][k];
+          for (j = k; j < p; j++) A[i][j] -= f * A[k][j];
+          bb[i] -= f * bb[k];
+        }
+      }
+      return bb;
+    }
+
+    function filterPick(d) {
+      var sc = [], j;
+      for (j = 0; j < d.p; j++) { var col = d.X.map(function (r) { return r[j]; }); sc.push({ j: j, v: Math.abs(pearson(col, d.y)) }); }
+      sc.sort(function (a, b) { return b.v - a.v; });
+      return sc.slice(0, K).map(function (o) { return o.j; });
+    }
+    function rfePick(d) {
+      var cols = []; for (var j = 0; j < d.p; j++) cols.push(j);
+      while (cols.length > K) {
+        var w = ridge(cols, d.X, d.y, 1.0);
+        var worst = 0, wv = Infinity;
+        for (var a = 0; a < w.length; a++) if (Math.abs(w[a]) < wv) { wv = Math.abs(w[a]); worst = a; }
+        cols.splice(worst, 1);
+      }
+      return cols.slice();
+    }
+    function l1Pick(d) {
+      /* genuine Lasso (EQ D4.6) by cyclic coordinate descent with soft-thresholding;
+         rank the surviving |beta_j| and take top-K. Columns are unit-variance, so
+         per-feature denominators are ~N and one shared lambda behaves uniformly. */
+      var n = d.X.length, p = d.p, w = new Array(p).fill(0), lam = 0.18 * n, j, i, t;
+      for (t = 0; t < 40; t++) {
+        for (j = 0; j < p; j++) {
+          var rho = 0, denom = 0;
+          for (i = 0; i < n; i++) {
+            var pred = 0; for (var a = 0; a < p; a++) if (a !== j) pred += w[a] * d.X[i][a];
+            rho += d.X[i][j] * (d.y[i] - pred);
+            denom += d.X[i][j] * d.X[i][j];
+          }
+          /* soft-threshold: the operation that produces exact zeros */
+          if (rho > lam) w[j] = (rho - lam) / denom;
+          else if (rho < -lam) w[j] = (rho + lam) / denom;
+          else w[j] = 0;
+        }
+      }
+      var sc = w.map(function (v, jj) { return { j: jj, v: Math.abs(v) }; });
+      sc.sort(function (a, b) { return b.v - a.v; });
+      return sc.slice(0, K).map(function (o) { return o.j; });
+    }
+    function recall(picked, trueIdx) {
+      var set = {}, c = 0; picked.forEach(function (j) { set[j] = 1; });
+      trueIdx.forEach(function (j) { if (set[j]) c++; });
+      return c;
+    }
+
+    function render() {
+      noiseOut.textContent = noise.value;
+      snrOut.textContent = (+snr.value).toFixed(1);
+      var d = buildData();
+      var rf = recall(filterPick(d), d.trueIdx);
+      var rw = recall(rfePick(d), d.trueIdx);
+      var rl = recall(l1Pick(d), d.trueIdx);
+      fEl.textContent = rf + " / 5"; fEl.style.color = rf >= 5 ? C.MINT : (rf <= 2 ? C.RED : C.SEC);
+      wEl.textContent = rw + " / 5"; wEl.style.color = rw >= 5 ? C.MINT : (rw <= 2 ? C.RED : C.SEC);
+      lEl.textContent = rl + " / 5"; lEl.style.color = rl >= 5 ? C.MINT : (rl <= 2 ? C.RED : C.SEC);
+
+      var c = FM.setupCanvas(canvas, 220);
+      var ctx = c.ctx;
+      var b = axisBox(c, 90, 24, 14, 24);
+      ctx.clearRect(0, 0, c.w, c.h);
+      drawFrame(ctx, b);
+
+      var bars = [{ n: "FILTER  |corr|", v: rf, col: C.SEC }, { n: "WRAPPER RFE", v: rw, col: C.BLUE }, { n: "EMBEDDED L1", v: rl, col: C.MINT }];
+      var bw = (b.y0 - b.y1) / (bars.length * 1.6);
+      ctx.font = C.MONO;
+      /* gridlines at 0..5 */
+      var t;
+      for (t = 0; t <= K; t++) {
+        var gx = b.x0 + (b.x1 - b.x0) * t / K;
+        ctx.strokeStyle = "rgba(47,50,52,.6)"; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(gx, b.y1); ctx.lineTo(gx, b.y0); ctx.stroke();
+        ctx.fillStyle = C.MUT; ctx.textAlign = "center"; ctx.textBaseline = "top";
+        ctx.fillText(t, gx, b.y0 + 5);
+      }
+      bars.forEach(function (bar, i) {
+        var cy = b.y1 + (b.y0 - b.y1) * (i + 0.5) / bars.length;
+        var len = (b.x1 - b.x0) * bar.v / K;
+        ctx.fillStyle = bar.col;
+        ctx.fillRect(b.x0, cy - bw / 2, len, bw);
+        ctx.fillStyle = C.SEC; ctx.textAlign = "right"; ctx.textBaseline = "middle";
+        ctx.fillText(bar.n, b.x0 - 8, cy);
+        ctx.fillStyle = C.BRIGHT; ctx.textAlign = "left";
+        ctx.fillText(bar.v + "/5", b.x0 + len + 6, cy);
+      });
+    }
+
+    noise.addEventListener("input", render);
+    snr.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT D4.3 — Multicollinearity / VIF explorer
+     Two correlated features; with two features R^2 = rho^2, so
+     VIF = 1/(1 - rho^2). Scatter + the VIF(rho) curve. (EQ D4.8)
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("feat-vif");
+    if (!root) return;
+    var canvas = document.getElementById("feat-vif-canvas");
+    var rho = document.getElementById("feat-vif-rho");
+    var rhoOut = document.getElementById("feat-vif-rho-out");
+    var r2El = document.getElementById("feat-vif-r2");
+    var vifEl = document.getElementById("feat-vif-vif");
+    var verdictEl = document.getElementById("feat-vif-verdict");
+
+    var N = 240;
+    var gA = gaussFactory(55), gB = gaussFactory(91);
+    var za = [], zb = [];
+    for (var i = 0; i < N; i++) { za.push(gA()); zb.push(gB()); }
+
+    function render() {
+      var r = +rho.value;
+      rhoOut.textContent = r.toFixed(2);
+      var r2 = r * r;
+      var vif = 1 / (1 - r2);
+      r2El.textContent = r2.toFixed(2);
+      vifEl.textContent = vif >= 100 ? "≥100" : vif.toFixed(2);
+      vifEl.style.color = vif > 10 ? C.RED : (vif > 5 ? "#e0a23a" : C.MINT);
+      verdictEl.textContent = vif > 10 ? "SEVERE (>10)" : (vif > 5 ? "WATCH (>5)" : "OK (≤5)");
+      verdictEl.style.color = vif > 10 ? C.RED : (vif > 5 ? "#e0a23a" : C.SEC);
+
+      var c = FM.setupCanvas(canvas, 280);
+      var ctx = c.ctx;
+      ctx.clearRect(0, 0, c.w, c.h);
+      var half = c.w * 0.5;
+
+      /* ---- left panel: scatter of (x1, x2) with corr = rho ---- */
+      var bL = { x0: 36, x1: half - 14, y0: c.h - 26, y1: 16 };
+      drawFrame(ctx, bL);
+      var DR = 3.4;
+      function pxL(x) { return bL.x0 + (x + DR) / (2 * DR) * (bL.x1 - bL.x0); }
+      function pyL(y) { return bL.y0 - (y + DR) / (2 * DR) * (bL.y0 - bL.y1); }
+      ctx.strokeStyle = C.MUT; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(bL.x0, pyL(0)); ctx.lineTo(bL.x1, pyL(0)); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(pxL(0), bL.y1); ctx.lineTo(pxL(0), bL.y0); ctx.stroke();
+      var s2 = Math.sqrt(Math.max(0, 1 - r2));
+      ctx.fillStyle = C.MINT;
+      for (i = 0; i < N; i++) {
+        var x1 = za[i];
+        var x2 = r * za[i] + s2 * zb[i];     /* corr(x1,x2) = rho exactly */
+        ctx.beginPath(); ctx.arc(pxL(x1), pyL(x2), 2.4, 0, 2 * Math.PI); ctx.fill();
+      }
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT; ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText("x₁ →", bL.x1 - 28, bL.y0 - 14);
+      ctx.fillText("↑ x₂", bL.x0 + 4, bL.y1 + 2);
+      ctx.fillStyle = C.SEC; ctx.fillText("ρ = " + r.toFixed(2), bL.x0 + 4, bL.y1 + 16);
+
+      /* ---- right panel: VIF(rho) curve with a marker at current rho ---- */
+      var bR = { x0: half + 30, x1: c.w - 16, y0: c.h - 26, y1: 16 };
+      drawFrame(ctx, bR);
+      var VMAX = 12;
+      function pxR(rr) { return bR.x0 + rr * (bR.x1 - bR.x0); }                 /* rho 0..1 */
+      function pyR(v) { return bR.y0 - Math.min(v, VMAX) / VMAX * (bR.y0 - bR.y1); }
+      /* thresholds */
+      ctx.setLineDash([4, 4]); ctx.lineWidth = 1;
+      ctx.strokeStyle = "rgba(224,162,58,.6)";
+      ctx.beginPath(); ctx.moveTo(bR.x0, pyR(5)); ctx.lineTo(bR.x1, pyR(5)); ctx.stroke();
+      ctx.strokeStyle = "rgba(255,65,54,.6)";
+      ctx.beginPath(); ctx.moveTo(bR.x0, pyR(10)); ctx.lineTo(bR.x1, pyR(10)); ctx.stroke();
+      ctx.setLineDash([]);
+      /* curve */
+      ctx.strokeStyle = C.BLUE; ctx.lineWidth = 2; ctx.beginPath();
+      for (var t = 0; t <= 100; t++) {
+        var rr = t / 100 * 0.995;
+        var vv = 1 / (1 - rr * rr);
+        var X = pxR(rr), Y = pyR(vv);
+        if (t === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y);
+      }
+      ctx.stroke();
+      /* current marker */
+      var cm = Math.min(vif, VMAX);
+      ctx.fillStyle = vif > 10 ? C.RED : (vif > 5 ? "#e0a23a" : C.MINT);
+      ctx.beginPath(); ctx.arc(pxR(r), pyR(cm), 4.5, 0, 2 * Math.PI); ctx.fill();
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT; ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText("VIF ↑", bR.x0 + 4, bR.y1 + 2);
+      ctx.fillText("ρ →", bR.x1 - 24, bR.y0 - 14);
+      ctx.fillStyle = "#e0a23a"; ctx.fillText("VIF=5", bR.x0 + 4, pyR(5) - 12);
+      ctx.fillStyle = C.RED; ctx.fillText("VIF=10", bR.x0 + 4, pyR(10) - 12);
+    }
+
+    rho.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

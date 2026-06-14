@@ -1,0 +1,797 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Deep Reinforcement Learning — DQN &amp; PPO — AI Encyclopedia</title>
+<meta name="description" content="Swap the table for a neural net and RL scales to Atari and robotics — at the cost of instability that replay buffers and clipped objectives tame. DQN, PPO, DDPG/SAC, and the reproducibility problem." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+</head>
+<body data-track="rl" data-level="advanced">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ REINFORCEMENT LEARNING / 05 / DEEP RL</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../rl/06-rl-and-llms.html">NEXT: RL &amp; LLMs →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">REINFORCEMENT LEARNING · CHAPTER 05 / 06</div>
+    <h1>Deep Reinforcement Learning — DQN &amp; PPO</h1>
+    <p class="lede">The tabular methods of the earlier chapters store one number per state, which is impractical the instant the state is a screen of pixels or a robot's joint angles. The fix is to replace the table with a neural network, and it introduces a new failure mode. <strong>Swapping the table for a neural net scales RL to Atari and robotics, at the cost of an instability that replay buffers and clipped objectives exist to tame.</strong> This chapter covers two algorithms that made deep RL work: DQN, which stabilized value learning with a replay buffer and a frozen target network, and PPO, whose clipped surrogate objective made policy gradients robust enough to become the field's default.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>ADVANCED</b></span>
+      <span>READING TIME<b>≈ 28 MIN</b></span>
+      <span>BUILDS ON<b>CH 04 · POLICY GRADIENTS</b></span>
+      <span>INSTRUMENTS<b>DQN STABILIZERS · PPO CLIP · SEED VARIANCE</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">5.1</span>Function approximation &amp; instability</a>
+      <a href="#s2"><span class="n">5.2</span>Deep Q-Networks</a>
+      <a href="#s3"><span class="n">5.3</span>Proximal Policy Optimization</a>
+      <a href="#s4"><span class="n">5.4</span>Continuous control — DDPG &amp; SAC</a>
+      <a href="#s5"><span class="n">5.5</span>Stability &amp; reproducibility</a>
+      <a href="#s6"><span class="n">5.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 5.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">5.1</span><h2>Function approximation &amp; the deadly triad</h2></div>
+        <p>Tabular RL — a separate entry in a lookup table for every state-action pair — is exact and has clean convergence guarantees. It is also useless the moment the world is large. A 210&times;160 RGB Atari frame has more configurations than there are atoms in the universe; a tabular agent would never visit the same state twice, let alone learn from it. The escape is <strong>function approximation</strong>: parameterize the value function or policy with a model \(f_\theta\) — a neural network — that <em>generalizes</em> across states, so that what it learns in one state transfers to similar states it has never seen.</p>
+
+        <p>This single substitution is what "deep" reinforcement learning means. It is also where the guarantees fall apart. Tabular Q-learning converges; the same algorithm with a neural network in the loop can diverge spectacularly — values exploding to infinity, the policy collapsing to a single useless action. Sutton and Barto named the cause the <strong>deadly triad</strong>: instability is provoked when three ingredients are present at once.</p>
+
+        <div class="eq"><span class="eq-tag">EQ R5.1 — THE DEADLY TRIAD</span>
+        $$ \underbrace{\text{function approximation}}_{\text{generalize across states}} \;+\; \underbrace{\text{bootstrapping}}_{\text{target uses your own estimate}} \;+\; \underbrace{\text{off-policy learning}}_{\text{train on data from another policy}} \;\Longrightarrow\; \text{risk of divergence} $$
+        <div class="eq-note">Each ingredient is individually benign — and individually almost indispensable. <b>Function approximation</b> is forced on us by large state spaces. <b>Bootstrapping</b> (a TD target \(r + \gamma \max_{a'} Q(s', a')\) that depends on the network's own output) is what makes learning sample-efficient. <b>Off-policy</b> learning lets us reuse old data instead of throwing it away after one gradient step. <b>Present all three and the value estimates can chase their own moving target into divergence.</b> Every algorithm in this chapter is, at heart, a recipe for keeping the triad's three forces in balance rather than letting them resonate.</div>
+        </div>
+
+        <p>Why does the combination misbehave? In Q-learning the regression target \(y = r + \gamma \max_{a'} Q_\theta(s', a')\) is computed using the <em>same</em> network \(Q_\theta\) we are updating. A gradient step that raises \(Q_\theta(s,a)\) also raises \(Q_\theta(s',a')\) for similar \((s',a')\) — function approximation guarantees the change leaks to neighbors — which raises the target, which raises the next estimate. The network is chasing a target it moves every time it takes a step toward it. With on-policy data and a fresh table this loop is damped; with off-policy data, generalization, and bootstrapping together, it can amplify without bound.</p>
+
+        <p class="note">The triad is a diagnosis, not a theorem: it identifies the conditions <em>under which</em> divergence is possible, not a guarantee that it happens. In practice well-tuned deep agents are stable far more often than the worst case suggests — but the failure mode is real, it is hard to predict in advance, and the engineering of §5.2 and §5.3 is the field's accumulated wisdom for staying out of its way.</p>
+
+        <div class="exercise" data-answer="3" data-tol="0.001" data-hint="Count the named ingredients in EQ R5.1 that together create the divergence risk.">
+          <div class="ex-q">According to the <em>deadly triad</em> (EQ R5.1), how many ingredients must be present together for off-policy value learning with neural networks to risk divergence?</div>
+          <div class="ex-reveal-src">The triad names exactly three: function approximation, bootstrapping, and off-policy learning. The answer is <b>3</b>. Remove any one — e.g. switch to on-policy Monte-Carlo targets (no bootstrapping) or a tabular value (no approximation) — and the convergence story is far safer.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 5.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">5.2</span><h2>Deep Q-Networks — replay &amp; target nets</h2></div>
+        <p>The 2015 DQN paper is the landmark: a single architecture, learning straight from raw pixels and a score, reached human-level play on most of 49 Atari games. The network itself is unremarkable — a small convnet mapping a stack of four frames to one Q-value per action. The two ideas that made it <em>stable</em> are the lesson, and both are direct countermeasures to the deadly triad.</p>
+
+        <h3>Experience replay</h3>
+        <p>Instead of learning from each transition the instant it occurs and then discarding it, DQN writes every transition \((s, a, r, s')\) into a large circular <strong>replay buffer</strong> and trains on <em>random minibatches sampled from it</em>. This buys two things. First, it breaks the temporal correlation between consecutive samples: successive frames of one episode are near-identical and violate the i.i.d. assumption every SGD convergence proof leans on; shuffling from a buffer of a million transitions restores approximate independence. Second, it reuses each experience many times, turning a precious environment interaction into many gradient updates — a large gain in sample efficiency.</p>
+
+        <h3>The target network</h3>
+        <p>The second stabilizer attacks the moving-target problem head on. DQN keeps a <em>separate</em> copy of the network, the <strong>target network</strong> \(Q_{\theta^-}\), whose weights are frozen and only periodically copied from the online network \(Q_\theta\) (every \(C\) steps in the original; modern code often uses a slow Polyak average instead). The regression target is computed with the frozen copy, so it does not move while the online network chases it.</p>
+
+        <div class="eq"><span class="eq-tag">EQ R5.2 — THE DQN LOSS (WITH A FROZEN TARGET)</span>
+        $$ \mathcal{L}(\theta) \;=\; \mathbb{E}_{(s,a,r,s') \sim \mathcal{D}}\!\left[\Big(\, \underbrace{r + \gamma \max_{a'} Q_{\theta^-}(s', a')}_{\text{target } y,\ \text{frozen}} \;-\; Q_\theta(s, a) \,\Big)^{2}\right] $$
+        <div class="eq-note">\(\mathcal{D}\) is the replay buffer; \((s,a,r,s')\) a minibatch sampled uniformly from it. The target \(y\) uses the <b>frozen</b> parameters \(\theta^-\); the gradient flows only through \(Q_\theta(s,a)\) — never through the target. <b>Stop-gradient on the bootstrap target plus a buffer that decorrelates samples is the whole stabilization recipe.</b> For a terminal transition the \(\gamma \max\) term is dropped: \(y = r\). Double-DQN refines this by choosing the next action with the online net but evaluating it with the target net, which curbs the systematic over-estimation that a single \(\max\) introduces.</div>
+        </div>
+
+        <p>The target network's weights are refreshed by a hard copy every \(C\) steps, or by a soft <strong>Polyak (exponential) update</strong> applied every step — the form most continuous-control code now uses:</p>
+
+        <div class="eq"><span class="eq-tag">EQ R5.3 — POLYAK (SOFT) TARGET UPDATE</span>
+        $$ \theta^- \;\leftarrow\; \tau\, \theta \;+\; (1 - \tau)\, \theta^-, \qquad 0 &lt; \tau \ll 1 $$
+        <div class="eq-note">With \(\tau\) small (say \(0.005\)) the target net is a slowly-trailing exponential moving average of the online net: it moves, but far too slowly to resonate with the online updates. \(\tau = 1\) recovers a hard copy every step (no smoothing at all); \(\tau \to 0\) freezes the target forever. <b>\(\tau\) trades stability against the speed at which the target tracks genuine improvement</b> — too small and learning crawls, too large and the moving-target instability creeps back.</div>
+        </div>
+
+        <div class="exercise" data-answer="true" data-tol="0" data-hint="Think about why successive transitions from one episode violate the i.i.d. assumption, and what sampling uniformly from a large buffer does to that.">
+          <div class="ex-q">True or false: DQN's experience-replay buffer breaks the correlation between consecutive training samples by storing transitions and drawing random minibatches from the whole buffer rather than learning from each transition in order. (Answer <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">Consecutive frames within an episode are highly correlated and badly violate the i.i.d. assumption SGD relies on. Sampling uniformly from a buffer of up to a million past transitions mixes experiences from many different times and episodes, restoring approximate independence — that decorrelation, together with sample reuse, is the buffer's whole purpose. The statement is <b>true</b>.</div>
+        </div>
+
+        <div class="exercise" data-answer="2.04" data-tol="0.01" data-hint="Polyak update (EQ R5.3): new target = tau·online + (1 - tau)·old target.">
+          <div class="ex-q">A target-network weight is updated by a Polyak step (EQ R5.3) with \(\tau = 0.005\). The online weight is \(\theta = 10\) and the current target weight is \(\theta^- = 2\). What is the new target weight \(\theta^-\)?</div>
+          <div class="ex-reveal-src">\(\theta^- \leftarrow \tau\,\theta + (1-\tau)\,\theta^- = 0.005 \times 10 + 0.995 \times 2 = 0.05 + 1.99 = \) <b>2.04</b>. The target inches only \(0.04\) toward the online value — exactly the slow trailing average that keeps the bootstrap target from chasing itself.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># DQN target + replay on a toy 4-state chain MDP (EQ R5.2, EQ R5.3)
+import numpy as np
+rng = np.random.default_rng(0)
+
+# states 0..3, action "go" advances one state; reward +1 only on reaching s3
+nS, gamma = 4, 0.9
+def step(s):                                   # deterministic toy dynamics
+    ns = min(s + 1, 3); r = 1.0 if ns == 3 else 0.0; done = (ns == 3)
+    return ns, r, done
+
+# fill a replay buffer with transitions from random starts
+buffer = [(s, *step(s)) for s in rng.integers(0, 3, size=400)]
+
+Q  = np.zeros(nS)                              # "online" tabular value (one per state, greedy action)
+Qt = Q.copy()                                  # frozen target network
+lr, tau = 0.5, 0.1
+for it in range(60):
+    s, ns, r, done = buffer[rng.integers(len(buffer))]   # sample from replay
+    y = r if done else r + gamma * Qt[ns]                # target uses FROZEN Qt
+    Q[s] += lr * (y - Q[s])                              # gradient step on online Q only
+    Qt = tau * Q + (1 - tau) * Qt                        # Polyak soft update (EQ R5.3)
+
+true = np.array([gamma**2, gamma**1, gamma**0, 0.0])     # exact V from each state
+print("learned Q :", Q.round(3).tolist())
+print("true   V :", true.round(3).tolist())
+print("max error :", float(np.abs(Q - true).max()).__round__(4))
+print("\nfreezing the target (Qt) is what stops Q from chasing its own moving estimate.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="drl-dqn" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT R5.1 — DQN STABILIZERS</span><span class="w-sub">REPLAY BUFFER · TARGET NET · EQ R5.2</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>REPLAY BUFFER</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-drl-dqn-replay="on">ON</button>
+                  <button class="w-btn ghost" data-drl-dqn-replay="off">OFF (ONLINE)</button>
+                </div>
+              </div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>TARGET NETWORK</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-drl-dqn-target="on">FROZEN</button>
+                  <button class="w-btn ghost" data-drl-dqn-target="off">OFF (SELF)</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="drl-dqn-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">REGIME</div><div class="r-value" id="drl-dqn-mode" style="font-size:12px;">STABILIZED</div></div>
+              <div class="readout acc"><div class="r-label">FINAL VALUE ERROR</div><div class="r-value" id="drl-dqn-err">—</div></div>
+              <div class="readout"><div class="r-label">OUTCOME</div><div class="r-value" id="drl-dqn-out" style="font-size:12px;">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Each curve is the learned value of the start state over training on the toy chain, plotted against its true value (the dashed mint line). With both stabilizers <b>ON</b> the estimate climbs smoothly to the truth. Turn <b>OFF the target network</b> and the bootstrap target chases itself — the curve overshoots and oscillates. Turn <b>OFF replay</b> and learning from a single correlated stream becomes jagged and slow. Switch both off to watch the deadly triad's instability in miniature. Nothing here needs a click — it renders the stabilized run on load.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 5.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">5.3</span><h2>Proximal Policy Optimization</h2></div>
+        <p>DQN learns a value and acts greedily; it is confined to discrete actions and is famously fiddly to tune. The other half of deep RL learns the policy directly (Chapter 04). Vanilla policy gradients are unbiased but high-variance and brittle: a single overlarge step can push the policy into a region where it collects no reward, and with no good data it never recovers. The fix that won the field is <strong>Proximal Policy Optimization (PPO)</strong> — robust, simple to implement, and the workhorse behind everything from robotics to the RLHF that aligns language models (Chapter 06).</p>
+
+        <p>PPO descends from <strong>Trust Region Policy Optimization (TRPO)</strong>, whose principle is: improve the policy, but never step so far that the new policy is unrecognizably different from the old one, because the advantage estimates were collected under the old policy and stop being valid far from it. TRPO enforces this with a hard KL-divergence constraint and a second-order optimization — correct but heavy. PPO achieves nearly the same effect with a first-order trick that fits in a few lines: <strong>clip the probability ratio</strong>.</p>
+
+        <p>Let \(r_t(\theta) = \dfrac{\pi_\theta(a_t \mid s_t)}{\pi_{\theta_{\text{old}}}(a_t \mid s_t)}\) be the ratio of the new policy's probability of the taken action to the old policy's. \(r_t = 1\) means no change; \(r_t > 1\) means the new policy is more likely to take that action. PPO maximizes the <strong>clipped surrogate objective</strong>:</p>
+
+        <div class="eq"><span class="eq-tag">EQ R5.4 — PPO CLIPPED SURROGATE OBJECTIVE</span>
+        $$ L^{\text{CLIP}}(\theta) \;=\; \mathbb{E}_t\!\Big[\, \min\big(\, r_t(\theta)\, \hat{A}_t,\;\; \mathrm{clip}\big(r_t(\theta),\, 1 - \varepsilon,\, 1 + \varepsilon\big)\, \hat{A}_t \,\big) \Big] $$
+        <div class="eq-note">\(\hat{A}_t\) is the estimated <b>advantage</b> (typically from GAE, Chapter 04) — how much better the action was than the policy's average. The \(\mathrm{clip}\) confines the ratio to \([1-\varepsilon,\, 1+\varepsilon]\) (the default \(\varepsilon = 0.2\) gives \([0.8,\, 1.2]\)). The outer \(\min\) takes the <em>pessimistic</em> of the clipped and unclipped terms, so the objective is a <b>lower bound</b> on the true improvement. <b>The effect: once an update would move the policy too far in the rewarding direction, the gradient simply switches off — there is no incentive to step past the trust region.</b> No KL constraint, no second-order solve: a one-line guardrail that made policy gradients dependable.</div>
+        </div>
+
+        <p>The asymmetry is the clever part. Read it case by case. When the advantage is <strong>positive</strong> (a good action, push its probability up) the objective stops rewarding any increase in \(r_t\) past \(1+\varepsilon\): the upside is capped, so the update cannot over-commit. When the advantage is <strong>negative</strong> (a bad action, push its probability down) the clipping floors the term at \(1-\varepsilon\), again removing the incentive to over-correct. Crucially, the \(\min\) only ever <em>removes</em> incentive when the policy has already moved far enough in the favorable direction — it never clips in a way that prevents <em>undoing</em> a too-large step, so the policy can always claw back from a mistake. That single property is why PPO is forgiving where vanilla policy gradients are not.</p>
+
+        <div class="exercise" data-answer="1.2" data-tol="0.001" data-hint="The clip is to [1 - eps, 1 + eps]; the upper bound is 1 + eps.">
+          <div class="ex-q">PPO clips the probability ratio \(r_t(\theta)\) to the interval \([1-\varepsilon,\, 1+\varepsilon]\). For the standard \(\varepsilon = 0.2\), what is the <em>upper</em> end of the clipping interval, \(1 + \varepsilon\)?</div>
+          <div class="ex-reveal-src">\(1 + \varepsilon = 1 + 0.2 = \) <b>1.2</b>. (The lower end is \(1 - 0.2 = 0.8\).) Once the new policy is more than 20% more likely to take an advantageous action than the old policy was, the clipped objective stops rewarding any further increase — the trust region, made of arithmetic.</div>
+        </div>
+
+        <div class="exercise" data-answer="2.4" data-tol="0.001" data-hint="L = min(r·A, clip(r, 0.8, 1.2)·A). Compute both terms with r = 1.5, A = +2, eps = 0.2, then take the min.">
+          <div class="ex-q">For one sample with ratio \(r_t = 1.5\), advantage \(\hat{A}_t = +2\), and \(\varepsilon = 0.2\), evaluate the per-sample PPO objective \(\min\!\big(r_t\hat{A}_t,\ \mathrm{clip}(r_t,\,0.8,\,1.2)\,\hat{A}_t\big)\) from EQ R5.4.</div>
+          <div class="ex-reveal-src">Unclipped term: \(r_t\hat{A}_t = 1.5 \times 2 = 3\). Clipped ratio: \(\mathrm{clip}(1.5, 0.8, 1.2) = 1.2\), so the clipped term is \(1.2 \times 2 = 2.4\). The objective is the minimum: \(\min(3,\ 2.4) = \) <b>2.4</b>. The advantage is positive and the ratio has already exceeded \(1+\varepsilon\), so PPO caps the reward at the clipped value — pushing \(r_t\) higher would buy nothing.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># PPO clipped objective on toy advantages, swept over the ratio r (EQ R5.4)
+import numpy as np
+
+eps = 0.2
+r = np.linspace(0.0, 2.0, 21)                  # candidate probability ratios
+
+def ppo_obj(r, A, eps=0.2):
+    unclipped = r * A
+    clipped   = np.clip(r, 1 - eps, 1 + eps) * A
+    return np.minimum(unclipped, clipped)      # pessimistic lower bound
+
+A_pos, A_neg = +1.0, -1.0
+L_pos = ppo_obj(r, A_pos, eps)
+L_neg = ppo_obj(r, A_neg, eps)
+
+print(" r     L(A=+1)   L(A=-1)")
+for ri, lp, ln in zip(r, L_pos, L_neg):
+    print(f"{ri:4.2f}   {lp:+6.3f}   {ln:+6.3f}")
+
+print(f"\nclip interval at eps={eps}: [{1-eps:.2f}, {1+eps:.2f}]")
+print("A&gt;0: objective FLATTENS once r exceeds 1.20 (no reward for over-stepping).")
+print("A&lt;0: objective FLATTENS once r drops below 0.80 (no reward for over-correcting).")
+plot_xy(r.tolist(), L_pos.tolist())</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="drl-ppo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT R5.2 — PPO CLIP VISUALIZER</span><span class="w-sub">L^CLIP vs RATIO · EQ R5.4</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>CLIP ε <output id="drl-ppo-eps-out">0.20</output></label><input type="range" id="drl-ppo-eps" min="0.05" max="0.5" step="0.01" value="0.2"/></div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>ADVANTAGE Â</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-drl-ppo-adv="pos">POSITIVE (+1)</button>
+                  <button class="w-btn ghost" data-drl-ppo-adv="neg">NEGATIVE (−1)</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="drl-ppo-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">CLIP INTERVAL</div><div class="r-value" id="drl-ppo-int">[0.80, 1.20]</div></div>
+              <div class="readout acc"><div class="r-label">OBJECTIVE FLATTENS AT r =</div><div class="r-value" id="drl-ppo-knee">1.20</div></div>
+              <div class="readout"><div class="r-label">L^CLIP AT r = 1.5</div><div class="r-value" id="drl-ppo-val">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The mint curve is the clipped objective \(L^{\text{CLIP}}\) as a function of the ratio \(r_t\); the faint grey line is the <em>unclipped</em> \(r_t\hat{A}_t\) that vanilla policy gradients would chase off to infinity. For a <b>positive</b> advantage the mint curve rises, then goes flat past \(1+\varepsilon\) — the gradient dies, so no update can over-step. Flip to a <b>negative</b> advantage and the flat shoulder appears below \(1-\varepsilon\) instead. Widen \(\varepsilon\) to loosen the trust region (bigger, riskier steps); narrow it for timid, stable ones. The default \(\varepsilon = 0.2\) is what most PPO code ships with — and what renders on load.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 5.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">5.4</span><h2>Continuous control — DDPG &amp; SAC</h2></div>
+        <p>DQN's \(\max_{a'}\) over actions is fine when there are four buttons; it is intractable when the action is a vector of continuous torques, because the maximization is itself an optimization problem at every step. Continuous control — robot arms, locomotion, autonomous driving — needs a different shape of algorithm. The dominant family is <strong>actor–critic</strong>, which keeps a learned policy (the <em>actor</em>) and a learned value (the <em>critic</em>) and lets them improve each other.</p>
+
+        <ul>
+          <li><strong>DDPG (Deep Deterministic Policy Gradient).</strong> An off-policy actor–critic that you can read as "DQN for continuous actions". A deterministic actor \(\mu_\theta(s)\) outputs the action directly, so the critic's \(\max\) is replaced by \(Q(s, \mu_\theta(s))\) — no inner optimization. It inherits DQN's replay buffer and target networks (with Polyak updates, EQ R5.3) and adds exploration noise to the actor's output. Powerful, but notoriously sensitive to hyperparameters.</li>
+          <li><strong>TD3 (Twin Delayed DDPG).</strong> Three targeted fixes for DDPG's pathologies: <em>twin critics</em> (take the minimum of two Q-networks to fight the over-estimation bias DQN also suffers); <em>delayed</em> actor updates (update the policy less often than the critic, so it chases a more settled target); and <em>target-policy smoothing</em> (add noise to the target action so the critic cannot exploit sharp peaks). Together they make off-policy continuous control far more reliable.</li>
+          <li><strong>SAC (Soft Actor–Critic).</strong> The current default for continuous control. SAC is built on <em>maximum-entropy RL</em>: the objective adds an entropy bonus, so the agent is rewarded not only for return but for staying as random as it can while still doing well. This yields strong, automatic exploration, robustness to hyperparameters, and excellent sample efficiency.</li>
+        </ul>
+
+        <div class="eq"><span class="eq-tag">EQ R5.5 — MAXIMUM-ENTROPY OBJECTIVE (SAC)</span>
+        $$ J(\pi) \;=\; \sum_{t} \mathbb{E}_{(s_t, a_t) \sim \pi}\!\Big[\, R(s_t, a_t) \;+\; \alpha\, \mathcal{H}\big(\pi(\cdot \mid s_t)\big) \,\Big], \qquad \mathcal{H}(\pi) = -\!\sum_{a} \pi(a\mid s)\log \pi(a\mid s) $$
+        <div class="eq-note">The familiar return, plus a per-step <b>entropy bonus</b> \(\alpha\,\mathcal{H}(\pi)\) that pays the agent to keep its action distribution spread out. The temperature \(\alpha\) sets the price of randomness: large \(\alpha\) keeps the policy exploratory and stochastic, \(\alpha \to 0\) recovers ordinary reward maximization. <b>Entropy turns exploration from a bolt-on heuristic (the ε of DQN) into a first-class term of the objective</b> — and modern SAC tunes \(\alpha\) automatically to hold entropy at a target, removing one of the most painful knobs in RL. The price: a continuous, off-policy method that, like DDPG/TD3, leans on replay buffers and target networks for stability.</div>
+        </div>
+
+        <p class="note">A useful mental map: PPO is the robust, on-policy default when you can afford to throw away data after each batch (and it dominates RLHF for that simplicity). SAC is the sample-efficient, off-policy default when interactions are expensive — a real robot, a slow simulator. DQN and its descendants own discrete-action problems. There is no universal winner; the right choice is dictated by action space, sample budget, and how much tuning you can tolerate.</p>
+      </section>
+
+      <!-- ====================== 5.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">5.5</span><h2>Stability &amp; reproducibility</h2></div>
+        <p>Deep RL works — and it is also, honestly, the least reproducible corner of mainstream machine learning. The reason traces straight back to §5.1: the agent generates its own data, so a tiny early difference in behavior steers it toward an entirely different region of experience, and the gap compounds. The most uncomfortable symptom is <strong>seed sensitivity</strong>: the <em>same</em> algorithm, the <em>same</em> code, the <em>same</em> hyperparameters, changing only the random seed, can produce wildly different learning curves — one seed solving the task, another never leaving the floor.</p>
+
+        <p>This is not a rumor; it was documented carefully. Henderson et al. (2018) showed that reported results in deep-RL papers were routinely driven by a handful of lucky seeds, that the choice of seed could matter as much as the choice of algorithm, and that comparisons drawn from too few runs were often statistically meaningless. The practical consequences are now widely accepted:</p>
+        <ul>
+          <li><strong>Report many seeds, not one.</strong> A single learning curve is anecdote. Five to ten independent seeds, with the spread shown — not just the best or the mean — is the minimum honest unit of evidence.</li>
+          <li><strong>Show the distribution.</strong> Mean &plusmn; standard deviation, or better, the interquartile range and confidence intervals; aggregate protocols like RLiable exist precisely to stop cherry-picking. The <em>variance across seeds</em> is itself a result — a high-variance method may be worse in practice than a lower-mean but reliable one.</li>
+          <li><strong>Pin the stack.</strong> Environment version, library version, hardware, and every hyperparameter, because deep-RL outcomes are sensitive to all of them — implementation details that sound cosmetic (reward scaling, observation normalization, the exact advantage estimator) routinely swing final performance more than the headline algorithm does.</li>
+        </ul>
+
+        <div class="eq"><span class="eq-tag">EQ R5.6 — WHAT A SINGLE SEED HIDES</span>
+        $$ \bar{G} = \frac{1}{N}\sum_{i=1}^{N} G^{(i)}, \qquad \mathrm{SE} = \frac{s}{\sqrt{N}}, \qquad s^2 = \frac{1}{N-1}\sum_{i=1}^{N}\big(G^{(i)} - \bar{G}\big)^2 $$
+        <div class="eq-note">\(G^{(i)}\) is the final return of seed \(i\); \(\bar{G}\) the mean across \(N\) seeds; \(s\) the sample standard deviation; \(\mathrm{SE}\) the standard error of the mean, which shrinks only as \(1/\sqrt{N}\). <b>With \(N = 1\) there is no \(s\) and no \(\mathrm{SE}\) — the number you report has an error bar you simply cannot see.</b> Because deep-RL seed variance is large, the \(\sqrt{N}\) in the denominator is brutal: halving your uncertainty costs four times the compute. This is the arithmetic behind "run more seeds".</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Why one seed lies: variance of final return across seeds (EQ R5.6)
+import numpy as np
+
+# simulate 8 seeds of a high-variance deep-RL run: some solve it, some stall
+rng = np.random.default_rng(7)
+seeds = 8
+# bimodal outcome: ~60% reach a good return ~180, ~40% get stuck near ~40
+solved = rng.random(seeds) &lt; 0.6
+final = np.where(solved, rng.normal(180, 15, seeds),
+                          rng.normal(40, 20, seeds)).clip(0)
+
+mean = final.mean()
+s    = final.std(ddof=1)                        # sample std (N-1)
+se   = s / np.sqrt(seeds)                        # standard error of the mean
+
+print("per-seed final return:", final.round(1).tolist())
+print(f"mean    G_bar = {mean:6.1f}")
+print(f"std     s     = {s:6.1f}   (this is what one seed cannot show you)")
+print(f"std-err SE    = {se:6.1f}   (shrinks only as 1/sqrt(N))")
+print(f"if you reported ONLY seed 0: {final[0]:.1f}  &lt;- anecdote, not evidence")
+plot_scatter(list(range(seeds)), final.tolist(), solved.astype(int).tolist())</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="drl-seed" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT R5.3 — REWARD-CURVE VARIANCE ACROSS SEEDS</span><span class="w-sub">SAME ALGORITHM · DIFFERENT SEEDS · EQ R5.6</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>SEEDS SHOWN N <output id="drl-seed-n-out">8</output></label><input type="range" id="drl-seed-n" min="1" max="12" step="1" value="8"/></div>
+              <div class="ctl"><label>RUN-TO-RUN NOISE <output id="drl-seed-noise-out">1.00</output></label><input type="range" id="drl-seed-noise" min="0.2" max="2" step="0.1" value="1"/></div>
+            </div>
+            <canvas class="w-canvas" id="drl-seed-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">MEAN FINAL RETURN</div><div class="r-value" id="drl-seed-mean">—</div></div>
+              <div class="readout acc"><div class="r-label">STD ACROSS SEEDS</div><div class="r-value" id="drl-seed-std">—</div></div>
+              <div class="readout"><div class="r-label">STD ERROR (s/√N)</div><div class="r-value" id="drl-seed-se">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Every faint curve is one seed of the <em>same</em> deep-RL agent — identical code, identical hyperparameters, only the random seed differs. The bright mint line is the mean across them; the shaded band is &plusmn; one standard deviation. Drag <b>N</b> down to 1 and you are left with a single anecdotal curve that could be the lucky run or the doomed one — you cannot tell. Drag it up and the mean steadies while the band reveals the true spread the field learned to report. Crank the noise to feel why high-variance methods demand many seeds before any comparison means anything. Renders eight seeds on load — no interaction needed.</div>
+        </div>
+
+        <div class="callout warn">
+          <span class="co-icon">PITFALLS</span>
+          <p><strong>The deep-RL reproducibility checklist.</strong> (1) One-seed results are anecdotes — report &ge;5, ideally with IQR/CIs. (2) The deadly triad can diverge silently; watch the Q-values, not just the reward. (3) Reward scaling and observation normalization swing outcomes more than the algorithm name — log them. (4) "Beats SOTA" from a different env version or evaluation protocol is not a comparison. (5) Tuning on the test environment is a contamination, exactly as in supervised learning.</p>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>The clip that stabilized policy gradients is about to stabilize something far larger.</strong> Chapter 06 turns PPO outward: the same clipped objective, with a language model as the policy and a learned reward model standing in for the environment, is the engine of RLHF — and its leaner successors, DPO and GRPO, that align the models you talk to every day.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 5.R — References ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">5.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://doi.org/10.1038/nature14236" target="_blank" rel="noopener">Mnih, V. et al. (2015). <span class="ref-venue">Human-level control through deep reinforcement learning</span>.</a> <span class="ref-meta">Nature 518 — the DQN paper; experience replay and the frozen target network (EQ R5.2) learning Atari from pixels.</span></li>
+          <li><a href="https://arxiv.org/abs/1707.06347" target="_blank" rel="noopener">Schulman, J., Wolski, F., Dhariwal, P., Radford, A. &amp; Klimov, O. (2017). <span class="ref-venue">Proximal Policy Optimization Algorithms</span>.</a> <span class="ref-meta">arXiv:1707.06347 — the clipped surrogate objective (EQ R5.4) at the heart of §5.3.</span></li>
+          <li><a href="https://arxiv.org/abs/1502.05477" target="_blank" rel="noopener">Schulman, J., Levine, S., Abbeel, P., Jordan, M. &amp; Moritz, P. (2015). <span class="ref-venue">Trust Region Policy Optimization</span>.</a> <span class="ref-meta">arXiv:1502.05477 — the KL-constrained trust region PPO approximates with a first-order clip.</span></li>
+          <li><a href="https://arxiv.org/abs/1801.01290" target="_blank" rel="noopener">Haarnoja, T., Zhou, A., Abbeel, P. &amp; Levine, S. (2018). <span class="ref-venue">Soft Actor-Critic: Off-Policy Maximum Entropy Deep RL with a Stochastic Actor</span>.</a> <span class="ref-meta">arXiv:1801.01290 — the maximum-entropy objective (EQ R5.5) and the continuous-control default of §5.4.</span></li>
+          <li><a href="https://doi.org/10.1609/aaai.v32i1.11796" target="_blank" rel="noopener">van Hasselt, H., Guez, A. &amp; Silver, D. (2016). <span class="ref-venue">Deep Reinforcement Learning with Double Q-learning</span>.</a> <span class="ref-meta">AAAI 2016 (arXiv:1509.06461) — double-DQN, decoupling action selection from evaluation to curb over-estimation.</span></li>
+          <li><a href="https://arxiv.org/abs/1509.02971" target="_blank" rel="noopener">Lillicrap, T. P. et al. (2016). <span class="ref-venue">Continuous control with deep reinforcement learning</span>.</a> <span class="ref-meta">arXiv:1509.02971 — DDPG, the deterministic actor–critic for continuous actions (§5.4).</span></li>
+          <li><a href="https://arxiv.org/abs/1802.09477" target="_blank" rel="noopener">Fujimoto, S., van Hoof, H. &amp; Meger, D. (2018). <span class="ref-venue">Addressing Function Approximation Error in Actor-Critic Methods</span>.</a> <span class="ref-meta">arXiv:1802.09477 — TD3; twin critics, delayed updates, and target smoothing.</span></li>
+          <li><a href="https://doi.org/10.1609/aaai.v32i1.11694" target="_blank" rel="noopener">Henderson, P. et al. (2018). <span class="ref-venue">Deep Reinforcement Learning that Matters</span>.</a> <span class="ref-meta">AAAI 2018 (arXiv:1709.06560) — the reproducibility and seed-variance study behind §5.5 and EQ R5.6.</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../rl/04-policy-gradients.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">04</span> Policy Gradients</div></a>
+        <a class="next" href="../rl/06-rl-and-llms.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">06</span> RL &amp; LLMs</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — REINFORCEMENT LEARNING · CH 05</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* ============================================================
+   Deep Reinforcement Learning — DQN & PPO — chapter instruments
+   Single IIFE, no globals. setTimeout-only animation.
+   Every widget guarded by element existence; meaningful
+   initial render with zero interaction.
+   ============================================================ */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  function fnum(x, d) { d = d === undefined ? 2 : d; return x.toFixed(d); }
+
+  /* ========================================================
+     INSTRUMENT R5.1 — DQN stabilizers
+     Train a scalar value of the start state on a toy chain via
+     bootstrapped TD updates. Toggle replay (decorrelated sample
+     order) and target net (frozen vs self-bootstrap) and watch
+     the learned-value curve converge, overshoot, or oscillate.
+     Pure deterministic computation -> reproducible curves.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("drl-dqn");
+    if (!root) return;
+    var canvas = document.getElementById("drl-dqn-canvas");
+    var modeEl = document.getElementById("drl-dqn-mode");
+    var errEl = document.getElementById("drl-dqn-err");
+    var outEl = document.getElementById("drl-dqn-out");
+    var replayBtns = root.querySelectorAll("[data-drl-dqn-replay]");
+    var targetBtns = root.querySelectorAll("[data-drl-dqn-target]");
+    var useReplay = true, useTarget = true;
+
+    var gamma = 0.9;
+    var trueV = Math.pow(gamma, 2);    // true value of start state s0 -> s3 reward
+    var STEPS = 80;
+
+    // Build a deterministic stream of transitions on the chain s0->s1->s2->s3(+1).
+    // Online order is correlated (whole episodes back-to-back); replay shuffles.
+    function transitions(replay) {
+      var seq = [];
+      // 24 episodes worth of transitions
+      for (var e = 0; e < 24; e++) {
+        seq.push([0, 1, 0, false]);
+        seq.push([1, 2, 0, false]);
+        seq.push([2, 3, 1, true]);
+      }
+      if (replay) {
+        // deterministic shuffle (mulberry32) -> decorrelated draw order
+        var rnd = FM.mulberry32(12345);
+        for (var i = seq.length - 1; i > 0; i--) {
+          var j = Math.floor(rnd() * (i + 1));
+          var t = seq[i]; seq[i] = seq[j]; seq[j] = t;
+        }
+      }
+      return seq;
+    }
+
+    function run(replay, target) {
+      var Q = [0, 0, 0, 0];      // online value per state
+      var Qt = [0, 0, 0, 0];     // target value per state
+      var lr = 0.4;
+      var seq = transitions(replay);
+      var curve = [];            // learned value of s0 over training
+      for (var k = 0; k < STEPS; k++) {
+        var tr = seq[k % seq.length];
+        var s = tr[0], ns = tr[1], r = tr[2], done = tr[3];
+        var boot = target ? Qt[ns] : Q[ns];   // frozen target vs self-bootstrap
+        var y = done ? r : r + gamma * boot;
+        Q[s] += lr * (y - Q[s]);
+        if (target) {
+          // periodic hard refresh of the target every 8 steps
+          if (k % 8 === 7) { Qt = Q.slice(); }
+        }
+        curve.push(Q[0]);
+      }
+      return curve;
+    }
+
+    function render() {
+      var curve = run(useReplay, useTarget);
+      var finalErr = Math.abs(curve[curve.length - 1] - trueV);
+
+      modeEl.textContent = (useReplay && useTarget) ? "STABILIZED"
+        : (!useReplay && !useTarget) ? "DEADLY TRIAD"
+        : (!useTarget) ? "NO TARGET NET" : "NO REPLAY";
+      errEl.textContent = fnum(finalErr, 3);
+      // crude oscillation detector: sign changes in successive deltas near the end
+      var osc = 0;
+      for (var i = curve.length - 20; i < curve.length - 1; i++) {
+        if (i < 1) continue;
+        var d0 = curve[i] - curve[i - 1], d1 = curve[i + 1] - curve[i];
+        if (d0 * d1 < 0) osc++;
+      }
+      outEl.textContent = finalErr < 0.03 ? "CONVERGED"
+        : osc >= 4 ? "OSCILLATING" : "BIASED / SLOW";
+      outEl.style.color = finalErr < 0.03 ? C.MINT : C.RED;
+
+      var c = FM.setupCanvas(canvas, 300);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      ctx.clearRect(0, 0, w, h);
+      var padL = 44, padR = 16, padT = 18, padB = 28;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+
+      // y-range: cover true value and the curve, with headroom for overshoot
+      var lo = 0, hi = Math.max(trueV * 1.6, 1.0);
+      for (var m = 0; m < curve.length; m++) { if (curve[m] > hi) hi = curve[m]; if (curve[m] < lo) lo = curve[m]; }
+      hi = hi * 1.05; if (hi - lo < 1e-6) hi = lo + 1;
+
+      function X(i) { return x0 + (x1 - x0) * i / (STEPS - 1); }
+      function Y(v) { return y0 - (v - lo) / (hi - lo) * (y0 - y1); }
+
+      // frame + gridlines
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(x0, y1, x1 - x0, y0 - y1);
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      for (var g = 0; g <= 4; g++) {
+        var gv = lo + (hi - lo) * g / 4, gy = Y(gv);
+        ctx.strokeStyle = "rgba(47,50,52,.5)";
+        ctx.beginPath(); ctx.moveTo(x0, gy); ctx.lineTo(x1, gy); ctx.stroke();
+        ctx.fillStyle = C.MUT; ctx.fillText(gv.toFixed(2), x0 - 6, gy);
+      }
+
+      // true-value reference line (dashed mint)
+      ctx.strokeStyle = C.MINT; ctx.setLineDash([5, 4]); ctx.lineWidth = 1.4;
+      ctx.beginPath(); ctx.moveTo(x0, Y(trueV)); ctx.lineTo(x1, Y(trueV)); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = C.MINT; ctx.textAlign = "left"; ctx.textBaseline = "bottom";
+      ctx.fillText("true V(s0) = " + trueV.toFixed(2), x0 + 6, Y(trueV) - 3);
+
+      // learned-value curve
+      var stable = (finalErr < 0.03);
+      ctx.strokeStyle = stable ? C.MINT : C.RED; ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (var p = 0; p < curve.length; p++) {
+        var px = X(p), py = Y(curve[p]);
+        if (p === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+
+      // axis labels
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText("training step →", x0, y0 + 6);
+      ctx.save();
+      ctx.translate(13, (y0 + y1) / 2); ctx.rotate(-Math.PI / 2);
+      ctx.textAlign = "center"; ctx.fillStyle = C.SEC;
+      ctx.fillText("learned V(s0)", 0, 0);
+      ctx.restore();
+    }
+
+    replayBtns.forEach(function (b) {
+      b.addEventListener("click", function () {
+        replayBtns.forEach(function (x) { x.classList.remove("on"); });
+        b.classList.add("on");
+        useReplay = b.getAttribute("data-drl-dqn-replay") === "on";
+        render();
+      });
+    });
+    targetBtns.forEach(function (b) {
+      b.addEventListener("click", function () {
+        targetBtns.forEach(function (x) { x.classList.remove("on"); });
+        b.classList.add("on");
+        useTarget = b.getAttribute("data-drl-dqn-target") === "on";
+        render();
+      });
+    });
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT R5.2 — PPO clip visualizer
+     Plot L^CLIP(r) = min(r*A, clip(r,1-eps,1+eps)*A) over r,
+     against the unclipped r*A line. Slider eps; sign of A toggles.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("drl-ppo");
+    if (!root) return;
+    var canvas = document.getElementById("drl-ppo-canvas");
+    var epsIn = document.getElementById("drl-ppo-eps");
+    var epsOut = document.getElementById("drl-ppo-eps-out");
+    var intEl = document.getElementById("drl-ppo-int");
+    var kneeEl = document.getElementById("drl-ppo-knee");
+    var valEl = document.getElementById("drl-ppo-val");
+    var advBtns = root.querySelectorAll("[data-drl-ppo-adv]");
+    var advPos = true;
+
+    function clip(x, lo, hi) { return Math.max(lo, Math.min(hi, x)); }
+
+    function render() {
+      var eps = +epsIn.value;
+      epsOut.textContent = fnum(eps, 2);
+      var A = advPos ? 1 : -1;
+      var loC = 1 - eps, hiC = 1 + eps;
+      intEl.textContent = "[" + loC.toFixed(2) + ", " + hiC.toFixed(2) + "]";
+      // objective flattens at the upper knee for A>0, lower knee for A<0
+      kneeEl.textContent = advPos ? hiC.toFixed(2) : loC.toFixed(2);
+
+      function obj(r) { return Math.min(r * A, clip(r, loC, hiC) * A); }
+      valEl.textContent = (obj(1.5) >= 0 ? "+" : "") + obj(1.5).toFixed(2);
+
+      var c = FM.setupCanvas(canvas, 300);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      ctx.clearRect(0, 0, w, h);
+      var padL = 44, padR = 16, padT = 18, padB = 30;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+
+      var rMin = 0, rMax = 2;
+      var vMin = -2.1, vMax = 2.1;
+      function X(r) { return x0 + (r - rMin) / (rMax - rMin) * (x1 - x0); }
+      function Y(v) { return y0 - (v - vMin) / (vMax - vMin) * (y0 - y1); }
+
+      // frame
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(x0, y1, x1 - x0, y0 - y1);
+      // y gridlines
+      ctx.font = C.MONO; ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      for (var gi = -2; gi <= 2; gi++) {
+        var gy = Y(gi);
+        ctx.strokeStyle = gi === 0 ? "rgba(155,155,155,.45)" : "rgba(47,50,52,.5)";
+        ctx.beginPath(); ctx.moveTo(x0, gy); ctx.lineTo(x1, gy); ctx.stroke();
+        ctx.fillStyle = C.MUT; ctx.fillText(gi.toFixed(0), x0 - 6, gy);
+      }
+
+      // shade the trust region [1-eps, 1+eps]
+      ctx.fillStyle = "rgba(166,242,204,.06)";
+      ctx.fillRect(X(loC), y1, X(hiC) - X(loC), y0 - y1);
+      ctx.strokeStyle = "rgba(166,242,204,.35)"; ctx.setLineDash([3, 3]); ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(X(loC), y1); ctx.lineTo(X(loC), y0); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(X(hiC), y1); ctx.lineTo(X(hiC), y0); ctx.stroke();
+      ctx.setLineDash([]);
+
+      // r = 1 reference (no policy change)
+      ctx.strokeStyle = "rgba(78,138,247,.5)"; ctx.setLineDash([4, 4]); ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.moveTo(X(1), y1); ctx.lineTo(X(1), y0); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = C.BLUE; ctx.textAlign = "center"; ctx.textBaseline = "top";
+      ctx.fillText("r = 1", X(1), y1 + 2);
+
+      // unclipped r*A (faint grey)
+      ctx.strokeStyle = "rgba(155,155,155,.55)"; ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      var first = true;
+      for (var ru = rMin; ru <= rMax + 1e-9; ru += 0.02) {
+        var vu = clipY(ru * A, vMin, vMax);
+        if (first) { ctx.moveTo(X(ru), Y(vu)); first = false; } else ctx.lineTo(X(ru), Y(vu));
+      }
+      ctx.stroke();
+
+      // clipped objective L^CLIP (mint, thick)
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 2.4;
+      ctx.beginPath();
+      first = true;
+      for (var r = rMin; r <= rMax + 1e-9; r += 0.02) {
+        var v = clipY(obj(r), vMin, vMax);
+        if (first) { ctx.moveTo(X(r), Y(v)); first = false; } else ctx.lineTo(X(r), Y(v));
+      }
+      ctx.stroke();
+
+      // knee marker (where it flattens)
+      var knee = advPos ? hiC : loC;
+      ctx.fillStyle = C.MINT;
+      ctx.beginPath(); ctx.arc(X(knee), Y(obj(knee)), 3.4, 0, 2 * Math.PI); ctx.fill();
+
+      // legend / labels
+      ctx.font = C.MONO; ctx.textBaseline = "top";
+      ctx.textAlign = "left"; ctx.fillStyle = C.MINT;
+      ctx.fillText("L^CLIP", x0 + 6, y1 + 4);
+      ctx.fillStyle = C.SEC;
+      ctx.fillText("(grey: unclipped r·Â, runs off)", x0 + 60, y1 + 4);
+      ctx.fillStyle = C.MUT; ctx.textAlign = "right";
+      ctx.fillText("probability ratio r  (Â = " + (advPos ? "+1" : "−1") + ")", x1, y0 + 8);
+    }
+
+    function clipY(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+    advBtns.forEach(function (b) {
+      b.addEventListener("click", function () {
+        advBtns.forEach(function (x) { x.classList.remove("on"); });
+        b.classList.add("on");
+        advPos = b.getAttribute("data-drl-ppo-adv") === "pos";
+        render();
+      });
+    });
+    epsIn.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT R5.3 — Reward-curve variance across seeds
+     N deterministic learning curves (logistic-ish climb) with
+     seed-dependent asymptote + noise. Show mean + std band and
+     report mean / std / standard error (EQ R5.6).
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("drl-seed");
+    if (!root) return;
+    var canvas = document.getElementById("drl-seed-canvas");
+    var nIn = document.getElementById("drl-seed-n");
+    var nOut = document.getElementById("drl-seed-n-out");
+    var noiseIn = document.getElementById("drl-seed-noise");
+    var noiseOut = document.getElementById("drl-seed-noise-out");
+    var meanEl = document.getElementById("drl-seed-mean");
+    var stdEl = document.getElementById("drl-seed-std");
+    var seEl = document.getElementById("drl-seed-se");
+    var T = 60; // training checkpoints per curve
+
+    function makeCurve(seed, noiseScale) {
+      var rnd = FM.mulberry32(1000 + seed * 7919);
+      // bimodal asymptote: ~60% "solve" near 190, rest stall near 45
+      var solved = rnd() < 0.6;
+      var asym = solved ? 160 + rnd() * 50 : 25 + rnd() * 45;
+      var rate = 0.06 + rnd() * 0.06;     // climb speed varies by seed
+      var mid = 12 + rnd() * 16;
+      var curve = [];
+      for (var t = 0; t < T; t++) {
+        var base = asym / (1 + Math.exp(-rate * (t - mid)));   // logistic climb
+        var n = (rnd() - 0.5) * 18 * noiseScale * (0.4 + 0.6 * t / T);
+        curve.push(Math.max(0, base + n));
+      }
+      return curve;
+    }
+
+    function render() {
+      var N = parseInt(nIn.value, 10);
+      var noise = +noiseIn.value;
+      nOut.textContent = N + "";
+      noiseOut.textContent = fnum(noise, 2);
+
+      var curves = [];
+      for (var i = 0; i < N; i++) curves.push(makeCurve(i, noise));
+
+      // mean + std band across seeds at each checkpoint
+      var mean = [], sd = [];
+      for (var t = 0; t < T; t++) {
+        var sum = 0;
+        for (var s = 0; s < N; s++) sum += curves[s][t];
+        var mu = sum / N; mean.push(mu);
+        var v = 0;
+        for (var s2 = 0; s2 < N; s2++) { var d = curves[s2][t] - mu; v += d * d; }
+        sd.push(N > 1 ? Math.sqrt(v / (N - 1)) : 0);
+      }
+      // final-return stats across seeds
+      var finals = curves.map(function (cu) { return cu[T - 1]; });
+      var fmean = finals.reduce(function (a, b) { return a + b; }, 0) / N;
+      var fvar = 0;
+      for (var k = 0; k < N; k++) { var dd = finals[k] - fmean; fvar += dd * dd; }
+      var fstd = N > 1 ? Math.sqrt(fvar / (N - 1)) : 0;
+      var fse = N > 1 ? fstd / Math.sqrt(N) : 0;
+      meanEl.textContent = fnum(fmean, 1);
+      stdEl.textContent = N > 1 ? fnum(fstd, 1) : "n/a (N=1)";
+      seEl.textContent = N > 1 ? fnum(fse, 1) : "n/a (N=1)";
+
+      var c = FM.setupCanvas(canvas, 320);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      ctx.clearRect(0, 0, w, h);
+      var padL = 44, padR = 16, padT = 18, padB = 30;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+
+      var yMax = 230;
+      function X(t) { return x0 + (x1 - x0) * t / (T - 1); }
+      function Y(v) { return y0 - v / yMax * (y0 - y1); }
+
+      // frame + gridlines
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(x0, y1, x1 - x0, y0 - y1);
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      for (var g = 0; g <= 4; g++) {
+        var gv = yMax * g / 4, gy = Y(gv);
+        ctx.strokeStyle = "rgba(47,50,52,.5)";
+        ctx.beginPath(); ctx.moveTo(x0, gy); ctx.lineTo(x1, gy); ctx.stroke();
+        ctx.fillStyle = C.MUT; ctx.fillText(gv.toFixed(0), x0 - 6, gy);
+      }
+
+      // ± std band (only meaningful with N > 1)
+      if (N > 1) {
+        ctx.fillStyle = "rgba(166,242,204,.12)";
+        ctx.beginPath();
+        for (var tt = 0; tt < T; tt++) ctx.lineTo(X(tt), Y(Math.min(yMax, mean[tt] + sd[tt])));
+        for (var tb = T - 1; tb >= 0; tb--) ctx.lineTo(X(tb), Y(Math.max(0, mean[tb] - sd[tb])));
+        ctx.closePath(); ctx.fill();
+      }
+
+      // individual seed curves (faint)
+      ctx.lineWidth = 1;
+      for (var sc = 0; sc < N; sc++) {
+        ctx.strokeStyle = "rgba(155,155,155,.45)";
+        ctx.beginPath();
+        for (var p = 0; p < T; p++) { var px = X(p), py = Y(Math.min(yMax, curves[sc][p])); if (p === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py); }
+        ctx.stroke();
+      }
+
+      // mean curve (bright mint)
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 2.4;
+      ctx.beginPath();
+      for (var q = 0; q < T; q++) { var qx = X(q), qy = Y(Math.min(yMax, mean[q])); if (q === 0) ctx.moveTo(qx, qy); else ctx.lineTo(qx, qy); }
+      ctx.stroke();
+
+      // labels
+      ctx.font = C.MONO; ctx.textBaseline = "top";
+      ctx.textAlign = "left"; ctx.fillStyle = C.MINT;
+      ctx.fillText(N > 1 ? "MEAN ± 1 STD OF " + N + " SEEDS" : "1 SEED — NO SPREAD VISIBLE", x0 + 6, y1 + 4);
+      ctx.fillStyle = C.MUT; ctx.textAlign = "right";
+      ctx.fillText("training step →", x1, y0 + 8);
+      ctx.textAlign = "left";
+      ctx.fillText("episode return", x0, y0 + 8);
+    }
+
+    nIn.addEventListener("input", render);
+    noiseIn.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

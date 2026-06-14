@@ -1,0 +1,868 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Distributions — The Shapes of Randomness — AI Encyclopedia</title>
+<meta name="description" content="A handful of named distributions describe most randomness you'll meet — and the Central Limit Theorem explains why the Normal is everywhere." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+</head>
+<body data-track="stats" data-level="intro">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ STATISTICS / 02 / DISTRIBUTIONS</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../stats/03-descriptive-correlation.html">NEXT: CORRELATION →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">MATHEMATICS &amp; STATISTICS · CHAPTER 02 / 08</div>
+    <h1>Distributions — The Shapes of Randomness</h1>
+    <p class="lede"><strong>A handful of named distributions account for most randomness in practice</strong>: coin flips, queue arrivals, measurement noise, market returns. Each is fixed by one or two numbers. The Central Limit Theorem explains why the Normal curve recurs so often: average enough independent quantities and it appears, regardless of where you started.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>INTRO</b></span>
+      <span>READING TIME<b>≈ 24 MIN</b></span>
+      <span>BUILDS ON<b>STATS 01</b></span>
+      <span>INSTRUMENTS<b>EXPLORER · CLT · TAIL RISK</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">2.1</span>Discrete distributions</a>
+      <a href="#s2"><span class="n">2.2</span>Continuous distributions</a>
+      <a href="#s3"><span class="n">2.3</span>Moments</a>
+      <a href="#s4"><span class="n">2.4</span>The Central Limit Theorem</a>
+      <a href="#s5"><span class="n">2.5</span>Heavy tails for quants</a>
+      <a href="#s6"><span class="n">2.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 2.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">2.1</span><h2>Discrete distributions: counting outcomes</h2></div>
+        <p>A <strong>distribution</strong> is a complete accounting of how probability is spread over the possible outcomes of a random quantity. When the outcomes are countable — heads or tails, the number of emails arriving in an hour, the roll of a die — we describe it with a <strong>probability mass function</strong> (PMF): a rule \(p(x)\) that assigns each outcome a probability, with the masses summing to one. Four discrete families cover an astonishing share of real problems, and they are all secretly about the same atom: a single yes/no trial.</p>
+
+        <p>The atom is the <strong>Bernoulli</strong> distribution — one trial with success probability \(p\). Everything in this section is built by repeating it, counting it, or waiting on it.</p>
+
+        <div class="eq"><span class="eq-tag">EQ S2.1 — BERNOULLI &amp; BINOMIAL</span>
+        $$ \text{Bernoulli: } \; p(1) = p,\; p(0) = 1 - p \qquad\qquad \text{Binomial: } \; P(X = k) = \binom{n}{k} p^{k} (1 - p)^{n - k} $$
+        <div class="eq-note">A Bernoulli variable is a single coin flip scored 1 (success, probability \(p\)) or 0 (failure). The <b>Binomial</b> counts how many successes appear in \(n\) independent Bernoulli flips: \(\binom{n}{k}\) is the number of ways to place the \(k\) successes, times the probability of any one such arrangement. <b>A Binomial is just a sum of \(n\) Bernoullis</b> — which is exactly why §2.4 will make it look Normal as \(n\) grows. Its mean is \(np\) and its variance \(np(1-p)\).</div>
+        </div>
+
+        <p>Two more families finish the toolkit, and both arise by pushing the Binomial to a limit:</p>
+        <ul>
+          <li><strong>Poisson</strong> — the law of rare events spread over a continuum of opportunity. Take a Binomial with many trials (\(n \to \infty\)) each tiny in probability (\(p \to 0\)) but with a fixed expected count \(\lambda = np\), and you get \(P(X = k) = e^{-\lambda}\lambda^{k}/k!\). It models arrivals: photons on a sensor, customers at a till, mutations along a genome, requests at a server. Its defining quirk — <b>mean equals variance equals \(\lambda\)</b> — is a diagnostic: if your count data has variance much larger than its mean, it is <em>over-dispersed</em> and the Poisson is the wrong model.</li>
+          <li><strong>Geometric</strong> — the waiting time for the first success: \(P(X = k) = (1 - p)^{k - 1} p\) for \(k = 1, 2, \dots\) (the number of flips up to and including the first head). It is the discrete cousin of the Exponential (§2.2) and is <b>memoryless</b>: having already waited ten flips tells you nothing about how many more remain.</li>
+        </ul>
+
+        <div class="eq"><span class="eq-tag">EQ S2.2 — POISSON &amp; GEOMETRIC</span>
+        $$ \text{Poisson}(\lambda): \; P(X = k) = \frac{e^{-\lambda}\,\lambda^{k}}{k!} \qquad\qquad \text{Geometric}(p): \; P(X = k) = (1 - p)^{k - 1} p $$
+        <div class="eq-note">Poisson: one parameter \(\lambda > 0\) is both the rate and (uniquely) both moments. Geometric: \(\mathbb{E}[X] = 1/p\) — a fair coin (\(p = 0.5\)) takes 2 flips on average to land its first head; a rare success (\(p = 0.01\)) takes 100. <b>Both inherit independence from the Bernoulli atom they are built from</b>, which is what makes their formulas so clean.</div>
+        </div>
+
+        <div class="exercise" data-answer="0.21" data-tol="0.005" data-hint="Bernoulli variance is p times (1 − p).">
+          <div class="ex-q">A single trial succeeds with probability \(p = 0.3\). What is the variance of this \(\text{Bernoulli}(0.3)\) variable, \(p(1 - p)\)?</div>
+          <div class="ex-reveal-src">A Bernoulli's variance is \(\mathbb{E}[X^2] - (\mathbb{E}[X])^2 = p - p^2 = p(1 - p)\). With \(p = 0.3\): \(0.3 \times 0.7 = \) <b>0.21</b>. Note it is maximised at \(p = 0.5\) (variance 0.25) — a fair coin is the most unpredictable, a near-certain trial the least.</div>
+        </div>
+
+        <div class="exercise" data-answer="0.184" data-tol="0.02" data-hint="Poisson PMF: e^(−λ) λ^k / k! with λ = 1, k = 2.">
+          <div class="ex-q">Calls arrive at a desk at a rate of one per minute, \(\lambda = 1\). Using the Poisson PMF, what is \(P(X = 2)\) — the probability of exactly two calls in a minute? (Use \(e^{-1} = 0.368\).)</div>
+          <div class="ex-reveal-src">\(P(X = 2) = \dfrac{e^{-1}\,1^{2}}{2!} = \dfrac{0.368}{2} = \) <b>0.184</b>. About one minute in five-and-a-half sees exactly two calls — even though one is the expected number.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Sample Binomial, Poisson, Normal -- empirical vs theoretical mean and var
+import numpy as np
+rng = np.random.default_rng(0)
+M = 200_000                                   # samples per family
+
+n, p   = 10, 0.3                              # Binomial(10, 0.3)
+lam     = 4.0                                 # Poisson(4)
+mu, sig = 0.0, 2.0                            # Normal(0, 2)
+
+draws = {
+    "Binomial(10,0.3)": (rng.binomial(n, p, M),  n*p,        n*p*(1-p)),
+    "Poisson(4)":       (rng.poisson(lam, M),    lam,        lam),       # mean == var == lambda
+    "Normal(0,2)":      (rng.normal(mu, sig, M), mu,         sig**2),
+}
+
+print(f"{'family':18}{'emp mean':>10}{'theory':>9}{'emp var':>10}{'theory':>9}")
+for name, (s, m, v) in draws.items():
+    print(f"{name:18}{s.mean():10.3f}{m:9.3f}{s.var():10.3f}{v:9.3f}")
+
+print("\nempirical moments track the formulas to ~1% at M = 200k;")
+print("note Poisson's mean and variance are both 4 -- its signature.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="dist-explorer" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT S2.1 — DISTRIBUTION EXPLORER</span><span class="w-sub">PMF / PDF + SAMPLED HISTOGRAM · 6 FAMILIES</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl" style="flex:1 1 100%;min-width:auto;">
+                <label>FAMILY</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-dist-fam="binomial">BINOMIAL</button>
+                  <button class="w-btn ghost" data-dist-fam="poisson">POISSON</button>
+                  <button class="w-btn ghost" data-dist-fam="geometric">GEOMETRIC</button>
+                  <button class="w-btn ghost" data-dist-fam="uniform">UNIFORM</button>
+                  <button class="w-btn ghost" data-dist-fam="normal">NORMAL</button>
+                  <button class="w-btn ghost" data-dist-fam="exponential">EXPONENTIAL</button>
+                </div>
+              </div>
+            </div>
+            <div class="ctl-row">
+              <div class="ctl"><label><span id="dist-p1-name">TRIALS n</span> <output id="dist-p1-out">20</output></label><input type="range" id="dist-p1" min="1" max="60" step="1" value="20"/></div>
+              <div class="ctl"><label><span id="dist-p2-name">SUCCESS p</span> <output id="dist-p2-out">0.40</output></label><input type="range" id="dist-p2" min="0.02" max="0.98" step="0.01" value="0.40"/></div>
+            </div>
+            <canvas class="w-canvas" id="dist-explorer-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">TYPE</div><div class="r-value" id="dist-type" style="font-size:13px;">—</div></div>
+              <div class="readout"><div class="r-label">MEAN</div><div class="r-value" id="dist-mean">—</div></div>
+              <div class="readout"><div class="r-label">VARIANCE</div><div class="r-value" id="dist-var">—</div></div>
+              <div class="readout"><div class="r-label">STD DEV</div><div class="r-value" id="dist-sd">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The <span style="color:var(--accent);">mint</span> curve is the exact theoretical PMF (bars, for discrete families) or PDF (continuous); the <span style="color:var(--blue);">blue</span> outline is a histogram of 4,000 fresh samples. Switch to <b>Poisson</b> and notice the readouts for mean and variance stay locked together. Drag a Binomial's \(n\) up and watch the discrete bars climb into a smooth bell — a preview of §2.4. The two sliders rename themselves to whatever the chosen family's parameters are.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 2.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">2.2</span><h2>Continuous distributions: spreading mass over a line</h2></div>
+        <p>When outcomes form a continuum — a height, a temperature, a wait in seconds — no single point can carry positive probability (there are infinitely many points). Instead we use a <strong>probability density function</strong> (PDF) \(f(x)\): probability is <em>area under the curve</em>, so \(P(a \le X \le b) = \int_a^b f(x)\,\mathrm{d}x\) and the total area is one. Three continuous families dominate the introductory landscape.</p>
+
+        <p>The <strong>Uniform</strong> on \([a, b]\) is the flat distribution — every value in the interval equally likely. It is the bedrock of simulation: a computer's random-number generator produces \(\text{Uniform}(0, 1)\) draws, and every other distribution is manufactured from them by transformation.</p>
+
+        <div class="eq"><span class="eq-tag">EQ S2.3 — THE NORMAL (GAUSSIAN) DENSITY</span>
+        $$ f(x) = \frac{1}{\sigma\sqrt{2\pi}}\, \exp\!\left( -\frac{(x - \mu)^2}{2\sigma^2} \right), \qquad x \in \mathbb{R} $$
+        <div class="eq-note">The bell curve, fixed entirely by its mean \(\mu\) (where it is centred) and standard deviation \(\sigma\) (how wide). The exponent is a parabola in \(x\), so the log-density is a downward parabola — the source of the curve's symmetric, rapidly-decaying tails. The <b>68–95–99.7 rule</b>: roughly 68% of mass lies within \(1\sigma\) of the mean, 95% within \(2\sigma\), 99.7% within \(3\sigma\). Standardising via \(z = (x - \mu)/\sigma\) collapses every Normal onto one <em>standard</em> Normal, \(\mathcal{N}(0, 1)\) — the reason a single z-table once sufficed for all of statistics.</div>
+        </div>
+
+        <p>The <strong>Exponential</strong> is the continuous waiting time between Poisson events: if arrivals come at rate \(\lambda\), the gap until the next one is \(\text{Exp}(\lambda)\), with density \(f(x) = \lambda e^{-\lambda x}\) for \(x \ge 0\). Like the Geometric, it is <strong>memoryless</strong> — the only continuous distribution that is. A bus that arrives "on average every 10 minutes" as a Poisson process gives you no credit for the 9 minutes you've already waited; your expected remaining wait is still 10. This is famously counter-intuitive and is exactly why memorylessness deserves a name.</p>
+
+        <div class="eq"><span class="eq-tag">EQ S2.4 — UNIFORM &amp; EXPONENTIAL</span>
+        $$ \text{Uniform}(a,b): \; f(x) = \frac{1}{b - a} \;\; (a \le x \le b) \qquad\qquad \text{Exponential}(\lambda): \; f(x) = \lambda e^{-\lambda x} \;\; (x \ge 0) $$
+        <div class="eq-note">Uniform: \(\mathbb{E}[X] = \tfrac{a + b}{2}\), \(\operatorname{Var}(X) = \tfrac{(b - a)^2}{12}\) — that \(1/12\) returns in the CLT instrument. Exponential: \(\mathbb{E}[X] = 1/\lambda\), \(\operatorname{Var}(X) = 1/\lambda^2\); its variance equals its mean <em>squared</em>, so the distribution is right-skewed — many short waits, a few long ones. <b>The Exponential is to the Poisson what the Geometric is to the Bernoulli</b>: the continuous waiting time for a discrete counting process.</div>
+        </div>
+
+        <div class="exercise" data-answer="0.0833" data-tol="0.02" data-hint="Uniform(a,b) variance is (b − a) squared over 12.">
+          <div class="ex-q">A random number is drawn uniformly from \([0, 1]\). What is its variance, \(\dfrac{(b - a)^2}{12}\)?</div>
+          <div class="ex-reveal-src">With \(a = 0,\ b = 1\): \(\operatorname{Var}(X) = \dfrac{(1 - 0)^2}{12} = \dfrac{1}{12} = \) <b>0.0833</b>. This single number — the variance of a unit uniform — is the seed the Central Limit Theorem grows the Normal from in §2.4.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 2.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">2.3</span><h2>Moments: four numbers that describe a shape</h2></div>
+        <p>You don't need the whole PDF to talk about a distribution; four summary numbers — the <strong>moments</strong> — capture its location, spread, lopsidedness, and tail-heaviness. They are how one distribution gets compared to another, and how you decide whether the Normal is a fair description of your data.</p>
+
+        <div class="eq"><span class="eq-tag">EQ S2.5 — THE FOUR MOMENTS</span>
+        $$ \mu = \mathbb{E}[X], \quad \sigma^2 = \mathbb{E}\big[(X - \mu)^2\big], \quad \text{skew} = \mathbb{E}\!\left[\left(\tfrac{X - \mu}{\sigma}\right)^3\right], \quad \text{kurt} = \mathbb{E}\!\left[\left(\tfrac{X - \mu}{\sigma}\right)^4\right] $$
+        <div class="eq-note"><b>Mean</b> \(\mu\) — the centre of mass, the balance point of the density. <b>Variance</b> \(\sigma^2\) — the average squared distance from the mean; its square root \(\sigma\) is the standard deviation, in the same units as the data. <b>Skewness</b> — the standardised third moment; \(0\) for any symmetric distribution, positive when the right tail is longer (incomes, wait times), negative when the left tail is. <b>Kurtosis</b> — the standardised fourth moment; it measures how much mass sits in the tails. The Normal has kurtosis exactly \(3\), so practitioners quote <em>excess kurtosis</em> \(= \text{kurt} - 3\): zero for a Normal, positive for the heavy-tailed distributions of §2.5.</div>
+        </div>
+
+        <p>Each higher moment refines the picture. Mean and variance alone cannot distinguish a symmetric bell from a lopsided ramp with the same centre and spread — you need skew. And two distributions can share mean, variance, <em>and</em> skew yet differ wildly in how often they throw extreme values — that difference lives in the kurtosis, which is the single most important number when randomness can hurt you (§2.5).</p>
+
+        <p class="note"><strong>A caution that experts insist on.</strong> Higher moments are estimated from data far less reliably than lower ones: a sample skew or kurtosis is dominated by the few most extreme points you happened to observe, so it is noisy and, for genuinely heavy-tailed data, may not even converge. For some distributions in §2.5 the higher moments are <em>infinite</em> — they do not exist at all. Treat sample kurtosis as a hint, not a measurement.</p>
+
+        <table class="data">
+          <thead><tr><th>Distribution</th><th>Mean</th><th>Variance</th><th>Skew</th><th>Excess kurtosis</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Normal</strong>(\(\mu, \sigma^2\))</td><td class="m">μ</td><td class="m">σ²</td><td class="m">0</td><td class="hl">0</td></tr>
+            <tr><td><strong>Uniform</strong>(\(a, b\))</td><td class="m">(a+b)/2</td><td class="m">(b−a)²/12</td><td class="m">0</td><td class="m">−1.2</td></tr>
+            <tr><td><strong>Exponential</strong>(\(\lambda\))</td><td class="m">1/λ</td><td class="m">1/λ²</td><td class="m">+2</td><td class="hl">+6</td></tr>
+            <tr><td><strong>Poisson</strong>(\(\lambda\))</td><td class="m">λ</td><td class="m">λ</td><td class="m">1/√λ</td><td class="m">1/λ</td></tr>
+            <tr><td><strong>Student-t</strong>(\(\nu\))</td><td class="m">0 (ν&gt;1)</td><td class="m">ν/(ν−2)</td><td class="m">0 (ν&gt;3)</td><td class="hl">6/(ν−4)</td></tr>
+          </tbody>
+        </table>
+        <p class="note">Read the kurtosis column as a "danger gauge." The Uniform is <em>platykurtic</em> (negative excess) — bounded, no surprises. The Exponential and especially the Student-t are <em>leptokurtic</em> (positive excess) — far more prone to outliers than a Normal of the same variance. A Student-t with \(\nu = 5\) has excess kurtosis \(6/(5 - 4) = 6\), and below \(\nu = 4\) its kurtosis is infinite.</p>
+      </section>
+
+      <!-- ====================== 2.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">2.4</span><h2>The Central Limit Theorem: why the Normal is everywhere</h2></div>
+        <p>Here is the result that makes the whole subject hang together — and the reason the Normal earns its place at the centre of statistics. Take <em>any</em> distribution with a finite mean \(\mu\) and finite variance \(\sigma^2\). Draw \(n\) independent samples from it and average them. As \(n\) grows, the distribution of that average — properly recentred and rescaled — converges to a standard Normal, <strong>regardless of the shape you started from</strong>.</p>
+
+        <div class="eq"><span class="eq-tag">EQ S2.6 — THE CENTRAL LIMIT THEOREM</span>
+        $$ \bar{X}_n = \frac{1}{n}\sum_{i=1}^{n} X_i \quad\Longrightarrow\quad \frac{\bar{X}_n - \mu}{\sigma / \sqrt{n}} \;\xrightarrow{\;d\;}\; \mathcal{N}(0, 1) \quad \text{as } n \to \infty $$
+        <div class="eq-note">The sample mean \(\bar{X}_n\) is itself random; the CLT pins down its distribution. Two facts fall out for free. First, \(\bar{X}_n\) centres on \(\mu\) — the average is an unbiased estimate of the true mean. Second, its spread shrinks as \(\sigma/\sqrt{n}\): <b>the standard error falls like \(1/\sqrt{n}\)</b>, so to halve your uncertainty you must <em>quadruple</em> your sample. The \(\xrightarrow{d}\) means "converges in distribution." The CLT does not require the \(X_i\) to be Normal — only that they share a distribution with finite variance, the one condition §2.5 will show is not always met.</div>
+        </div>
+
+        <p>This is why the bell curve appears unbidden across nature and engineering: any quantity that is the <em>sum of many small independent contributions</em> — measurement error from countless tiny perturbations, a person's height from thousands of genetic and environmental nudges, the total noise on a sensor — is approximately Normal by construction. The Normal is not assumed; it is <em>produced</em>, again and again, by aggregation.</p>
+
+        <div class="callout">
+          <span class="co-icon">KEY</span>
+          <p><strong>Convergence is fast for friendly shapes, slow for skewed ones.</strong> For a symmetric starting distribution like the Uniform, the average of just \(n = 5\)–\(10\) draws already looks convincingly bell-shaped. For a strongly skewed one like the Exponential you may need \(n = 30\)–\(50\) before the bell is clean — the textbook "\(n \ge 30\)" rule of thumb is a rough average, not a law. The <em>shape</em> of the parent distribution governs the <em>rate</em> of convergence, even though it never governs the limit.</p>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># CLT demo: average N Uniform(0,1) draws, M times, and histogram the means
+import numpy as np
+rng = np.random.default_rng(1)
+N, M = 30, 40_000                              # N draws per mean, M means
+
+means = rng.uniform(0, 1, size=(M, N)).mean(axis=1)
+
+# CLT prediction for the means: centre 0.5, variance (1/12)/N
+print(f"empirical  mean of means : {means.mean():.4f}   (theory 0.5000)")
+print(f"empirical  var  of means : {means.var():.5f}  (theory {(1/12)/N:.5f})")
+print(f"=> standard error shrinks like 1/sqrt(N):  {(1/12/N)**0.5:.4f}")
+
+# a bell emerges from a FLAT parent -- plot the density histogram
+hist, edges = np.histogram(means, bins=45, density=True)
+centers = 0.5 * (edges[:-1] + edges[1:])
+print("\nthe parent Uniform is flat; the average of 30 of them is a clean bell.")
+plot_xy(centers, hist)</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="dist-clt" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT S2.2 — CENTRAL LIMIT THEOREM SIMULATOR</span><span class="w-sub">AVERAGE OF N IID DRAWS → NORMAL · EQ S2.6</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>PARENT</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-clt-parent="uniform">UNIFORM</button>
+                  <button class="w-btn ghost" data-clt-parent="exponential">EXPONENTIAL</button>
+                  <button class="w-btn ghost" data-clt-parent="bernoulli">BERNOULLI</button>
+                </div>
+              </div>
+              <div class="ctl"><label>SAMPLE SIZE N <output id="dist-clt-n-out">1</output></label><input type="range" id="dist-clt-n" min="1" max="50" step="1" value="1"/></div>
+            </div>
+            <canvas class="w-canvas" id="dist-clt-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">PARENT SHAPE</div><div class="r-value" id="dist-clt-shape" style="font-size:13px;">—</div></div>
+              <div class="readout acc"><div class="r-label">STD ERROR σ/√N</div><div class="r-value" id="dist-clt-se">—</div></div>
+              <div class="readout"><div class="r-label">SAMPLE SKEW</div><div class="r-value" id="dist-clt-skew">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">At \(N = 1\) you see the raw parent — flat, skewed, or two-spiked. Drag \(N\) upward: 10,000 sample means are re-histogrammed each step and the <span style="color:var(--accent);">mint</span> Normal curve (mean \(\mu\), width \(\sigma/\sqrt{N}\)) is overlaid for comparison. Watch the Exponential's heavy right skew melt away far more slowly than the Uniform's — the parent shape sets the <em>speed</em> of convergence, never the destination. The sample-skew readout marches toward zero as the bell forms.</div>
+        </div>
+
+        <div class="exercise" data-answer="0.5" data-tol="0.02" data-hint="Standard error is sigma over root-N; sigma of a unit uniform is 1/sqrt(12).">
+          <div class="ex-q">You average \(n = 4\) draws from \(\text{Uniform}(0, 1)\), whose standard deviation is \(\sigma = 1/\sqrt{12} = 0.2887\). By what factor \(1/\sqrt{n}\) does the standard error of the mean shrink relative to a single draw?</div>
+          <div class="ex-reveal-src">The standard error is \(\sigma/\sqrt{n}\), so relative to one draw it shrinks by \(1/\sqrt{n} = 1/\sqrt{4} = 1/2 = \) <b>0.5</b>. Quadrupling the sample halves the error — the \(1/\sqrt{n}\) law that governs every poll, A/B test, and Monte-Carlo estimate.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 2.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">2.5</span><h2>Heavy tails for quants: when the Normal lies</h2></div>
+        <p>The CLT comes with fine print, and on a trading desk that fine print is the whole story. The theorem requires a <em>finite variance</em>. Many real processes — financial returns above all — produce extreme moves far more often than a Normal of the same everyday spread would ever allow. These are <strong>heavy-tailed</strong> (or "fat-tailed") distributions, and mistaking them for Normal is how risk models blow up.</p>
+
+        <p>Three families matter, in rising order of danger:</p>
+        <ul>
+          <li><strong>Student-t</strong>(\(\nu\)). A bell that looks Normal in the middle but decays far more slowly in the tails, governed by the <em>degrees of freedom</em> \(\nu\). Small \(\nu\) means fat tails; as \(\nu \to \infty\) it converges back to the Normal. It is the workhorse for daily and weekly asset returns, where \(\nu \approx 3\)–\(6\) typically fits — and where, below \(\nu = 4\), the kurtosis is infinite and below \(\nu = 2\) even the <em>variance</em> is infinite, voiding the CLT outright.</li>
+          <li><strong>Lognormal</strong>. If \(\log X\) is Normal, then \(X\) is lognormal: strictly positive, right-skewed, with a long upper tail. It is the natural model for quantities that grow multiplicatively — stock <em>prices</em> (Quant 03's geometric Brownian motion), income, city sizes, file sizes. Because it is a transformed Normal, the CLT applies to its logarithm, not to it.</li>
+          <li><strong>Power laws</strong> (Pareto). The heaviest tails of all: \(P(X > x) \propto x^{-\alpha}\). The tail decays only polynomially, so for small enough exponent \(\alpha\) the variance — or even the mean — fails to exist, and sample averages never settle down. Power laws describe wealth, city populations, word frequencies, network degrees, and the size of catastrophic losses. Whether they are the right model for financial returns, versus a Student-t with merely fattish tails, remains <em>genuinely contested</em> among quants: the data in the extreme tail is, by definition, sparse, and the two models are hard to tell apart from any finite sample.</li>
+        </ul>
+
+        <div class="eq"><span class="eq-tag">EQ S2.7 — STUDENT-t &amp; POWER-LAW TAILS</span>
+        $$ f_{t}(x;\nu) = \frac{\Gamma\!\left(\frac{\nu + 1}{2}\right)}{\sqrt{\nu\pi}\,\Gamma\!\left(\frac{\nu}{2}\right)} \left(1 + \frac{x^2}{\nu}\right)^{-\frac{\nu + 1}{2}} \qquad\qquad P(X > x) \;\sim\; x^{-\alpha} \;\;\text{(power law)} $$
+        <div class="eq-note">The Student-t density decays like \(x^{-(\nu + 1)}\) for large \(x\) — a <em>polynomial</em> tail, versus the Normal's \(e^{-x^2/2}\) which is astronomically thinner. That polynomial decay is exactly a power-law tail with \(\alpha = \nu\). <b>The practical consequence: a "six-sigma" daily move is a once-in-a-million-years event under a Normal, but happens every few years in real markets.</b> Risk built on the Normal systematically under-prices the catastrophe; this miscalibration is the proximate cause of more than one financial crisis.</div>
+        </div>
+
+        <p class="note">There is a deeper reason heavy tails persist. A <em>generalised</em> CLT says that sums of infinite-variance variables converge not to the Normal but to the <strong>stable</strong> family (of which the Normal is the lone finite-variance member). So heavy-tailedness is not a failure of aggregation to "kick in" — for these processes, aggregation has a different, fatter-tailed attractor. The Normal is the special case, not the rule.</p>
+
+        <div class="widget" id="dist-tail" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT S2.3 — TAIL-RISK OVERLAY</span><span class="w-sub">NORMAL vs STUDENT-t · TAIL-PROBABILITY READOUT</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>DEGREES OF FREEDOM ν <output id="dist-tail-nu-out">4</output></label><input type="range" id="dist-tail-nu" min="2" max="30" step="1" value="4"/></div>
+              <div class="ctl"><label>THRESHOLD (in σ) <output id="dist-tail-z-out">3.0</output></label><input type="range" id="dist-tail-z" min="1" max="6" step="0.1" value="3"/></div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>VIEW</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-tail-view="linear">LINEAR</button>
+                  <button class="w-btn ghost" data-tail-view="log">LOG-y</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="dist-tail-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">P(|X| &gt; t) NORMAL</div><div class="r-value" id="dist-tail-pn">—</div></div>
+              <div class="readout acc"><div class="r-label">P(|X| &gt; t) STUDENT-t</div><div class="r-value" id="dist-tail-pt">—</div></div>
+              <div class="readout"><div class="r-label">TAIL RATIO t / Normal</div><div class="r-value" id="dist-tail-ratio">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Both curves are scaled to unit variance, so they agree in the bland centre — the danger hides in the tails. Switch to <b>LOG-y</b> to see the gap explode: the Normal plunges as a downward parabola while the Student-t falls only linearly (a power-law tail). Push the threshold to 4–5σ and read the <em>ratio</em>: at \(\nu = 4\) a 4σ event is many times likelier under the t than the Normal. Raise \(\nu\) toward 30 and the two distributions merge — the Student-t becoming Normal in the limit.</div>
+        </div>
+
+        <div class="callout warn">
+          <span class="co-icon">CONTESTED</span>
+          <p><strong>How fat are the tails, really?</strong> That financial returns are heavier-tailed than Normal is settled and uncontroversial. <em>How</em> heavy is not. One camp (after Mandelbrot) argues for true power laws with possibly infinite variance; another fits finite-variance Student-t or stochastic-volatility models that generate fat tails without abandoning the CLT. The disagreement is hard to resolve precisely because extreme events are rare, so the deciding data is scarce. The honest engineering posture: assume tails fatter than Normal, stress-test against several tail models, and never let a single distributional assumption carry your entire risk number.</p>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>One distribution describes one quantity; the next chapter asks how two quantities move together.</strong> Stats 03: descriptive statistics and correlation — summarising real data with means, medians, and quantiles, and measuring the linear (Pearson) and rank (Spearman) association between variables, with the warning that opens every honest course: correlation is not causation.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 2.R ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">2.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://doi.org/10.1007/978-0-387-21736-9" target="_blank" rel="noopener">Wasserman, L. (2004). <span class="ref-venue">All of Statistics: A Concise Course in Statistical Inference</span>.</a> <span class="ref-meta">Springer — the standard modern reference for the distributions, moments, and convergence results in this chapter.</span></li>
+          <li><a href="https://doi.org/10.1007/978-0-387-87857-7" target="_blank" rel="noopener">Fischer, H. (2011). <span class="ref-venue">A History of the Central Limit Theorem: From Classical to Modern Probability Theory</span>.</a> <span class="ref-meta">Springer — the full lineage of EQ S2.6, from de Moivre and Laplace to Lindeberg and Lévy.</span></li>
+          <li><a href="https://doi.org/10.2307/2331554" target="_blank" rel="noopener">Student [Gosset, W. S.] (1908). <span class="ref-venue">The Probable Error of a Mean</span>. <i>Biometrika</i> 6(1), 1–25.</a> <span class="ref-meta">The original derivation of the Student-t distribution (EQ S2.7), written at the Guinness brewery.</span></li>
+          <li><a href="https://doi.org/10.1086/294632" target="_blank" rel="noopener">Mandelbrot, B. (1963). <span class="ref-venue">The Variation of Certain Speculative Prices</span>. <i>Journal of Business</i> 36(4), 394–419.</a> <span class="ref-meta">The founding argument that financial returns are heavy-tailed and possibly infinite-variance — the contested claim of §2.5.</span></li>
+          <li><a href="https://doi.org/10.1080/713665670" target="_blank" rel="noopener">Cont, R. (2001). <span class="ref-venue">Empirical Properties of Asset Returns: Stylized Facts and Statistical Issues</span>. <i>Quantitative Finance</i> 1(2), 223–236.</a> <span class="ref-meta">A careful survey of the fat-tail evidence and why pinning down the tail exponent is genuinely hard.</span></li>
+          <li><a href="https://doi.org/10.1137/070710111" target="_blank" rel="noopener">Clauset, A., Shalizi, C. R. &amp; Newman, M. E. J. (2009). <span class="ref-venue">Power-Law Distributions in Empirical Data</span>. <i>SIAM Review</i> 51(4), 661–703.</a> <span class="ref-meta">The methodological reference on fitting and — crucially — testing power-law tails against alternatives.</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../stats/01-probability.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">01</span> Probability</div></a>
+        <a class="next" href="../stats/03-descriptive-correlation.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">03</span> Correlation</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — STATISTICS · CH 02</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* ============================================================
+   Distributions — The Shapes of Randomness — chapter instruments
+   Single IIFE, no globals. Three instruments, each guarded by
+   element existence. setTimeout for any deferred redraw; FM helpers
+   for canvas + deterministic RNG. Math matches §2.1–§2.5 exactly.
+   ============================================================ */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  /* ---------- shared numerics ---------- */
+  function erf(x) {                                   /* A&S 7.1.26, ~1e-7 */
+    var s = x < 0 ? -1 : 1; x = Math.abs(x);
+    var t = 1 / (1 + 0.3275911 * x);
+    var y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t
+                  - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x);
+    return s * y;
+  }
+  function ncdf(x) { return 0.5 * (1 + erf(x / Math.SQRT2)); }
+  function npdf(x) { return Math.exp(-0.5 * x * x) / Math.sqrt(2 * Math.PI); }
+  function logGamma(z) {                              /* Lanczos approximation */
+    var g = 7, c = [0.99999999999980993, 676.5203681218851, -1259.1392167224028,
+      771.32342877765313, -176.61502916214059, 12.507343278686905,
+      -0.13857109526572012, 9.9843695780195716e-6, 1.5056327351493116e-7];
+    if (z < 0.5) return Math.log(Math.PI / Math.sin(Math.PI * z)) - logGamma(1 - z);
+    z -= 1; var a = c[0]; var tt = z + g + 0.5;
+    for (var i = 1; i < g + 2; i++) a += c[i] / (z + i);
+    return 0.5 * Math.log(2 * Math.PI) + (z + 0.5) * Math.log(tt) - tt + Math.log(a);
+  }
+  function fact(k) { var r = 1; for (var i = 2; i <= k; i++) r *= i; return r; }
+  function logFact(k) { return logGamma(k + 1); }
+  function binom(n, k) {                              /* via log-gamma, stable */
+    if (k < 0 || k > n) return 0;
+    return Math.exp(logGamma(n + 1) - logGamma(k + 1) - logGamma(n - k + 1));
+  }
+  function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
+
+  /* standard Student-t density at x with nu d.o.f. (variance NOT yet unit) */
+  function tpdf(x, nu) {
+    var lc = logGamma((nu + 1) / 2) - logGamma(nu / 2) - 0.5 * Math.log(nu * Math.PI);
+    return Math.exp(lc - ((nu + 1) / 2) * Math.log(1 + x * x / nu));
+  }
+  /* P(|X| > z) for a Student-t standardised to unit variance, by numeric
+     integration of the unit-variance density (nu > 2). */
+  function tTailUnitVar(zUnit, nu) {
+    var scale = Math.sqrt(nu / (nu - 2));            /* sd of raw t(nu) */
+    var xRaw = zUnit * scale;                        /* threshold in raw-t units */
+    /* integrate one tail of the raw density from xRaw to a large cutoff */
+    var hi = xRaw + 60, steps = 4000, h = (hi - xRaw) / steps, s = 0;
+    for (var i = 0; i <= steps; i++) {
+      var x = xRaw + i * h;
+      var w = (i === 0 || i === steps) ? 0.5 : 1;    /* trapezoid */
+      s += w * tpdf(x, nu);
+    }
+    return clamp(2 * s * h, 0, 1);                   /* both tails */
+  }
+
+  /* ========================================================
+     INSTRUMENT S2.1 — Distribution explorer
+     PMF/PDF + a sampled histogram, six families.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("dist-explorer");
+    if (!root) return;
+    var canvas = document.getElementById("dist-explorer-canvas");
+    var p1 = document.getElementById("dist-p1");
+    var p2 = document.getElementById("dist-p2");
+    var p1Out = document.getElementById("dist-p1-out");
+    var p2Out = document.getElementById("dist-p2-out");
+    var p1Name = document.getElementById("dist-p1-name");
+    var p2Name = document.getElementById("dist-p2-name");
+    var typeEl = document.getElementById("dist-type");
+    var meanEl = document.getElementById("dist-mean");
+    var varEl = document.getElementById("dist-var");
+    var sdEl = document.getElementById("dist-sd");
+    var btns = root.querySelectorAll("[data-dist-fam]");
+    var fam = "binomial";
+    var SAMPLES = 4000;
+
+    /* per-family slider config: [min,max,step,val,fixedDigits] */
+    var CFG = {
+      binomial:    { discrete: true,  p1: ["TRIALS n", 1, 60, 1, 20, 0],   p2: ["SUCCESS p", 0.02, 0.98, 0.01, 0.40, 2] },
+      poisson:     { discrete: true,  p1: ["RATE λ", 0.5, 25, 0.5, 4, 1],   p2: null },
+      geometric:   { discrete: true,  p1: ["SUCCESS p", 0.05, 0.9, 0.01, 0.30, 2], p2: null },
+      uniform:     { discrete: false, p1: ["LOWER a", -4, 4, 0.1, 0, 1],    p2: ["WIDTH (b−a)", 0.5, 8, 0.1, 4, 1] },
+      normal:      { discrete: false, p1: ["MEAN μ", -4, 4, 0.1, 0, 1],     p2: ["STD σ", 0.3, 3, 0.1, 1, 1] },
+      exponential: { discrete: false, p1: ["RATE λ", 0.2, 4, 0.1, 1, 1],    p2: null }
+    };
+
+    function setSlider(slider, out, nameEl, spec) {
+      if (!spec) { slider.parentElement.style.display = "none"; return; }
+      slider.parentElement.style.display = "";
+      nameEl.textContent = spec[0];
+      slider.min = spec[1]; slider.max = spec[2]; slider.step = spec[3];
+      slider.value = spec[4];
+      out.textContent = (+spec[4]).toFixed(spec[5]);
+    }
+    function applyFamily() {
+      var cfg = CFG[fam];
+      setSlider(p1, p1Out, p1Name, cfg.p1);
+      setSlider(p2, p2Out, p2Name, cfg.p2);
+    }
+
+    function params() {
+      var cfg = CFG[fam];
+      var a = +p1.value, b = cfg.p2 ? +p2.value : null;
+      if (p1Out) p1Out.textContent = a.toFixed(cfg.p1[5]);
+      if (cfg.p2 && p2Out) p2Out.textContent = b.toFixed(cfg.p2[5]);
+      return { a: a, b: b };
+    }
+
+    /* analytic moments per family */
+    function moments(pr) {
+      var a = pr.a, b = pr.b;
+      switch (fam) {
+        case "binomial":    return { m: a * b, v: a * b * (1 - b) };
+        case "poisson":     return { m: a, v: a };
+        case "geometric":   return { m: 1 / a, v: (1 - a) / (a * a) };
+        case "uniform":     return { m: a + b / 2, v: b * b / 12 };
+        case "normal":      return { m: a, v: b * b };
+        case "exponential": return { m: 1 / a, v: 1 / (a * a) };
+      }
+    }
+
+    /* theoretical PMF (discrete) as {xs:[],ps:[]} over a sensible support */
+    function pmf(pr) {
+      var xs = [], ps = [], k, P;
+      if (fam === "binomial") {
+        for (k = 0; k <= pr.a; k++) { xs.push(k); ps.push(binom(pr.a, k) * Math.pow(pr.b, k) * Math.pow(1 - pr.b, pr.a - k)); }
+      } else if (fam === "poisson") {
+        var kmax = Math.max(10, Math.ceil(pr.a + 4 * Math.sqrt(pr.a)));
+        for (k = 0; k <= kmax; k++) { ps.push(Math.exp(-pr.a + k * Math.log(pr.a) - logFact(k))); xs.push(k); }
+      } else if (fam === "geometric") {
+        var kg = Math.max(12, Math.ceil(6 / pr.a));
+        for (k = 1; k <= kg; k++) { P = Math.pow(1 - pr.a, k - 1) * pr.a; if (P < 1e-4 && k > 4) break; xs.push(k); ps.push(P); }
+      }
+      return { xs: xs, ps: ps };
+    }
+
+    /* theoretical PDF (continuous) sampled on [lo,hi] */
+    function pdf(pr, lo, hi, n) {
+      var xs = [], ys = [], i, x, y;
+      for (i = 0; i < n; i++) {
+        x = lo + (hi - lo) * i / (n - 1); y = 0;
+        if (fam === "uniform") { y = (x >= pr.a && x <= pr.a + pr.b) ? 1 / pr.b : 0; }
+        else if (fam === "normal") { var zz = (x - pr.a) / pr.b; y = npdf(zz) / pr.b; }
+        else if (fam === "exponential") { y = x >= 0 ? pr.a * Math.exp(-pr.a * x) : 0; }
+        xs.push(x); ys.push(y);
+      }
+      return { xs: xs, ys: ys };
+    }
+
+    /* deterministic sampling via inverse-CDF on uniforms (seeded) */
+    function sample(pr, rnd) {
+      var u = rnd();
+      if (fam === "uniform")     return pr.a + u * pr.b;
+      if (fam === "normal")      { var u2 = rnd(); return pr.a + pr.b * Math.sqrt(-2 * Math.log(u + 1e-12)) * Math.cos(2 * Math.PI * u2); }
+      if (fam === "exponential") return -Math.log(u + 1e-12) / pr.a;
+      if (fam === "geometric")   return Math.floor(Math.log(u + 1e-12) / Math.log(1 - pr.a)) + 1;
+      if (fam === "poisson") {                          /* Knuth */
+        var L = Math.exp(-pr.a), k = 0, p = 1;
+        do { k++; p *= rnd(); } while (p > L);
+        return k - 1;
+      }
+      if (fam === "binomial") { var c = 0; for (var j = 0; j < pr.a; j++) if (rnd() < pr.b) c++; return c; }
+      return 0;
+    }
+
+    function render() {
+      var pr = params();
+      var mm = moments(pr);
+      typeEl.textContent = CFG[fam].discrete ? "DISCRETE (PMF)" : "CONTINUOUS (PDF)";
+      meanEl.textContent = mm.m.toFixed(3);
+      varEl.textContent = mm.v.toFixed(3);
+      sdEl.textContent = Math.sqrt(mm.v).toFixed(3);
+
+      var c = FM.setupCanvas(canvas, 320);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      var padL = 44, padR = 14, padT = 16, padB = 28;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      ctx.clearRect(0, 0, w, h);
+
+      var rnd = FM.mulberry32(20240602);
+      var i, k;
+
+      if (CFG[fam].discrete) {
+        var P = pmf(pr);
+        var support = P.xs.length;
+        var loX = P.xs[0], hiX = P.xs[support - 1];
+        /* histogram of samples into the same integer support */
+        var counts = new Array(support).fill(0), tot = 0;
+        for (i = 0; i < SAMPLES; i++) {
+          var sv = sample(pr, rnd);
+          var idx = sv - loX;
+          if (idx >= 0 && idx < support) { counts[idx]++; tot++; }
+        }
+        var maxP = 0;
+        for (i = 0; i < support; i++) { if (P.ps[i] > maxP) maxP = P.ps[i]; if (tot && counts[i] / tot > maxP) maxP = counts[i] / tot; }
+        maxP = maxP * 1.12 || 1;
+        var bw = (x1 - x0) / support;
+        function pyD(p) { return y0 - p / maxP * (y0 - y1); }
+        /* axes */
+        ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y0); ctx.stroke();
+        /* sampled histogram (blue outline bars) */
+        ctx.strokeStyle = C.BLUE; ctx.lineWidth = 1.4;
+        for (i = 0; i < support; i++) {
+          if (!tot) break;
+          var hx = x0 + i * bw, hh = counts[i] / tot;
+          ctx.strokeRect(hx + bw * 0.12, pyD(hh), bw * 0.76, y0 - pyD(hh));
+        }
+        /* theoretical PMF (mint stems + dots) */
+        ctx.strokeStyle = C.MINT; ctx.fillStyle = C.MINT; ctx.lineWidth = 2;
+        for (i = 0; i < support; i++) {
+          var cx = x0 + (i + 0.5) * bw, cy = pyD(P.ps[i]);
+          ctx.beginPath(); ctx.moveTo(cx, y0); ctx.lineTo(cx, cy); ctx.stroke();
+          ctx.beginPath(); ctx.arc(cx, cy, 2.6, 0, 2 * Math.PI); ctx.fill();
+        }
+        /* x labels */
+        ctx.fillStyle = C.MUT; ctx.font = C.MONO; ctx.textAlign = "center"; ctx.textBaseline = "top";
+        var stepLbl = Math.max(1, Math.round(support / 8));
+        for (i = 0; i < support; i += stepLbl) ctx.fillText(P.xs[i], x0 + (i + 0.5) * bw, y0 + 5);
+      } else {
+        /* choose a display window from the moments */
+        var sd = Math.sqrt(mm.v);
+        var lo, hi;
+        if (fam === "exponential") { lo = 0; hi = mm.m + 5 * sd; }
+        else if (fam === "uniform") { lo = pr.a - 0.5 * pr.b; hi = pr.a + 1.5 * pr.b; }
+        else { lo = mm.m - 4 * sd; hi = mm.m + 4 * sd; }
+        var curve = pdf(pr, lo, hi, 240);
+        /* sample histogram into 36 bins on [lo,hi] */
+        var NB = 36, bins = new Array(NB).fill(0), n2 = 0;
+        for (i = 0; i < SAMPLES; i++) {
+          var s2 = sample(pr, rnd);
+          var bi = Math.floor((s2 - lo) / (hi - lo) * NB);
+          if (bi >= 0 && bi < NB) { bins[bi]++; n2++; }
+        }
+        var binW = (hi - lo) / NB;
+        var maxY = 0;
+        for (i = 0; i < curve.ys.length; i++) if (curve.ys[i] > maxY) maxY = curve.ys[i];
+        for (i = 0; i < NB; i++) { var dens = n2 ? bins[i] / n2 / binW : 0; if (dens > maxY) maxY = dens; }
+        maxY = maxY * 1.12 || 1;
+        function px(x) { return x0 + (x - lo) / (hi - lo) * (x1 - x0); }
+        function pyC(y) { return y0 - y / maxY * (y0 - y1); }
+        ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y0); ctx.stroke();
+        /* histogram (blue) */
+        ctx.strokeStyle = C.BLUE; ctx.lineWidth = 1.2;
+        for (i = 0; i < NB; i++) {
+          if (!n2) break;
+          var d = bins[i] / n2 / binW;
+          var bx = px(lo + i * binW), bx2 = px(lo + (i + 1) * binW);
+          ctx.strokeRect(bx + 1, pyC(d), bx2 - bx - 2, y0 - pyC(d));
+        }
+        /* theoretical PDF (mint) */
+        ctx.strokeStyle = C.MINT; ctx.lineWidth = 2; ctx.beginPath();
+        for (i = 0; i < curve.xs.length; i++) {
+          var X = px(curve.xs[i]), Y = pyC(curve.ys[i]);
+          if (i === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y);
+        }
+        ctx.stroke();
+        /* x labels */
+        ctx.fillStyle = C.MUT; ctx.font = C.MONO; ctx.textAlign = "center"; ctx.textBaseline = "top";
+        for (i = 0; i <= 4; i++) { var xv = lo + (hi - lo) * i / 4; ctx.fillText(xv.toFixed(1), px(xv), y0 + 5); }
+      }
+      /* legend */
+      ctx.font = C.MONO; ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillStyle = C.MINT; ctx.fillText(CFG[fam].discrete ? "■ THEORY PMF" : "■ THEORY PDF", x0 + 6, y1 + 2);
+      ctx.fillStyle = C.BLUE; ctx.fillText("□ 4,000 SAMPLES", x0 + 6, y1 + 16);
+    }
+
+    btns.forEach(function (b) {
+      b.addEventListener("click", function () {
+        fam = b.getAttribute("data-dist-fam");
+        btns.forEach(function (o) { o.classList.toggle("on", o === b); });
+        applyFamily();
+        render();
+      });
+    });
+    p1.addEventListener("input", render);
+    p2.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    applyFamily();
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT S2.2 — Central Limit Theorem simulator
+     Histogram of M sample-means of N iid draws, vs Normal.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("dist-clt");
+    if (!root) return;
+    var canvas = document.getElementById("dist-clt-canvas");
+    var nIn = document.getElementById("dist-clt-n");
+    var nOut = document.getElementById("dist-clt-n-out");
+    var shapeEl = document.getElementById("dist-clt-shape");
+    var seEl = document.getElementById("dist-clt-se");
+    var skewEl = document.getElementById("dist-clt-skew");
+    var btns = root.querySelectorAll("[data-clt-parent]");
+    var parent = "uniform";
+    var M = 10000;
+
+    /* parents standardised so the limit is comparable: report true mu, sigma */
+    var PAR = {
+      uniform:     { mu: 0.5, sigma: Math.sqrt(1 / 12), label: "Uniform(0,1) — flat" },
+      exponential: { mu: 1.0, sigma: 1.0,               label: "Exponential(1) — right-skewed" },
+      bernoulli:   { mu: 0.3, sigma: Math.sqrt(0.3 * 0.7), label: "Bernoulli(0.3) — two spikes" }
+    };
+    function draw1(rnd) {
+      var u = rnd();
+      if (parent === "uniform")     return u;
+      if (parent === "exponential") return -Math.log(u + 1e-12);   /* lambda = 1 */
+      return u < 0.3 ? 1 : 0;                                       /* Bernoulli(0.3) */
+    }
+
+    function render() {
+      var N = parseInt(nIn.value, 10);
+      nOut.textContent = N;
+      var p = PAR[parent];
+      shapeEl.textContent = p.label;
+      var se = p.sigma / Math.sqrt(N);
+      seEl.textContent = se.toFixed(4);
+
+      var rnd = FM.mulberry32(424242);
+      var means = new Float64Array(M), i, j, s, mAcc = 0;
+      for (i = 0; i < M; i++) {
+        s = 0; for (j = 0; j < N; j++) s += draw1(rnd);
+        means[i] = s / N; mAcc += means[i];
+      }
+      var mBar = mAcc / M, vAcc = 0, sk = 0;
+      for (i = 0; i < M; i++) { var dd = means[i] - mBar; vAcc += dd * dd; }
+      var sdM = Math.sqrt(vAcc / M);
+      for (i = 0; i < M; i++) { var z = (means[i] - mBar) / (sdM || 1); sk += z * z * z; }
+      sk /= M;
+      skewEl.textContent = (sk >= 0 ? "+" : "") + sk.toFixed(3);
+
+      /* histogram on a window centred at mu, +/- 4 standard errors */
+      var lo = p.mu - 4 * se, hi = p.mu + 4 * se;
+      var NB = 44, bins = new Array(NB).fill(0), inWin = 0;
+      for (i = 0; i < M; i++) {
+        var bi = Math.floor((means[i] - lo) / (hi - lo) * NB);
+        if (bi >= 0 && bi < NB) { bins[bi]++; inWin++; }
+      }
+      var binW = (hi - lo) / NB;
+
+      var c = FM.setupCanvas(canvas, 320);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      var padL = 44, padR = 14, padT = 16, padB = 28;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      ctx.clearRect(0, 0, w, h);
+
+      /* Normal overlay density on same window */
+      function normY(x) { var zz = (x - p.mu) / se; return npdf(zz) / se; }
+      var maxY = 0, k;
+      for (k = 0; k < NB; k++) { var d = inWin ? bins[k] / M / binW : 0; if (d > maxY) maxY = d; }
+      for (k = 0; k <= 60; k++) { var xx = lo + (hi - lo) * k / 60; var ny = normY(xx); if (ny > maxY) maxY = ny; }
+      maxY = maxY * 1.1 || 1;
+      function px(x) { return x0 + (x - lo) / (hi - lo) * (x1 - x0); }
+      function py(y) { return y0 - y / maxY * (y0 - y1); }
+
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y0); ctx.stroke();
+      /* histogram of means (blue fill, faint) */
+      ctx.fillStyle = "rgba(78,138,247,.28)"; ctx.strokeStyle = C.BLUE; ctx.lineWidth = 1;
+      for (k = 0; k < NB; k++) {
+        var dd2 = bins[k] / M / binW;
+        var bx = px(lo + k * binW), bx2 = px(lo + (k + 1) * binW);
+        ctx.fillRect(bx, py(dd2), bx2 - bx, y0 - py(dd2));
+      }
+      /* Normal curve (mint) */
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 2; ctx.beginPath();
+      for (k = 0; k <= 120; k++) {
+        var X = lo + (hi - lo) * k / 120, Y = normY(X);
+        if (k === 0) ctx.moveTo(px(X), py(Y)); else ctx.lineTo(px(X), py(Y));
+      }
+      ctx.stroke();
+      /* mean marker */
+      ctx.strokeStyle = C.MUT; ctx.setLineDash([4, 4]);
+      ctx.beginPath(); ctx.moveTo(px(p.mu), y1); ctx.lineTo(px(p.mu), y0); ctx.stroke();
+      ctx.setLineDash([]);
+      /* x labels */
+      ctx.fillStyle = C.MUT; ctx.font = C.MONO; ctx.textAlign = "center"; ctx.textBaseline = "top";
+      for (k = 0; k <= 4; k++) { var xv = lo + (hi - lo) * k / 4; ctx.fillText(xv.toFixed(2), px(xv), y0 + 5); }
+      /* legend */
+      ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillStyle = C.BLUE; ctx.fillText("□ HISTOGRAM OF " + (M / 1000) + "K MEANS", x0 + 6, y1 + 2);
+      ctx.fillStyle = C.MINT; ctx.fillText("■ NORMAL(μ, σ/√N)", x0 + 6, y1 + 16);
+    }
+
+    btns.forEach(function (b) {
+      b.addEventListener("click", function () {
+        parent = b.getAttribute("data-clt-parent");
+        btns.forEach(function (o) { o.classList.toggle("on", o === b); });
+        render();
+      });
+    });
+    nIn.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT S2.3 — Tail-risk overlay (Normal vs Student-t)
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("dist-tail");
+    if (!root) return;
+    var canvas = document.getElementById("dist-tail-canvas");
+    var nuIn = document.getElementById("dist-tail-nu");
+    var zIn = document.getElementById("dist-tail-z");
+    var nuOut = document.getElementById("dist-tail-nu-out");
+    var zOut = document.getElementById("dist-tail-z-out");
+    var pnEl = document.getElementById("dist-tail-pn");
+    var ptEl = document.getElementById("dist-tail-pt");
+    var ratioEl = document.getElementById("dist-tail-ratio");
+    var btns = root.querySelectorAll("[data-tail-view]");
+    var view = "linear";
+
+    /* unit-variance Student-t density: scale raw t(nu) by sd = sqrt(nu/(nu-2)) */
+    function tUnitPdf(x, nu) {
+      var sd = Math.sqrt(nu / (nu - 2));
+      return tpdf(x * sd, nu) * sd;                 /* change of variables */
+    }
+    function fmtP(p) {
+      if (p >= 0.01) return (p * 100).toFixed(2) + "%";
+      if (p >= 1e-4) return (p * 100).toFixed(3) + "%";
+      return p.toExponential(1);
+    }
+
+    function render() {
+      var nu = parseInt(nuIn.value, 10);
+      var z = parseFloat(zIn.value);
+      nuOut.textContent = nu;
+      zOut.textContent = z.toFixed(1);
+      var pn = 2 * (1 - ncdf(z));                    /* Normal two-tail */
+      var pt = tTailUnitVar(z, nu);                  /* Student-t two-tail */
+      pnEl.textContent = fmtP(pn);
+      ptEl.textContent = fmtP(pt);
+      ratioEl.textContent = (pn > 0 ? (pt / pn).toFixed(1) + "×" : "—");
+
+      var c = FM.setupCanvas(canvas, 320);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      var padL = 50, padR = 14, padT = 16, padB = 28;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      ctx.clearRect(0, 0, w, h);
+
+      var lo = -6, hi = 6, NS = 280, k, X, Y;
+      var logMode = view === "log";
+      var ymin = logMode ? -7 : 0;                   /* log10 floor */
+      var ymax = logMode ? Math.log10(0.45) : 0.45;
+      function px(x) { return x0 + (x - lo) / (hi - lo) * (x1 - x0); }
+      function py(y) {
+        var v = logMode ? Math.log10(Math.max(y, 1e-8)) : y;
+        v = clamp(v, ymin, ymax);
+        return y0 - (v - ymin) / (ymax - ymin) * (y0 - y1);
+      }
+
+      /* grid */
+      ctx.strokeStyle = "rgba(47,50,52,.55)"; ctx.lineWidth = 1;
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      for (k = 0; k <= 4; k++) {
+        var gv = ymin + (ymax - ymin) * k / 4, gy = y0 - (gv - ymin) / (ymax - ymin) * (y0 - y1);
+        ctx.beginPath(); ctx.moveTo(x0, gy); ctx.lineTo(x1, gy); ctx.stroke();
+        ctx.fillText(logMode ? "1e" + Math.round(gv) : gv.toFixed(2), x0 - 6, gy);
+      }
+      ctx.strokeStyle = C.HAIR; ctx.strokeRect(x0, y1, x1 - x0, y0 - y1);
+
+      /* threshold band (|x| > z) shaded */
+      ctx.fillStyle = "rgba(255,65,54,.10)";
+      ctx.fillRect(x0, y1, px(-z) - x0, y0 - y1);
+      ctx.fillRect(px(z), y1, x1 - px(z), y0 - y1);
+      ctx.strokeStyle = "rgba(255,65,54,.5)"; ctx.setLineDash([4, 4]);
+      ctx.beginPath(); ctx.moveTo(px(z), y1); ctx.lineTo(px(z), y0); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(px(-z), y1); ctx.lineTo(px(-z), y0); ctx.stroke();
+      ctx.setLineDash([]);
+
+      /* Normal (blue) */
+      ctx.strokeStyle = C.BLUE; ctx.lineWidth = 2; ctx.beginPath();
+      for (k = 0; k < NS; k++) { X = lo + (hi - lo) * k / (NS - 1); Y = npdf(X); if (k === 0) ctx.moveTo(px(X), py(Y)); else ctx.lineTo(px(X), py(Y)); }
+      ctx.stroke();
+      /* Student-t (mint) */
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 2; ctx.beginPath();
+      for (k = 0; k < NS; k++) { X = lo + (hi - lo) * k / (NS - 1); Y = tUnitPdf(X, nu); if (k === 0) ctx.moveTo(px(X), py(Y)); else ctx.lineTo(px(X), py(Y)); }
+      ctx.stroke();
+
+      /* x labels */
+      ctx.fillStyle = C.MUT; ctx.font = C.MONO; ctx.textAlign = "center"; ctx.textBaseline = "top";
+      for (k = -6; k <= 6; k += 2) ctx.fillText(k + "σ", px(k), y0 + 5);
+      /* legend */
+      ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillStyle = C.BLUE; ctx.fillText("■ NORMAL", x0 + 6, y1 + 2);
+      ctx.fillStyle = C.MINT; ctx.fillText("■ STUDENT-t (ν=" + nu + ")", x0 + 6, y1 + 16);
+      ctx.fillStyle = C.RED;  ctx.fillText("░ |X| > " + z.toFixed(1) + "σ", x0 + 6, y1 + 30);
+    }
+
+    btns.forEach(function (b) {
+      b.addEventListener("click", function () {
+        view = b.getAttribute("data-tail-view");
+        btns.forEach(function (o) { o.classList.toggle("on", o === b); });
+        render();
+      });
+    });
+    nuIn.addEventListener("input", render);
+    zIn.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

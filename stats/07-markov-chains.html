@@ -1,0 +1,869 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Markov Chains &amp; MCMC — AI Encyclopedia</title>
+<meta name="description" content="A process that forgets its past is enough to model PageRank and language, and to sample from distributions we cannot integrate — the Markov property, stationary distributions, HMMs, and MCMC." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+</head>
+<body data-track="stats" data-level="core">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ STATISTICS / 07 / MARKOV CHAINS</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../stats/08-information-theory.html">NEXT: INFORMATION THEORY →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">MATHEMATICS &amp; STATISTICS · CHAPTER 07 / 08</div>
+    <h1>Markov Chains &amp; MCMC</h1>
+    <p class="lede">A process that forgets its past, a property called <strong>memorylessness</strong>, is enough to model PageRank and language and to sample from distributions we cannot integrate. The assumption that the next state depends only on the present, not the full history, turns a sequence into a matrix, gives long-run behavior a fixed point you can solve for, and lets us draw from any probability density by walking through it.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 28 MIN</b></span>
+      <span>BUILDS ON<b>STATS 01 · 06</b></span>
+      <span>INSTRUMENTS<b>TRANSITION · PAGERANK · METROPOLIS</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">7.1</span>The Markov property</a>
+      <a href="#s2"><span class="n">7.2</span>Stationarity &amp; ergodicity</a>
+      <a href="#s3"><span class="n">7.3</span>Hidden Markov Models</a>
+      <a href="#s4"><span class="n">7.4</span>MCMC: Metropolis–Hastings</a>
+      <a href="#s5"><span class="n">7.5</span>Gibbs &amp; MCMC in ML</a>
+      <a href="#s6"><span class="n">7.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 7.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">7.1</span><h2>The Markov property &amp; transition matrices</h2></div>
+        <p>Most stochastic processes carry their whole history with them: tomorrow's weather might depend on the last week, a word on the whole paragraph. A <strong>Markov chain</strong> is the radical simplification that throws the history away. The future depends on the present state and nothing earlier — the chain is <em>memoryless</em>:</p>
+
+        <div class="eq"><span class="eq-tag">EQ S7.1 — THE MARKOV PROPERTY</span>
+        $$ \Pr\!\big(X_{t+1} = j \mid X_t = i,\, X_{t-1},\, \ldots,\, X_0\big) \;=\; \Pr\!\big(X_{t+1} = j \mid X_t = i\big) \;=\; P_{ij} $$
+        <div class="eq-note">Conditioning on the entire past collapses to conditioning on the single current state. The number \(P_{ij}\) — the probability of stepping from state \(i\) to state \(j\) — is independent of when or how you arrived at \(i\). <b>This one line is the whole subject.</b> Everything downstream (stationarity, HMMs, MCMC) is a consequence of replacing "history" with "current state". A chain that instead needs the last \(k\) states is order-\(k\); but any order-\(k\) chain over alphabet \(S\) is an ordinary order-1 chain over the enlarged state space \(S^k\), so we lose no generality studying order 1.</div>
+        </div>
+
+        <p>Collect the \(P_{ij}\) into a <strong>transition matrix</strong> \(P\). It is <em>row-stochastic</em>: every entry is non-negative and every row sums to 1, because from state \(i\) the chain must go <em>somewhere</em>. If the distribution over states today is a row vector \(\pi^{(t)}\), then one step of the chain is one matrix multiply:</p>
+
+        <div class="eq"><span class="eq-tag">EQ S7.2 — ONE STEP &amp; THE CHAPMAN–KOLMOGOROV RELATION</span>
+        $$ \pi^{(t+1)} \;=\; \pi^{(t)} P, \qquad\Longrightarrow\qquad \pi^{(t)} \;=\; \pi^{(0)} P^{\,t}, \qquad \big(P^{\,n}\big)_{ij} \;=\; \Pr\!\big(X_{t+n}=j \mid X_t=i\big) $$
+        <div class="eq-note">Distributions are <b>left</b>-multiplied by \(P\) (row vector times matrix). The \(n\)-step transition probabilities are just the \(n\)-th matrix power — the Chapman–Kolmogorov equation \(P^{m+n} = P^m P^n\) is nothing more than the associativity of matrix multiplication. So the long-run behavior of a Markov chain is an eigenvalue question about \(P\), which is exactly the linear algebra of Chapter 06 put to work.</div>
+        </div>
+
+        <p>A canonical example is a tiny two-state weather model: <em>Sunny</em> and <em>Rainy</em>, with \(P(\text{stay sunny}) = 0.7\) and \(P(\text{stay rainy}) = 0.6\). The transition matrix and one step from "certainly sunny today" are:</p>
+
+        <div class="eq"><span class="eq-tag">EQ S7.3 — A TWO-STATE CHAIN</span>
+        $$ P = \begin{pmatrix} 0.7 &amp; 0.3 \\ 0.4 &amp; 0.6 \end{pmatrix}, \qquad \pi^{(0)} = (1,\ 0), \qquad \pi^{(1)} = \pi^{(0)} P = (0.7,\ 0.3) $$
+        <div class="eq-note">Rows are "from", columns are "to": row 1 is "from Sunny", so \(0.7\) stay sunny, \(0.3\) turn rainy. Iterate and the distribution marches toward a fixed point \((4/7,\ 3/7) \approx (0.571,\ 0.429)\) regardless of the starting day — the <b>stationary distribution</b> of §7.2. The whole future is encoded in this \(2\times2\) grid.</div>
+        </div>
+
+        <div class="exercise" data-answer="1" data-tol="0.001" data-hint="order = how many past states the next state needs.">
+          <div class="ex-q">A chain's next state depends only on the current state — that is exactly the Markov property of EQ S7.1. What is the <b>order</b> of such a chain (how many previous states the transition rule reads)?</div>
+          <div class="ex-reveal-src">Order-\(k\) means the next state depends on the last \(k\) states. The Markov property says it depends on the <em>current</em> state alone, so \(k = \) <b>1</b>. (An order-2 chain would read the last two states; it can always be re-encoded as an order-1 chain over pairs.)</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Iterate a 2-state chain (EQ S7.2) and watch it forget where it started
+import numpy as np
+P = np.array([[0.7, 0.3],     # from Sunny -> [Sunny, Rainy]
+              [0.4, 0.6]])    # from Rainy -> [Sunny, Rainy]
+
+for start in ([1.0, 0.0], [0.0, 1.0]):     # two very different beginnings
+    pi = np.array(start)
+    print(f"start {start}:")
+    for t in range(6):
+        print(f"  t={t}  P(Sunny)={pi[0]:.4f}  P(Rainy)={pi[1]:.4f}")
+        pi = pi @ P                          # one step = one matrix multiply
+    print()
+
+print("Both starts converge to (4/7, 3/7) =",
+      np.round([4/7, 3/7], 4), "-- the chain forgets its initial state.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="mc-trans" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT S7.1 — TRANSITION-MATRIX EXPLORER</span><span class="w-sub">EDIT P · ITERATE TO STATIONARY · EQ S7.2</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>P(A → A) <output id="mc-aa-out">0.70</output></label><input type="range" id="mc-aa" min="0" max="1" step="0.01" value="0.70"/></div>
+              <div class="ctl"><label>P(B → B) <output id="mc-bb-out">0.60</output></label><input type="range" id="mc-bb" min="0" max="1" step="0.01" value="0.60"/></div>
+              <div class="ctl"><label>START P(A) <output id="mc-p0-out">1.00</output></label><input type="range" id="mc-p0" min="0" max="1" step="0.01" value="1.00"/></div>
+            </div>
+            <canvas class="w-canvas" id="mc-trans-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">CURRENT P(A) · P(B)</div><div class="r-value" id="mc-cur" style="font-size:13px;">—</div></div>
+              <div class="readout acc"><div class="r-label">STATIONARY π = (πA, πB)</div><div class="r-value" id="mc-stat" style="font-size:13px;">—</div></div>
+              <div class="readout"><div class="r-label">STEPS TO CONVERGE (Δ&lt;1e-4)</div><div class="r-value" id="mc-steps">—</div></div>
+            </div>
+            <div class="ctl-row" style="margin-top:6px;">
+              <button class="w-btn" id="mc-step">STEP ▸</button>
+              <button class="w-btn ghost" id="mc-run">RUN TO π ▶</button>
+              <button class="w-btn ghost" id="mc-reset">RESET</button>
+            </div>
+          </div>
+          <div class="w-note">Off-diagonals are fixed by row-stochasticity: \(P(A\to B) = 1 - P(A\to A)\). Press <b>STEP</b> to apply \(\pi \leftarrow \pi P\) once and watch the bars march; <b>RUN</b> animates the whole walk to the fixed point. The dashed line is the solved stationary \(\pi_A = \tfrac{P(B\to A)}{P(A\to B)+P(B\to A)}\). Drag <b>START P(A)</b> anywhere — the chain lands on the same π, because it forgets its past.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 7.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">7.2</span><h2>Stationary distributions &amp; ergodicity</h2></div>
+        <p>The fixed point the weather chain crawled toward is no accident. A distribution \(\pi\) is <strong>stationary</strong> if applying the chain leaves it unchanged: one step in, the same distribution out. It is the eigenvector of \(P^\top\) for eigenvalue 1:</p>
+
+        <div class="eq"><span class="eq-tag">EQ S7.4 — STATIONARY DISTRIBUTION</span>
+        $$ \pi P = \pi, \qquad \sum_i \pi_i = 1, \qquad \pi_i \ge 0 \qquad\Longleftrightarrow\qquad P^\top \pi^\top = \pi^\top $$
+        <div class="eq-note">A row-stochastic \(P\) always has eigenvalue 1 (its rows sum to 1, so the all-ones vector is a right eigenvector); the corresponding <em>left</em> eigenvector, normalized to sum to 1, is \(\pi\). For the two-state chain, solving \(\pi_A P_{AB} = \pi_B P_{BA}\) with \(\pi_A + \pi_B = 1\) gives \(\pi_A = P_{BA}/(P_{AB}+P_{BA})\). <b>Stationary does not mean the chain stops</b> — individual realizations keep hopping; it means the <em>population</em> of states stops shifting.</div>
+        </div>
+
+        <p>When does iterating actually reach \(\pi\), and is \(\pi\) unique? That is the question of <strong>ergodicity</strong>. A finite chain converges to a single stationary distribution from <em>every</em> start exactly when it is:</p>
+        <ul>
+          <li><strong>Irreducible</strong> — every state is reachable from every other (the chain is one connected piece, not separate islands). Otherwise each island has its own \(\pi\).</li>
+          <li><strong>Aperiodic</strong> — the chain is not trapped in a fixed cycle (e.g. a chain that strictly alternates A→B→A→B has period 2 and never settles; it oscillates forever). A single self-loop \(P_{ii} &gt; 0\) anywhere breaks periodicity.</li>
+        </ul>
+
+        <div class="callout">
+          <span class="co-icon">ERGODIC THEOREM</span>
+          <p><strong>An irreducible, aperiodic finite chain has a unique stationary \(\pi\), and \(P^{\,t} \to \mathbf{1}\pi\) as \(t \to \infty\).</strong> Two consequences power the rest of the chapter. (1) <em>Convergence:</em> the distribution forgets its start at a rate governed by the second-largest eigenvalue \(|\lambda_2|\) — the <em>spectral gap</em> \(1 - |\lambda_2|\) is the mixing speed. (2) <em>Time-averages = space-averages:</em> the long-run fraction of time a single trajectory spends in state \(i\) equals \(\pi_i\). That second fact is what makes MCMC (§7.4) legal: run one walk long enough and its visit-frequencies <em>are</em> the target distribution.</p>
+        </div>
+
+        <p>A sufficient (not necessary) condition that makes \(\pi\) easy to verify and is the cornerstone of MCMC is <strong>detailed balance</strong> — the chain is <em>reversible</em>, with as much probability flowing \(i \to j\) as \(j \to i\):</p>
+
+        <div class="eq"><span class="eq-tag">EQ S7.5 — DETAILED BALANCE (REVERSIBILITY)</span>
+        $$ \pi_i\, P_{ij} \;=\; \pi_j\, P_{ji} \quad \text{for all } i, j \qquad\Longrightarrow\qquad \pi P = \pi $$
+        <div class="eq-note">Sum the left identity over \(i\): \(\sum_i \pi_i P_{ij} = \pi_j \sum_i P_{ji} = \pi_j\), which is exactly \((\pi P)_j = \pi_j\). So detailed balance <em>implies</em> stationarity — a strictly stronger, local, pairwise condition that is far easier to engineer than the global \(\pi P = \pi\). <b>Metropolis–Hastings (§7.4) is, in one sentence, a recipe for constructing a chain that satisfies EQ S7.5 for any target \(\pi\) you name.</b></div>
+        </div>
+
+        <p>This is also the engine behind <strong>PageRank</strong>. Model a random surfer who, at each step, follows an outgoing link uniformly at random; with probability \(1-\alpha\) (the <em>damping</em>, \(\alpha \approx 0.15\)) they instead teleport to a random page. That teleport term makes the chain irreducible and aperiodic on any web graph, so the ergodic theorem guarantees a unique stationary \(\pi\) — and \(\pi_i\), the long-run fraction of time the surfer sits on page \(i\), <em>is</em> its PageRank.</p>
+
+        <div class="exercise" data-answer="0.571" data-tol="0.01" data-hint="pi_A = P(B->A) / (P(A->B) + P(B->A)).">
+          <div class="ex-q">For the two-state chain with \(P(\text{stay A}) = 0.7\) (so \(P(A\to B)=0.3\)) and \(P(\text{stay B}) = 0.6\) (so \(P(B\to A)=0.4\)), what is the stationary probability \(\pi_A\)? Use \(\pi_A = \dfrac{P(B\to A)}{P(A\to B) + P(B\to A)}\).</div>
+          <div class="ex-reveal-src">\( \pi_A = \dfrac{0.4}{0.3 + 0.4} = \dfrac{0.4}{0.7} = \dfrac{4}{7} = \) <b>0.571</b>. Equivalently, detailed balance \(\pi_A \cdot 0.3 = \pi_B \cdot 0.4\) with \(\pi_A + \pi_B = 1\) gives the same answer. The chain spends ~57% of its days sunny in the long run.</div>
+        </div>
+
+        <div class="widget" id="mc-pagerank" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT S7.2 — RANDOM WALK &amp; PAGERANK</span><span class="w-sub">5-NODE GRAPH · DAMPED SURFER · EQ S7.4</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>DAMPING α (teleport prob) <output id="mc-pr-alpha-out">0.15</output></label><input type="range" id="mc-pr-alpha" min="0" max="0.6" step="0.01" value="0.15"/></div>
+              <div class="ctl"><label>WALK SPEED <output id="mc-pr-speed-out">MED</output></label><input type="range" id="mc-pr-speed" min="0" max="2" step="1" value="1"/></div>
+            </div>
+            <canvas class="w-canvas" id="mc-pr-canvas" height="340"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">STEPS WALKED</div><div class="r-value" id="mc-pr-steps">0</div></div>
+              <div class="readout acc"><div class="r-label">TOP PAGE (EMPIRICAL)</div><div class="r-value" id="mc-pr-top" style="font-size:14px;">—</div></div>
+              <div class="readout"><div class="r-label">EMPIRICAL ≈ EXACT π?</div><div class="r-value" id="mc-pr-err" style="font-size:13px;">—</div></div>
+            </div>
+            <div class="ctl-row" style="margin-top:6px;">
+              <button class="w-btn" id="mc-pr-toggle">WALK ▶</button>
+              <button class="w-btn ghost" id="mc-pr-reset">RESET COUNTS</button>
+            </div>
+          </div>
+          <div class="w-note">A single surfer hops the directed graph; each node's bar shows the <span style="color:var(--accent);">empirical</span> visit frequency, with the <span style="color:var(--blue);">blue tick</span> marking the exact stationary \(\pi\) (the eigenvector, solved by power iteration). Watch the time-average climb toward the space-average — that convergence is the ergodic theorem in action. Node C is a hub with many inbound links, so it wins. Set α high and authority flattens (everyone teleports everywhere); set α = 0 and a dangling/cyclic trap can starve the rest.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Power-iterate a transition matrix to its stationary pi; verify pi @ P = pi
+import numpy as np
+P = np.array([[0.7, 0.3],
+              [0.4, 0.6]])
+assert np.allclose(P.sum(1), 1.0)          # rows are valid distributions
+
+pi = np.array([1.0, 0.0])                   # any start works
+for _ in range(200):
+    pi = pi @ P                             # EQ S7.2, repeatedly
+pi = pi / pi.sum()
+
+print("stationary pi      :", np.round(pi, 6))
+print("pi @ P             :", np.round(pi @ P, 6))
+print("fixed point holds  :", np.allclose(pi @ P, pi))
+
+# cross-check against the dominant LEFT eigenvector of P (eigval 1)
+w, v = np.linalg.eig(P.T)                    # left eigvecs = right eigvecs of P^T
+k = np.argmin(np.abs(w - 1.0))              # the eigenvalue equal to 1
+ev = np.real(v[:, k]); ev = ev / ev.sum()
+print("eigenvector pi     :", np.round(ev, 6))
+print("closed form (4/7)  :", round(4/7, 6))</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 7.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">7.3</span><h2>Hidden Markov Models</h2></div>
+        <p>So far the state was observable — we saw the weather directly. A <strong>Hidden Markov Model</strong> (HMM) adds one layer of indirection: the Markov chain runs underneath, but you never see the states. You see only <em>emissions</em> — noisy observations whose distribution depends on the hidden state. The classic toy: you cannot see the weather, but you see whether a friend carries an umbrella; you infer the hidden weather from the visible umbrellas.</p>
+
+        <div class="eq"><span class="eq-tag">EQ S7.6 — HMM JOINT DISTRIBUTION</span>
+        $$ \Pr\!\big(x_{1:T},\, z_{1:T}\big) \;=\; \underbrace{\pi_{z_1}}_{\text{initial}} \;\prod_{t=2}^{T} \underbrace{A_{z_{t-1} z_t}}_{\text{transition}} \;\prod_{t=1}^{T} \underbrace{B_{z_t}(x_t)}_{\text{emission}} $$
+        <div class="eq-note">\(z_{1:T}\) are the hidden states (the Markov chain), \(x_{1:T}\) the observations. \(A\) is the state-transition matrix (the chain of §7.1), \(B_{z}(x)\) the emission probability of seeing \(x\) when the hidden state is \(z\), and \(\pi\) the initial distribution. <b>Two Markov assumptions are stacked:</b> states depend only on the previous state, and each observation depends only on the current state. Summing this joint over all \(K^T\) hidden paths looks hopeless — but dynamic programming makes it \(O(K^2 T)\).</div>
+        </div>
+
+        <p>Three canonical questions, each with an exact algorithm — all variants of the same dynamic program that re-uses the Markov factorization instead of enumerating paths:</p>
+        <table class="data">
+          <thead><tr><th>Question</th><th>Algorithm</th><th>Computes</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Likelihood</strong> — how probable is this observation sequence?</td><td class="m">Forward</td><td>\(\Pr(x_{1:T})\) by summing over hidden paths</td></tr>
+            <tr><td><strong>Decoding</strong> — what is the single most likely hidden path?</td><td class="m">Viterbi</td><td>\(\arg\max_z \Pr(z_{1:T} \mid x_{1:T})\)</td></tr>
+            <tr><td><strong>Learning</strong> — fit \(A, B, \pi\) from unlabeled data</td><td class="m">Baum–Welch (EM)</td><td>parameters that locally maximize \(\Pr(x_{1:T})\)</td></tr>
+          </tbody>
+        </table>
+
+        <p>The <strong>forward algorithm</strong> carries a vector of "beliefs" \(\alpha_t(j) = \Pr(x_{1:t},\, z_t = j)\) — the joint probability of the observations so far <em>and</em> being in state \(j\) now — and updates it one observation at a time:</p>
+
+        <div class="eq"><span class="eq-tag">EQ S7.7 — THE FORWARD RECURSION</span>
+        $$ \alpha_t(j) \;=\; B_j(x_t) \sum_{i=1}^{K} \alpha_{t-1}(i)\, A_{ij}, \qquad \Pr(x_{1:T}) \;=\; \sum_{j=1}^{K} \alpha_T(j) $$
+        <div class="eq-note">Each step blends "where could I have come from" (\(\sum_i \alpha_{t-1}(i) A_{ij}\), a transition step exactly like EQ S7.2) with "does state \(j\) explain what I just saw" (\(B_j(x_t)\)). The whole sequence's likelihood is the final beliefs summed. <b>Viterbi is the same recursion with \(\sum\) replaced by \(\max\)</b> (and a back-pointer), turning "total probability of all paths" into "probability of the single best path".</div>
+        </div>
+
+        <p class="note">HMMs ruled speech recognition, part-of-speech tagging, and bioinformatics (gene finding, sequence alignment) for two decades. In modern deep learning their throne went to RNNs and then Transformers (Vol II · Ch 03), which drop the discrete-state and conditional-independence constraints. But the HMM's structure survives everywhere: linear-state-space models and Kalman filters are HMMs with continuous Gaussian states, and the forward–backward dynamic program is the direct ancestor of the message-passing that powers modern structured prediction.</p>
+
+        <div class="exercise" data-answer="0.18" data-tol="0.02" data-hint="alpha_1(j) = pi_j * B_j(x_1); here 0.6 * 0.3.">
+          <div class="ex-q">An HMM starts with \(\pi_{\text{Rainy}} = 0.6\). The emission probability of seeing an <em>umbrella</em> given Rainy is \(B_{\text{Rainy}}(\text{umbrella}) = 0.3\). Using EQ S7.7 at \(t=1\) (no transition yet), what is the forward value \(\alpha_1(\text{Rainy}) = \pi_{\text{Rainy}}\, B_{\text{Rainy}}(\text{umbrella})\)?</div>
+          <div class="ex-reveal-src">\( \alpha_1(\text{Rainy}) = \pi_{\text{Rainy}} \cdot B_{\text{Rainy}}(\text{umbrella}) = 0.6 \times 0.3 = \) <b>0.18</b>. This is the joint probability of "the weather is Rainy on day 1 <em>and</em> we saw an umbrella" — the seed the forward recursion then propagates forward.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 7.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">7.4</span><h2>Markov Chain Monte Carlo — Metropolis–Hastings</h2></div>
+        <p>Here the chapter turns inside-out. Until now \(P\) was given and we asked for \(\pi\). <strong>MCMC inverts the problem:</strong> you are <em>given</em> a target distribution \(\pi\) — typically a Bayesian posterior (Stats 05) you can evaluate up to a constant but cannot integrate or sample from directly — and you <em>construct</em> a Markov chain whose stationary distribution is exactly that \(\pi\). Run the chain; its trajectory becomes your sample. The ergodic theorem (§7.2) is the guarantee that this is allowed.</p>
+
+        <div class="callout">
+          <span class="co-icon">WHY THIS MATTERS</span>
+          <p><strong>The defining pain of Bayesian inference is the normalizing constant.</strong> The posterior \(p(\theta \mid x) = \frac{p(x \mid \theta)\,p(\theta)}{p(x)}\) has a denominator \(p(x) = \int p(x\mid\theta)p(\theta)\,\mathrm{d}\theta\) that is usually an intractable high-dimensional integral. MCMC sidesteps it entirely: every step compares two densities as a <em>ratio</em>, so the unknown constant cancels. You only ever need \(\pi\) up to proportionality. That single trick is why MCMC, not algebra, is how most real Bayesian models are fit.</p>
+        </div>
+
+        <p>The <strong>Metropolis–Hastings</strong> algorithm is a constructive recipe for a chain obeying detailed balance (EQ S7.5) with respect to any \(\pi\). From the current point \(\theta\), <em>propose</em> a move to \(\theta'\) from a proposal density \(q(\theta' \mid \theta)\); then <em>accept</em> it with a probability designed to enforce reversibility:</p>
+
+        <div class="eq"><span class="eq-tag">EQ S7.8 — THE METROPOLIS–HASTINGS ACCEPTANCE RULE</span>
+        $$ a \;=\; \min\!\left(1,\; \frac{\pi(\theta')\, q(\theta \mid \theta')}{\pi(\theta)\, q(\theta' \mid \theta)} \right); \qquad \text{accept } \theta' \text{ with prob } a, \text{ else stay at } \theta $$
+        <div class="eq-note">\(\pi\) appears only as the <b>ratio</b> \(\pi(\theta')/\pi(\theta)\) — the normalizing constant cancels, which is the whole point. The proposal ratio \(q(\theta\mid\theta')/q(\theta'\mid\theta)\) corrects for any asymmetry in how you propose. For a <em>symmetric</em> proposal (e.g. a Gaussian centered on the current point) those \(q\) terms cancel and the rule collapses to the original 1953 <b>Metropolis</b> form \(a = \min(1,\, \pi(\theta')/\pi(\theta))\): always move toward higher density, sometimes move toward lower. Plugging EQ S7.8 into detailed balance verifies \(\pi\) is stationary by construction.</div>
+        </div>
+
+        <p>The logic is a biased random walk. Uphill moves (to higher \(\pi\)) are always taken; downhill moves are taken with probability equal to the density ratio, so the walker explores the tails without getting stuck on the peak. Over many steps it visits each region in proportion to \(\pi\) — exactly the time-average = space-average promise. Two practical knobs dominate everything:</p>
+        <ul>
+          <li><strong>Step size</strong> (proposal width). Too small and the walker shuffles, exploring slowly with high autocorrelation; too large and almost every proposal lands in the low-density wilderness and is rejected. The folklore target acceptance rate is ~0.234 for high-dimensional random-walk Metropolis (an Roberts–Gelman–Gilks result) — neither greedy nor timid.</li>
+          <li><strong>Burn-in &amp; mixing.</strong> The chain starts wherever you put it, not at \(\pi\); the first stretch is transient and is discarded as <em>burn-in</em>. Consecutive samples are correlated, so the <em>effective</em> sample size is far below the raw count. Diagnostics like the \(\hat{R}\) statistic (comparing several independent chains) and trace plots are how you decide it has converged — and "it looks converged" is famously not a proof.</li>
+        </ul>
+
+        <div class="exercise" data-answer="0.5" data-tol="0.001" data-hint="symmetric proposal: a = min(1, pi(new)/pi(old)) = min(1, 1/2).">
+          <div class="ex-q">In symmetric-proposal Metropolis, the acceptance probability is \(a = \min\!\big(1,\, \pi(\theta')/\pi(\theta)\big)\). The current point has (unnormalized) density \(\pi(\theta) = 2\) and the proposed point has \(\pi(\theta') = 1\). What is the acceptance probability \(a\)?</div>
+          <div class="ex-reveal-src">The proposal moves <em>downhill</em> (1 &lt; 2), so \(a = \min\!\big(1,\, 1/2\big) = \) <b>0.5</b>. The walker takes this downhill step half the time — accepting just enough bad moves to map the distribution's tails rather than collapsing onto its mode. (Had the move been uphill, \(a = \min(1,\, \text{ratio}\,&gt;\,1) = 1\): always accept.)</div>
+        </div>
+
+        <div class="widget" id="mc-metropolis" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT S7.3 — METROPOLIS SAMPLER</span><span class="w-sub">1-D TWO-PEAK TARGET · HISTOGRAM CONVERGES · EQ S7.8</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>PROPOSAL STEP σ <output id="mc-mh-step-out">1.0</output></label><input type="range" id="mc-mh-step" min="0.05" max="6" step="0.05" value="1.0"/></div>
+              <div class="ctl"><label>SAMPLE SPEED <output id="mc-mh-speed-out">MED</output></label><input type="range" id="mc-mh-speed" min="0" max="2" step="1" value="1"/></div>
+            </div>
+            <canvas class="w-canvas" id="mc-mh-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">SAMPLES DRAWN</div><div class="r-value" id="mc-mh-n">0</div></div>
+              <div class="readout acc"><div class="r-label">ACCEPTANCE RATE</div><div class="r-value" id="mc-mh-acc">—</div></div>
+              <div class="readout"><div class="r-label">HISTOGRAM vs TARGET (L1)</div><div class="r-value" id="mc-mh-fit" style="font-size:13px;">—</div></div>
+            </div>
+            <div class="ctl-row" style="margin-top:6px;">
+              <button class="w-btn" id="mc-mh-toggle">SAMPLE ▶</button>
+              <button class="w-btn ghost" id="mc-mh-reset">RESET</button>
+            </div>
+          </div>
+          <div class="w-note">The <span style="color:var(--blue);">blue curve</span> is the target — a two-peaked mixture you can evaluate but not easily sample. <span style="color:var(--accent);">Mint bars</span> are the running histogram of accepted samples; the <span style="color:var(--accent);">dot</span> is the current walker. Watch the bars grow into the curve. Now <em>break</em> it: shrink σ toward 0 and the walker can't cross the valley between peaks — it samples one mode and reports a confidently wrong distribution (the canonical MCMC failure). Blow σ up and the acceptance rate craters as proposals miss the target entirely. The healthy regime is in between.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Metropolis-Hastings for a 2-component Gaussian mixture target (EQ S7.8)
+import numpy as np
+rng = np.random.default_rng(0)
+
+def target(x):                              # unnormalized density: two peaks
+    return 0.6*np.exp(-0.5*((x+2)/0.7)**2) + 0.4*np.exp(-0.5*((x-2)/1.0)**2)
+
+x, step, n = 0.0, 1.5, 40000
+samples, accepts = np.empty(n), 0
+for i in range(n):
+    xp = x + rng.normal(0, step)            # symmetric Gaussian proposal
+    if rng.random() < min(1.0, target(xp)/target(x)):   # accept rule, const cancels
+        x, accepts = xp, accepts + 1        # move; ratio needs no normalizer
+    samples[i] = x
+
+burn = samples[2000:]                        # discard burn-in
+print(f"acceptance rate : {accepts/n:.3f}")
+print(f"sample mean     : {burn.mean():+.3f}   (true mix mean is near 0)")
+print(f"sample std      : {burn.std():.3f}")
+# overlay the recovered target density on the canvas (normalized by area)
+xs = np.linspace(-6, 6, 200)
+area = np.sum(target(xs)) * (xs[1] - xs[0])  # Riemann sum normalizer
+plot_xy(xs, target(xs) / area)               # the target the walk reproduced</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 7.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">7.5</span><h2>Gibbs sampling &amp; MCMC in modern ML</h2></div>
+        <p>Metropolis–Hastings is general but blunt: one proposal width for a whole high-dimensional space rarely fits. <strong>Gibbs sampling</strong> is the special case that exploits structure — when you cannot sample the joint \(p(\theta_1, \ldots, \theta_d)\) but <em>can</em> sample each variable from its <em>full conditional</em> given all the others. You then cycle through the coordinates, replacing each in turn by a fresh draw from its conditional:</p>
+
+        <div class="eq"><span class="eq-tag">EQ S7.9 — THE GIBBS SWEEP</span>
+        $$ \theta_1^{(t+1)} \sim p\big(\theta_1 \mid \theta_2^{(t)}, \ldots, \theta_d^{(t)}\big), \;\; \theta_2^{(t+1)} \sim p\big(\theta_2 \mid \theta_1^{(t+1)}, \theta_3^{(t)}, \ldots\big), \;\; \ldots $$
+        <div class="eq-note">Each coordinate is updated from its conditional with the others held fixed (always using the freshest values). Gibbs is <b>Metropolis–Hastings with acceptance probability always equal to 1</b>: when you propose from the exact conditional, the MH ratio simplifies to one, so no move is ever rejected. The price is that you need those conditionals in closed form — which is exactly why conjugate priors (Stats 05) and graphical models are its natural habitat. It can also mix slowly when coordinates are strongly correlated, because it only ever moves axis-by-axis.</div>
+        </div>
+
+        <p>Where MCMC sits in the 2026 landscape:</p>
+        <ul>
+          <li><strong>Probabilistic programming.</strong> Stan, PyMC, and NumPyro let you declare a model and sample its posterior with no hand-derived math. The default sampler is almost never vanilla Metropolis — it is the <strong>No-U-Turn Sampler (NUTS)</strong>, an adaptive form of <em>Hamiltonian Monte Carlo</em> that uses gradients of \(\log\pi\) to propose long, informed trajectories instead of a blind local jiggle, dramatically improving mixing in high dimensions. Vanilla random-walk Metropolis is now mostly pedagogy and a fallback.</li>
+          <li><strong>The gradient frontier.</strong> HMC/NUTS need \(\nabla \log \pi\), which auto-diff (Vol II · Ch 03 machinery) supplies for free. For massive datasets, <em>stochastic-gradient MCMC</em> (SGLD and kin) injects calibrated noise into SGD steps so the optimizer's trajectory itself samples a Bayesian posterior over weights — the bridge between deep learning and Bayesian inference.</li>
+          <li><strong>The diffusion connection.</strong> Modern image and video generators (Vol II · Ch 08) are, at heart, learned reverse-time Markov chains: a forward chain gradually adds Gaussian noise to data, and a neural network learns to run the chain backward, sampling images by walking from noise to signal. Langevin-style sampling — a gradient ascent on \(\log\pi\) with noise — is the direct intellectual descendant of the Metropolis walk you ran in Instrument S7.3.</li>
+          <li><strong>The honest caveats.</strong> Convergence is asymptotic and unprovable in finite time; multimodal targets (like Instrument S7.3 with small σ) can trap a chain in one mode forever; and effective sample sizes can be a tiny fraction of the raw count. MCMC is the workhorse of Bayesian computation precisely because, used with diagnostics and skepticism, it is the most general tool we have — not because it is foolproof.</li>
+        </ul>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>Markov chains gave us a way to sample what we cannot integrate; the next chapter asks how much a random outcome is <em>worth knowing</em>.</strong> Information theory measures uncertainty in bits — entropy, cross-entropy, KL divergence, mutual information — and turns out to be the language in which the acceptance ratios, the mixing rates, and the very loss functions of every model in this encyclopedia are most naturally written. Stats 08: <em>Information Theory</em>.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 7.R — References ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">7.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://doi.org/10.1017/CBO9780511810633" target="_blank" rel="noopener">Norris, J. R. (1997). <span class="ref-venue">Markov Chains</span>.</a> <span class="ref-meta">Cambridge University Press — the standard rigorous treatment of transition matrices, stationarity, ergodicity, and reversibility.</span></li>
+          <li><a href="https://doi.org/10.1063/1.1699114" target="_blank" rel="noopener">Metropolis, N., Rosenbluth, A. W., Rosenbluth, M. N., Teller, A. H. &amp; Teller, E. (1953). <span class="ref-venue">Equation of State Calculations by Fast Computing Machines</span>.</a> <span class="ref-meta">J. Chem. Phys. 21(6) — the original Metropolis acceptance rule (symmetric-proposal special case of EQ S7.8).</span></li>
+          <li><a href="https://doi.org/10.1093/biomet/57.1.97" target="_blank" rel="noopener">Hastings, W. K. (1970). <span class="ref-venue">Monte Carlo Sampling Methods Using Markov Chains and Their Applications</span>.</a> <span class="ref-meta">Biometrika 57(1) — the generalization to asymmetric proposals, completing Metropolis–Hastings.</span></li>
+          <li><a href="https://doi.org/10.1109/5.18626" target="_blank" rel="noopener">Rabiner, L. R. (1989). <span class="ref-venue">A Tutorial on Hidden Markov Models and Selected Applications in Speech Recognition</span>.</a> <span class="ref-meta">Proc. IEEE 77(2) — the canonical reference for the forward, Viterbi, and Baum–Welch algorithms (§7.3).</span></li>
+          <li><a href="https://doi.org/10.1109/TPAMI.1984.4767596" target="_blank" rel="noopener">Geman, S. &amp; Geman, D. (1984). <span class="ref-venue">Stochastic Relaxation, Gibbs Distributions, and the Bayesian Restoration of Images</span>.</a> <span class="ref-meta">IEEE TPAMI 6(6) — introduced Gibbs sampling (EQ S7.9) to statistics and image analysis.</span></li>
+          <li><a href="http://ilpubs.stanford.edu:8090/422/" target="_blank" rel="noopener">Page, L., Brin, S., Motwani, R. &amp; Winograd, T. (1999). <span class="ref-venue">The PageRank Citation Ranking: Bringing Order to the Web</span>.</a> <span class="ref-meta">Stanford InfoLab — the damped random-walk Markov chain whose stationary distribution is PageRank (§7.2).</span></li>
+          <li><a href="https://doi.org/10.1214/aoap/1034625254" target="_blank" rel="noopener">Roberts, G. O., Gelman, A. &amp; Gilks, W. R. (1997). <span class="ref-venue">Weak Convergence and Optimal Scaling of Random Walk Metropolis Algorithms</span>.</a> <span class="ref-meta">Ann. Appl. Probab. 7(1) — the ~0.234 optimal acceptance-rate result (§7.4).</span></li>
+          <li><a href="https://jmlr.org/papers/v15/hoffman14a.html" target="_blank" rel="noopener">Hoffman, M. D. &amp; Gelman, A. (2014). <span class="ref-venue">The No-U-Turn Sampler: Adaptively Setting Path Lengths in Hamiltonian Monte Carlo</span>.</a> <span class="ref-meta">JMLR 15 — NUTS, the adaptive HMC sampler behind Stan / PyMC / NumPyro (§7.5).</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../stats/06-linear-algebra.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">06</span> Linear Algebra</div></a>
+        <a class="next" href="../stats/08-information-theory.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">08</span> Information Theory</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — STATISTICS · CH 07</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* ============================================================
+   Markov Chains & MCMC — chapter instruments
+   Single IIFE, no globals. setTimeout-driven animation only.
+   Each widget guarded by element existence.
+   ============================================================ */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  function fnum(x, d) { d = d === undefined ? 3 : d; return x.toFixed(d); }
+
+  /* ========================================================
+     INSTRUMENT S7.1 — Transition-matrix explorer
+     Edit a 2-state chain, iterate pi <- pi P toward stationary.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("mc-trans");
+    if (!root) return;
+    var aa = document.getElementById("mc-aa");
+    var bb = document.getElementById("mc-bb");
+    var p0 = document.getElementById("mc-p0");
+    var aaOut = document.getElementById("mc-aa-out");
+    var bbOut = document.getElementById("mc-bb-out");
+    var p0Out = document.getElementById("mc-p0-out");
+    var curEl = document.getElementById("mc-cur");
+    var statEl = document.getElementById("mc-stat");
+    var stepsEl = document.getElementById("mc-steps");
+    var canvas = document.getElementById("mc-trans-canvas");
+    var stepBtn = document.getElementById("mc-step");
+    var runBtn = document.getElementById("mc-run");
+    var resetBtn = document.getElementById("mc-reset");
+
+    var pi = [1, 0];     // current distribution (A, B)
+    var t = 0;           // step counter
+    var timer = null;
+    var hist = [];       // history of pi[0] for the trace
+
+    function stationary() {
+      var pAB = 1 - (+aa.value);   // P(A->B)
+      var pBA = 1 - (+bb.value);   // P(B->A)
+      var denom = pAB + pBA;
+      var piA = denom < 1e-12 ? +p0.value : pBA / denom;  // both stay -> absorbing-ish
+      return [piA, 1 - piA];
+    }
+    function stepsToConverge() {
+      var pAB = 1 - (+aa.value), pBA = 1 - (+bb.value);
+      var stat = stationary();
+      var v = [+p0.value, 1 - (+p0.value)], n = 0;
+      while (n < 2000 && Math.abs(v[0] - stat[0]) > 1e-4) {
+        var nA = v[0] * (+aa.value) + v[1] * pBA;
+        var nB = v[0] * pAB + v[1] * (+bb.value);
+        v = [nA, nB]; n++;
+      }
+      return n;
+    }
+    function apply(v) {
+      var pAB = 1 - (+aa.value), pBA = 1 - (+bb.value);
+      var nA = v[0] * (+aa.value) + v[1] * pBA;
+      var nB = v[0] * pAB + v[1] * (+bb.value);
+      return [nA, nB];
+    }
+    function resetState() {
+      stop();
+      pi = [+p0.value, 1 - (+p0.value)];
+      t = 0; hist = [pi[0]];
+      render();
+    }
+    function stop() { if (timer) { clearInterval(timer); timer = null; } runBtn.classList.remove("on"); runBtn.textContent = "RUN TO π ▶"; }
+
+    function render() {
+      aaOut.textContent = fnum(+aa.value, 2);
+      bbOut.textContent = fnum(+bb.value, 2);
+      p0Out.textContent = fnum(+p0.value, 2);
+      var stat = stationary();
+      curEl.textContent = fnum(pi[0], 3) + " · " + fnum(pi[1], 3);
+      statEl.textContent = fnum(stat[0], 3) + " · " + fnum(stat[1], 3);
+      stepsEl.textContent = stepsToConverge();
+
+      var c = FM.setupCanvas(canvas, 300);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      ctx.clearRect(0, 0, w, h);
+      var padL = 44, padR = 16, padT = 18, padB = 26;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+
+      // left: two big bars for current P(A), P(B)
+      var barsW = (x1 - x0) * 0.34;
+      var bx0 = x0, bx1 = x0 + barsW;
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText("CURRENT π", bx0, y1 - 12);
+      var labels = ["A", "B"], cols = [C.MINT, C.BLUE];
+      var bw = (bx1 - bx0 - 16) / 2;
+      for (var k = 0; k < 2; k++) {
+        var bxx = bx0 + k * (bw + 16);
+        var bh = pi[k] * (y0 - y1);
+        ctx.fillStyle = "rgba(47,50,52,.5)";
+        ctx.fillRect(bxx, y1, bw, y0 - y1);
+        ctx.fillStyle = cols[k];
+        ctx.fillRect(bxx, y0 - bh, bw, bh);
+        // stationary tick
+        var sy = y0 - stat[k] * (y0 - y1);
+        ctx.strokeStyle = C.SEC; ctx.setLineDash([3, 3]); ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(bxx - 2, sy); ctx.lineTo(bxx + bw + 2, sy); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = C.SEC; ctx.textAlign = "center"; ctx.textBaseline = "top";
+        ctx.fillText(labels[k], bxx + bw / 2, y0 + 6);
+        ctx.fillStyle = cols[k]; ctx.textBaseline = "bottom";
+        ctx.fillText(fnum(pi[k], 2), bxx + bw / 2, y0 - bh - 3);
+      }
+
+      // right: convergence trace of P(A) over steps, with stationary line
+      var tx0 = bx1 + 40, tx1 = x1;
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(tx0, y1, tx1 - tx0, y0 - y1);
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText("P(A) vs STEP", tx0, y1 - 12);
+      // stationary dashed
+      var sline = y0 - stat[0] * (y0 - y1);
+      ctx.strokeStyle = C.SEC; ctx.setLineDash([4, 4]);
+      ctx.beginPath(); ctx.moveTo(tx0, sline); ctx.lineTo(tx1, sline); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = C.SEC; ctx.textAlign = "right"; ctx.textBaseline = "bottom";
+      ctx.fillText("π_A=" + fnum(stat[0], 2), tx1 - 3, sline - 2);
+      // trace line
+      var maxN = Math.max(12, hist.length - 1);
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (var i = 0; i < hist.length; i++) {
+        var X = tx0 + (i / maxN) * (tx1 - tx0);
+        var Y = y0 - hist[i] * (y0 - y1);
+        if (i === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y);
+      }
+      ctx.stroke();
+      // last point dot
+      if (hist.length) {
+        var lx = tx0 + ((hist.length - 1) / maxN) * (tx1 - tx0);
+        var ly = y0 - hist[hist.length - 1] * (y0 - y1);
+        ctx.fillStyle = C.BRIGHT;
+        ctx.beginPath(); ctx.arc(lx, ly, 3, 0, 2 * Math.PI); ctx.fill();
+      }
+      ctx.fillStyle = C.MUT; ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText("t=" + t, tx0 + 3, y0 - 12);
+    }
+
+    function doStep() {
+      pi = apply(pi); t++;
+      hist.push(pi[0]);
+      if (hist.length > 200) hist.shift();
+      render();
+    }
+    stepBtn.addEventListener("click", function () { stop(); doStep(); });
+    runBtn.addEventListener("click", function () {
+      if (timer) { stop(); return; }
+      runBtn.classList.add("on"); runBtn.textContent = "PAUSE ⏸";
+      var stat = stationary();
+      timer = setInterval(function () {
+        doStep();
+        if (Math.abs(pi[0] - stat[0]) < 1e-4 || t > 200) stop();
+      }, 280);
+    });
+    resetBtn.addEventListener("click", resetState);
+    [aa, bb].forEach(function (s) { s.addEventListener("input", function () { stop(); render(); }); });
+    p0.addEventListener("input", resetState);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    resetState();
+  })();
+
+  /* ========================================================
+     INSTRUMENT S7.2 — Random walk & PageRank on a 5-node graph
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("mc-pagerank");
+    if (!root) return;
+    var canvas = document.getElementById("mc-pr-canvas");
+    var alpha = document.getElementById("mc-pr-alpha");
+    var alphaOut = document.getElementById("mc-pr-alpha-out");
+    var speed = document.getElementById("mc-pr-speed");
+    var speedOut = document.getElementById("mc-pr-speed-out");
+    var stepsEl = document.getElementById("mc-pr-steps");
+    var topEl = document.getElementById("mc-pr-top");
+    var errEl = document.getElementById("mc-pr-err");
+    var toggleBtn = document.getElementById("mc-pr-toggle");
+    var resetBtn = document.getElementById("mc-pr-reset");
+
+    var names = ["A", "B", "C", "D", "E"];
+    // directed adjacency: C is a hub with many inbound links
+    var adj = [
+      [0, 1, 1, 0, 0],   // A -> B, C
+      [0, 0, 1, 0, 0],   // B -> C
+      [1, 0, 0, 1, 1],   // C -> A, D, E
+      [0, 0, 1, 0, 1],   // D -> C, E
+      [0, 0, 1, 0, 0]    // E -> C
+    ];
+    var N = 5;
+    var pos = [];        // node positions in a pentagon, set on render
+    var visits = new Array(N).fill(0);
+    var cur = 0, steps = 0, timer = null;
+    var rng = FM.mulberry32 ? FM.mulberry32(7) : Math.random;
+    function rand() { return typeof rng === "function" ? rng() : Math.random(); }
+
+    function buildP() {
+      var a = +alpha.value;
+      var P = [];
+      for (var i = 0; i < N; i++) {
+        var row = new Array(N).fill(0);
+        var outs = [];
+        for (var j = 0; j < N; j++) if (adj[i][j]) outs.push(j);
+        var teleport = a / N;
+        if (outs.length === 0) {                 // dangling: teleport fully
+          for (var k = 0; k < N; k++) row[k] = 1 / N;
+        } else {
+          var follow = (1 - a) / outs.length;
+          for (var m = 0; m < N; m++) row[m] = teleport;
+          for (var o = 0; o < outs.length; o++) row[outs[o]] += follow;
+        }
+        P.push(row);
+      }
+      return P;
+    }
+    function exactPi(P) {
+      var pi = new Array(N).fill(1 / N);
+      for (var it = 0; it < 400; it++) {
+        var np = new Array(N).fill(0);
+        for (var i = 0; i < N; i++)
+          for (var j = 0; j < N; j++) np[j] += pi[i] * P[i][j];
+        pi = np;
+      }
+      var s = pi.reduce(function (x, y) { return x + y; }, 0);
+      return pi.map(function (x) { return x / s; });
+    }
+    function walkStep(P) {
+      var row = P[cur], r = rand(), acc = 0, nxt = N - 1;
+      for (var j = 0; j < N; j++) { acc += row[j]; if (r <= acc) { nxt = j; break; } }
+      cur = nxt; visits[cur]++; steps++;
+    }
+
+    function render() {
+      alphaOut.textContent = fnum(+alpha.value, 2);
+      speedOut.textContent = ["SLOW", "MED", "FAST"][+speed.value];
+      var P = buildP();
+      var exact = exactPi(P);
+      var total = visits.reduce(function (x, y) { return x + y; }, 0);
+      var emp = visits.map(function (v) { return total ? v / total : 0; });
+
+      var c = FM.setupCanvas(canvas, 340);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      ctx.clearRect(0, 0, w, h);
+
+      // layout: graph on the left half, bars on the right half
+      var gx0 = 10, gx1 = w * 0.5, gcx = (gx0 + gx1) / 2, gcy = h / 2, R = Math.min(gx1 - gx0, h) * 0.36;
+      pos = [];
+      for (var i = 0; i < N; i++) {
+        var ang = -Math.PI / 2 + i * 2 * Math.PI / N;
+        pos.push([gcx + R * Math.cos(ang), gcy + R * Math.sin(ang)]);
+      }
+      // edges (directed, with arrowheads)
+      ctx.strokeStyle = C.HAIR; ctx.fillStyle = C.HAIR; ctx.lineWidth = 1.2;
+      for (var a2 = 0; a2 < N; a2++) for (var b = 0; b < N; b++) {
+        if (!adj[a2][b]) continue;
+        var p1 = pos[a2], p2 = pos[b];
+        var dx = p2[0] - p1[0], dy = p2[1] - p1[1], len = Math.sqrt(dx * dx + dy * dy);
+        var ux = dx / len, uy = dy / len, nodeR = 15;
+        var sx = p1[0] + ux * nodeR, sy = p1[1] + uy * nodeR;
+        var ex = p2[0] - ux * nodeR, ey = p2[1] - uy * nodeR;
+        ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke();
+        // arrowhead
+        var ah = 6;
+        ctx.beginPath();
+        ctx.moveTo(ex, ey);
+        ctx.lineTo(ex - ah * ux - ah * 0.5 * (-uy), ey - ah * uy - ah * 0.5 * ux);
+        ctx.lineTo(ex - ah * ux + ah * 0.5 * (-uy), ey - ah * uy + ah * 0.5 * ux);
+        ctx.closePath(); ctx.fill();
+      }
+      // nodes
+      for (var n = 0; n < N; n++) {
+        var p = pos[n];
+        var isCur = n === cur && steps > 0;
+        ctx.beginPath(); ctx.arc(p[0], p[1], 15, 0, 2 * Math.PI);
+        ctx.fillStyle = isCur ? C.MINT : "#1e2124";
+        ctx.fill();
+        ctx.strokeStyle = isCur ? C.MINT : C.SEC; ctx.lineWidth = isCur ? 2 : 1;
+        ctx.stroke();
+        ctx.fillStyle = isCur ? "#000000" : C.BRIGHT;
+        ctx.font = "12px ui-monospace, Menlo, monospace";
+        ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText(names[n], p[0], p[1]);
+      }
+
+      // bars on right: empirical (mint) with exact tick (blue)
+      var bx0 = w * 0.56, bx1 = w - 14, by0 = h - 28, by1 = 22;
+      var maxV = Math.max(0.0001, Math.max.apply(null, exact.concat(emp)));
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText("VISIT FREQUENCY  ■ empirical  | exact π", bx0, by1 - 14);
+      var bw = (bx1 - bx0) / N * 0.6, gap = (bx1 - bx0) / N;
+      for (var q = 0; q < N; q++) {
+        var bxx = bx0 + q * gap + (gap - bw) / 2;
+        var eh = (emp[q] / maxV) * (by0 - by1);
+        var xh = (exact[q] / maxV) * (by0 - by1);
+        ctx.fillStyle = "rgba(47,50,52,.5)";
+        ctx.fillRect(bxx, by1, bw, by0 - by1);
+        ctx.fillStyle = C.MINT;
+        ctx.fillRect(bxx, by0 - eh, bw, eh);
+        // exact tick
+        ctx.strokeStyle = C.BLUE; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(bxx - 1, by0 - xh); ctx.lineTo(bxx + bw + 1, by0 - xh); ctx.stroke();
+        ctx.fillStyle = C.SEC; ctx.textAlign = "center"; ctx.textBaseline = "top";
+        ctx.fillText(names[q], bxx + bw / 2, by0 + 5);
+      }
+
+      stepsEl.textContent = steps;
+      var topIdx = 0; for (var z = 1; z < N; z++) if (exact[z] > exact[topIdx]) topIdx = z;
+      topEl.textContent = names[topIdx] + " (π=" + fnum(exact[topIdx], 3) + ")";
+      var l1 = 0; for (var u = 0; u < N; u++) l1 += Math.abs(emp[u] - exact[u]);
+      errEl.textContent = total ? "L1 = " + fnum(l1, 3) : "walk to compare";
+    }
+
+    function tick() {
+      var P = buildP();
+      var batch = [2, 5, 14][+speed.value];
+      for (var b = 0; b < batch; b++) walkStep(P);
+      render();
+    }
+    function stop() { if (timer) { clearInterval(timer); timer = null; } toggleBtn.classList.remove("on"); toggleBtn.textContent = "WALK ▶"; }
+    toggleBtn.addEventListener("click", function () {
+      if (timer) { stop(); return; }
+      toggleBtn.classList.add("on"); toggleBtn.textContent = "PAUSE ⏸";
+      timer = setInterval(tick, 120);
+    });
+    resetBtn.addEventListener("click", function () {
+      visits = new Array(N).fill(0); steps = 0; cur = 0; render();
+    });
+    alpha.addEventListener("input", render);
+    speed.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT S7.3 — Metropolis sampler on a 1-D mixture
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("mc-metropolis");
+    if (!root) return;
+    var canvas = document.getElementById("mc-mh-canvas");
+    var step = document.getElementById("mc-mh-step");
+    var stepOut = document.getElementById("mc-mh-step-out");
+    var speed = document.getElementById("mc-mh-speed");
+    var speedOut = document.getElementById("mc-mh-speed-out");
+    var nEl = document.getElementById("mc-mh-n");
+    var accEl = document.getElementById("mc-mh-acc");
+    var fitEl = document.getElementById("mc-mh-fit");
+    var toggleBtn = document.getElementById("mc-mh-toggle");
+    var resetBtn = document.getElementById("mc-mh-reset");
+
+    var XMIN = -7, XMAX = 7, BINS = 56;
+    var hist = new Array(BINS).fill(0);
+    var x = 0, n = 0, accepts = 0, timer = null;
+    var rng = FM.mulberry32 ? FM.mulberry32(13) : Math.random;
+    function rand() { return typeof rng === "function" ? rng() : Math.random(); }
+    function randn() {  // Box–Muller from the deterministic uniform RNG
+      var u = Math.max(1e-12, rand()), v = rand();
+      return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+    }
+    // unnormalized two-peak target
+    function target(t) {
+      return 0.6 * Math.exp(-0.5 * Math.pow((t + 2) / 0.7, 2)) +
+             0.4 * Math.exp(-0.5 * Math.pow((t - 2) / 1.0, 2));
+    }
+    // normalized target density on the grid (for overlay + L1)
+    var grid = [], gnorm = 1;
+    (function () {
+      var xs = [], sum = 0, dx = (XMAX - XMIN) / 400;
+      for (var i = 0; i <= 400; i++) { var t = XMIN + i * dx; xs.push([t, target(t)]); sum += target(t) * dx; }
+      grid = xs; gnorm = sum;
+    })();
+    function binOf(t) {
+      var b = Math.floor((t - XMIN) / (XMAX - XMIN) * BINS);
+      return b < 0 ? 0 : b >= BINS ? BINS - 1 : b;
+    }
+
+    function sampleStep() {
+      var s = +step.value;
+      var xp = x + s * randn();              // symmetric Gaussian proposal
+      var a = Math.min(1, target(xp) / target(x));
+      if (rand() < a) { x = xp; accepts++; } // accept (const cancels in ratio)
+      n++;
+      if (n > 200) hist[binOf(x)]++;          // record after a short burn-in
+    }
+
+    function render() {
+      stepOut.textContent = fnum(+step.value, 2);
+      speedOut.textContent = ["SLOW", "MED", "FAST"][+speed.value];
+      var c = FM.setupCanvas(canvas, 320);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      ctx.clearRect(0, 0, w, h);
+      var padL = 16, padR = 16, padT = 16, padB = 26;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      function px(t) { return x0 + (t - XMIN) / (XMAX - XMIN) * (x1 - x0); }
+
+      // scale: target peak and histogram peak to a common height
+      var tgtMax = 0; for (var g = 0; g < grid.length; g++) if (grid[g][1] / gnorm > tgtMax) tgtMax = grid[g][1] / gnorm;
+      var binW = (XMAX - XMIN) / BINS;
+      var total = hist.reduce(function (p, q) { return p + q; }, 0);
+      var histMax = 0;
+      for (var b2 = 0; b2 < BINS; b2++) { var dens = total ? hist[b2] / total / binW : 0; if (dens > histMax) histMax = dens; }
+      var yScale = Math.max(tgtMax, histMax, 1e-6);
+
+      // histogram bars (mint)
+      ctx.fillStyle = "rgba(166,242,204,.55)";
+      for (var b = 0; b < BINS; b++) {
+        if (!total) break;
+        var dens2 = hist[b] / total / binW;
+        var bh = (dens2 / yScale) * (y0 - y1);
+        var bxA = px(XMIN + b * binW), bxB = px(XMIN + (b + 1) * binW);
+        ctx.fillRect(bxA, y0 - bh, (bxB - bxA) - 1, bh);
+      }
+      // target curve (blue)
+      ctx.strokeStyle = C.BLUE; ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (var i = 0; i < grid.length; i++) {
+        var X = px(grid[i][0]), Y = y0 - (grid[i][1] / gnorm / yScale) * (y0 - y1);
+        if (i === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y);
+      }
+      ctx.stroke();
+      // baseline
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y0); ctx.stroke();
+      // current walker
+      var wx = px(x);
+      ctx.strokeStyle = C.MINT; ctx.setLineDash([2, 3]); ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(wx, y1); ctx.lineTo(wx, y0); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = C.BRIGHT;
+      ctx.beginPath(); ctx.arc(wx, y0 - 6, 4, 0, 2 * Math.PI); ctx.fill();
+      // axis ticks
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "center"; ctx.textBaseline = "top";
+      [-6, -3, 0, 3, 6].forEach(function (tk) { ctx.fillText(String(tk), px(tk), y0 + 5); });
+      // legend
+      ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillStyle = C.BLUE; ctx.fillText("— TARGET π", x0 + 2, y1);
+      ctx.fillStyle = C.MINT; ctx.fillText("■ SAMPLES", x0 + 2, y1 + 13);
+
+      // readouts
+      nEl.textContent = n;
+      accEl.textContent = n ? fnum(accepts / n, 3) : "—";
+      if (total) {
+        var l1 = 0;
+        for (var k = 0; k < BINS; k++) {
+          var center = XMIN + (k + 0.5) * binW;
+          var tdens = target(center) / gnorm * binW;   // target prob mass in bin
+          var edens = hist[k] / total;                 // empirical mass in bin
+          l1 += Math.abs(tdens - edens);
+        }
+        fitEl.textContent = "L1 = " + fnum(l1, 3);
+      } else { fitEl.textContent = "sample to compare"; }
+    }
+
+    function tick() {
+      var batch = [4, 12, 40][+speed.value];
+      for (var b = 0; b < batch; b++) sampleStep();
+      render();
+    }
+    function stop() { if (timer) { clearInterval(timer); timer = null; } toggleBtn.classList.remove("on"); toggleBtn.textContent = "SAMPLE ▶"; }
+    toggleBtn.addEventListener("click", function () {
+      if (timer) { stop(); return; }
+      toggleBtn.classList.add("on"); toggleBtn.textContent = "PAUSE ⏸";
+      timer = setInterval(tick, 90);
+    });
+    resetBtn.addEventListener("click", function () {
+      hist = new Array(BINS).fill(0); n = 0; accepts = 0; x = 0; render();
+    });
+    step.addEventListener("input", render);
+    speed.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

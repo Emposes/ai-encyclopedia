@@ -1,0 +1,745 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Distance &amp; Similarity Metrics — AI Encyclopedia</title>
+<meta name="description" content="Every nearest-neighbor, cluster and embedding rests on one choice — how you measure 'close' — and in high dimensions that choice gets strange." />
+<link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
+<meta name="theme-color" content="#000000" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+</head>
+<body data-track="ml" data-level="intro">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ MACHINE LEARNING / 11 / DISTANCES</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../ml/12-clustering-zoo.html">NEXT: CLUSTERING ZOO →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">MACHINE LEARNING · CHAPTER 11 / 15</div>
+    <h1>Distance &amp; Similarity Metrics</h1>
+    <p class="lede">k-NN, every clustering algorithm, and every vector search rest on one decision that usually goes unexamined: how you measure "close". <strong>That single choice of distance determines every nearest neighbor, cluster, and embedding, and in high dimensions it behaves in counterintuitive ways.</strong> This chapter builds the families of distance and similarity from the ground up, Minkowski, Mahalanobis, cosine, and Jaccard, then confronts the curse that hollows them out as dimensions grow.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>INTRO</b></span>
+      <span>READING TIME<b>≈ 22 MIN</b></span>
+      <span>BUILDS ON<b>ML 04 · STATS 06</b></span>
+      <span>INSTRUMENTS<b>DISTANCE EXPLORER · MAHALANOBIS · CONCENTRATION</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">11.1</span>The distance defines the model</a>
+      <a href="#s2"><span class="n">11.2</span>The Minkowski family</a>
+      <a href="#s3"><span class="n">11.3</span>Mahalanobis distance</a>
+      <a href="#s4"><span class="n">11.4</span>Cosine &amp; Jaccard similarity</a>
+      <a href="#s5"><span class="n">11.5</span>The curse of dimensionality</a>
+      <a href="#s6"><span class="n">11.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 11.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">11.1</span><h2>Why the distance defines the model</h2></div>
+        <p>k-NN (Chapter 04) has no parameters, no training step, no loss function. Strip it down and what remains is a stored dataset and <em>one function that decides which points count as neighbors</em>. The same is true of k-means, of DBSCAN, of hierarchical clustering, of the approximate-nearest-neighbor index inside every vector database. None of them is really an algorithm over data; each is an algorithm over a <strong>distance</strong>. Change the distance and you have changed the model — usually more than any hyperparameter could.</p>
+
+        <p>Mathematicians demand four properties before they will call a function \(d(\mathbf{x},\mathbf{y})\) a <strong>metric</strong>. They are worth stating because the moment you violate one, geometric intuition stops being trustworthy:</p>
+
+        <div class="eq"><span class="eq-tag">EQ M11.1 — THE METRIC AXIOMS</span>
+        $$ d(\mathbf{x},\mathbf{y}) \ge 0,\quad d(\mathbf{x},\mathbf{y}) = 0 \iff \mathbf{x}=\mathbf{y},\quad d(\mathbf{x},\mathbf{y}) = d(\mathbf{y},\mathbf{x}),\quad d(\mathbf{x},\mathbf{z}) \le d(\mathbf{x},\mathbf{y}) + d(\mathbf{y},\mathbf{z}) $$
+        <div class="eq-note">In order: <b>non-negativity</b>, <b>identity of indiscernibles</b> (zero distance means the same point), <b>symmetry</b>, and the <b>triangle inequality</b> — a detour through \(\mathbf{y}\) can never be shorter than going straight. Euclidean, Manhattan, and Mahalanobis distance satisfy all four. <b>Cosine and squared-Euclidean distance do not</b> — both break the triangle inequality, which is exactly why some fast indexes that assume a true metric cannot be used with them unmodified (§11.4).</div>
+        </div>
+
+        <p>The deepest consequence hides inside the most innocent-looking choice. A distance combines coordinates, so it implicitly weights them. If one feature is measured in millimetres and another in kilometres, the kilometres dominate every Euclidean comparison and the millimetres become invisible — the model decides almost everything on a single axis without anyone choosing that. This is why distance-based methods demand standardized features, why a covariance correction exists at all (§11.3), and why "what distance?" is never a footnote. <strong>The distance is the inductive bias.</strong></p>
+
+        <div class="callout">
+          <span class="co-icon">SCALE FIRST</span>
+          <p><strong>An unscaled feature is a silent vote.</strong> Before any distance is computed, the standard moves are z-scoring each column to mean 0, variance 1, or min–max scaling to \([0,1]\). Skip it and the column with the largest raw spread quietly becomes the model. Trees (Chapter 04) are the exception that proves the rule — they care only about the <em>order</em> of values within a column, so they are invariant to rescaling and never need it.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 11.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">11.2</span><h2>The Minkowski family — Euclidean &amp; Manhattan</h2></div>
+        <p>The workhorse distances are a single formula with one dial. The <strong>Minkowski distance</strong> of order \(p\) raises each coordinate gap to the power \(p\), sums them, and takes the \(p\)-th root:</p>
+
+        <div class="eq"><span class="eq-tag">EQ M11.2 — THE MINKOWSKI DISTANCE</span>
+        $$ d_p(\mathbf{x},\mathbf{y}) \;=\; \left( \sum_{i=1}^{n} \lvert x_i - y_i \rvert^{\,p} \right)^{1/p}, \qquad p \ge 1 $$
+        <div class="eq-note">Turning the single knob \(p\) gives every distance you use daily. \(p=1\) is <b>Manhattan</b> (taxicab) distance, the sum of absolute coordinate gaps — how far you walk on a city grid. \(p=2\) is <b>Euclidean</b> distance, the straight-line length from Pythagoras. As \(p \to \infty\) the largest single coordinate gap swallows the sum and you get the <b>Chebyshev</b> distance \(\max_i \lvert x_i - y_i\rvert\) — the king's move on a chessboard. For \(p \ge 1\) it is a true metric; for \(0 &lt; p &lt; 1\) the triangle inequality fails and it is only a "fractional distance."</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><div>Take \(\mathbf{x} = (1, 1)\) and \(\mathbf{y} = (4, 5)\). The coordinate gaps are \(\lvert 4-1\rvert = 3\) and \(\lvert 5-1\rvert = 4\).</div></div>
+          <div class="x-step"><span class="x-n">02</span><div>Manhattan (\(p=1\)): \(3 + 4 = \mathbf{7}\) — total blocks walked along the grid.</div></div>
+          <div class="x-step"><span class="x-n">03</span><div>Euclidean (\(p=2\)): \(\sqrt{3^2 + 4^2} = \sqrt{9 + 16} = \sqrt{25} = \mathbf{5}\) — the 3-4-5 right triangle.</div></div>
+          <div class="x-step"><span class="x-n">04</span><div>Chebyshev (\(p\to\infty\)): \(\max(3, 4) = \mathbf{4}\). Note the ordering \(4 \le 5 \le 7\): higher \(p\) always gives a smaller-or-equal distance.</div></div>
+          <span class="x-result">RESULT: Manhattan 7 · Euclidean 5 · Chebyshev 4</span>
+        </div></div>
+        </div>
+
+        <p>The order \(p\) is not a cosmetic choice — it reshapes the geometry of "near." The set of all points at distance exactly 1 from the origin, the <strong>unit ball</strong>, changes form completely: a <em>diamond</em> for Manhattan, a <em>circle</em> for Euclidean, a <em>square</em> for Chebyshev. Two points that are equidistant under one \(p\) need not be under another, so the nearest neighbor itself can change with \(p\). The instrument below lets you drag both points and read all three off at once.</p>
+
+        <div class="exercise" data-answer="7" data-tol="0.001" data-hint="Manhattan distance is the sum of the absolute coordinate differences: |4−1| + |6−2|.">
+          <div class="ex-q">Using EQ M11.2 with \(p=1\), what is the <b>Manhattan</b> distance between \((1, 2)\) and \((4, 6)\)?</div>
+          <div class="ex-reveal-src">Sum the absolute coordinate gaps: \(\lvert 4-1\rvert + \lvert 6-2\rvert = 3 + 4 = \) <b>7</b>. Manhattan ignores the diagonal shortcut — it counts only axis-aligned travel, as if walking city blocks.</div>
+        </div>
+
+        <div class="exercise" data-answer="5" data-tol="0.001" data-hint="Euclidean distance is the square root of the sum of squared differences: √((3−0)² + (4−0)²).">
+          <div class="ex-q">Using EQ M11.2 with \(p=2\), what is the <b>Euclidean</b> distance between \((0, 0)\) and \((3, 4)\)?</div>
+          <div class="ex-reveal-src">\(\sqrt{(3-0)^2 + (4-0)^2} = \sqrt{9 + 16} = \sqrt{25} = \) <b>5</b> — the hypotenuse of the classic 3-4-5 right triangle. The straight-line route is shorter than the Manhattan route of \(3+4=7\), as the triangle inequality guarantees.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># EQ M11.2: the Minkowski family, plus cosine and Mahalanobis, between two vectors
+import numpy as np
+
+x = np.array([1.0, 1.0])
+y = np.array([4.0, 5.0])
+diff = x - y
+
+manhattan = np.abs(diff).sum()                      # p = 1
+euclidean = np.sqrt((diff ** 2).sum())              # p = 2
+chebyshev = np.abs(diff).max()                      # p -> infinity
+print(f"Manhattan (p=1) : {manhattan:.4f}")
+print(f"Euclidean (p=2) : {euclidean:.4f}")
+print(f"Chebyshev (inf) : {chebyshev:.4f}")
+print("ordering p1 >= p2 >= pinf :", manhattan >= euclidean >= chebyshev)
+
+cos_sim = (x @ y) / (np.linalg.norm(x) * np.linalg.norm(y))
+print(f"\ncosine similarity : {cos_sim:.4f}   (1 = same direction)")
+
+cov = np.array([[1.0, 0.8], [0.8, 1.0]])            # correlated features
+m2 = diff @ np.linalg.inv(cov) @ diff               # squared Mahalanobis (EQ M11.3)
+print(f"Mahalanobis dist  : {np.sqrt(m2):.4f}   (vs Euclidean {euclidean:.4f})")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — try p between 1 and 2, or set the off-diagonal covariance to 0</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="simil-mink" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT M11.1 — DISTANCE EXPLORER</span><span class="w-sub">TWO POINTS · EUCLIDEAN · MANHATTAN · CHEBYSHEV · EQ M11.2</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>POINT P — x <output id="simil-mink-px-out">1.0</output></label><input type="range" id="simil-mink-px" min="-4.5" max="4.5" step="0.1" value="1"/></div>
+              <div class="ctl"><label>POINT P — y <output id="simil-mink-py-out">1.0</output></label><input type="range" id="simil-mink-py" min="-4.5" max="4.5" step="0.1" value="1"/></div>
+            </div>
+            <div class="ctl-row">
+              <div class="ctl"><label>POINT Q — x <output id="simil-mink-qx-out">4.0</output></label><input type="range" id="simil-mink-qx" min="-4.5" max="4.5" step="0.1" value="4"/></div>
+              <div class="ctl"><label>POINT Q — y <output id="simil-mink-qy-out">5.0</output></label><input type="range" id="simil-mink-qy" min="-4.5" max="4.5" step="0.1" value="5"/></div>
+            </div>
+            <canvas class="w-canvas" id="simil-mink-canvas" height="340"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">EUCLIDEAN (p=2)</div><div class="r-value" id="simil-mink-euc">—</div></div>
+              <div class="readout"><div class="r-label">MANHATTAN (p=1)</div><div class="r-value" id="simil-mink-man">—</div></div>
+              <div class="readout"><div class="r-label">CHEBYSHEV (p=∞)</div><div class="r-value" id="simil-mink-che">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The faint coloured outlines around P are the three <b>unit balls</b> — the diamond is Manhattan, the circle Euclidean, the square Chebyshev — every shape a locus of "distance 1 from P." The mint line is the straight Euclidean route; the blue staircase is one Manhattan path of equal taxicab length. Default P = (1,1), Q = (4,5) gives Euclidean <b>5</b>, Manhattan <b>7</b>, Chebyshev <b>4</b>. Drag Q onto a diagonal of P (equal x- and y-gaps) and watch Manhattan stretch furthest while Chebyshev stays small — the same two points, three different verdicts on "how far."</div>
+        </div>
+      </section>
+
+      <!-- ====================== 11.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">11.3</span><h2>Mahalanobis distance — correcting for covariance</h2></div>
+        <p>Euclidean distance treats every direction as equal and every feature as independent. Real data rarely obliges. Suppose height and weight are strongly correlated: a point that is tall-and-light sits <em>far</em> from the data cloud even if its raw Euclidean distance to the centre is modest, because it violates the correlation the rest of the data obeys. The <strong>Mahalanobis distance</strong> (Mahalanobis, 1936) fixes this by measuring distance in units of the data's own spread, deflating directions of high variance and inflating directions of low variance:</p>
+
+        <div class="eq"><span class="eq-tag">EQ M11.3 — MAHALANOBIS DISTANCE</span>
+        $$ d_M(\mathbf{x},\boldsymbol{\mu}) \;=\; \sqrt{(\mathbf{x}-\boldsymbol{\mu})^{\top}\, \Sigma^{-1}\, (\mathbf{x}-\boldsymbol{\mu})} $$
+        <div class="eq-note">\(\boldsymbol{\mu}\) is the data mean and \(\Sigma\) its covariance matrix; \(\Sigma^{-1}\) is the inverse covariance (the "precision" matrix). The quadratic form rotates into the eigen-axes of \(\Sigma\) and rescales each by \(1/\sqrt{\lambda_i}\) — exactly the principal directions of Stats 06. <b>When \(\Sigma = I\) (uncorrelated, unit-variance features), Mahalanobis collapses back to plain Euclidean distance.</b> Curves of constant \(d_M\) are the <em>ellipses</em> aligned with the data cloud, not circles — which is why a point along the cloud's long axis can be "closer" than a nearer point lying across it.</div>
+        </div>
+
+        <p>There is a clean way to see what \(\Sigma^{-1}\) is doing: Mahalanobis distance is just Euclidean distance computed <em>after whitening</em> the data — applying the linear transform \(\Sigma^{-1/2}\) that decorrelates the features and rescales each to unit variance. Whiten first, then measure with an ordinary ruler. This also explains its starring role in <strong>outlier and anomaly detection</strong>: for multivariate-Gaussian data, \(d_M^2\) follows a \(\chi^2\) distribution with \(n\) degrees of freedom, giving a principled threshold for "too far to be one of us."</p>
+
+        <div class="exercise" data-answer="5" data-tol="0.001" data-hint="With Σ = diag(9, 16), the inverse is diag(1/9, 1/16); compute (x−μ)ᵀ Σ⁻¹ (x−μ) for the gap (9, 16), then take the square root.">
+          <div class="ex-q">Features are uncorrelated with variances 9 and 16, so \(\Sigma = \begin{bmatrix} 9 &amp; 0 \\ 0 &amp; 16 \end{bmatrix}\) (\(\sigma_x = 3\), \(\sigma_y = 4\)). A point sits a gap of \((9, 16)\) from the mean. What is its Mahalanobis distance \(d_M\) (EQ M11.3)?</div>
+          <div class="ex-reveal-src">For diagonal \(\Sigma\), \(\Sigma^{-1} = \begin{bmatrix} 1/9 &amp; 0 \\ 0 &amp; 1/16 \end{bmatrix}\), so each gap is measured in standard deviations. The squared distance is \(\dfrac{9^2}{9} + \dfrac{16^2}{16} = 9 + 16 = 25\). So \(d_M = \sqrt{25} = \) <b>5</b>. The point sits \(3\sigma\) out along \(x\) and \(4\sigma\) out along \(y\) — a 3-4-5 right triangle in σ-units, even though its raw Euclidean gap of \(\sqrt{9^2+16^2}\approx 18.4\) is far larger.</div>
+        </div>
+
+        <div class="widget" id="simil-maha" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT M11.2 — MAHALANOBIS vs EUCLIDEAN</span><span class="w-sub">CORRELATED CLOUD · COVARIANCE ELLIPSE · EQ M11.3</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>VARIANCE σ²ₓ <output id="simil-maha-vx-out">3.0</output></label><input type="range" id="simil-maha-vx" min="0.4" max="4" step="0.1" value="3"/></div>
+              <div class="ctl"><label>VARIANCE σ²ᵧ <output id="simil-maha-vy-out">0.6</output></label><input type="range" id="simil-maha-vy" min="0.4" max="4" step="0.1" value="0.6"/></div>
+              <div class="ctl"><label>CORRELATION ρ <output id="simil-maha-rho-out">0.80</output></label><input type="range" id="simil-maha-rho" min="-0.9" max="0.9" step="0.05" value="0.8"/></div>
+            </div>
+            <div class="ctl-row">
+              <div class="ctl"><label>TEST POINT — x <output id="simil-maha-tx-out">2.4</output></label><input type="range" id="simil-maha-tx" min="-4" max="4" step="0.1" value="2.4"/></div>
+              <div class="ctl"><label>TEST POINT — y <output id="simil-maha-ty-out">2.0</output></label><input type="range" id="simil-maha-ty" min="-4" max="4" step="0.1" value="2"/></div>
+            </div>
+            <canvas class="w-canvas" id="simil-maha-canvas" height="340"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">EUCLIDEAN TO MEAN</div><div class="r-value" id="simil-maha-euc">—</div></div>
+              <div class="readout acc"><div class="r-label">MAHALANOBIS TO MEAN</div><div class="r-value" id="simil-maha-mah">—</div></div>
+              <div class="readout"><div class="r-label">VERDICT (χ² ≈ 2.45σ)</div><div class="r-value" id="simil-maha-flag" style="font-size:13px;line-height:1.5;">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The mint dots are a seeded Gaussian cloud with the covariance you dial in; the mint ellipses are the contours of constant Mahalanobis distance (1, 2, 3 σ). The white dot is your test point, the white line its straight Euclidean reach to the mean. Crank \(\rho\) toward 0.8 and slide the test point <em>along</em> the cloud's long axis: Euclidean distance stays large while Mahalanobis shrinks — the point is unremarkable given the correlation. Now push it <em>across</em> the short axis and the verdict flips to OUTLIER even at a small Euclidean distance. That divergence is the entire reason Mahalanobis exists.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Mahalanobis = Euclidean after whitening — two points, same Euclidean distance,
+# but very different Mahalanobis distance on a correlated cloud (EQ M11.3)
+import numpy as np
+
+mu  = np.array([0.0, 0.0])
+cov = np.array([[1.0, 0.9],
+                [0.9, 1.0]])          # strongly correlated features
+Sinv = np.linalg.inv(cov)
+
+# two test points the SAME Euclidean distance (sqrt 2) from the mean...
+along  = np.array([1.0,  1.0])        # lies ALONG the correlation axis
+across = np.array([1.0, -1.0])        # lies ACROSS it
+
+def mahal(p):
+    d = p - mu
+    return np.sqrt(d @ Sinv @ d)
+
+for name, p in [("along ", along), ("across", across)]:
+    print(f"{name}: Euclidean = {np.linalg.norm(p - mu):.3f}"
+          f"   Mahalanobis = {mahal(p):.3f}")
+
+print("\nIdentical Euclidean distance, ~6x difference in Mahalanobis:")
+print("the across-the-grain point violates the correlation, so it reads as far.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — set the off-diagonal to 0 and watch the two distances become equal</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 11.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">11.4</span><h2>Cosine &amp; Jaccard similarity</h2></div>
+        <p>Sometimes magnitude is noise and only <em>direction</em> carries meaning. A document that uses the word "neural" twice as often as another, in the same proportions across every other word, is about the same thing — yet its longer count vector sits far away under Euclidean distance. <strong>Cosine similarity</strong> throws magnitude away by normalizing both vectors to unit length, then taking their dot product — the cosine of the angle between them:</p>
+
+        <div class="eq"><span class="eq-tag">EQ M11.4 — COSINE SIMILARITY</span>
+        $$ \cos\theta \;=\; \frac{\mathbf{x}\cdot\mathbf{y}}{\lVert\mathbf{x}\rVert\,\lVert\mathbf{y}\rVert} \;=\; \frac{\sum_i x_i y_i}{\sqrt{\sum_i x_i^2}\,\sqrt{\sum_i y_i^2}} \;\in\; [-1, 1] $$
+        <div class="eq-note">\(1\) means the vectors point the same way, \(0\) means orthogonal (unrelated), \(-1\) means opposite. The companion <b>cosine distance</b> is \(1 - \cos\theta\); it is <em>not</em> a true metric (it violates the triangle inequality), which is why some metric-tree indexes refuse it. The standard trick: on <b>L2-normalized</b> vectors, squared Euclidean distance is \(2(1 - \cos\theta)\) — a strictly increasing function of cosine distance — so cosine ranking equals Euclidean ranking, and you can use any Euclidean index after normalizing. This is why embedding pipelines normalize before they store. Cosine is the default for sparse text vectors and dense embeddings precisely because it ignores document length and activation scale.</div>
+        </div>
+
+        <p>When the data is not counts but <em>sets</em> — the tags on a photo, the words in a tweet, the products in a basket — direction is the wrong picture entirely. <strong>Jaccard similarity</strong> measures overlap: the size of the intersection over the size of the union.</p>
+
+        <div class="eq"><span class="eq-tag">EQ M11.5 — JACCARD SIMILARITY</span>
+        $$ J(A,B) \;=\; \frac{\lvert A \cap B \rvert}{\lvert A \cup B \rvert}, \qquad d_J(A,B) \;=\; 1 - J(A,B) $$
+        <div class="eq-note">Pure set overlap: \(1\) when the sets are identical, \(0\) when they are disjoint. The <b>Jaccard distance</b> \(1 - J\) <em>is</em> a true metric. On binary vectors it counts only shared presences and ignores the vast sea of shared absences — the right instinct for sparse data, where two short documents agreeing that they both lack 49,998 of 50,000 vocabulary words tells you nothing. At web scale Jaccard is estimated, not computed, via <b>MinHash</b> + locality-sensitive hashing — the engine behind near-duplicate detection and the data deduplication that cleans LLM training corpora (Vol II · CH 04).</div>
+        </div>
+
+        <div class="exercise" data-answer="0.5" data-tol="0.001" data-hint="Jaccard = |A ∩ B| / |A ∪ B|. The shared elements are {2, 3}; the union is {1, 2, 3, 4}.">
+          <div class="ex-q">Two sets \(A = \{1, 2, 3\}\) and \(B = \{2, 3, 4\}\). What is their Jaccard similarity \(J(A,B)\) (EQ M11.5)?</div>
+          <div class="ex-reveal-src">Intersection \(A \cap B = \{2, 3\}\), size 2. Union \(A \cup B = \{1, 2, 3, 4\}\), size 4. So \(J = \dfrac{2}{4} = \) <b>0.5</b> — the sets share half of their combined elements. The Jaccard distance is \(1 - 0.5 = 0.5\).</div>
+        </div>
+
+        <table class="data">
+          <thead><tr><th>Measure</th><th>Sees</th><th>True metric?</th><th>Reach for it when…</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Euclidean</strong></td><td class="m">straight-line gap</td><td class="hl">yes</td><td>features are scaled &amp; roughly independent; the default for k-means</td></tr>
+            <tr><td><strong>Manhattan</strong></td><td class="m">axis-aligned gap</td><td class="hl">yes</td><td>grid-like or high-dimensional data; more robust to outliers than L2</td></tr>
+            <tr><td><strong>Mahalanobis</strong></td><td class="m">gap in σ-units</td><td class="hl">yes</td><td>features are correlated; outlier/anomaly detection</td></tr>
+            <tr><td><strong>Cosine</strong></td><td class="m">angle only</td><td>no</td><td>text TF-IDF, dense embeddings — when length is irrelevant</td></tr>
+            <tr><td><strong>Jaccard</strong></td><td class="m">set overlap</td><td class="hl">yes (1−J)</td><td>sparse binary / set data; near-duplicate detection</td></tr>
+          </tbody>
+        </table>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Cosine ignores magnitude; Jaccard measures set overlap (EQ M11.4-M11.5)
+import numpy as np
+
+# a short doc and the SAME doc with every count doubled
+a = np.array([3.0, 1.0, 0.0, 2.0])
+b = np.array([6.0, 2.0, 0.0, 4.0])          # b = 2*a : same direction
+
+cos = (a @ b) / (np.linalg.norm(a) * np.linalg.norm(b))
+euc = np.linalg.norm(a - b)
+print(f"cosine(a, b)     : {cos:.4f}   (1.0 = identical direction)")
+print(f"euclidean(a, b)  : {euc:.4f}   (large! magnitude differs)")
+print("-> cosine calls them identical; Euclidean is fooled by length\n")
+
+# Jaccard on two sets, computed via binary membership vectors
+A = {1, 2, 3}
+B = {2, 3, 4}
+inter = len(A & B)
+union = len(A | B)
+print(f"A & B = {A & B}, A | B = {A | B}")
+print(f"Jaccard(A, B)    : {inter/union:.4f}")
+print(f"Jaccard distance : {1 - inter/union:.4f}")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — add an element to B and watch Jaccard fall</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 11.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">11.5</span><h2>The curse of dimensionality</h2></div>
+        <p>Everything above is built on a quiet assumption: that "nearest" is meaningfully different from "farthest." In low dimensions it obviously is. In high dimensions it quietly stops being true — and this is the single most important, least intuitive fact in this chapter. As the number of dimensions grows, the distances between random points <strong>concentrate</strong>: the nearest neighbor and the farthest neighbor of a query end up at almost the same distance, and the very notion of a closest point loses its bite.</p>
+
+        <div class="eq"><span class="eq-tag">EQ M11.6 — DISTANCE CONCENTRATION</span>
+        $$ \lim_{n \to \infty} \;\mathbb{E}\!\left[ \frac{\mathrm{dist}_{\max}(n) - \mathrm{dist}_{\min}(n)}{\mathrm{dist}_{\min}(n)} \right] \;\to\; 0 \qquad (\text{i.i.d. features}) $$
+        <div class="eq-note">For data with independent coordinates, the <em>relative contrast</em> between the farthest and nearest points of a query vanishes as the dimension \(n\) grows (Beyer et al., 1999). Each new coordinate adds roughly equal, independent "noise" to every pairwise distance, so by a law-of-large-numbers effect all distances pile up around the same mean and their <em>spread relative to that mean</em> collapses. The practical reading is brutal: <b>in enough dimensions, every point is almost equidistant from every other</b>, k-NN's votes become coin flips, and the index gains nothing over a linear scan. Aggarwal et al. (2001) add a twist — lower \(p\) (Manhattan over Euclidean, even fractional norms) concentrates more slowly, so Manhattan is often the better high-dimensional choice.</div>
+        </div>
+
+        <p>A second face of the same curse is geometric. To capture a fixed fraction of uniformly spread points, a neighborhood must grow until it is no longer "local" at all. In a \(d\)-dimensional unit cube, a sub-cube holding just 1% of the volume needs edge length \(0.01^{1/d}\): at \(d=2\) that is 0.10, but at \(d=100\) it is \(\approx 0.955\) — to grab 1% of the data your "neighborhood" must span 95% of every single axis. Locality evaporates.</p>
+
+        <div class="callout warn">
+          <span class="co-icon">THE ESCAPE HATCH</span>
+          <p><strong>Why does any of this still work?</strong> Because real high-dimensional data is almost never i.i.d. across its coordinates. Images, text embeddings, and audio live near a much lower-dimensional <em>manifold</em> inside the ambient space — the <strong>manifold hypothesis</strong>. The concentration result describes the worst case of structureless noise; genuine data has structure, so its <em>intrinsic</em> dimension is small even when its nominal dimension is thousands. This is precisely why k-NN on a good learned embedding still works, while k-NN on raw high-dimensional pixels does not. Dimensionality reduction (PCA, UMAP — next chapters) and learned representations are, at bottom, attempts to recover that low intrinsic dimension before you ever compute a distance.</p>
+        </div>
+
+        <div class="widget" id="simil-curse" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT M11.3 — DISTANCE CONCENTRATION</span><span class="w-sub">RANDOM POINTS · CONTRAST vs DIMENSION · EQ M11.6</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>DIMENSION n <output id="simil-curse-d-out">2</output></label><input type="range" id="simil-curse-d" min="0" max="9" step="1" value="0"/></div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>NORM</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-simil-curse-p="2">EUCLIDEAN</button>
+                  <button class="w-btn ghost" data-simil-curse-p="1">MANHATTAN</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="simil-curse-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">NEAREST / FARTHEST DIST</div><div class="r-value" id="simil-curse-mm" style="font-size:13px;">—</div></div>
+              <div class="readout acc"><div class="r-label">RELATIVE CONTRAST</div><div class="r-value" id="simil-curse-contrast">—</div></div>
+              <div class="readout"><div class="r-label">REGIME</div><div class="r-value" id="simil-curse-regime" style="font-size:13px;line-height:1.5;">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">200 points are drawn uniformly in the \(n\)-cube; the histogram is their distances to one query, and the contrast \((d_{\max}-d_{\min})/d_{\min}\) is EQ M11.6 made live. At \(n=2\) the distances are spread wide and "nearest" is meaningful. Slide \(n\) toward 512 and watch the histogram tighten into a spike — the contrast plunges from ~10 toward a fraction, and a nearest neighbor stops being distinguishable from the rest. Flip to <b>Manhattan</b> and the collapse is gentler at every dimension: the Aggarwal result, drawn from random data.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># EQ M11.6: the max/min pairwise-distance ratio collapsing as dimension rises
+import numpy as np
+rng = np.random.default_rng(0)
+
+print(" dim    mean dist   min      max     contrast (max-min)/min")
+dims, contrasts = [], []
+for n in (2, 4, 8, 16, 64, 256, 1024):
+    X = rng.random((200, n))                  # 200 uniform points in the n-cube
+    q = rng.random(n)                         # one query point
+    d = np.sqrt(((X - q) ** 2).sum(axis=1))   # Euclidean distance to each
+    contrast = (d.max() - d.min()) / d.min()
+    dims.append(n); contrasts.append(contrast)
+    print(f"{n:5d} {d.mean():10.3f} {d.min():8.3f} {d.max():8.3f} {contrast:14.3f}")
+
+print("\nIn 2-D the farthest point is ~10x the nearest; by 1024-D the gap is tiny.")
+print("Nearest-neighbor 'distance' loses its meaning -- the curse, quantified.")
+plot_xy(dims, contrasts)                       # contrast vs dimension</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — switch to Manhattan (np.abs(X-q).sum) and watch it decay slower</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>You now own the ruler; next you point it at unlabeled data.</strong> Every clustering algorithm is a distance plus a rule for grouping by it — k-means minimizes squared Euclidean distance to centroids, DBSCAN grows clusters by a distance radius, hierarchical methods merge by inter-cluster distance. Chapter 12 tours the clustering zoo and shows how the choice you made here decides the shapes each one can — and cannot — find.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 11.R — References ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">11.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://doi.org/10.1007/s13171-019-00164-5" target="_blank" rel="noopener">Mahalanobis, P. C. (1936, repr. 2018). <span class="ref-venue">On the generalised distance in statistics</span>. <i>Sankhyā A</i>, 80(S1), 1–7.</a> <span class="ref-meta">the original covariance-corrected distance (EQ M11.3), reprinted with commentary.</span></li>
+          <li><a href="https://doi.org/10.1007/3-540-44503-X_27" target="_blank" rel="noopener">Aggarwal, C. C., Hinneburg, A. &amp; Keim, D. A. (2001). <span class="ref-venue">On the Surprising Behavior of Distance Metrics in High Dimensional Space</span>. <i>ICDT 2001</i>, LNCS 1973, 420–434.</a> <span class="ref-meta">shows lower-order (fractional, Manhattan) norms concentrate more slowly than Euclidean (§11.5).</span></li>
+          <li><a href="https://doi.org/10.1007/3-540-49257-7_15" target="_blank" rel="noopener">Beyer, K., Goldstein, J., Ramakrishnan, R. &amp; Shaft, U. (1999). <span class="ref-venue">When Is "Nearest Neighbor" Meaningful?</span> <i>ICDT 1999</i>, LNCS 1540, 217–235.</a> <span class="ref-meta">the foundational distance-concentration result behind EQ M11.6.</span></li>
+          <li><a href="https://doi.org/10.1109/TIT.1967.1053964" target="_blank" rel="noopener">Cover, T. &amp; Hart, P. (1967). <span class="ref-venue">Nearest neighbor pattern classification</span>. <i>IEEE Trans. Information Theory</i>, 13(1), 21–27.</a> <span class="ref-meta">why the distance choice is the model: the founding analysis of k-NN.</span></li>
+          <li><a href="https://doi.org/10.1145/276698.276876" target="_blank" rel="noopener">Broder, A. Z. (1997/1998). <span class="ref-venue">On the resemblance and containment of documents</span> &amp; <span class="ref-venue">Min-wise independent permutations</span>. <i>SEQUENCES / STOC</i>.</a> <span class="ref-meta">MinHash estimation of Jaccard similarity at scale (§11.4).</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../ml/10-svm-kernels.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">10</span> SVM &amp; Kernels</div></a>
+        <a class="next" href="../ml/12-clustering-zoo.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">12</span> Clustering Zoo</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — MACHINE LEARNING · CH 11</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* ============================================================
+   Distance & Similarity Metrics — chapter instruments
+   Single IIFE, no globals. setTimeout (not rAF) for any timed
+   work; every widget guarded by element existence.
+   ============================================================ */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  function fnum(x, d) { d = d === undefined ? 2 : d; return (Math.round(x * Math.pow(10, d)) / Math.pow(10, d)).toFixed(d); }
+  var RENDERS = [];
+
+  /* ========================================================
+     INSTRUMENT M11.1 — DISTANCE EXPLORER
+     Two draggable-via-slider points; Euclidean / Manhattan /
+     Chebyshev read-outs and the three unit balls around P.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("simil-mink");
+    if (!root) return;
+    var ids = ["px", "py", "qx", "qy"];
+    var inp = {}, out = {};
+    ids.forEach(function (k) {
+      inp[k] = document.getElementById("simil-mink-" + k);
+      out[k] = document.getElementById("simil-mink-" + k + "-out");
+    });
+    var canvas = document.getElementById("simil-mink-canvas");
+    var eucEl = document.getElementById("simil-mink-euc");
+    var manEl = document.getElementById("simil-mink-man");
+    var cheEl = document.getElementById("simil-mink-che");
+
+    function render() {
+      var px = +inp.px.value, py = +inp.py.value, qx = +inp.qx.value, qy = +inp.qy.value;
+      out.px.textContent = fnum(px, 1); out.py.textContent = fnum(py, 1);
+      out.qx.textContent = fnum(qx, 1); out.qy.textContent = fnum(qy, 1);
+
+      var dx = qx - px, dy = qy - py;
+      var euc = Math.sqrt(dx * dx + dy * dy);
+      var man = Math.abs(dx) + Math.abs(dy);
+      var che = Math.max(Math.abs(dx), Math.abs(dy));
+      eucEl.textContent = fnum(euc, 3);
+      manEl.textContent = fnum(man, 3);
+      cheEl.textContent = fnum(che, 3);
+
+      var cv = FM.setupCanvas(canvas, 340);
+      var ctx = cv.ctx, w = cv.w, h = cv.h;
+      ctx.clearRect(0, 0, w, h);
+      var cx = w / 2, cy = h / 2;
+      var scale = Math.min(w, h) / 11;       /* world units -> px; show ~ +-5.5 */
+      function PX(x, y) { return [cx + x * scale, cy - y * scale]; }
+
+      /* faint grid */
+      ctx.lineWidth = 1; ctx.strokeStyle = "rgba(99,99,99,.22)";
+      var g;
+      for (g = -5; g <= 5; g++) {
+        var a1 = PX(g, -5), a2 = PX(g, 5);
+        ctx.beginPath(); ctx.moveTo(a1[0], a1[1]); ctx.lineTo(a2[0], a2[1]); ctx.stroke();
+        var a3 = PX(-5, g), a4 = PX(5, g);
+        ctx.beginPath(); ctx.moveTo(a3[0], a3[1]); ctx.lineTo(a4[0], a4[1]); ctx.stroke();
+      }
+      /* axes */
+      ctx.strokeStyle = "rgba(99,99,99,.45)";
+      var ox1 = PX(-5, 0), ox2 = PX(5, 0), oy1 = PX(0, -5), oy2 = PX(0, 5);
+      ctx.beginPath(); ctx.moveTo(ox1[0], ox1[1]); ctx.lineTo(ox2[0], ox2[1]); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(oy1[0], oy1[1]); ctx.lineTo(oy2[0], oy2[1]); ctx.stroke();
+
+      /* unit balls around P (radius 1 world unit) */
+      var R = 1;
+      /* Chebyshev: square */
+      ctx.strokeStyle = "rgba(99,99,99,.85)"; ctx.lineWidth = 1.2;
+      var sq = [PX(px - R, py - R), PX(px + R, py - R), PX(px + R, py + R), PX(px - R, py + R)];
+      ctx.beginPath(); ctx.moveTo(sq[0][0], sq[0][1]);
+      for (var s = 1; s < 4; s++) ctx.lineTo(sq[s][0], sq[s][1]);
+      ctx.closePath(); ctx.stroke();
+      /* Manhattan: diamond */
+      ctx.strokeStyle = C.BLUE;
+      var dm = [PX(px + R, py), PX(px, py + R), PX(px - R, py), PX(px, py - R)];
+      ctx.beginPath(); ctx.moveTo(dm[0][0], dm[0][1]);
+      for (var t = 1; t < 4; t++) ctx.lineTo(dm[t][0], dm[t][1]);
+      ctx.closePath(); ctx.stroke();
+      /* Euclidean: circle */
+      ctx.strokeStyle = C.MINT;
+      var pc = PX(px, py);
+      ctx.beginPath(); ctx.arc(pc[0], pc[1], R * scale, 0, Math.PI * 2); ctx.stroke();
+
+      /* Manhattan staircase path P -> Q (L-shaped) */
+      ctx.strokeStyle = "rgba(78,138,247,.55)"; ctx.lineWidth = 1.5;
+      var corner = PX(qx, py);
+      ctx.beginPath();
+      ctx.moveTo(pc[0], pc[1]); ctx.lineTo(corner[0], corner[1]);
+      var qpx = PX(qx, qy);
+      ctx.lineTo(qpx[0], qpx[1]); ctx.stroke();
+
+      /* straight Euclidean segment P -> Q */
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(pc[0], pc[1]); ctx.lineTo(qpx[0], qpx[1]); ctx.stroke();
+
+      /* points */
+      ctx.fillStyle = C.BRIGHT;
+      ctx.beginPath(); ctx.arc(pc[0], pc[1], 4, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(qpx[0], qpx[1], 4, 0, Math.PI * 2); ctx.fill();
+      ctx.font = C.MONO; ctx.fillStyle = C.SEC; ctx.textBaseline = "bottom"; ctx.textAlign = "left";
+      ctx.fillText("P", pc[0] + 7, pc[1] - 4);
+      ctx.fillText("Q", qpx[0] + 7, qpx[1] - 4);
+
+      /* legend */
+      ctx.textBaseline = "top"; ctx.textAlign = "left";
+      ctx.fillStyle = C.MINT; ctx.fillText("○ Euclidean ball + route", 8, 8);
+      ctx.fillStyle = C.BLUE; ctx.fillText("◇ Manhattan ball + path", 8, 22);
+      ctx.fillStyle = C.SEC;  ctx.fillText("□ Chebyshev ball", 8, 36);
+    }
+    ids.forEach(function (k) { inp[k].addEventListener("input", render); });
+    RENDERS.push(render);
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT M11.2 — MAHALANOBIS vs EUCLIDEAN
+     A seeded Gaussian cloud with adjustable covariance,
+     its constant-distance ellipses, and a test point.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("simil-maha");
+    if (!root) return;
+    var vxIn = document.getElementById("simil-maha-vx");
+    var vyIn = document.getElementById("simil-maha-vy");
+    var rhoIn = document.getElementById("simil-maha-rho");
+    var txIn = document.getElementById("simil-maha-tx");
+    var tyIn = document.getElementById("simil-maha-ty");
+    var vxOut = document.getElementById("simil-maha-vx-out");
+    var vyOut = document.getElementById("simil-maha-vy-out");
+    var rhoOut = document.getElementById("simil-maha-rho-out");
+    var txOut = document.getElementById("simil-maha-tx-out");
+    var tyOut = document.getElementById("simil-maha-ty-out");
+    var canvas = document.getElementById("simil-maha-canvas");
+    var eucEl = document.getElementById("simil-maha-euc");
+    var mahEl = document.getElementById("simil-maha-mah");
+    var flagEl = document.getElementById("simil-maha-flag");
+
+    /* seeded standard-normal cloud (fixed; covariance applied at render) */
+    var rnd = FM.mulberry32(20240611);
+    function gauss() {
+      var u = Math.max(rnd(), 1e-9), v = rnd();
+      return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+    }
+    var BASE = [];
+    for (var i = 0; i < 220; i++) BASE.push([gauss(), gauss()]);
+
+    function render() {
+      var vx = +vxIn.value, vy = +vyIn.value, rho = +rhoIn.value;
+      var tx = +txIn.value, ty = +tyIn.value;
+      vxOut.textContent = fnum(vx, 1); vyOut.textContent = fnum(vy, 1);
+      rhoOut.textContent = fnum(rho, 2);
+      txOut.textContent = fnum(tx, 1); tyOut.textContent = fnum(ty, 1);
+
+      var sx = Math.sqrt(vx), sy = Math.sqrt(vy);
+      var cov01 = rho * sx * sy;
+      /* covariance Sigma = [[vx, cov01],[cov01, vy]] */
+      var det = vx * vy - cov01 * cov01;
+      /* Sigma^{-1} */
+      var ia = vy / det, ib = -cov01 / det, ic = -cov01 / det, id = vx / det;
+      function mahalSq(dx, dy) { return dx * (ia * dx + ib * dy) + dy * (ic * dx + id * dy); }
+
+      /* Cholesky L of Sigma so cloud = L * standard-normal (lower-triangular) */
+      var l11 = sx;
+      var l21 = cov01 / sx;
+      var l22 = Math.sqrt(Math.max(vy - l21 * l21, 1e-9));
+
+      var euc = Math.sqrt(tx * tx + ty * ty);
+      var mah = Math.sqrt(Math.max(mahalSq(tx, ty), 0));
+      eucEl.textContent = fnum(euc, 3);
+      mahEl.textContent = fnum(mah, 3);
+      /* 2-D chi-square 95% radius ~ sqrt(5.99) = 2.448 sigma */
+      var thresh = 2.448;
+      var isOut = mah > thresh;
+      flagEl.textContent = isOut ? "OUTLIER" : "TYPICAL";
+      flagEl.style.color = isOut ? C.RED : C.MINT;
+
+      var cv = FM.setupCanvas(canvas, 340);
+      var ctx = cv.ctx, w = cv.w, h = cv.h;
+      ctx.clearRect(0, 0, w, h);
+      var cx = w / 2, cy = h / 2;
+      var scale = Math.min(w, h) / 11;
+      function PX(x, y) { return [cx + x * scale, cy - y * scale]; }
+
+      /* faint grid */
+      ctx.lineWidth = 1; ctx.strokeStyle = "rgba(99,99,99,.18)";
+      for (var g = -5; g <= 5; g++) {
+        var a1 = PX(g, -5), a2 = PX(g, 5);
+        ctx.beginPath(); ctx.moveTo(a1[0], a1[1]); ctx.lineTo(a2[0], a2[1]); ctx.stroke();
+        var a3 = PX(-5, g), a4 = PX(5, g);
+        ctx.beginPath(); ctx.moveTo(a3[0], a3[1]); ctx.lineTo(a4[0], a4[1]); ctx.stroke();
+      }
+
+      /* the cloud: L * z */
+      ctx.fillStyle = "rgba(166,242,204,.55)";
+      for (var k = 0; k < BASE.length; k++) {
+        var z0 = BASE[k][0], z1 = BASE[k][1];
+        var wx = l11 * z0;
+        var wy = l21 * z0 + l22 * z1;
+        var pp = PX(wx, wy);
+        ctx.beginPath(); ctx.arc(pp[0], pp[1], 2, 0, Math.PI * 2); ctx.fill();
+      }
+
+      /* constant-Mahalanobis ellipses at 1, 2, 3 sigma: points L*(r*[cos,sin]) */
+      [1, 2, 3].forEach(function (r) {
+        ctx.strokeStyle = r === 1 ? "rgba(166,242,204,.9)" : "rgba(166,242,204," + (0.5 - r * 0.08) + ")";
+        ctx.lineWidth = r === 1 ? 1.6 : 1.1;
+        ctx.beginPath();
+        for (var a = 0; a <= 96; a++) {
+          var th = a / 96 * Math.PI * 2;
+          var ez0 = r * Math.cos(th), ez1 = r * Math.sin(th);
+          var ex = l11 * ez0, ey = l21 * ez0 + l22 * ez1;
+          var ep = PX(ex, ey);
+          if (a === 0) ctx.moveTo(ep[0], ep[1]); else ctx.lineTo(ep[0], ep[1]);
+        }
+        ctx.closePath(); ctx.stroke();
+      });
+
+      /* mean + Euclidean line to test point */
+      var mp = PX(0, 0), tp = PX(tx, ty);
+      ctx.strokeStyle = "rgba(255,255,255,.6)"; ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath(); ctx.moveTo(mp[0], mp[1]); ctx.lineTo(tp[0], tp[1]); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = C.BRIGHT;
+      ctx.beginPath(); ctx.arc(mp[0], mp[1], 3, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = isOut ? C.RED : C.BRIGHT;
+      ctx.beginPath(); ctx.arc(tp[0], tp[1], 4.5, 0, Math.PI * 2); ctx.fill();
+
+      ctx.font = C.MONO; ctx.fillStyle = C.SEC; ctx.textBaseline = "top"; ctx.textAlign = "left";
+      ctx.fillText("○ 1/2/3σ Mahalanobis contours", 8, 8);
+      ctx.fillText("— — white = Euclidean reach", 8, 22);
+    }
+    [vxIn, vyIn, rhoIn, txIn, tyIn].forEach(function (el) { el.addEventListener("input", render); });
+    RENDERS.push(render);
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT M11.3 — DISTANCE CONCENTRATION
+     200 uniform points in the n-cube; histogram of their
+     distances to a query; relative contrast (EQ M11.6).
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("simil-curse");
+    if (!root) return;
+    var dIn = document.getElementById("simil-curse-d");
+    var dOut = document.getElementById("simil-curse-d-out");
+    var canvas = document.getElementById("simil-curse-canvas");
+    var mmEl = document.getElementById("simil-curse-mm");
+    var contrastEl = document.getElementById("simil-curse-contrast");
+    var regimeEl = document.getElementById("simil-curse-regime");
+    var pBtns = root.querySelectorAll("[data-simil-curse-p]");
+    var DIMS = [2, 4, 8, 16, 32, 64, 128, 256, 512, 1024];
+    var pNorm = 2;
+
+    /* one fixed RNG stream so the picture is deterministic and refit-stable */
+    function computeDists(n, p) {
+      var rnd = FM.mulberry32(13 + n * 1000 + p);
+      var N = 200, q = [], i, j;
+      for (j = 0; j < n; j++) q.push(rnd());
+      var ds = [];
+      for (i = 0; i < N; i++) {
+        var acc = 0;
+        for (j = 0; j < n; j++) {
+          var gap = Math.abs(rnd() - q[j]);
+          acc += (p === 1) ? gap : gap * gap;
+        }
+        ds.push(p === 1 ? acc : Math.sqrt(acc));
+      }
+      return ds;
+    }
+
+    function render() {
+      var di = parseInt(dIn.value, 10), n = DIMS[di];
+      dOut.textContent = n;
+      var ds = computeDists(n, pNorm);
+      var lo = Infinity, hi = -Infinity, sum = 0, i;
+      for (i = 0; i < ds.length; i++) { if (ds[i] < lo) lo = ds[i]; if (ds[i] > hi) hi = ds[i]; sum += ds[i]; }
+      var mean = sum / ds.length;
+      var contrast = lo > 1e-9 ? (hi - lo) / lo : 0;
+      mmEl.textContent = fnum(lo, 2) + " / " + fnum(hi, 2);
+      contrastEl.textContent = fnum(contrast, 3);
+      var regime = contrast > 3 ? "MEANINGFUL" : contrast > 0.6 ? "FADING" : "COLLAPSED";
+      regimeEl.textContent = regime;
+      regimeEl.style.color = contrast > 3 ? C.MINT : contrast > 0.6 ? C.BLUE : C.RED;
+
+      var cv = FM.setupCanvas(canvas, 300);
+      var ctx = cv.ctx, w = cv.w, h = cv.h;
+      ctx.clearRect(0, 0, w, h);
+      var padL = 44, padR = 16, padT = 18, padB = 30;
+      var W = w - padL - padR, H = h - padT - padB;
+
+      /* histogram over a FIXED axis [0, max possible scaled] so tightening is visible.
+         Normalize distances by their theoretical mean growth so all dims share a frame:
+         divide by mean -> show spread *around* the mean. */
+      var BINS = 34;
+      var axMin = 0, axMax = 2;          /* distance / mean, 0..2 frame */
+      var counts = new Array(BINS).fill(0);
+      for (i = 0; i < ds.length; i++) {
+        var v = mean > 1e-9 ? ds[i] / mean : 1;
+        var b = Math.floor((v - axMin) / (axMax - axMin) * BINS);
+        if (b < 0) b = 0; if (b >= BINS) b = BINS - 1;
+        counts[b]++;
+      }
+      var cmax = 1; for (i = 0; i < BINS; i++) if (counts[i] > cmax) cmax = counts[i];
+
+      /* frame */
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1; ctx.strokeRect(padL, padT, W, H);
+      /* x ticks at 0, 0.5, 1, 1.5, 2 (multiples of the mean) */
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT; ctx.textAlign = "center"; ctx.textBaseline = "top";
+      [0, 0.5, 1, 1.5, 2].forEach(function (xv) {
+        var xpx = padL + (xv - axMin) / (axMax - axMin) * W;
+        ctx.fillText(xv.toFixed(1) + "×", xpx, padT + H + 6);
+      });
+      ctx.textAlign = "left";
+      ctx.fillText("DISTANCE ÷ MEAN  (spread shrinks as n grows)", padL + 4, padT + H + 18);
+
+      /* mean line */
+      var mx = padL + (1 - axMin) / (axMax - axMin) * W;
+      ctx.strokeStyle = "rgba(255,255,255,.35)"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(mx, padT); ctx.lineTo(mx, padT + H); ctx.stroke();
+
+      /* bars */
+      var bw = W / BINS;
+      ctx.fillStyle = pNorm === 1 ? "rgba(78,138,247,.7)" : "rgba(166,242,204,.7)";
+      for (i = 0; i < BINS; i++) {
+        if (!counts[i]) continue;
+        var bh = counts[i] / cmax * (H - 6);
+        ctx.fillRect(padL + i * bw + 0.5, padT + H - bh, bw - 1, bh);
+      }
+    }
+
+    pBtns.forEach(function (b) {
+      b.addEventListener("click", function () {
+        pNorm = (b.getAttribute("data-simil-curse-p") === "1") ? 1 : 2;
+        pBtns.forEach(function (o) { o.classList.toggle("on", o === b); });
+        render();
+      });
+    });
+    dIn.addEventListener("input", render);
+    RENDERS.push(render);
+    render();
+  })();
+
+  /* ---------- re-render on resize ---------- */
+  var rsT = null;
+  window.addEventListener("resize", function () {
+    if (rsT) clearTimeout(rsT);
+    rsT = setTimeout(function () {
+      for (var i = 0; i < RENDERS.length; i++) RENDERS[i]();
+    }, 160);
+  });
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

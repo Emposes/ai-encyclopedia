@@ -1,0 +1,169 @@
+{
+  "concepts": [
+    {
+      "id": "mlops-06-explainability-s1",
+      "chapter": "mlops/06-explainability",
+      "section": "s1",
+      "title": "Why explainability — trust, debugging, regulation",
+      "eyebrow": "MODEL RISK",
+      "beats": [
+        {
+          "text": "A high cross-validated score tells you a model is accurate, but it never tells you why a single prediction came out the way it did.",
+          "visual": { "type": "title", "text": "Why explainability", "sub": "Trust · Debugging · Regulation" }
+        },
+        {
+          "text": "Explainability serves three distinct masters, and each one asks a different question of the same model.",
+          "visual": { "type": "bars", "values": [3, 3, 3], "labels": ["Trust", "Debug", "Regulation"], "highlight": 2 }
+        },
+        {
+          "text": "Debugging is where explanations earn their keep, exposing leakage and shortcut features like snow in the background standing in for husky.",
+          "visual": { "type": "stat", "value": 3, "label": "masters served by an explanation" }
+        },
+        {
+          "text": "Regulation is no longer hypothetical: the CFPB confirmed in 2023 that opaque models still owe applicants the specific reasons for an adverse action.",
+          "visual": { "type": "stat", "value": 2023, "label": "CFPB ruling on ML adverse-action reasons", "decimals": 0 }
+        },
+        {
+          "text": "The EU AI Act takes force from 2024, with high-risk obligations for credit scoring and medical devices phasing in through 2027.",
+          "visual": { "type": "plot", "ys": [2023, 2024, 2025, 2026, 2027], "dot": 4, "xlabel": "year", "ylabel": "AI Act rollout" }
+        },
+        {
+          "text": "Treat every method here with care: an explanation is a model of a model, a post-hoc approximation that can be unstable, unfaithful, or even manipulated.",
+          "visual": { "type": "title", "text": "An explanation can lie", "sub": "Post-hoc tools are not understanding" }
+        }
+      ]
+    },
+    {
+      "id": "mlops-06-explainability-s2",
+      "chapter": "mlops/06-explainability",
+      "section": "s2",
+      "title": "Global vs local explanations",
+      "eyebrow": "MODEL RISK",
+      "beats": [
+        {
+          "text": "Explanations split first along scope: a global one describes the whole model, a local one describes a single prediction.",
+          "visual": { "type": "title", "text": "Global vs local", "sub": "Whole model vs one row" }
+        },
+        {
+          "text": "Global says income is the most important feature on average; local says this applicant was denied chiefly for three recent late payments.",
+          "visual": { "type": "bars", "values": [5, 2, 2, 1], "labels": ["income", "util", "age", "late"], "highlight": 0 }
+        },
+        {
+          "text": "A feature can be globally unimportant yet decisive for one row, and globally important yet irrelevant for another.",
+          "visual": { "type": "plot", "ys": [1, 1, 4, 1, 1], "dot": 2, "xlabel": "applicants", "ylabel": "feature effect" }
+        },
+        {
+          "text": "Averaging local explanations recovers a global one, but you cannot run that inference backwards to any single applicant.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "A second axis is model access: agnostic methods only call predict, while model-specific methods read internal structure for speed and fidelity.",
+          "visual": { "type": "bars", "values": [2, 2], "labels": ["agnostic", "specific"], "highlight": 1 }
+        },
+        {
+          "text": "Match scope to the decision: a board deploying a fraud model wants the global picture, a customer disputing a blocked card wants the local one.",
+          "visual": { "type": "title", "text": "Pick the right scope", "sub": "Wrong scope is the common error" }
+        }
+      ]
+    },
+    {
+      "id": "mlops-06-explainability-s3",
+      "chapter": "mlops/06-explainability",
+      "section": "s3",
+      "title": "Permutation importance & PDP/ICE",
+      "eyebrow": "MODEL RISK",
+      "beats": [
+        {
+          "text": "The cheapest global tool asks a blunt question: if I shuffle a feature's column, how much worse does the model get?",
+          "visual": { "type": "title", "text": "Permutation importance", "sub": "Break the feature, measure the drop" }
+        },
+        {
+          "text": "Importance is the drop in score caused by breaking the link between a feature and the target, averaged over K shuffles.",
+          "visual": { "type": "equation", "tex": "\\mathrm{Imp}_j = s(\\hat{f}, X, y) - \\frac{1}{K}\\sum_{k=1}^{K} s(\\hat{f}, X^{(\\pi_k, j)}, y)", "note": "score drop from permuting column j" }
+        },
+        {
+          "text": "On a toy model that truly uses x0 strongly and x1 mildly while ignoring x2 and x3, the importance ranking recovers exactly that reliance.",
+          "visual": { "type": "bars", "values": [3.0, 1.0, 0.0, 0.0], "labels": ["x0", "x1", "x2", "x3"], "highlight": 0 }
+        },
+        {
+          "text": "Correlated features split and hide each other's importance: shuffle one and the model leans on its twin, so both look unimportant.",
+          "visual": { "type": "stat", "value": 0, "label": "apparent importance of correlated pair" }
+        },
+        {
+          "text": "Partial dependence answers shape: fix a feature to a value for every row, average the predictions, and sweep the value across its range.",
+          "visual": { "type": "equation", "tex": "\\mathrm{PD}_j(v) \\approx \\frac{1}{N}\\sum_{i=1}^{N} \\hat{f}(v, x^{(i)}_{-j})", "note": "average effect of feature j alone" }
+        },
+        {
+          "text": "ICE plots one line per row instead of averaging; when those lines fan out and cross, the flat-looking average is hiding subgroups.",
+          "visual": { "type": "plot", "ys": [0.1, 0.2, 0.5, 0.8, 0.9], "dot": 2, "xlabel": "swept feature", "ylabel": "prediction", "mark": "PDP" }
+        }
+      ]
+    },
+    {
+      "id": "mlops-06-explainability-s4",
+      "chapter": "mlops/06-explainability",
+      "section": "s4",
+      "title": "LIME — local surrogate models",
+      "eyebrow": "MODEL RISK",
+      "beats": [
+        {
+          "text": "LIME explains one prediction by approximating the black box with a simple model in a small neighbourhood around that point.",
+          "visual": { "type": "title", "text": "LIME", "sub": "Local interpretable surrogate" }
+        },
+        {
+          "text": "Any wiggly decision surface looks roughly linear if you zoom in far enough, so a straight line can stand in locally.",
+          "visual": { "type": "plot", "ys": [0.05, 0.15, 0.5, 0.85, 0.95], "dot": 2, "xlabel": "feature x", "ylabel": "black-box output" }
+        },
+        {
+          "text": "The recipe: perturb around x, query the model, weight each sample by proximity, then fit a sparse linear surrogate.",
+          "visual": { "type": "equation", "tex": "\\pi_x(z) = \\exp\\!\\left(\\frac{-D(x,z)^2}{\\sigma^2}\\right)", "note": "RBF proximity weight on perturbed sample z" }
+        },
+        {
+          "text": "The objective trades global accuracy for local interpretability: the simplest surrogate that stays faithful right around x.",
+          "visual": { "type": "equation", "tex": "\\xi(x) = \\underset{g \\in G}{\\arg\\min}\\; \\mathcal{L}(\\hat{f}, g, \\pi_x) + \\Omega(g)", "note": "local fidelity plus a simplicity penalty" }
+        },
+        {
+          "text": "The neighbourhood width sigma is a free knob, and it is exactly LIME's weak spot: the explanation can swing with it.",
+          "visual": { "type": "bars", "values": [1, 3, 2], "labels": ["run 1", "run 2", "run 3"], "highlight": 1 }
+        },
+        {
+          "text": "Re-running with a new seed or a different bandwidth can perturb the weights, so two LIME runs can disagree on the same instance.",
+          "visual": { "type": "stat", "value": 2, "label": "LIME runs that can disagree" }
+        }
+      ]
+    },
+    {
+      "id": "mlops-06-explainability-s5",
+      "chapter": "mlops/06-explainability",
+      "section": "s5",
+      "title": "SHAP — Shapley values for features",
+      "eyebrow": "MODEL RISK",
+      "beats": [
+        {
+          "text": "SHAP is the most-used method in the field because it rests on the one thing everything else lacks: a uniqueness theorem.",
+          "visual": { "type": "title", "text": "SHAP", "sub": "Shapley values for features" }
+        },
+        {
+          "text": "Cast the prediction as a coalition payout and the features as players, and the Shapley value is the only fair way to split it.",
+          "visual": { "type": "equation", "tex": "\\phi_j = \\sum_{S \\subseteq F \\setminus \\{j\\}} \\frac{|S|!\\,(|F|-|S|-1)!}{|F|!}\\,[\\,v(S \\cup \\{j\\}) - v(S)\\,]", "note": "average marginal contribution over all orderings" }
+        },
+        {
+          "text": "The axiom that matters for an audit is efficiency: the attributions and the base value add up to exactly the prediction.",
+          "visual": { "type": "equation", "tex": "\\hat{f}(x) = \\phi_0 + \\sum_{j=1}^{|F|} \\phi_j", "note": "base value plus signed feature pushes" }
+        },
+        {
+          "text": "With a base value of 0.30 and a prediction of 0.82, efficiency forces the feature pushes to total exactly 0.52.",
+          "visual": { "type": "stat", "value": 0.52, "label": "sum of SHAP values", "decimals": 2 }
+        },
+        {
+          "text": "Computing the values exactly costs two to the power of the feature count, so TreeSHAP and KernelSHAP make it tractable.",
+          "visual": { "type": "bars", "values": [4, 16, 64, 256], "labels": ["2f", "4f", "6f", "8f"], "highlight": 3 }
+        },
+        {
+          "text": "On a toy loan score, dragging recent late payments up grows one red arrow until it alone flips the decision to denial.",
+          "visual": { "type": "bars", "values": [-0.55, 0.36, -0.44, 0.32, -0.45], "labels": ["late", "income", "util", "age", "dti"], "highlight": 0 }
+        }
+      ]
+    }
+  ]
+}

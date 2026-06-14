@@ -1,0 +1,739 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Probability — The Logic of Uncertainty — AI Encyclopedia</title>
+<meta name="description" content="Probability is the calculus of uncertainty: Kolmogorov's three axioms, conditioning, and Bayes' theorem turn prior belief into posterior knowledge — with the base-rate trap as the cautionary tale." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+</head>
+<body data-track="stats" data-level="intro">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ STATISTICS / 01 / PROBABILITY</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../stats/02-distributions.html">NEXT: DISTRIBUTIONS →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">MATHEMATICS &amp; STATISTICS · CHAPTER 01 / 08</div>
+    <h1>Probability — The Logic of Uncertainty</h1>
+    <p class="lede">Probability gives degrees of belief an arithmetic, built on three axioms. <strong>Conditioning is the operation that turns prior belief into posterior knowledge</strong>: it governs how a diagnostic test revises a diagnosis, how a spam filter learns, and how any model reasons under doubt.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>INTRO</b></span>
+      <span>READING TIME<b>≈ 24 MIN</b></span>
+      <span>BUILDS ON<b>ALGEBRA</b></span>
+      <span>INSTRUMENTS<b>BAYES BOX · LLN · TREE</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">1.1</span>Sample spaces &amp; axioms</a>
+      <a href="#s2"><span class="n">1.2</span>Conditioning &amp; independence</a>
+      <a href="#s3"><span class="n">1.3</span>Bayes' theorem</a>
+      <a href="#s4"><span class="n">1.4</span>Random variables &amp; expectation</a>
+      <a href="#s5"><span class="n">1.5</span>Pitfalls: base rates</a>
+      <a href="#s6"><span class="n">1.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 1.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">1.1</span><h2>Sample spaces, events &amp; Kolmogorov's axioms</h2></div>
+        <p>Probability begins by naming everything that <em>could</em> happen. The <strong>sample space</strong> \(\Omega\) is the set of all possible outcomes of an experiment: for one die roll \(\Omega = \{1,2,3,4,5,6\}\); for a coin flip \(\Omega = \{H, T\}\). An <strong>event</strong> is any subset of \(\Omega\) — "the roll is even" is the event \(\{2,4,6\}\). Probability is then a single function that assigns each event a number between 0 and 1, measuring how much of the sample space it occupies.</p>
+
+        <p>In 1933 Andrei Kolmogorov reduced the entire subject to three rules. Every theorem in this chapter — every theorem in probability — is a consequence of just these:</p>
+
+        <div class="eq"><span class="eq-tag">EQ S1.1 — KOLMOGOROV'S AXIOMS</span>
+        $$ \text{(1)}\;\; P(A) \ge 0 \qquad \text{(2)}\;\; P(\Omega) = 1 \qquad \text{(3)}\;\; P\!\Big(\bigcup_i A_i\Big) = \sum_i P(A_i) \;\;\text{for disjoint } A_i $$
+        <div class="eq-note">Probabilities are <b>non-negative</b>, the certain event has probability <b>one</b>, and the probability of any of several <b>mutually exclusive</b> events is the sum of their probabilities. That is the whole foundation. From them follow the complement rule \(P(A^c) = 1 - P(A)\), monotonicity \(A \subseteq B \Rightarrow P(A) \le P(B)\), and — for events that <em>can</em> overlap — inclusion–exclusion.</div>
+        </div>
+
+        <p>The third axiom only adds probabilities when events cannot happen together. When they can overlap, naively summing double-counts the intersection, so you subtract it back out:</p>
+
+        <div class="eq"><span class="eq-tag">EQ S1.2 — ADDITION RULE (INCLUSION–EXCLUSION)</span>
+        $$ P(A \cup B) \;=\; P(A) + P(B) - P(A \cap B) $$
+        <div class="eq-note">"Probability of A <b>or</b> B" — where "or" is inclusive. The overlap \(P(A \cap B)\) sits inside both \(P(A)\) and \(P(B)\), so it is counted twice and must be removed once. If \(A\) and \(B\) are disjoint, \(P(A \cap B) = 0\) and this collapses to axiom 3. <b>This single correction is the seed of nearly every "but you forgot to subtract the overlap" mistake in applied probability.</b></div>
+        </div>
+
+        <p>For a <strong>finite, equally-likely</strong> sample space — fair dice, shuffled cards, balanced coins — every outcome carries weight \(1/|\Omega|\), and the probability of an event reduces to counting:</p>
+
+        <div class="eq"><span class="eq-tag">EQ S1.3 — THE CLASSICAL (COUNTING) DEFINITION</span>
+        $$ P(A) \;=\; \frac{|A|}{|\Omega|} \;=\; \frac{\text{number of favorable outcomes}}{\text{number of possible outcomes}} $$
+        <div class="eq-note">Valid <em>only</em> when outcomes are equally likely — a modelling assumption, not a law. Most of real life is not equally likely (a biased coin, a loaded market), which is exactly why Kolmogorov's axioms are stated abstractly: they hold whether probabilities come from symmetry, from long-run frequency, or from a degree of belief.</div>
+        </div>
+
+        <p class="note"><strong>Frequentist vs. Bayesian — the honest caveat.</strong> The axioms say what a probability function must <em>obey</em>; they are silent on what a probability <em>means</em>. One school reads \(P(A)\) as a long-run frequency — the fraction of times \(A\) occurs in endless repetitions (§1.4 makes this precise). The other reads it as a degree of belief that can be updated by evidence (§1.3). Both satisfy EQ S1.1 identically, which is why the two camps share every equation and disagree only on interpretation. This chapter uses whichever lens is clearer and flags the switch.</p>
+
+        <div class="exercise" data-answer="0.7" data-tol="0.01" data-hint="use the addition rule EQ S1.2; subtract the overlap once">
+          <div class="ex-q">From a single draw, \( P(A) = 0.5 \), \( P(B) = 0.4 \), and \( P(A \cap B) = 0.2 \). What is \( P(A \cup B) \)?</div>
+          <div class="ex-reveal-src">By EQ S1.2, \( P(A \cup B) = P(A) + P(B) - P(A \cap B) = 0.5 + 0.4 - 0.2 = \) <b>0.7</b>. The \(0.2\) overlap was sitting inside both \(0.5\) and \(0.4\), so it is removed exactly once.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Axioms by counting: a fair die, the event "even", and the addition rule
+import numpy as np
+omega = np.array([1, 2, 3, 4, 5, 6])          # sample space
+
+A = omega[omega % 2 == 0]                       # event A: roll is even {2,4,6}
+B = omega[omega > 3]                            # event B: roll > 3   {4,5,6}
+P = lambda S: len(S) / len(omega)               # EQ S1.3: classical definition
+
+inter = np.intersect1d(A, B)                     # A and B  -> {4, 6}
+union = np.union1d(A, B)                         # A or  B  -> {2,4,5,6}
+print(f"P(A)            = {P(A):.4f}")
+print(f"P(B)            = {P(B):.4f}")
+print(f"P(A and B)      = {P(inter):.4f}")
+print(f"P(A or  B) count= {P(union):.4f}")
+addition = P(A) + P(B) - P(inter)               # EQ S1.2
+print(f"P(A or  B) rule = {addition:.4f}   <- matches the direct count")
+print(f"P(not A)        = {1 - P(A):.4f}   <- complement rule")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 1.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">1.2</span><h2>Conditional probability &amp; independence</h2></div>
+        <p>The single most important operation in the subject is <strong>conditioning</strong>: revising a probability once you learn that some event has occurred. Learning that \(B\) happened shrinks your world from all of \(\Omega\) down to just \(B\), and you renormalize so the new, smaller world again has total probability one.</p>
+
+        <div class="eq"><span class="eq-tag">EQ S1.4 — CONDITIONAL PROBABILITY</span>
+        $$ P(A \mid B) \;=\; \frac{P(A \cap B)}{P(B)}, \qquad P(B) &gt; 0 $$
+        <div class="eq-note">Read aloud: "the probability of \(A\) <b>given</b> \(B\)." You keep only the part of \(A\) that lives inside \(B\) — the numerator — and rescale by the size of the new universe \(B\). <b>Conditioning is the engine of all learning from evidence:</b> every belief update, every diagnosis, every filter is some instance of this one ratio.</div>
+        </div>
+
+        <p>Rearranging EQ S1.4 gives the <strong>multiplication rule</strong> for the joint probability of two events, and applying it across a partition gives a way to assemble a total probability from its conditional pieces:</p>
+
+        <div class="eq"><span class="eq-tag">EQ S1.5 — CHAIN RULE &amp; LAW OF TOTAL PROBABILITY</span>
+        $$ P(A \cap B) = P(A \mid B)\,P(B), \qquad\qquad P(A) = \sum_i P(A \mid B_i)\,P(B_i) $$
+        <div class="eq-note">Left: a joint probability factors into a marginal times a conditional. Right: if the \(B_i\) partition \(\Omega\) (mutually exclusive, collectively exhaustive), the overall chance of \(A\) is a <b>weighted average</b> of its chances within each slice, weighted by how likely each slice is. This averaging step is exactly the denominator of Bayes' theorem in §1.3.</div>
+        </div>
+
+        <p>Two events are <strong>independent</strong> when knowing one tells you nothing about the other — conditioning leaves the probability unchanged, \(P(A \mid B) = P(A)\). Substituting into the chain rule gives the cleaner, symmetric test:</p>
+
+        <div class="eq"><span class="eq-tag">EQ S1.6 — INDEPENDENCE</span>
+        $$ A \perp B \quad\Longleftrightarrow\quad P(A \cap B) = P(A)\,P(B) $$
+        <div class="eq-note">Independence means the joint factors into the product of marginals. <b>It is a property of the probabilities, not of the physical situation</b> — two events can be independent under one distribution and dependent under another. A frequent trap: <em>mutually exclusive</em> events with positive probability are the opposite of independent — if \(A\) rules out \(B\), then learning \(A\) tells you \(B\) cannot happen, so \(P(B \mid A) = 0 \ne P(B)\).</div>
+        </div>
+
+        <p class="note"><strong>Conditioning is not symmetric.</strong> \(P(A \mid B)\) and \(P(B \mid A)\) are different numbers in general — most rain comes with clouds, but most clouds bring no rain. Confusing the two is the prosecutor's fallacy (§1.5), and correcting it is precisely what Bayes' theorem does.</p>
+
+        <div class="exercise" data-answer="0.667" data-tol="0.01" data-hint="EQ S1.4: keep only the even outcomes greater than 3, over all even outcomes">
+          <div class="ex-q">Roll a fair die. Given that the result is even (\(B = \{2,4,6\}\)), what is the probability it is greater than 3 (\(A = \{4,5,6\}\))? Compute \( P(A \mid B) \).</div>
+          <div class="ex-reveal-src">\( A \cap B = \{4, 6\} \), so \( P(A \cap B) = 2/6 \) and \( P(B) = 3/6 \). By EQ S1.4, \( P(A \mid B) = \dfrac{2/6}{3/6} = \dfrac{2}{3} \approx \) <b>0.667</b>. For contrast, the unconditional \(P(A) = 3/6 = 0.5\): conditioning on "even" raises the probability from 0.5 to 0.667, because the even faces lean high.</div>
+        </div>
+
+        <div class="widget" id="prob-tree" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT S1.3 — CONDITIONAL-PROBABILITY EXPLORER</span><span class="w-sub">VENN ⇄ TREE · EQ S1.4–S1.6</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>P(A) <output id="prob-tree-a-out">0.50</output></label><input type="range" id="prob-tree-a" min="0.05" max="0.95" step="0.01" value="0.50"/></div>
+              <div class="ctl"><label>P(B) <output id="prob-tree-b-out">0.40</output></label><input type="range" id="prob-tree-b" min="0.05" max="0.95" step="0.01" value="0.40"/></div>
+              <div class="ctl"><label>P(A ∩ B) <output id="prob-tree-ab-out">0.20</output></label><input type="range" id="prob-tree-ab" min="0" max="0.95" step="0.01" value="0.20"/></div>
+            </div>
+            <canvas class="w-canvas" id="prob-tree-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">P(A ∪ B)</div><div class="r-value" id="prob-tree-union">—</div></div>
+              <div class="readout acc"><div class="r-label">P(A | B)</div><div class="r-value" id="prob-tree-aGb">—</div></div>
+              <div class="readout acc"><div class="r-label">P(B | A)</div><div class="r-value" id="prob-tree-bGa">—</div></div>
+              <div class="readout"><div class="r-label">INDEPENDENT?</div><div class="r-value" id="prob-tree-indep" style="font-size:13px;">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The two circles are events \(A\) and \(B\); their overlap is \(P(A \cap B)\). Drag the overlap slider toward \(P(A)\,P(B)\) and the verdict flips to <b>INDEPENDENT</b> — that is the exact point where conditioning stops changing anything (\(P(A\mid B) = P(A)\)). Push the overlap to zero and the events become mutually exclusive: \(P(A\mid B) = 0\), the <em>opposite</em> of independent. The slider is clamped so the overlap can never exceed either circle — an impossible probability the axioms forbid.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 1.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">1.3</span><h2>Bayes' theorem — inverting the condition</h2></div>
+        <p>We can usually measure \(P(\text{evidence} \mid \text{cause})\) — how often a disease produces a positive test, how often spam contains the word "free." But what we <em>want</em> is the reverse: \(P(\text{cause} \mid \text{evidence})\) — given a positive test, how likely is the disease? Bayes' theorem is the bridge. Start from the symmetry of the chain rule, \(P(A \cap B) = P(A \mid B)P(B) = P(B \mid A)P(A)\), and solve for the conditional you don't have:</p>
+
+        <div class="eq"><span class="eq-tag">EQ S1.7 — BAYES' THEOREM</span>
+        $$ P(H \mid E) \;=\; \frac{P(E \mid H)\,P(H)}{P(E)}, \qquad P(E) = P(E\mid H)P(H) + P(E\mid H^c)P(H^c) $$
+        <div class="eq-note">\(H\) is a hypothesis, \(E\) the evidence. \(P(H)\) is the <b>prior</b> (belief before seeing \(E\)); \(P(E\mid H)\) the <b>likelihood</b> (how well \(H\) predicts \(E\)); \(P(H\mid E)\) the <b>posterior</b> (belief after). The denominator \(P(E)\) — the total probability of the evidence under <em>all</em> hypotheses, from EQ S1.5 — is just the normalizer that makes the posteriors sum to one. <b>Prior, scaled by how well the data fit, renormalized: that is all learning is.</b></div>
+        </div>
+
+        <p>The structure is clearer in <strong>odds form</strong>, which strips away the shared denominator. The posterior odds are the prior odds multiplied by the <em>likelihood ratio</em> — how much more probable the evidence is under \(H\) than under its negation:</p>
+
+        <div class="eq"><span class="eq-tag">EQ S1.8 — BAYES IN ODDS FORM</span>
+        $$ \underbrace{\frac{P(H \mid E)}{P(H^c \mid E)}}_{\text{posterior odds}} \;=\; \underbrace{\frac{P(H)}{P(H^c)}}_{\text{prior odds}} \;\times\; \underbrace{\frac{P(E \mid H)}{P(E \mid H^c)}}_{\text{likelihood ratio}} $$
+        <div class="eq-note">Evidence enters as a <b>multiplier</b> on your odds — a likelihood ratio of 1 leaves belief untouched; 10 multiplies your odds tenfold; \(\tfrac{1}{10}\) divides them. This form makes the central lesson of §1.5 visible at a glance: <b>a strong test (large likelihood ratio) applied to a rare hypothesis (tiny prior odds) can still leave the posterior small.</b> The multiplier is powerful, but it multiplies a number that started near zero.</div>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">THE BASE RATE</span>
+          <p><strong>Why a 99%-accurate test can be wrong most of the time it fires.</strong> Take a disease that afflicts 1 person in 100, a test with 99% sensitivity and 95% specificity. Of 10,000 people, ~100 are sick and ~99 test positive correctly; of the 9,900 healthy, 5% — about 495 — test positive <em>falsely</em>. A positive result therefore points to a sick person only \(99/(99 + 495) \approx 17\%\) of the time. The test is excellent; the disease is rarer than the test's error rate, and the rarity dominates. Conditioning forces you to confront the base rate the headline accuracy hides.</p>
+        </div>
+
+        <div class="exercise" data-answer="0.167" data-tol="0.02" data-unit="" data-hint="Bayes: numerator = sens·prev; denominator adds (1-spec)·(1-prev)">
+          <div class="ex-q">A disease has prevalence \(P(D) = 0.01\). A test has sensitivity \(P(+\mid D) = 0.99\) and specificity \(P(-\mid D^c) = 0.95\) (so the false-positive rate is \(0.05\)). You test positive. What is \( P(D \mid +) \)?</div>
+          <div class="ex-reveal-src">By EQ S1.7: numerator \( = P(+\mid D)P(D) = 0.99 \times 0.01 = 0.0099\). Denominator \( = 0.0099 + P(+\mid D^c)P(D^c) = 0.0099 + 0.05 \times 0.99 = 0.0099 + 0.0495 = 0.0594\). So \( P(D \mid +) = 0.0099 / 0.0594 = \) <b>0.167</b> — about one in six. A near-perfect test on a rare disease still leaves five of six positives healthy.</div>
+        </div>
+
+        <div class="widget" id="prob-bayes" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT S1.1 — BAYES-BOX DISEASE-TEST CALCULATOR</span><span class="w-sub">EQ S1.7 · LIVE · 10,000-PERSON COHORT</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>PREVALENCE P(D) <output id="prob-bayes-prev-out">1.00%</output></label><input type="range" id="prob-bayes-prev" min="0.001" max="0.5" step="0.001" value="0.01"/></div>
+              <div class="ctl"><label>SENSITIVITY P(+|D) <output id="prob-bayes-sens-out">99%</output></label><input type="range" id="prob-bayes-sens" min="0.5" max="0.999" step="0.001" value="0.99"/></div>
+              <div class="ctl"><label>SPECIFICITY P(−|Dᶜ) <output id="prob-bayes-spec-out">95%</output></label><input type="range" id="prob-bayes-spec" min="0.5" max="0.999" step="0.001" value="0.95"/></div>
+            </div>
+            <canvas class="w-canvas" id="prob-bayes-canvas" height="220"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">P(DISEASE | POSITIVE)</div><div class="r-value" id="prob-bayes-ppv">—</div></div>
+              <div class="readout"><div class="r-label">TRUE POS · FALSE POS</div><div class="r-value" id="prob-bayes-counts" style="font-size:13px;">—</div></div>
+              <div class="readout"><div class="r-label">P(HEALTHY | NEGATIVE)</div><div class="r-value" id="prob-bayes-npv">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Each cell of the bar is the 10,000-person cohort split into true/false positives and negatives. At the defaults — prevalence 1%, sensitivity 99%, specificity 95% — a positive result means disease only <b>~16.7%</b> of the time: the base-rate trap, made of red false positives swamping the green true ones. Now drag prevalence up to 20% and watch the posterior leap past 80% — the <em>same test</em>, a different population. The lesson the headline accuracy hides: a test's worth depends on who you give it to.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Monte-Carlo a conditional probability and check it against exact Bayes
+import numpy as np
+rng = np.random.default_rng(0)
+
+prev, sens, spec = 0.01, 0.99, 0.95            # prevalence, sensitivity, specificity
+N = 2_000_000
+
+disease  = rng.random(N) &lt; prev                                  # who is actually sick
+positive = np.where(disease, rng.random(N) &lt; sens,              # sick  -> true positive
+                              rng.random(N) &lt; (1 - spec))        # well  -> false positive
+
+mc = disease[positive].mean()                  # P(D | +) by simulation
+exact = (sens * prev) / (sens * prev + (1 - spec) * (1 - prev))  # EQ S1.7
+print(f"positives observed     : {positive.sum():,} of {N:,}")
+print(f"P(D | +)  Monte-Carlo  : {mc:.4f}")
+print(f"P(D | +)  exact (Bayes): {exact:.4f}")
+print(f"gap                    : {abs(mc - exact):.4f}")
+print(f"\nbase-rate trap: a 99%/95% test is right only {exact*100:.1f}% of the time it fires.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 1.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">1.4</span><h2>Random variables, expectation &amp; variance</h2></div>
+        <p>A <strong>random variable</strong> \(X\) is a function that attaches a number to each outcome — the value rolled, the count of heads in ten flips, tomorrow's return. It lets us do arithmetic with chance. The two numbers that summarize a random variable are its center of mass and its spread.</p>
+
+        <p>The <strong>expectation</strong> (mean) is the probability-weighted average of the values \(X\) can take — the long-run average if you repeated the experiment forever:</p>
+
+        <div class="eq"><span class="eq-tag">EQ S1.9 — EXPECTATION</span>
+        $$ \mathbb{E}[X] \;=\; \sum_x x\,P(X = x) \quad\text{(discrete)}, \qquad \mathbb{E}[X] = \int x\,f(x)\,\mathrm{d}x \quad\text{(continuous)} $$
+        <div class="eq-note">Expectation is <b>linear no matter what</b>: \(\mathbb{E}[aX + bY] = a\,\mathbb{E}[X] + b\,\mathbb{E}[Y]\), even when \(X\) and \(Y\) are dependent — a fact used constantly and far less restrictive than it looks. Note the expected value need not be an attainable outcome: a fair die's mean is 3.5, a face it can never show.</div>
+        </div>
+
+        <p>The <strong>variance</strong> measures how far values typically stray from the mean — the expected squared deviation. Its square root, the standard deviation, restores the original units:</p>
+
+        <div class="eq"><span class="eq-tag">EQ S1.10 — VARIANCE</span>
+        $$ \mathrm{Var}(X) \;=\; \mathbb{E}\!\big[(X - \mathbb{E}[X])^2\big] \;=\; \mathbb{E}[X^2] - \big(\mathbb{E}[X]\big)^2 $$
+        <div class="eq-note">The right-hand form ("mean of the square minus the square of the mean") is the one you actually compute. Variance is <b>not</b> linear: \(\mathrm{Var}(aX) = a^2\,\mathrm{Var}(X)\), and \(\mathrm{Var}(X + Y) = \mathrm{Var}(X) + \mathrm{Var}(Y)\) holds <em>only when \(X \perp Y\)</em>. That independence-gated additivity is what makes the average of \(n\) independent samples have variance \(\sigma^2/n\) — the mathematical reason averaging reduces noise.</div>
+        </div>
+
+        <p>That last fact is the <strong>law of large numbers</strong>: as you collect more independent samples, their running average converges to the true expectation. Probability, defined abstractly by Kolmogorov, finally reconnects to the frequentist intuition of "long-run frequency" — they are provably the same limit.</p>
+
+        <div class="eq"><span class="eq-tag">EQ S1.11 — LAW OF LARGE NUMBERS</span>
+        $$ \bar{X}_n \;=\; \frac{1}{n}\sum_{i=1}^{n} X_i \;\xrightarrow[n \to \infty]{}\; \mathbb{E}[X] $$
+        <div class="eq-note">The sample mean of i.i.d. draws converges to the population mean. The convergence is <b>slow</b>: the spread of \(\bar{X}_n\) shrinks like \(1/\sqrt{n}\), so cutting your error in half takes <em>four times</em> the data. This \(\sqrt{n}\) rate governs the width of every confidence interval and the cost of every Monte-Carlo estimate (and is why the simulations above use millions of samples for three-decimal accuracy).</div>
+        </div>
+
+        <div class="exercise" data-answer="3.5" data-tol="0.001" data-unit="" data-hint="sum the six faces, each with probability 1/6">
+          <div class="ex-q">Let \(X\) be the result of one roll of a fair six-sided die. Compute the expectation \( \mathbb{E}[X] \) using EQ S1.9.</div>
+          <div class="ex-reveal-src">Each face has probability \(1/6\): \( \mathbb{E}[X] = \tfrac{1}{6}(1+2+3+4+5+6) = \tfrac{21}{6} = \) <b>3.5</b>. The mean is exactly halfway between 3 and 4 — a value the die can never actually show, which is fine: expectation is a balance point, not an outcome.</div>
+        </div>
+
+        <div class="exercise" data-answer="2.917" data-tol="0.01" data-unit="" data-hint="Var = E[X²] − (E[X])²; E[X²] = 91/6, E[X] = 3.5">
+          <div class="ex-q">For the same fair die, compute the variance \( \mathrm{Var}(X) \) using EQ S1.10. (Note \( \mathbb{E}[X^2] = \tfrac{1}{6}(1+4+9+16+25+36) = \tfrac{91}{6} \).)</div>
+          <div class="ex-reveal-src">\( \mathrm{Var}(X) = \mathbb{E}[X^2] - (\mathbb{E}[X])^2 = \tfrac{91}{6} - 3.5^2 = 15.1\overline{6} - 12.25 = \tfrac{35}{12} \approx \) <b>2.917</b>. The standard deviation is \( \sqrt{35/12} \approx 1.71 \), a natural "typical distance from 3.5."</div>
+        </div>
+
+        <div class="widget" id="prob-lln" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT S1.2 — LAW-OF-LARGE-NUMBERS SIMULATOR</span><span class="w-sub">EQ S1.11 · RUNNING AVERAGE → E[X]</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>EXPERIMENT</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-prob-lln-src="coin">FAIR COIN</button>
+                  <button class="w-btn ghost" data-prob-lln-src="die">FAIR DIE</button>
+                </div>
+              </div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>CONTROL</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost" data-prob-lln-act="run">RUN ▶</button>
+                  <button class="w-btn ghost" data-prob-lln-act="reset">RESET ↺</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="prob-lln-canvas" height="280"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">SAMPLES n</div><div class="r-value" id="prob-lln-n">—</div></div>
+              <div class="readout acc"><div class="r-label">RUNNING MEAN X̄ₙ</div><div class="r-value" id="prob-lln-mean">—</div></div>
+              <div class="readout"><div class="r-label">TRUE E[X]</div><div class="r-value" id="prob-lln-true">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The mint line is the running average \(\bar{X}_n\); the dashed line is the true mean (0.5 for the coin, 3.5 for the die). Press RUN and watch the early average lurch wildly, then settle — the convergence visibly slows because error shrinks only as \(1/\sqrt{n}\). A meaningful baseline is drawn before you touch anything: the first ~120 samples render on load. This is the bridge from Kolmogorov's abstract \(P\) back to "long-run frequency."</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Monty Hall: simulate stay vs switch and print the win rates
+import numpy as np
+rng = np.random.default_rng(0)
+N = 200_000
+
+car   = rng.integers(0, 3, N)            # door hiding the car (0,1,2)
+pick  = rng.integers(0, 3, N)            # contestant's first pick
+
+# stay wins exactly when the first pick was already the car
+stay_wins = (pick == car)
+# the host opens a goat door; switching wins whenever staying loses
+switch_wins = ~stay_wins
+
+print(f"trials              : {N:,}")
+print(f"P(win | STAY)       : {stay_wins.mean():.4f}   (theory 1/3 = 0.3333)")
+print(f"P(win | SWITCH)     : {switch_wins.mean():.4f}   (theory 2/3 = 0.6667)")
+print(f"switching advantage : {switch_wins.mean() / stay_wins.mean():.2f}x")
+print("\nWhy: your first pick is right 1/3 of the time, so the OTHER unopened")
+print("door carries the remaining 2/3 once the host reveals a goat. Conditioning,")
+print("not intuition. (Law of large numbers: rates lock in as N grows.)")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 1.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">1.5</span><h2>Pitfalls — base rates &amp; the prosecutor's fallacy</h2></div>
+        <p>Probability's hardest errors are not algebraic — they are interpretive. The mind reaches for the wrong conditional, ignores the denominator, or forgets how rare the thing it is reasoning about really is. Three traps cause most real-world damage.</p>
+
+        <h3>Base-rate neglect</h3>
+        <p>The §1.3 disease test is the canonical case: people quote a 99% test and conclude a positive result means 99% chance of disease, forgetting the 1% prevalence that makes false positives outnumber true ones. The base rate <em>is</em> the prior in Bayes' theorem, and dropping it is mathematically equivalent to setting \(P(H) = P(H^c)\) — assuming the disease is as common as health. <strong>Whenever someone reports a conditional probability without a base rate, the number is uninterpretable.</strong></p>
+
+        <h3>The prosecutor's fallacy</h3>
+        <p>This is the confusion of \(P(E \mid H)\) with \(P(H \mid E)\) dressed in a courtroom. A forensic match has a one-in-a-million random-match probability: \(P(\text{match} \mid \text{innocent}) = 10^{-6}\). The prosecutor declares the chance the defendant is innocent is therefore one in a million — but that swaps the conditional. The quantity that matters is \(P(\text{innocent} \mid \text{match})\), and by Bayes it depends on the <em>suspect pool</em>. In a city of 10 million, roughly 10 innocent people also match by chance; with one true source, a bare match makes the defendant only ~1-in-11 likely to be the source. The likelihood ratio is enormous, but multiplied against a tiny prior, the posterior is far from certainty.</p>
+
+        <div class="eq"><span class="eq-tag">EQ S1.12 — THE FALLACY, STATED EXACTLY</span>
+        $$ P(E \mid H) \;\ne\; P(H \mid E), \qquad\text{related only through}\quad P(H \mid E) = P(E \mid H)\,\frac{P(H)}{P(E)} $$
+        <div class="eq-note">The two conditionals differ by the factor \(P(H)/P(E)\) — exactly the prior-over-evidence ratio that base-rate neglect throws away. They coincide <em>only</em> when \(P(H) = P(E)\), a coincidence, never a rule. <b>"The evidence is unlikely if innocent" is not "innocence is unlikely given the evidence."</b> Real convictions (and acquittals) have turned on this single transposition.</div>
+        </div>
+
+        <div class="callout warn">
+          <span class="co-icon">PITFALLS</span>
+          <p><strong>The recurring shapes of error:</strong> (1) <em>base-rate neglect</em> — quoting \(P(E\mid H)\) and ignoring how rare \(H\) is; (2) the <em>prosecutor's fallacy</em> — reading \(P(E\mid H)\) as \(P(H\mid E)\); (3) the <em>conjunction fallacy</em> — judging \(P(A \cap B) &gt; P(A)\), impossible since an intersection can never be larger than either part (the "Linda is a bank teller and a feminist" experiment); (4) the <em>gambler's fallacy</em> — believing independent trials "are due" to correct, when by EQ S1.6 past flips tell a fair coin nothing.</p>
+        </div>
+
+        <p class="note"><strong>The unifying diagnosis.</strong> Every one of these is a failure to condition correctly — to track which event is given, which is uncertain, and what the base rates are. Bayes' theorem is not just a formula; it is the discipline that makes these errors impossible to commit if you actually write the ratio down. That is why §1.3 is the spine of this chapter and of everything statistical that follows.</p>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>We have treated probabilities of events and the mean and spread of a random variable in the abstract.</strong> The next chapter gives those random variables names and shapes: the Bernoulli, binomial, Poisson, normal, and exponential distributions — the recurring "characters" of uncertainty — plus the central limit theorem that explains why the bell curve appears everywhere a sum or an average does.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 1.R ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">1.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://archive.org/details/foundationsofthe00kolm" target="_blank" rel="noopener">Kolmogorov, A. N. (1933). <span class="ref-venue">Foundations of the Theory of Probability</span> (Grundbegriffe der Wahrscheinlichkeitsrechnung).</a> <span class="ref-meta">The axiomatic foundation of EQ S1.1; measure-theoretic probability.</span></li>
+          <li><a href="https://doi.org/10.1098/rstl.1763.0053" target="_blank" rel="noopener">Bayes, T. &amp; Price, R. (1763). <span class="ref-venue">An Essay towards solving a Problem in the Doctrine of Chances</span>.</a> <span class="ref-meta">Phil. Trans. R. Soc. — the original statement of EQ S1.7.</span></li>
+          <li><a href="https://projects.iq.harvard.edu/stat110" target="_blank" rel="noopener">Blitzstein, J. K. &amp; Hwang, J. (2019). <span class="ref-venue">Introduction to Probability</span> (2nd ed.). Chapman &amp; Hall / CRC.</a> <span class="ref-meta">Harvard Stat 110 — conditioning, Bayes, expectation, LLN; free course materials.</span></li>
+          <li><a href="https://www.jstor.org/stable/1914185" target="_blank" rel="noopener">Tversky, A. &amp; Kahneman, D. (1983). <span class="ref-venue">Extensional versus intuitive reasoning: The conjunction fallacy in probability judgment</span>.</a> <span class="ref-meta">Psychological Review 90(4) — the Linda problem (§1.5).</span></li>
+          <li><a href="https://doi.org/10.1093/oso/9780198509240.001.0001" target="_blank" rel="noopener">Jaynes, E. T. (2003). <span class="ref-venue">Probability Theory: The Logic of Science</span>. Cambridge University Press.</a> <span class="ref-meta">Probability as extended logic — the Bayesian reading of §1.1 and §1.3.</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../index.html#toc"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">§§</span> Index</div></a>
+        <a class="next" href="../stats/02-distributions.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">02</span> Distributions</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — STATISTICS · CH 01</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* ============================================================
+   Probability — The Logic of Uncertainty — chapter instruments
+   Single IIFE, no globals. Three widgets, each guarded by the
+   existence of its root element. setInterval (never rAF) drives
+   the law-of-large-numbers animation for background-tab safety.
+   ============================================================ */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  function clamp(x, lo, hi) { return x < lo ? lo : x > hi ? hi : x; }
+  function pct(x, d) { d = d === undefined ? 1 : d; return (x * 100).toFixed(d) + "%"; }
+
+  /* ========================================================
+     INSTRUMENT S1.1 — Bayes-box disease-test calculator
+     A 10,000-person cohort split into TP / FN / FP / TN; the
+     posterior P(D|+) is the green slice of the positive column.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("prob-bayes");
+    if (!root) return;
+    var prev = document.getElementById("prob-bayes-prev");
+    var sens = document.getElementById("prob-bayes-sens");
+    var spec = document.getElementById("prob-bayes-spec");
+    var prevOut = document.getElementById("prob-bayes-prev-out");
+    var sensOut = document.getElementById("prob-bayes-sens-out");
+    var specOut = document.getElementById("prob-bayes-spec-out");
+    var ppvEl = document.getElementById("prob-bayes-ppv");
+    var npvEl = document.getElementById("prob-bayes-npv");
+    var countsEl = document.getElementById("prob-bayes-counts");
+    var canvas = document.getElementById("prob-bayes-canvas");
+
+    function render() {
+      var p = +prev.value, se = +sens.value, sp = +spec.value;
+      prevOut.textContent = (p * 100).toFixed(p < 0.01 ? 2 : 1) + "%";
+      sensOut.textContent = (se * 100).toFixed(1) + "%";
+      specOut.textContent = (sp * 100).toFixed(1) + "%";
+
+      var N = 10000;
+      var sick = N * p, well = N - sick;
+      var tp = sick * se;              // true positives
+      var fn = sick - tp;             // false negatives
+      var fp = well * (1 - sp);       // false positives
+      var tn = well - fp;             // true negatives
+      var posPos = tp + fp;           // all positive tests
+      var negNeg = tn + fn;           // all negative tests
+      var ppv = posPos > 0 ? tp / posPos : 0;   // EQ S1.7: P(D|+)
+      var npv = negNeg > 0 ? tn / negNeg : 0;   // P(healthy|-)
+
+      ppvEl.textContent = pct(ppv, 1);
+      ppvEl.style.color = ppv >= 0.5 ? C.MINT : C.RED;
+      npvEl.textContent = pct(npv, 2);
+      countsEl.textContent = Math.round(tp).toLocaleString() + " · " +
+                             Math.round(fp).toLocaleString();
+
+      /* ---- draw the cohort as a single 10,000-person bar ---- */
+      var c = FM.setupCanvas(canvas, 220);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      ctx.clearRect(0, 0, w, h);
+      var padL = 8, padR = 8, padT = 30, padB = 46;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      var bw = x1 - x0, bh = y0 - y1;
+
+      // two stacked columns: POSITIVE tests (TP+FP), NEGATIVE tests (TN+FN)
+      var gap = 18;
+      var colW = (bw - gap) / 2;
+      var posX = x0, negX = x0 + colW + gap;
+
+      function column(cx, label, top, topN, bot, botN, topColor, botColor) {
+        var total = topN + botN;
+        var topH = total > 0 ? bh * (topN / total) : 0;
+        // top slice
+        ctx.fillStyle = topColor;
+        ctx.fillRect(cx, y1, colW, topH);
+        // bottom slice
+        ctx.fillStyle = botColor;
+        ctx.fillRect(cx, y1 + topH, colW, bh - topH);
+        // hairline frame
+        ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+        ctx.strokeRect(cx, y1, colW, bh);
+        // labels
+        ctx.font = C.MONO; ctx.textAlign = "center"; ctx.textBaseline = "top";
+        ctx.fillStyle = C.SEC;
+        ctx.fillText(label, cx + colW / 2, y0 + 8);
+        ctx.fillText(Math.round(total).toLocaleString() + " people", cx + colW / 2, y0 + 22);
+        // in-slice counts when tall enough
+        ctx.textBaseline = "middle";
+        if (topH > 16) {
+          ctx.fillStyle = "#000000";
+          ctx.fillText(top + " " + Math.round(topN).toLocaleString(), cx + colW / 2, y1 + topH / 2);
+        }
+        if (bh - topH > 16) {
+          ctx.fillStyle = "#000000";
+          ctx.fillText(bot + " " + Math.round(botN).toLocaleString(), cx + colW / 2, y1 + topH + (bh - topH) / 2);
+        }
+      }
+      // positive column: TRUE POS (mint) on top, FALSE POS (red) below
+      column(posX, "TEST +", "TP", tp, "FP", fp, C.MINT, C.RED);
+      // negative column: TRUE NEG (deep green) on top, FALSE NEG (muted) below
+      column(negX, "TEST −", "TN", tn, "FN", fn, C.DEEP, C.MUT);
+
+      // title strip
+      ctx.font = C.MONO; ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillStyle = C.MUT;
+      ctx.fillText("COHORT OF 10,000 · GREEN = CORRECT · RED/GREY = ERROR", x0, 8);
+    }
+
+    [prev, sens, spec].forEach(function (s) { s.addEventListener("input", render); });
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT S1.2 — Law-of-large-numbers simulator
+     Running average of a fair coin (E=0.5) or fair die (E=3.5)
+     converging to E[X]; driven by setInterval, not rAF.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("prob-lln");
+    if (!root) return;
+    var canvas = document.getElementById("prob-lln-canvas");
+    var nEl = document.getElementById("prob-lln-n");
+    var meanEl = document.getElementById("prob-lln-mean");
+    var trueEl = document.getElementById("prob-lln-true");
+    var srcBtns = root.querySelectorAll("[data-prob-lln-src]");
+    var actBtns = root.querySelectorAll("[data-prob-lln-act]");
+
+    var rng = FM.mulberry32(7);
+    var src = "coin";                 // "coin" | "die"
+    var n = 0, sum = 0;
+    var means = [];                   // history of running averages
+    var MAXPTS = 2000;                // cap stored history
+    var timer = null;
+
+    function trueMean() { return src === "coin" ? 0.5 : 3.5; }
+    function draw1() {
+      if (src === "coin") return rng() < 0.5 ? 0 : 1;
+      return Math.floor(rng() * 6) + 1;   // 1..6
+    }
+    function step(k) {
+      for (var i = 0; i < k; i++) {
+        n++; sum += draw1();
+        if (means.length < MAXPTS) means.push(sum / n);
+        else means[(n - 1) % MAXPTS] = sum / n; // (only first MAXPTS plotted)
+      }
+    }
+    function reset() {
+      stop();
+      rng = FM.mulberry32(7);
+      n = 0; sum = 0; means = [];
+      step(120);                       // meaningful initial state, zero interaction
+      render();
+    }
+    function stop() { if (timer) { clearInterval(timer); timer = null; } }
+    function run() {
+      if (timer) return;
+      timer = setInterval(function () {
+        step(Math.max(1, Math.floor(n / 40) + 1)); // accelerate as n grows
+        render();
+        if (n >= 50000) stop();
+      }, 60);
+    }
+
+    function render() {
+      var c = FM.setupCanvas(canvas, 280);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      ctx.clearRect(0, 0, w, h);
+      var padL = 46, padR = 14, padT = 16, padB = 28;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      var tm = trueMean();
+      // y-range brackets the true mean with headroom
+      var lo, hi;
+      if (src === "coin") { lo = 0; hi = 1; }
+      else { lo = 1; hi = 6; }
+      function px(i, m) { return x0 + (m <= 1 ? 0 : i / (m - 1)) * (x1 - x0); }
+      function py(v) { return y0 - (v - lo) / (hi - lo) * (y0 - y1); }
+
+      // frame + gridlines
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(x0, y1, x1 - x0, y0 - y1);
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      var ticks = src === "coin" ? [0, 0.25, 0.5, 0.75, 1] : [1, 2, 3, 4, 5, 6];
+      for (var t = 0; t < ticks.length; t++) {
+        var gy = py(ticks[t]);
+        ctx.strokeStyle = "rgba(47,50,52,.5)";
+        ctx.beginPath(); ctx.moveTo(x0, gy); ctx.lineTo(x1, gy); ctx.stroke();
+        ctx.fillStyle = C.MUT;
+        ctx.fillText(src === "coin" ? ticks[t].toFixed(2) : ticks[t].toString(), x0 - 6, gy);
+      }
+      // true-mean dashed line
+      ctx.strokeStyle = C.SEC; ctx.setLineDash([5, 4]); ctx.lineWidth = 1;
+      var ty = py(tm);
+      ctx.beginPath(); ctx.moveTo(x0, ty); ctx.lineTo(x1, ty); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = C.SEC; ctx.textAlign = "left"; ctx.textBaseline = "bottom";
+      ctx.fillText("E[X] = " + tm, x0 + 6, ty - 3);
+
+      // running-average curve
+      var m = means.length;
+      if (m > 0) {
+        ctx.strokeStyle = C.MINT; ctx.lineWidth = 2;
+        ctx.beginPath();
+        for (var i = 0; i < m; i++) {
+          var X = px(i, m), Y = py(means[i]);
+          if (i === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y);
+        }
+        ctx.stroke();
+        // current-point dot
+        ctx.fillStyle = C.BRIGHT;
+        ctx.beginPath();
+        ctx.arc(px(m - 1, m), py(means[m - 1]), 3, 0, 2 * Math.PI);
+        ctx.fill();
+      }
+      // axis caption
+      ctx.fillStyle = C.MUT; ctx.font = C.MONO;
+      ctx.textAlign = "right"; ctx.textBaseline = "bottom";
+      ctx.fillText("n = " + n.toLocaleString() + " →", x1, y0 + 22);
+
+      // readouts
+      nEl.textContent = n.toLocaleString();
+      var cur = m > 0 ? means[m - 1] : 0;
+      meanEl.textContent = src === "coin" ? cur.toFixed(4) : cur.toFixed(3);
+      trueEl.textContent = src === "coin" ? "0.5000" : "3.500";
+    }
+
+    srcBtns.forEach(function (b) {
+      b.addEventListener("click", function () {
+        src = b.getAttribute("data-prob-lln-src");
+        srcBtns.forEach(function (o) { o.classList.toggle("on", o === b); });
+        reset();
+      });
+    });
+    actBtns.forEach(function (b) {
+      b.addEventListener("click", function () {
+        if (b.getAttribute("data-prob-lln-act") === "run") run();
+        else reset();
+      });
+    });
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    reset();   // meaningful initial state (120 samples already plotted)
+  })();
+
+  /* ========================================================
+     INSTRUMENT S1.3 — Conditional-probability explorer
+     Two-circle Venn whose overlap is P(A∩B); reads off the
+     union, both conditionals, and an independence verdict.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("prob-tree");
+    if (!root) return;
+    var aIn = document.getElementById("prob-tree-a");
+    var bIn = document.getElementById("prob-tree-b");
+    var abIn = document.getElementById("prob-tree-ab");
+    var aOut = document.getElementById("prob-tree-a-out");
+    var bOut = document.getElementById("prob-tree-b-out");
+    var abOut = document.getElementById("prob-tree-ab-out");
+    var unionEl = document.getElementById("prob-tree-union");
+    var aGbEl = document.getElementById("prob-tree-aGb");
+    var bGaEl = document.getElementById("prob-tree-bGa");
+    var indepEl = document.getElementById("prob-tree-indep");
+    var canvas = document.getElementById("prob-tree-canvas");
+
+    function render() {
+      var pa = +aIn.value, pb = +bIn.value, pab = +abIn.value;
+      // axioms: overlap cannot exceed either event, nor leave the union > 1
+      var maxAB = Math.min(pa, pb);
+      var minAB = Math.max(0, pa + pb - 1);   // union <= 1 forces a floor
+      pab = clamp(pab, minAB, maxAB);
+      abIn.value = pab;
+
+      aOut.textContent = pa.toFixed(2);
+      bOut.textContent = pb.toFixed(2);
+      abOut.textContent = pab.toFixed(2);
+
+      var union = pa + pb - pab;              // EQ S1.2
+      var aGb = pb > 0 ? pab / pb : 0;        // EQ S1.4  P(A|B)
+      var bGa = pa > 0 ? pab / pa : 0;        //          P(B|A)
+      var prod = pa * pb;                     // EQ S1.6 independence target
+      var indep = Math.abs(pab - prod) < 0.005;
+
+      unionEl.textContent = union.toFixed(3);
+      aGbEl.textContent = aGb.toFixed(3);
+      bGaEl.textContent = bGa.toFixed(3);
+      if (pab < 0.0001) {
+        indepEl.textContent = "MUTUALLY EXCL.";
+        indepEl.style.color = C.RED;
+      } else if (indep) {
+        indepEl.textContent = "INDEPENDENT";
+        indepEl.style.color = C.MINT;
+      } else if (pab > prod) {
+        indepEl.textContent = "POS. DEPENDENT";
+        indepEl.style.color = C.BLUE;
+      } else {
+        indepEl.textContent = "NEG. DEPENDENT";
+        indepEl.style.color = C.SEC;
+      }
+
+      /* ---- draw the Venn: two area-proportional circles ---- */
+      var c = FM.setupCanvas(canvas, 300);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      ctx.clearRect(0, 0, w, h);
+      var cy = h / 2 - 6;
+      // radii proportional to sqrt(area) so circle area tracks probability
+      var scale = Math.min(w, h) * 0.30;
+      var rA = scale * Math.sqrt(pa);
+      var rB = scale * Math.sqrt(pb);
+      // horizontal offset encodes overlap: more overlap -> circles closer
+      var overlapFrac = pab / Math.max(maxAB, 1e-6);   // 0..1
+      var dMax = rA + rB;
+      var dMin = Math.abs(rA - rB);
+      var d = dMax - (dMax - dMin) * overlapFrac;       // center distance
+      var cxA = w / 2 - d / 2, cxB = w / 2 + d / 2;
+
+      ctx.lineWidth = 1.5;
+      // circle A (mint tint)
+      ctx.fillStyle = "rgba(166,242,204,.12)";
+      ctx.strokeStyle = C.MINT;
+      ctx.beginPath(); ctx.arc(cxA, cy, rA, 0, 2 * Math.PI); ctx.fill(); ctx.stroke();
+      // circle B (blue tint)
+      ctx.fillStyle = "rgba(78,138,247,.12)";
+      ctx.strokeStyle = C.BLUE;
+      ctx.beginPath(); ctx.arc(cxB, cy, rB, 0, 2 * Math.PI); ctx.fill(); ctx.stroke();
+      // overlap emphasis: clip to A, fill B region
+      if (pab > 0.0001) {
+        ctx.save();
+        ctx.beginPath(); ctx.arc(cxA, cy, rA, 0, 2 * Math.PI); ctx.clip();
+        ctx.fillStyle = "rgba(166,242,204,.22)";
+        ctx.beginPath(); ctx.arc(cxB, cy, rB, 0, 2 * Math.PI); ctx.fill();
+        ctx.restore();
+      }
+      // labels
+      ctx.font = "12px ui-monospace, Menlo, monospace";
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillStyle = C.MINT; ctx.fillText("A", cxA - rA * 0.45, cy);
+      ctx.fillStyle = C.BLUE; ctx.fillText("B", cxB + rB * 0.45, cy);
+      // caption
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText("CIRCLE AREA ∝ PROBABILITY · OVERLAP = P(A∩B)", 8, 8);
+      ctx.textAlign = "left"; ctx.textBaseline = "bottom";
+      ctx.fillText("P(A)·P(B) = " + prod.toFixed(3) +
+                   "  vs  P(A∩B) = " + pab.toFixed(3), 8, h - 6);
+    }
+
+    [aIn, bIn, abIn].forEach(function (s) { s.addEventListener("input", render); });
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

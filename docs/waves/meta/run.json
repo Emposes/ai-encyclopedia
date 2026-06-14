@@ -1,0 +1,63 @@
+{
+  "file": "openmodels/02-running-open-models.html",
+  "glossary": [
+    {
+      "term": "Inference engine",
+      "def": "The software that turns a directory of open weights into generated text: it loads the tensors, applies the model's chat template, runs the forward pass, manages the KV cache, and samples tokens. Almost every practical choice — quantization format, batching strategy, GPU/CPU split — lives in the engine, not the weights, which are inert until something runs them. llama.cpp, vLLM, SGLang, TensorRT-LLM, and MLX are the common ones."
+    },
+    {
+      "term": "llama.cpp",
+      "def": "A dependency-light C/C++ inference engine started by Georgi Gerganov in 2023 that runs LLMs on CPU, GPU (CUDA, Metal, Vulkan, ROCm), or any split of the two, and is the project that made local inference mainstream. Ollama and LM Studio are friendly wrappers over it, so when someone runs a model on a laptop, llama.cpp is usually the thing actually executing."
+    },
+    {
+      "term": "GGUF",
+      "def": "GPT-Generated Unified Format: the single self-describing, memory-mappable file that llama.cpp loads, holding the quantized tensors, tokenizer, chat template, and metadata such as context length all in one place. It superseded the older GGML format; a name like Llama-3.1-8B-Instruct-Q4_K_M.gguf encodes the model, size, instruct-tuning, and quant scheme in the filename."
+    },
+    {
+      "term": "Quantization (bits per weight)",
+      "def": "Storing each weight at lower numerical precision so it occupies fewer bits — the central lever that turns 'needs a datacenter' into 'runs on my desk.' Footprint is roughly bits-per-weight times parameters, so a 7B model is 14 GB at bf16, 7 GB at 8-bit, and 3.5 GB at 4-bit. Quality is near-lossless down to ~8 bits, drops only a little to ~4 bits, then falls off steeply below 4; Q4_K_M to Q5_K_M is the local sweet spot."
+    },
+    {
+      "term": "vLLM",
+      "def": "An open-source serving engine built to maximize aggregate throughput for many concurrent users on datacenter GPUs, and the foundation of most production open-model deployments. Its core innovation, PagedAttention, plus continuous batching, lets it pack far more requests into the same GPU memory than naive serving — the original paper reports up to 2–4x higher throughput at equal latency."
+    },
+    {
+      "term": "PagedAttention",
+      "def": "vLLM's KV-cache management scheme that borrows virtual memory from operating systems: the cache is split into fixed-size blocks allocated on demand via a block table, instead of one contiguous buffer per request sized for the maximum sequence length. This drives internal fragmentation to near zero and lets requests with identical prefixes (a shared system prompt) share the same physical blocks."
+    },
+    {
+      "term": "Decode bandwidth bound",
+      "def": "The observation that single-stream autoregressive decoding is limited by memory bandwidth, not compute: generating each token reads essentially every weight once, so tokens-per-second is upper-bounded by the device's memory bandwidth divided by the bytes read per token. This is why quantizing 16-bit to 4-bit speeds up decode roughly 4x — it reads 4x fewer bytes per token — and why prefill, which is parallel and compute-bound, behaves oppositely."
+    },
+    {
+      "term": "Continuous batching",
+      "def": "A serving technique where finished sequences immediately free their KV-cache slots and new requests fill them mid-flight, instead of an entire batch waiting for its slowest member to finish. Combined with PagedAttention it keeps the GPU saturated and is a large part of why throughput rises with concurrency up to the saturation point before per-user latency starts to suffer."
+    }
+  ],
+  "refs": [
+    {
+      "cite": "Gerganov, G. et al. (2023). llama.cpp — LLM inference in C/C++. GitHub.",
+      "url": "https://github.com/ggerganov/llama.cpp"
+    },
+    {
+      "cite": "Kwon, W., Li, Z., Zhuang, S. et al. (2023). Efficient Memory Management for Large Language Model Serving with PagedAttention. SOSP 2023.",
+      "url": "https://arxiv.org/abs/2309.06180"
+    },
+    {
+      "cite": "Dettmers, T., Lewis, M., Belkada, Y. & Zettlemoyer, L. (2022). LLM.int8(): 8-bit Matrix Multiplication for Transformers at Scale. NeurIPS 2022.",
+      "url": "https://arxiv.org/abs/2208.07339"
+    },
+    {
+      "cite": "Frantar, E., Ashkboos, S., Hoefler, T. & Alistarh, D. (2023). GPTQ: Accurate Post-Training Quantization for Generative Pre-trained Transformers. ICLR 2023.",
+      "url": "https://arxiv.org/abs/2210.17323"
+    },
+    {
+      "cite": "Lin, J., Tang, J., Tang, H. et al. (2024). AWQ: Activation-aware Weight Quantization for LLM Compression and Acceleration. MLSys 2024.",
+      "url": "https://arxiv.org/abs/2306.00978"
+    },
+    {
+      "cite": "The vLLM Team. vLLM Documentation. Official docs.",
+      "url": "https://docs.vllm.ai/"
+    }
+  ]
+}

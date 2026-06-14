@@ -1,0 +1,688 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>RL Meets LLMs — RLHF, DPO &amp; GRPO — AI Encyclopedia</title>
+<meta name="description" content="The reward-maximizing machinery that mastered games now aligns language models. RLHF and the Bradley-Terry reward model, PPO with a KL leash, DPO's closed-form shortcut that skips the reward model, and GRPO/RLVR with verifiable rewards and group-relative advantage." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+</head>
+<body data-track="rl" data-level="advanced">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ REINFORCEMENT LEARNING / 06 / RL &amp; LLMs</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../game-theory/01-games-equilibria.html">NEXT: GAME THEORY · 01 →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">REINFORCEMENT LEARNING · CHAPTER 06 / 06</div>
+    <h1>RL Meets LLMs — RLHF, DPO &amp; GRPO</h1>
+    <p class="lede">For most of this volume the agent acted in a maze, a game, or a control loop. Now the environment is a conversation and the agent is a language model, yet the machinery barely changes. <strong>The same reward-maximizing apparatus that mastered Atari and Go now aligns language models, and the latest variants skip the reward model entirely.</strong> This chapter traces the line from a contextual bandit, through the reward model and PPO of RLHF, to DPO's closed-form shortcut and GRPO's group-relative, value-network-free objective driving the reasoning models of 2025.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>ADVANCED</b></span>
+      <span>READING TIME<b>≈ 30 MIN</b></span>
+      <span>BUILDS ON<b>RL 05 · POLICY GRADIENTS</b></span>
+      <span>INSTRUMENTS<b>RM PIPELINE · DPO vs PPO · REWARD HACK</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">6.1</span>Bandits &amp; the contextual case</a>
+      <a href="#s2"><span class="n">6.2</span>RLHF — learning from preferences</a>
+      <a href="#s3"><span class="n">6.3</span>PPO for language models</a>
+      <a href="#s4"><span class="n">6.4</span>DPO — preferences without RL</a>
+      <a href="#s5"><span class="n">6.5</span>GRPO &amp; RLVR — verifiable rewards</a>
+      <a href="#s6"><span class="n">6.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 6.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">6.1</span><h2>Bandits &amp; the contextual case</h2></div>
+        <p>Before the conversation, the slot machine. A <strong>multi-armed bandit</strong> is the smallest non-trivial RL problem: one state, \(K\) actions ("arms"), each returning a noisy reward, and a single dilemma — explore arms you are unsure about, or exploit the one that has paid best so far. There are no transitions and no credit assignment across time, which is exactly what makes it the cleanest laboratory for the explore–exploit trade-off of Chapter 01.</p>
+
+        <p>Add a twist and you get the frame that makes the rest of this chapter click. In a <strong>contextual bandit</strong>, before each pull the agent sees a <em>context</em> \(x\) and chooses an arm \(a\) conditioned on it; the reward depends on both. The episode is exactly one step long: observe, act, get rewarded, done. There is no \(s_{t+1}\) to plan toward, so the discount factor and the Bellman recursion fall away entirely.</p>
+
+        <div class="eq"><span class="eq-tag">EQ R6.1 — THE CONTEXTUAL-BANDIT OBJECTIVE</span>
+        $$ \max_{\pi}\; \mathbb{E}_{x \sim \mathcal{D}}\; \mathbb{E}_{a \sim \pi(\cdot \mid x)}\big[\, r(x, a) \,\big] $$
+        <div class="eq-note">\(\mathcal{D}\) is the distribution of contexts; \(\pi(a \mid x)\) the policy; \(r(x,a)\) the reward for taking action \(a\) in context \(x\). Compare the full RL return (Vol RL · EQ R1.3): the sum over future steps has collapsed to a <b>single expected reward</b>, because the horizon is one. <b>This is the exact shape of LLM alignment.</b> Read \(x\) as the prompt, \(a\) as the entire generated response, and \(r(x,a)\) as "how good was that answer" — and RLHF is nothing more than a contextual bandit over an astronomically large action space.</div>
+        </div>
+
+        <p>That reframing is the load-bearing idea of the whole chapter. An LLM response is a single action drawn from a policy \(\pi_\theta(y \mid x)\) — yes, it is built token by token, but the reward arrives once, on the finished sequence, so the <em>optimization</em> is bandit-shaped even though the <em>generation</em> is sequential. The action space is the set of all token sequences, combinatorially huge, which is why we never enumerate arms; we sample, score, and nudge the sampling distribution. Two things are missing from EQ R6.1, and supplying them is the entire history that follows: <strong>where does \(r(x,a)\) come from</strong> when no environment hands it to us, and <strong>how do we optimize it</strong> when we cannot try every arm.</p>
+
+        <p class="note">A caveat experts insist on: treating an LLM rollout as one bandit action throws away all intermediate structure. Per-token credit assignment (the dense-reward, token-level MDP view) is an active research frontier, and process-reward models that score reasoning <em>steps</em> rather than only final answers are exactly an attempt to reintroduce the horizon the bandit framing discards. The bandit picture is the right first model — not the last word.</p>
+
+        <div class="exercise" data-answer="1" data-tol="0.001" data-hint="A bandit has no transitions, so how many steps until the episode ends?">
+          <div class="ex-q">A contextual bandit episode is exactly how many environment steps long (observe context, take one action, receive one reward, terminate)? Enter the integer.</div>
+          <div class="ex-reveal-src">There is one context, one action, one reward, then termination — no \(s_{t+1}\). The horizon is <b>1</b>, which is why the discounted return of Chapter 01 collapses to a single expected reward (EQ R6.1).</div>
+        </div>
+      </section>
+
+      <!-- ====================== 6.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">6.2</span><h2>RLHF — learning from human preferences</h2></div>
+        <p>The reward in EQ R6.1 is the problem. "How good is this answer" has no closed form — helpfulness, honesty, and tone are not functions you can write down. The insight that unlocked modern alignment, due to Christiano and colleagues in 2017 and scaled to language by InstructGPT in 2022, is that <strong>people cannot reliably score a response on an absolute scale, but they can reliably compare two</strong>. So do not ask for a number; ask which of two completions is better, and <em>learn</em> a reward function that explains those choices.</p>
+
+        <p>The bridge from comparisons to a scalar is the <strong>Bradley–Terry model</strong>, a century-old model of paired comparisons. Assign each response a latent reward \(r_\phi(x,y)\); the probability that response \(y_w\) is preferred over \(y_l\) is the sigmoid of their reward difference.</p>
+
+        <div class="eq"><span class="eq-tag">EQ R6.2 — BRADLEY–TERRY PREFERENCE MODEL</span>
+        $$ P\big(y_w \succ y_l \mid x\big) \;=\; \frac{\exp r_\phi(x, y_w)}{\exp r_\phi(x, y_w) + \exp r_\phi(x, y_l)} \;=\; \sigma\!\big(r_\phi(x, y_w) - r_\phi(x, y_l)\big) $$
+        <div class="eq-note">\(\sigma\) is the logistic sigmoid; \(y_w\) ("win") is the preferred completion, \(y_l\) ("lose") the rejected one. Only the <b>difference</b> of rewards matters — the model is invariant to adding any constant to every reward, so the scale is fixed only up to a shift. <b>Equal rewards give exactly \(\sigma(0) = 0.5\):</b> a coin flip when the two answers are equally good. Fitting \(r_\phi\) is then a binary-classification problem on preference pairs.</div>
+        </div>
+
+        <p>The reward model \(r_\phi\) is itself a transformer — usually the supervised-fine-tuned policy with its token head replaced by a single scalar head reading the final hidden state. It is trained by maximum likelihood on a dataset of comparisons \(\{(x, y_w, y_l)\}\): minimize the negative log-likelihood of the human's choice under EQ R6.2.</p>
+
+        <div class="eq"><span class="eq-tag">EQ R6.3 — REWARD-MODEL LOSS</span>
+        $$ \mathcal{L}_{\text{RM}}(\phi) \;=\; -\,\mathbb{E}_{(x,\,y_w,\,y_l)\sim \mathcal{D}}\Big[\, \log \sigma\!\big(r_\phi(x, y_w) - r_\phi(x, y_l)\big) \Big] $$
+        <div class="eq-note">This is logistic regression on the reward gap. The gradient pushes \(r_\phi(x,y_w)\) up and \(r_\phi(x,y_l)\) down until the model's predicted preference probability matches the humans'. <b>A subtlety that bites in practice: the reward model is a frozen snapshot of human judgment</b>, and as the policy drifts to exploit it (§6.5's reward hacking), its scores grow unreliable on exactly the off-distribution outputs the policy is now producing.</div>
+        </div>
+
+        <p>With a learned \(r_\phi\) standing in for the human, the contextual-bandit objective of EQ R6.1 is finally concrete: maximize the reward model's score over completions the policy generates. The classic RLHF pipeline is three stages — supervised fine-tuning (SFT) to teach the format, reward-model training on preferences, then policy optimization against the reward model — and the third stage is the subject of §6.3.</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Bradley-Terry: fit a scalar reward per item from pairwise preferences (EQ R6.2-3)
+import numpy as np
+rng = np.random.default_rng(0)
+
+# 4 responses with hidden "true" qualities; we only get to SEE comparisons
+true_r = np.array([2.0, 1.0, 0.0, -1.0])
+n = len(true_r)
+# generate 600 noisy pairwise preferences: winner sampled by Bradley-Terry
+pairs = rng.integers(0, n, (600, 2)); pairs = pairs[pairs[:,0] != pairs[:,1]]
+p_win = 1 / (1 + np.exp(-(true_r[pairs[:,0]] - true_r[pairs[:,1]])))
+i_wins = rng.random(len(pairs)) &lt; p_win        # True =&gt; left item won
+
+r = np.zeros(n)                                # learned rewards, start at 0
+for step in range(400):                        # gradient descent on EQ R6.3
+    w = np.where(i_wins, pairs[:,0], pairs[:,1])  # winner index per pair
+    l = np.where(i_wins, pairs[:,1], pairs[:,0])  # loser index per pair
+    pred = 1 / (1 + np.exp(-(r[w] - r[l])))    # P(winner beats loser) under model
+    g = np.zeros(n)                            # dL/dr ; (pred-1) flows to winner
+    np.add.at(g, w, (pred - 1)); np.add.at(g, l, (1 - pred))
+    r -= 0.05 * g / len(pairs)
+r -= r.mean()                                  # rewards fixed only up to a shift
+
+print("true   (centered):", (true_r - true_r.mean()).round(2))
+print("learned(centered):", r.round(2))
+print("ranking recovered:", list(np.argsort(-r)), "== ", list(np.argsort(-true_r)))</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="rlhf-rm" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT R6.1 — PREFERENCE → REWARD-MODEL PIPELINE</span><span class="w-sub">BRADLEY–TERRY · EQ R6.2 · LIVE</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>REWARD r(y_w) — CHOSEN <output id="rlhf-rm-rw-out">2.0</output></label><input type="range" id="rlhf-rm-rw" min="-3" max="3" step="0.1" value="2"/></div>
+              <div class="ctl"><label>REWARD r(y_l) — REJECTED <output id="rlhf-rm-rl-out">0.0</output></label><input type="range" id="rlhf-rm-rl" min="-3" max="3" step="0.1" value="0"/></div>
+            </div>
+            <canvas class="w-canvas" id="rlhf-rm-canvas" height="280"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">REWARD GAP Δ = r_w − r_l</div><div class="r-value" id="rlhf-rm-gap">—</div></div>
+              <div class="readout acc"><div class="r-label">P(CHOSEN ≻ REJECTED) = σ(Δ)</div><div class="r-value" id="rlhf-rm-p">—</div></div>
+              <div class="readout"><div class="r-label">RM LOSS −log σ(Δ)</div><div class="r-value" id="rlhf-rm-loss">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The reward model only ever sees the <b>gap</b> between two completions, never an absolute score (EQ R6.2). Slide the two rewards: when they are equal the preference probability sits at exactly 0.50 — a coin flip — and the loss is its maximum, \(\log 2 \approx 0.69\). Push the chosen response above the rejected one and the sigmoid curve marks how confidently the model now predicts the human's pick. Make the gap <em>negative</em> (rate the rejected answer higher) and watch the loss explode: the model is being told it ranked the pair backwards.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 6.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">6.3</span><h2>PPO for language models</h2></div>
+        <p>Stage three optimizes the policy against the reward model. The workhorse is <strong>Proximal Policy Optimization (PPO)</strong>, a policy-gradient method (Chapter 05) chosen for one property above all: it takes <em>small, conservative</em> steps. That conservatism is not incidental. The reward model is a fragile, frozen approximation; optimize against it too aggressively and the policy sprints off-distribution into regions where \(r_\phi\) is meaningless — and produces fluent nonsense that the reward model nonetheless loves.</p>
+
+        <p>PPO's mechanism is the <strong>clipped surrogate objective</strong>. Let \(\rho_t = \pi_\theta(a_t \mid s_t) / \pi_{\theta_{\text{old}}}(a_t \mid s_t)\) be the probability ratio between the updated and the data-collecting policy, and \(\hat A_t\) the advantage estimate. PPO maximizes the smaller of the unclipped and clipped products, which caps how far one update can move the policy.</p>
+
+        <div class="eq"><span class="eq-tag">EQ R6.4 — PPO CLIPPED SURROGATE</span>
+        $$ \mathcal{L}^{\text{CLIP}}(\theta) \;=\; \mathbb{E}_t\Big[\, \min\big(\rho_t\,\hat A_t,\; \operatorname{clip}(\rho_t,\, 1-\varepsilon,\, 1+\varepsilon)\,\hat A_t\big) \Big] $$
+        <div class="eq-note">The ratio \(\rho_t\) is clipped to \([1-\varepsilon,\, 1+\varepsilon]\) (typically \(\varepsilon = 0.2\)). When the advantage is positive, the objective stops rewarding the update once \(\rho_t > 1+\varepsilon\); when negative, once \(\rho_t &lt; 1-\varepsilon\). <b>The \(\min\) makes the bound pessimistic</b> — it removes the incentive to move the policy too far in a single step, a cheap surrogate for the trust region of TRPO without the second-order machinery.</div>
+        </div>
+
+        <p>On top of the clip, RLHF adds a second leash: a per-token <strong>KL penalty</strong> against the original SFT model. The reward actually optimized is not \(r_\phi\) alone but \(r_\phi\) minus a penalty for drifting away from where the policy started.</p>
+
+        <div class="eq"><span class="eq-tag">EQ R6.5 — THE KL-REGULARIZED RLHF REWARD</span>
+        $$ \max_{\pi_\theta}\; \mathbb{E}_{x \sim \mathcal{D},\, y \sim \pi_\theta}\big[\, r_\phi(x, y) \,\big] \;-\; \beta\, \mathbb{D}_{\mathrm{KL}}\!\big(\pi_\theta(y\mid x)\,\|\,\pi_{\text{ref}}(y\mid x)\big) $$
+        <div class="eq-note">\(\pi_{\text{ref}}\) is the frozen SFT reference; \(\beta\) sets the strength of the leash. The KL term keeps the policy near a region where the reward model is trustworthy and where the model still speaks fluent, on-distribution language. <b>The whole RLHF objective is this one line</b> — and §6.4 shows it has a closed-form optimum, which is the crack DPO pries open. Standard PPO-RLHF needs <em>four</em> models in memory at once: policy, reference, reward model, and a value/critic network.</div>
+        </div>
+
+        <p>The cost is the story. Four large models resident simultaneously, online rollouts at every step, a separate value network to train, and a notorious sensitivity to hyperparameters — PPO-RLHF works, and it produced InstructGPT, ChatGPT, and the first generation of aligned assistants, but it is heavy, finicky, and hard to reproduce. Every method that follows is, in part, an attempt to keep RLHF's results while shedding its weight.</p>
+
+        <div class="exercise" data-answer="1.2" data-tol="0.001" data-hint="With a positive advantage the ratio is clipped at the upper edge 1 + epsilon.">
+          <div class="ex-q">In PPO with \(\varepsilon = 0.2\), the new policy makes an action four times as likely as the old policy, so \(\rho_t = 4\), and the advantage \(\hat A_t\) is positive. Using EQ R6.4, what effective ratio multiplies \(\hat A_t\) in the clipped objective?</div>
+          <div class="ex-reveal-src">For positive \(\hat A_t\) the objective is the \(\min\), which selects the clipped branch once \(\rho_t > 1+\varepsilon\). With \(\varepsilon = 0.2\) the cap is \(1 + 0.2 = \) <b>1.2</b>: pushing the ratio from 1.2 toward 4 buys no extra objective, so PPO has no incentive to take the giant step.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># PPO clipped surrogate vs the raw ratio objective (EQ R6.4)
+import numpy as np
+eps = 0.2
+ratio = np.linspace(0.0, 2.5, 26)             # pi_new / pi_old
+
+def clip_obj(rho, A, eps=0.2):
+    return np.minimum(rho * A, np.clip(rho, 1-eps, 1+eps) * A)
+
+A_pos, A_neg = 1.0, -1.0
+obj_pos = clip_obj(ratio, A_pos, eps)         # good action: A > 0
+obj_neg = clip_obj(ratio, A_neg, eps)         # bad action:  A &lt; 0
+
+print(" ratio  clip(A=+1)  clip(A=-1)")
+for r, op, on in list(zip(ratio, obj_pos, obj_neg))[::4]:
+    print(f" {r:5.2f}   {op:8.3f}   {on:9.3f}")
+
+# the objective FLATTENS past the clip edges -> no reward for a giant step
+print(f"\nA&gt;0 objective is flat for ratio &gt;= {1+eps}: ",
+      np.allclose(obj_pos[ratio &gt;= 1+eps], 1+eps))
+print(f"A&lt;0 objective is flat for ratio &lt;= {1-eps}: ",
+      np.allclose(obj_neg[ratio &lt;= 1-eps], -(1-eps)))
+plot_xy(ratio.tolist(), obj_pos.tolist())</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 6.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">6.4</span><h2>DPO — preferences without RL</h2></div>
+        <p>Here is the elegant turn. The KL-regularized objective of EQ R6.5 is not an open-ended search — it has a known, closed-form optimal policy. For a fixed reward \(r\), the policy that maximizes "expected reward minus \(\beta\)-KL to the reference" is the reference distribution reweighted by the exponentiated reward:</p>
+
+        <div class="eq"><span class="eq-tag">EQ R6.6 — THE OPTIMAL KL-REGULARIZED POLICY</span>
+        $$ \pi_r(y \mid x) \;=\; \frac{1}{Z(x)}\,\pi_{\text{ref}}(y \mid x)\,\exp\!\Big(\tfrac{1}{\beta}\, r(x, y)\Big), \qquad Z(x) = \sum_{y}\pi_{\text{ref}}(y \mid x)\,\exp\!\Big(\tfrac{1}{\beta}\, r(x,y)\Big) $$
+        <div class="eq-note">This is a standard result (a Gibbs / Boltzmann distribution); the partition function \(Z(x)\) is intractable because it sums over all sequences, which is why RLHF resorts to PPO instead of using it directly. <b>But invert it</b> — solve for \(r\) in terms of \(\pi_r\) — and the reward becomes a function of the policy itself, with \(Z(x)\) appearing as an additive term that depends only on \(x\).</div>
+        </div>
+
+        <p>Rafailov and colleagues (2023) made the leap: substitute that inverted reward into the Bradley–Terry preference model (EQ R6.2). The intractable \(Z(x)\) is the <em>same</em> for both completions of a pair, so in the difference \(r(x,y_w) - r(x,y_l)\) it <strong>cancels exactly</strong>. What remains is a reward expressed purely as a log-ratio of the policy to the reference — and the entire reward-model-plus-RL pipeline collapses into a single supervised loss on preference pairs.</p>
+
+        <div class="eq"><span class="eq-tag">EQ R6.7 — THE DPO LOSS</span>
+        $$ \mathcal{L}_{\text{DPO}}(\theta) = -\,\mathbb{E}_{(x,y_w,y_l)}\!\left[\log \sigma\!\left( \beta \log \frac{\pi_\theta(y_w\mid x)}{\pi_{\text{ref}}(y_w\mid x)} - \beta \log \frac{\pi_\theta(y_l\mid x)}{\pi_{\text{ref}}(y_l\mid x)} \right)\right] $$
+        <div class="eq-note">The bracketed term is the <b>implicit reward</b> \(\hat r_\theta(x,y) = \beta\log\frac{\pi_\theta(y\mid x)}{\pi_{\text{ref}}(y\mid x)}\): the policy <em>is</em> its own reward model. Minimizing this raises the likelihood of \(y_w\) and lowers that of \(y_l\), each measured relative to the reference. <b>No reward model is trained, no rollouts are sampled, no RL loop runs</b> — just a forward/backward pass on a fixed dataset, like ordinary supervised fine-tuning. The \(\beta\) that was the KL strength in EQ R6.5 reappears here as the loss temperature.</div>
+        </div>
+
+        <p>The gradient makes the behavior vivid. Its magnitude scales with how badly the implicit reward model currently ranks the pair — pairs the model already gets right contribute little, pairs it gets backwards contribute a lot — and its direction increases \(\log\pi_\theta(y_w\mid x)\) while decreasing \(\log\pi_\theta(y_l\mid x)\). DPO is preference learning that looks and runs exactly like supervised learning, and that simplicity made it the default for budget alignment almost overnight.</p>
+
+        <p class="note"><strong>Honest caveats, because the field is not settled.</strong> DPO is offline: it optimizes on a fixed preference set and cannot explore beyond it, so it is sensitive to how well that data covers the policy's behavior, and the implicit reward can <em>drift</em> on out-of-distribution completions. Online and iterative variants (sampling fresh pairs, IPO's bounded objective, KTO's prospect-theory single-label loss) exist precisely to patch these gaps. Several careful studies find well-tuned PPO still edges out DPO on the hardest tasks; DPO's win is overwhelmingly one of <em>simplicity and cost</em>, not a clean dominance on quality.</p>
+
+        <div class="exercise" data-answer="true" data-tol="0" data-hint="Look at EQ R6.7 — count how many of {reward model, RL rollout loop} appear in it.">
+          <div class="ex-q">True or false: DPO removes the need for a separately trained reward model and for an online RL optimization loop, optimizing preferences with a single supervised loss instead. (Answer <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">EQ R6.7 depends only on the policy \(\pi_\theta\) and the frozen reference \(\pi_{\text{ref}}\) — the intractable \(Z(x)\) cancelled and the reward model became implicit in the policy. There is no \(r_\phi\) to train and no rollout loop; a single supervised gradient step on preference pairs suffices. The statement is <b>true</b>.</div>
+        </div>
+
+        <div class="exercise" data-answer="0.8" data-tol="0.02" data-hint="Implicit-reward gap is beta times the log-ratio difference; then take sigma of it. Note e^(2 ln 2) = 4.">
+          <div class="ex-q">For a preference pair, the policy assigns the chosen completion twice the reference likelihood (\(\pi_\theta/\pi_{\text{ref}} = 2\)) and the rejected completion half (\(\pi_\theta/\pi_{\text{ref}} = 0.5\)). With \(\beta = 1\), the implicit-reward gap is \(\beta(\ln 2 - \ln 0.5) = 2\ln 2 \approx 1.386\). What preference probability \(\sigma(\text{gap})\) does the model now assign to the chosen completion? (Use \(\sigma(z) = 1/(1+e^{-z})\).)</div>
+          <div class="ex-reveal-src">Since \(e^{2\ln 2} = (e^{\ln 2})^2 = 2^2 = 4\), we have \(e^{-1.386} = 1/4 = 0.25\). So \(\sigma(2\ln 2) = \dfrac{1}{1 + 0.25} = \dfrac{1}{1.25} = \) <b>0.8</b>. The DPO gradient keeps pushing this toward 1 — raising \(\pi_\theta(y_w)\), lowering \(\pi_\theta(y_l)\).</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># DPO loss on toy preferred/rejected pairs; check the gradient DIRECTION (EQ R6.7)
+import numpy as np
+beta = 1.0
+# log-probs (policy and frozen reference) for chosen y_w and rejected y_l
+lp_pi_w,  lp_ref_w  = -2.0, -2.3      # policy already prefers y_w a bit
+lp_pi_l,  lp_ref_l  = -1.5, -2.4      # but policy still over-likes y_l
+
+# implicit reward = beta * (log pi - log ref)  -- the policy IS the reward model
+r_w = beta * (lp_pi_w - lp_ref_w)
+r_l = beta * (lp_pi_l - lp_ref_l)
+gap = r_w - r_l
+p_pref = 1 / (1 + np.exp(-gap))               # P(y_w > y_l) under EQ R6.2
+loss   = -np.log(p_pref)
+print(f"implicit reward  r_w={r_w:+.3f}  r_l={r_l:+.3f}   gap={gap:+.3f}")
+print(f"P(chosen preferred) = {p_pref:.3f}   DPO loss = {loss:.3f}")
+
+# dL/d(logprob): coefficient (p_pref - 1) &lt; 0 =&gt; RAISE logpi(y_w), LOWER logpi(y_l)
+coef = p_pref - 1.0
+g_w  = beta * coef * (+1)                      # gradient wrt log pi(y_w)
+g_l  = beta * coef * (-1)                      # gradient wrt log pi(y_l)
+print(f"\ngrad wrt logpi(y_w) = {g_w:+.3f}  (negative -> ascent RAISES y_w)")
+print(f"grad wrt logpi(y_l) = {g_l:+.3f}  (positive -> ascent LOWERS y_l)")
+print("direction: push probability mass from the rejected toward the chosen answer.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="rlhf-dpo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT R6.2 — DPO vs PPO</span><span class="w-sub">SAME OBJECTIVE · TWO MACHINES · EQ R6.5–R6.7</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>OPTIMIZER</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-rlhf-dpo-mode="dpo">DPO</button>
+                  <button class="w-btn ghost" data-rlhf-dpo-mode="ppo">PPO-RLHF</button>
+                </div>
+              </div>
+            </div>
+            <div id="rlhf-dpo-stages" style="margin-top:6px;"></div>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">MODELS IN MEMORY</div><div class="r-value" id="rlhf-dpo-models">—</div></div>
+              <div class="readout acc"><div class="r-label">ONLINE ROLLOUTS</div><div class="r-value" id="rlhf-dpo-roll">—</div></div>
+              <div class="readout"><div class="r-label">SEPARATE REWARD MODEL</div><div class="r-value" id="rlhf-dpo-rm">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Both targets optimize the <em>same</em> KL-regularized objective (EQ R6.5). Toggle between them: <b>PPO-RLHF</b> trains a reward model, then samples online rollouts and runs four models at once (policy, reference, reward, critic); <b>DPO</b> proves that objective has a closed-form optimum (EQ R6.6), folds the reward into the policy (EQ R6.7), and reduces the whole thing to one supervised loss over a fixed preference set — two models, no rollouts, no reward model. The stages light up to show exactly which pieces each pipeline keeps.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 6.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">6.5</span><h2>GRPO &amp; RLVR — verifiable rewards</h2></div>
+        <p>DPO and PPO both lean on <em>human</em> preferences, with all the noise, expense, and gameability that entails. But for some tasks the reward needs no human at all: a math answer is right or wrong, code passes the unit tests or it does not. This is <strong>RLVR — reinforcement learning from verifiable rewards</strong>: replace the learned, hackable reward model with a deterministic checker that returns a clean, ungameable signal. It is the engine behind the reasoning models — DeepSeek-R1, OpenAI's o-series, and their kin — that surged through 2024–2025.</p>
+
+        <p>The optimizer of choice is <strong>GRPO — Group Relative Policy Optimization</strong>, introduced with DeepSeekMath. Its central move attacks PPO's most expensive component: the value network (the critic) that estimates a baseline for the advantage. GRPO deletes it. Instead, for each prompt it samples a <em>group</em> of \(G\) complete responses, scores them all, and uses the group's own statistics as the baseline — the advantage of a response is simply how far above or below the group average its reward sits.</p>
+
+        <div class="eq"><span class="eq-tag">EQ R6.8 — GRPO GROUP-RELATIVE ADVANTAGE</span>
+        $$ \hat A_i \;=\; \frac{r_i - \operatorname{mean}(r_1, \ldots, r_G)}{\operatorname{std}(r_1, \ldots, r_G)}, \qquad i = 1, \ldots, G $$
+        <div class="eq-note">\(r_i\) is the reward of the \(i\)-th sampled response to the same prompt; the baseline is the <b>group mean</b> and the scale is the group standard deviation. <b>No learned value network is needed</b> — the baseline that PPO spends a whole second model to estimate, GRPO reads straight off a batch of samples. A response beats its peers \(\Rightarrow\) positive advantage \(\Rightarrow\) its tokens are reinforced; it lags \(\Rightarrow\) negative \(\Rightarrow\) suppressed. The normalized advantage then enters a PPO-style clipped objective (EQ R6.4) with the usual KL leash to the reference.</div>
+        </div>
+
+        <p>Strip away the value network and what remains is almost startlingly simple: sample several answers, reward each (often just 1 for correct, 0 for wrong), standardize the rewards within the group, and push the policy toward the above-average answers. Run that loop on verifiable math and code, and reasoning behavior — longer chains of thought, self-checking, backtracking — emerges without any of it being explicitly supervised. That emergence, more than the algorithm itself, is what made GRPO the defining method of the reasoning era.</p>
+
+        <div class="callout warn">
+          <span class="co-icon">REWARD HACKING</span>
+          <p><strong>The recurring failure of every method in this chapter.</strong> The policy optimizes the <em>measured</em> reward, not the <em>intended</em> one — so any gap between them gets exploited. A reward model that slightly favors longer answers breeds verbosity; one that likes confident tone breeds confident wrongness; a verifiable checker with a loophole gets gamed by answers that pass the test without solving the task. This is Goodhart's law in a gradient: <em>when a measure becomes a target, it ceases to be a good measure.</em> The KL leash (EQ R6.5) is the main defense — it keeps the policy near the trustworthy region — but it only slows the drift, it does not remove the incentive.</p>
+        </div>
+
+        <div class="exercise" data-answer="true" data-tol="0" data-hint="Look at what appears in EQ R6.8's baseline — a value network, or a batch of samples?">
+          <div class="ex-q">True or false: GRPO estimates the advantage of each response from the statistics of a group of sampled outputs for the same prompt, removing the need for a separately learned value (critic) network. (Answer <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">EQ R6.8's baseline is the <em>group mean</em> and its scale the <em>group std</em> — both read directly off a batch of \(G\) sampled responses, never from a learned critic. That is precisely how GRPO drops PPO's value network. The statement is <b>true</b>.</div>
+        </div>
+
+        <div class="exercise" data-answer="1" data-tol="0.001" data-hint="Group mean of the rewards, then (r_i - mean) / std for the correct response.">
+          <div class="ex-q">A GRPO group of \(G = 4\) responses to one prompt scores rewards \((1, 0, 0, 1)\) (1 = correct). Using EQ R6.8, what is the standardized advantage \(\hat A_i\) of a <em>correct</em> response? (Mean \(= 0.5\); population std \(= 0.5\).)</div>
+          <div class="ex-reveal-src">Mean \(= (1+0+0+1)/4 = 0.5\). Variance \(= \frac{1}{4}\big[(0.5)^2\cdot 4\big] = 0.25\), so std \(= 0.5\). A correct response: \(\hat A = (1 - 0.5)/0.5 = \) <b>1</b>. A wrong one gets \((0-0.5)/0.5 = -1\): symmetric, and the whole group needn't be re-baselined by any extra network.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># GRPO group-relative advantage from a group of sampled outputs (EQ R6.8)
+import numpy as np
+rng = np.random.default_rng(0)
+
+# one prompt, G=8 sampled responses; verifiable reward = 1 if correct else 0
+correct = np.array([1, 0, 1, 1, 0, 0, 1, 0], dtype=float)   # RLVR: pass/fail
+G = len(correct)
+
+mean = correct.mean()
+std  = correct.std() + 1e-8                    # population std, EQ R6.8
+adv  = (correct - mean) / std                  # group-relative advantage
+
+print(f"rewards            : {correct.astype(int).tolist()}")
+print(f"group mean (baseline) = {mean:.3f}   group std = {std:.3f}")
+print("advantages         :", adv.round(3).tolist())
+print("\ncorrect responses get +adv (reinforced), wrong get -adv (suppressed);")
+print("the baseline is the GROUP itself -- no learned value network anywhere.")
+
+# if EVERY sample is correct, std -> 0: the group gives no learning signal
+allright = np.ones(G)
+adv0 = (allright - allright.mean()) / (allright.std() + 1e-8)
+print("\nall-correct group advantages:", adv0.round(3).tolist(),
+      "-> zero signal (nothing to prefer)")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="rlhf-hack" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT R6.3 — REWARD HACKING</span><span class="w-sub">PROXY REWARD vs TRUE QUALITY · EQ R6.5</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>OPTIMIZATION PRESSURE (STEPS) <output id="rlhf-hack-t-out">40</output></label><input type="range" id="rlhf-hack-t" min="0" max="100" step="1" value="40"/></div>
+              <div class="ctl"><label>KL LEASH β <output id="rlhf-hack-b-out">0.20</output></label><input type="range" id="rlhf-hack-b" min="0" max="0.6" step="0.02" value="0.2"/></div>
+            </div>
+            <canvas class="w-canvas" id="rlhf-hack-canvas" height="280"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">PROXY REWARD r_φ</div><div class="r-value" id="rlhf-hack-proxy">—</div></div>
+              <div class="readout"><div class="r-label">TRUE QUALITY</div><div class="r-value" id="rlhf-hack-true">—</div></div>
+              <div class="readout"><div class="r-label">KL FROM REFERENCE</div><div class="r-value" id="rlhf-hack-kl">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The <span style="color:var(--accent);">mint</span> curve is what the reward model measures; the <span style="color:var(--blue,#4e8af7);">blue</span> curve is the true quality you actually want. Early optimization lifts both — the proxy is a decent stand-in near the reference. Crank up the pressure and they <em>diverge</em>: the proxy keeps climbing while true quality peaks and falls as the policy learns to exploit the reward model's blind spots. This gap is reward hacking, and the dashed line is where true quality turns over. Tighten the KL leash β and the policy stays near the reference — flatter proxy gains, but the divergence is delayed and shallower. Loosen it toward 0 and the hack arrives fast and hard.</div>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>Every method here turned a goal into a number and maximized it — and every failure was a player gaming the rules.</strong> Preference learning, reward hacking, and self-play are all strategic interaction in disguise. The Game Theory volume opens with the formal language for that: players, payoffs, strategies, and the equilibria that emerge when every agent optimizes against every other — including against the very humans whose preferences we just spent a chapter learning.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 6.R — References ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">6.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://arxiv.org/abs/1706.03741" target="_blank" rel="noopener">Christiano, P. F., Leike, J., Brown, T. B., Martic, M., Legg, S. &amp; Amodei, D. (2017). <span class="ref-venue">Deep Reinforcement Learning from Human Preferences</span>.</a> <span class="ref-meta">NeurIPS — the original preference-to-reward pipeline and the Bradley–Terry reward model (EQ R6.2–R6.3) that RLHF scaled to language.</span></li>
+          <li><a href="https://arxiv.org/abs/2203.02155" target="_blank" rel="noopener">Ouyang, L. et al. (2022). <span class="ref-venue">Training Language Models to Follow Instructions with Human Feedback (InstructGPT)</span>.</a> <span class="ref-meta">NeurIPS — the three-stage SFT → reward model → PPO RLHF recipe behind ChatGPT; source of the KL-regularized objective (EQ R6.5).</span></li>
+          <li><a href="https://arxiv.org/abs/1707.06347" target="_blank" rel="noopener">Schulman, J., Wolski, F., Dhariwal, P., Radford, A. &amp; Klimov, O. (2017). <span class="ref-venue">Proximal Policy Optimization Algorithms</span>.</a> <span class="ref-meta">arXiv — the clipped surrogate objective (EQ R6.4) used as the RLHF policy optimizer.</span></li>
+          <li><a href="https://arxiv.org/abs/2305.18290" target="_blank" rel="noopener">Rafailov, R., Sharma, A., Mitchell, E., Ermon, S., Manning, C. D. &amp; Finn, C. (2023). <span class="ref-venue">Direct Preference Optimization: Your Language Model is Secretly a Reward Model</span>.</a> <span class="ref-meta">NeurIPS — DPO; the closed-form optimal policy (EQ R6.6) and the supervised preference loss (EQ R6.7) that skip the reward model and RL loop.</span></li>
+          <li><a href="https://arxiv.org/abs/2402.03300" target="_blank" rel="noopener">Shao, Z. et al. (2024). <span class="ref-venue">DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models</span>.</a> <span class="ref-meta">arXiv — introduces GRPO; the group-relative advantage (EQ R6.8) that removes PPO's value network.</span></li>
+          <li><a href="https://arxiv.org/abs/2501.12948" target="_blank" rel="noopener">DeepSeek-AI (2025). <span class="ref-venue">DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning</span>.</a> <span class="ref-meta">arXiv — RLVR with GRPO at scale; reasoning behavior emerging from verifiable rewards (§6.5).</span></li>
+          <li><a href="https://arxiv.org/abs/2009.01325" target="_blank" rel="noopener">Stiennon, N. et al. (2020). <span class="ref-venue">Learning to Summarize from Human Feedback</span>.</a> <span class="ref-meta">NeurIPS — the reward-hacking dynamics of over-optimizing a learned reward model (Instrument R6.3 §6.5).</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../rl/05-deep-rl.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">05</span> Deep RL</div></a>
+        <a class="next" href="../game-theory/01-games-equilibria.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">01</span> Games &amp; Equilibria</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — REINFORCEMENT LEARNING · CH 06</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* ============================================================
+   RL Meets LLMs — RLHF, DPO & GRPO — chapter instruments
+   Single IIFE, no globals. setTimeout-only animation.
+   Every widget guarded by element existence; meaningful
+   initial render with zero interaction.
+   ============================================================ */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  function fnum(x, d) { d = d === undefined ? 2 : d; return x.toFixed(d); }
+  function sigmoid(z) { return 1 / (1 + Math.exp(-z)); }
+
+  /* ========================================================
+     INSTRUMENT R6.1 — Preference -> reward-model pipeline
+     Plot the sigmoid P(y_w > y_l) = sigma(r_w - r_l); mark the
+     current gap; show RM loss -log sigma(gap). EQ R6.2-R6.3.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("rlhf-rm");
+    if (!root) return;
+    var canvas = document.getElementById("rlhf-rm-canvas");
+    var rwIn = document.getElementById("rlhf-rm-rw");
+    var rlIn = document.getElementById("rlhf-rm-rl");
+    var rwOut = document.getElementById("rlhf-rm-rw-out");
+    var rlOut = document.getElementById("rlhf-rm-rl-out");
+    var gapEl = document.getElementById("rlhf-rm-gap");
+    var pEl = document.getElementById("rlhf-rm-p");
+    var lossEl = document.getElementById("rlhf-rm-loss");
+
+    function render() {
+      var rw = +rwIn.value, rl = +rlIn.value;
+      rwOut.textContent = fnum(rw, 1);
+      rlOut.textContent = fnum(rl, 1);
+      var gap = rw - rl;
+      var p = sigmoid(gap);
+      var loss = -Math.log(Math.max(p, 1e-9));
+      gapEl.textContent = (gap >= 0 ? "+" : "") + fnum(gap, 2);
+      pEl.textContent = fnum(p, 3);
+      pEl.parentNode.style.color = "";
+      lossEl.textContent = fnum(loss, 3);
+      lossEl.style.color = gap < 0 ? C.RED : (gap > 1.5 ? C.MINT : C.BRIGHT);
+
+      var c = FM.setupCanvas(canvas, 280);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      var padL = 44, padR = 16, padT = 16, padB = 30;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      var gMin = -6, gMax = 6;
+      ctx.clearRect(0, 0, w, h);
+
+      function gx(g) { return x0 + (g - gMin) / (gMax - gMin) * (x1 - x0); }
+      function py(pv) { return y0 - pv * (y0 - y1); }
+
+      // frame + gridlines
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(x0, y1, x1 - x0, y0 - y1);
+      ctx.font = C.MONO; ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      for (var gl = 0; gl <= 4; gl++) {
+        var pv = gl / 4, yy = py(pv);
+        ctx.strokeStyle = "rgba(47,50,52,.5)";
+        ctx.beginPath(); ctx.moveTo(x0, yy); ctx.lineTo(x1, yy); ctx.stroke();
+        ctx.fillStyle = C.MUT; ctx.fillText(pv.toFixed(2), x0 - 6, yy);
+      }
+      // 0.5 reference line
+      ctx.strokeStyle = "rgba(155,155,155,.4)"; ctx.setLineDash([3, 3]);
+      ctx.beginPath(); ctx.moveTo(x0, py(0.5)); ctx.lineTo(x1, py(0.5)); ctx.stroke();
+      ctx.setLineDash([]);
+      // gap=0 vertical
+      ctx.strokeStyle = "rgba(155,155,155,.35)";
+      ctx.beginPath(); ctx.moveTo(gx(0), y1); ctx.lineTo(gx(0), y0); ctx.stroke();
+
+      // sigmoid curve
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (var i = 0; i <= 120; i++) {
+        var g = gMin + (gMax - gMin) * i / 120;
+        var xx = gx(g), yy2 = py(sigmoid(g));
+        if (i === 0) ctx.moveTo(xx, yy2); else ctx.lineTo(xx, yy2);
+      }
+      ctx.stroke();
+
+      // current point
+      var cg = Math.max(gMin, Math.min(gMax, gap));
+      var cx = gx(cg), cyp = py(sigmoid(gap));
+      ctx.strokeStyle = gap < 0 ? C.RED : C.BLUE; ctx.setLineDash([4, 4]); ctx.lineWidth = 1.3;
+      ctx.beginPath(); ctx.moveTo(cx, y0); ctx.lineTo(cx, cyp); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x0, cyp); ctx.lineTo(cx, cyp); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = gap < 0 ? C.RED : C.BLUE;
+      ctx.beginPath(); ctx.arc(cx, cyp, 4.5, 0, 2 * Math.PI); ctx.fill();
+
+      // labels
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "center"; ctx.textBaseline = "top";
+      ctx.fillText("REWARD GAP  Δ = r_w − r_l", (x0 + x1) / 2, y0 + 6);
+      ctx.textAlign = "left"; ctx.fillStyle = C.MINT;
+      ctx.textBaseline = "top";
+      ctx.fillText("P(chosen ≻ rejected) = σ(Δ)", x0 + 6, y1 + 4);
+    }
+
+    rwIn.addEventListener("input", render);
+    rlIn.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT R6.2 — DPO vs PPO
+     Toggle two pipelines; light up the stages each one keeps;
+     readouts: #models in memory, online rollouts, separate RM.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("rlhf-dpo");
+    if (!root) return;
+    var stagesEl = document.getElementById("rlhf-dpo-stages");
+    var modelsEl = document.getElementById("rlhf-dpo-models");
+    var rollEl = document.getElementById("rlhf-dpo-roll");
+    var rmEl = document.getElementById("rlhf-dpo-rm");
+    var btns = root.querySelectorAll("[data-rlhf-dpo-mode]");
+    var mode = "dpo";
+
+    var STAGES = [
+      { key: "sft",  label: "SFT (supervised fine-tune)",       both: true },
+      { key: "rm",   label: "Train reward model rφ (EQ R6.3)",  ppo: true },
+      { key: "roll", label: "Online rollouts: sample yπ",       ppo: true },
+      { key: "crit", label: "Train value/critic network",       ppo: true },
+      { key: "ppo",  label: "PPO clipped update (EQ R6.4)",     ppo: true },
+      { key: "dpo",  label: "Supervised DPO loss (EQ R6.7)",    dpo: true }
+    ];
+
+    function render() {
+      var isPPO = mode === "ppo";
+      var html = "";
+      STAGES.forEach(function (st) {
+        var on = st.both || (isPPO ? st.ppo : st.dpo);
+        var bg = on ? (st.both ? "rgba(155,155,155,.10)" : "rgba(166,242,204,.10)")
+                    : "transparent";
+        var bd = on ? (st.both ? C.HAIR : C.DEEP) : "#2f3234";
+        var col = on ? (st.both ? C.SEC : C.MINT) : "#3a3d3f";
+        var dot = on ? (st.both ? "○" : "●") : "·";
+        html += '<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;'
+              + 'margin-bottom:5px;border:1px solid ' + bd + ';border-radius:4px;'
+              + 'background:' + bg + ';font-family:ui-monospace,Menlo,monospace;'
+              + 'font-size:11px;color:' + col + ';'
+              + (on ? "" : "opacity:.5;text-decoration:line-through;") + '">'
+              + '<span style="font-size:13px;">' + dot + '</span>'
+              + '<span>' + st.label + '</span></div>';
+      });
+      stagesEl.innerHTML = html;
+
+      modelsEl.textContent = isPPO ? "4 (policy·ref·rm·critic)" : "2 (policy·ref)";
+      modelsEl.style.color = isPPO ? C.RED : C.MINT;
+      rollEl.textContent = isPPO ? "YES — every step" : "NONE (offline)";
+      rollEl.parentNode.style.color = "";
+      rmEl.textContent = isPPO ? "YES — trained first" : "NO — implicit in π";
+      rmEl.style.color = isPPO ? C.SEC : C.MINT;
+    }
+
+    btns.forEach(function (b) {
+      b.addEventListener("click", function () {
+        btns.forEach(function (x) { x.classList.remove("on"); });
+        b.classList.add("on");
+        mode = b.getAttribute("data-rlhf-dpo-mode");
+        render();
+      });
+    });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT R6.3 — Reward hacking
+     Proxy reward keeps climbing with optimization pressure while
+     true quality peaks then falls; KL grows. KL leash beta delays
+     and shallows the divergence. EQ R6.5. Curves are illustrative.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("rlhf-hack");
+    if (!root) return;
+    var canvas = document.getElementById("rlhf-hack-canvas");
+    var tIn = document.getElementById("rlhf-hack-t");
+    var bIn = document.getElementById("rlhf-hack-b");
+    var tOut = document.getElementById("rlhf-hack-t-out");
+    var bOut = document.getElementById("rlhf-hack-b-out");
+    var proxyEl = document.getElementById("rlhf-hack-proxy");
+    var trueEl = document.getElementById("rlhf-hack-true");
+    var klEl = document.getElementById("rlhf-hack-kl");
+
+    // model the three curves as functions of optimization "distance" d (the KL).
+    // beta caps how far the policy travels at a given pressure t.
+    function curves(t, beta) {
+      // distance travelled grows with pressure, throttled by the KL leash beta
+      var d = (t / 100) * 6 / (1 + 6 * beta);   // effective KL distance
+      var proxy = 1 - Math.exp(-0.9 * d);        // monotone increasing, saturating
+      // true quality: rises then falls — peaks at modest d, decays as policy hacks.
+      // amplitude chosen so the peak stays inside the frame (d*e^{-0.35d} maxes ~1.05).
+      var trueq = d * Math.exp(-0.35 * d) * 0.95;
+      return { d: d, proxy: proxy, trueq: Math.max(0, trueq) };
+    }
+
+    function render() {
+      var t = +tIn.value, beta = +bIn.value;
+      tOut.textContent = t;
+      bOut.textContent = fnum(beta, 2);
+      var cur = curves(t, beta);
+      proxyEl.textContent = fnum(cur.proxy, 3);
+      trueEl.textContent = fnum(cur.trueq, 3);
+      klEl.textContent = fnum(cur.d, 2);
+
+      var c = FM.setupCanvas(canvas, 280);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      var padL = 40, padR = 16, padT = 18, padB = 30;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      ctx.clearRect(0, 0, w, h);
+
+      var yMax = 1.15;
+      function px(tt) { return x0 + (tt / 100) * (x1 - x0); }
+      function py(v) { return y0 - (v / yMax) * (y0 - y1); }
+
+      // frame + gridlines
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(x0, y1, x1 - x0, y0 - y1);
+      ctx.font = C.MONO; ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      for (var gl = 0; gl <= 4; gl++) {
+        var vv = gl / 4 * yMax, yy = py(vv);
+        ctx.strokeStyle = "rgba(47,50,52,.5)";
+        ctx.beginPath(); ctx.moveTo(x0, yy); ctx.lineTo(x1, yy); ctx.stroke();
+        ctx.fillStyle = C.MUT; ctx.fillText(vv.toFixed(2), x0 - 6, yy);
+      }
+
+      // find true-quality peak across the pressure axis for the dashed marker
+      var peakT = 0, peakV = -1;
+      for (var s = 0; s <= 100; s++) {
+        var cv = curves(s, beta).trueq;
+        if (cv > peakV) { peakV = cv; peakT = s; }
+      }
+
+      // proxy curve (mint)
+      function drawCurve(field, color, lw) {
+        ctx.strokeStyle = color; ctx.lineWidth = lw;
+        ctx.beginPath();
+        for (var s2 = 0; s2 <= 100; s2++) {
+          var cc = curves(s2, beta);
+          var xx = px(s2), yy2 = py(cc[field]);
+          if (s2 === 0) ctx.moveTo(xx, yy2); else ctx.lineTo(xx, yy2);
+        }
+        ctx.stroke();
+      }
+      drawCurve("proxy", C.MINT, 2.2);
+      drawCurve("trueq", C.BLUE, 2.2);
+
+      // peak marker for true quality
+      if (peakV > 0.02) {
+        var mx = px(peakT);
+        ctx.strokeStyle = "rgba(78,138,247,.55)"; ctx.setLineDash([4, 4]); ctx.lineWidth = 1.2;
+        ctx.beginPath(); ctx.moveTo(mx, y1); ctx.lineTo(mx, y0); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = C.BLUE; ctx.font = C.MONO;
+        ctx.textAlign = "center"; ctx.textBaseline = "top";
+        ctx.fillText("true-quality peak", mx, y1 + 2);
+      }
+
+      // current pressure marker
+      var curX = px(t);
+      ctx.strokeStyle = "rgba(255,255,255,.35)"; ctx.lineWidth = 1.3;
+      ctx.beginPath(); ctx.moveTo(curX, y1); ctx.lineTo(curX, y0); ctx.stroke();
+      ctx.fillStyle = C.MINT;
+      ctx.beginPath(); ctx.arc(curX, py(cur.proxy), 4, 0, 2 * Math.PI); ctx.fill();
+      ctx.fillStyle = C.BLUE;
+      ctx.beginPath(); ctx.arc(curX, py(cur.trueq), 4, 0, 2 * Math.PI); ctx.fill();
+
+      // labels
+      ctx.font = C.MONO; ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillStyle = C.MINT; ctx.fillText("● PROXY r_φ (measured)", x0 + 6, y1 + 4);
+      ctx.fillStyle = C.BLUE; ctx.fillText("● TRUE QUALITY (wanted)", x0 + 6, y1 + 18);
+      ctx.fillStyle = C.MUT; ctx.textAlign = "right"; ctx.textBaseline = "top";
+      ctx.fillText("optimization pressure →", x1 - 4, y0 + 6);
+    }
+
+    tIn.addEventListener("input", render);
+    bIn.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

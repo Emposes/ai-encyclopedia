@@ -1,0 +1,169 @@
+{
+  "concepts": [
+    {
+      "id": "multimodal-04-speech-audio-s1",
+      "chapter": "multimodal/04-speech-audio",
+      "section": "s1",
+      "title": "Representing audio: waveforms, spectrograms, codecs",
+      "eyebrow": "MULTIMODAL",
+      "beats": [
+        {
+          "text": "Sound is a one-dimensional pressure signal that a microphone samples at a fixed rate into a stream of amplitudes.",
+          "visual": { "type": "title", "text": "Representing Audio", "sub": "Waveforms, spectrograms, codecs" }
+        },
+        {
+          "text": "One second of 16 kHz mono audio is 16,000 numbers, so raw waveforms are faithful but punishingly long.",
+          "visual": { "type": "stat", "value": 16000, "label": "Samples per second at 16 kHz", "unit": "samples" }
+        },
+        {
+          "text": "The Short-Time Fourier Transform slides a window across the signal and takes the Fourier transform of each frame.",
+          "visual": { "type": "equation", "tex": "X[m,k] = \\sum_{n=0}^{N-1} x[mH+n]\\, w[n]\\, e^{-i\\,2\\pi k n / N}", "note": "Magnitude squared gives the spectrogram" }
+        },
+        {
+          "text": "A short window localizes when a sound happened, a long window resolves which frequency, but their product stays fixed.",
+          "visual": { "type": "equation", "tex": "\\Delta t \\cdot \\Delta f = 1", "note": "Time-frequency resolution tradeoff" }
+        },
+        {
+          "text": "Human hearing is roughly logarithmic, so spectrograms are warped onto the mel scale into about 80 perceptual bands.",
+          "visual": { "type": "equation", "tex": "m(f) = 2595 \\,\\log_{10}\\!\\left(1 + \\frac{f}{700}\\right)", "note": "Hertz to mel" }
+        },
+        {
+          "text": "Neural codecs like EnCodec use residual vector quantization to turn the waveform into a grid of discrete tokens.",
+          "visual": { "type": "equation", "tex": "\\hat{z} = \\sum_{q=1}^{Q} e_q(c_q)", "note": "Stacked codebooks give K^Q combinations at Q log2 K bits" }
+        }
+      ]
+    },
+    {
+      "id": "multimodal-04-speech-audio-s2",
+      "chapter": "multimodal/04-speech-audio",
+      "section": "s2",
+      "title": "Speech recognition: Whisper",
+      "eyebrow": "MULTIMODAL",
+      "beats": [
+        {
+          "text": "Automatic speech recognition turns audio into text, once a hand-glued chain of acoustic, pronunciation, and language models.",
+          "visual": { "type": "title", "text": "Speech Recognition", "sub": "Whisper" }
+        },
+        {
+          "text": "Whisper is a plain encoder-decoder transformer trained on 680,000 hours of weakly labelled, multilingual web audio.",
+          "visual": { "type": "stat", "value": 680000, "label": "Hours of training audio", "unit": "hours" }
+        },
+        {
+          "text": "Audio is resampled to 16 kHz, converted to an 80-bin log-mel spectrogram over 30-second chunks, and fed to the encoder.",
+          "visual": { "type": "bars", "values": [16, 80, 30], "labels": ["kHz rate", "mel bins", "sec chunk"], "highlight": 1 }
+        },
+        {
+          "text": "The decoder autoregressively predicts text tokens, conditioning each one on the audio encoding and the text emitted so far.",
+          "visual": { "type": "equation", "tex": "p(y \\mid \\text{audio}) = \\prod_{t=1}^{T} p\\big(y_t \\mid y_{<t}, \\mathrm{Encoder}(\\text{log-mel})\\big)", "note": "A translator whose source language is sound" }
+        },
+        {
+          "text": "Robustness came from scale and weak supervision, teaching it to handle accents, noise, and code-switching.",
+          "visual": { "type": "plot", "ys": [40, 55, 70, 82, 90], "xlabel": "Data scale", "ylabel": "Robustness", "mark": "rise" }
+        },
+        {
+          "text": "The cost is hallucination, since on silent or unintelligible audio the decoder confidently invents fluent text.",
+          "visual": { "type": "lattice" }
+        }
+      ]
+    },
+    {
+      "id": "multimodal-04-speech-audio-s3",
+      "chapter": "multimodal/04-speech-audio",
+      "section": "s3",
+      "title": "Text-to-speech: Tacotron to neural TTS",
+      "eyebrow": "MULTIMODAL",
+      "beats": [
+        {
+          "text": "Text-to-speech runs recognition in reverse: text in, waveform out, rebuilt as two learned stages joined by the spectrogram.",
+          "visual": { "type": "title", "text": "Text-to-Speech", "sub": "Tacotron to neural TTS" }
+        },
+        {
+          "text": "The acoustic model maps text to a log-mel spectrogram, then a vocoder maps that spectrogram to samples.",
+          "visual": { "type": "equation", "tex": "\\text{text} \\xrightarrow{\\text{acoustic}} \\text{log-mel } S \\xrightarrow{\\text{vocoder}} \\text{waveform } x", "note": "The spectrogram is a deliberate bottleneck" }
+        },
+        {
+          "text": "Tacotron 2 reads characters and emits mel frames with attention, but could skip or repeat words when alignment slipped.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "FastSpeech 2 predicts an explicit duration per token and expands in one shot, trading naturalness for solid alignment.",
+          "visual": { "type": "bars", "values": [10, 1], "labels": ["Autoregressive", "One-shot"], "highlight": 1 }
+        },
+        {
+          "text": "WaveNet models raw audio one sample at a time with dilated causal convolutions whose receptive field grows exponentially.",
+          "visual": { "type": "equation", "tex": "p(x) = \\prod_{n=1}^{T} p\\big(x_n \\mid x_{n-1}, \\ldots, x_1\\big), \\quad \\text{field} = 2^{L}", "note": "Dilations 1, 2, 4, ... cover thousands of samples cheaply" }
+        },
+        {
+          "text": "WaveNet's quality was a leap but its serial speed was a disaster, so GAN vocoders now generate a waveform in one pass.",
+          "visual": { "type": "stat", "value": 24000, "label": "Samples generated per second, one at a time", "unit": "samples" }
+        }
+      ]
+    },
+    {
+      "id": "multimodal-04-speech-audio-s4",
+      "chapter": "multimodal/04-speech-audio",
+      "section": "s4",
+      "title": "Audio language models",
+      "eyebrow": "MULTIMODAL",
+      "beats": [
+        {
+          "text": "Once a codec turns audio into discrete tokens, the boundary between speech and language dissolves.",
+          "visual": { "type": "title", "text": "Audio Language Models", "sub": "Next-token prediction over sound" }
+        },
+        {
+          "text": "An audio language model predicts the next audio token exactly as a text model predicts the next word.",
+          "visual": { "type": "equation", "tex": "p(\\mathbf{a}) = \\prod_{t=1}^{T} p\\big(a_t \\mid a_{<t}\\big), \\quad a_t \\in \\{1, \\ldots, K\\}", "note": "Only the vocabulary changed, from words to RVQ codes" }
+        },
+        {
+          "text": "AudioLM continues a few seconds of speech or piano, preserving speaker identity, prosody, and even room acoustics.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "It splits tokens into coarse semantic content and fine acoustic detail, modelling meaning before texture.",
+          "visual": { "type": "bars", "values": [70, 30], "labels": ["Semantic", "Acoustic"], "highlight": 0 }
+        },
+        {
+          "text": "VALL-E clones a voice from a three-second sample, and omni models emit audio with no separate ASR or TTS stage.",
+          "visual": { "type": "stat", "value": 3, "label": "Seconds of reference for zero-shot cloning", "unit": "sec" }
+        },
+        {
+          "text": "Audio tokens are dense, so context windows fill fast and long-form coherence remains hard.",
+          "visual": { "type": "plot", "ys": [20, 45, 70, 88, 98], "xlabel": "Sequence length", "ylabel": "Context used", "mark": "rise" }
+        }
+      ]
+    },
+    {
+      "id": "multimodal-04-speech-audio-s5",
+      "chapter": "multimodal/04-speech-audio",
+      "section": "s5",
+      "title": "Real-time & streaming",
+      "eyebrow": "MULTIMODAL",
+      "beats": [
+        {
+          "text": "A spoken-conversation assistant lives or dies on latency, since the cascade of stages easily blows past a full second.",
+          "visual": { "type": "title", "text": "Real-Time & Streaming", "sub": "Cutting time-to-first-sound" }
+        },
+        {
+          "text": "Humans tolerate roughly 200 to 300 milliseconds of silence before a reply starts to feel unnatural.",
+          "visual": { "type": "stat", "value": 250, "label": "Tolerable reply latency for humans", "unit": "ms" }
+        },
+        {
+          "text": "Streaming ASR processes small overlapping chunks and emits partial transcripts as words arrive, never waiting for the end.",
+          "visual": { "type": "bars", "values": [1000, 200], "labels": ["Blocking", "Streaming"], "highlight": 1 }
+        },
+        {
+          "text": "Blocking cascades add the latency of every stage, while streaming overlaps them so only the first tokens matter.",
+          "visual": { "type": "equation", "tex": "L_{\\text{total}} = L_{\\text{ASR}} + L_{\\text{LLM}} + L_{\\text{TTS}} \\xrightarrow{\\text{streaming}} \\max\\big(L_{\\text{ASR}}^{\\text{first}}, L_{\\text{TTS}}^{\\text{first}}\\big) + L_{\\text{LLM}}^{\\text{first}}", "note": "Native audio models make the ASR and TTS hops vanish" }
+        },
+        {
+          "text": "The hardest problems are conversational: end-of-turn detection, barge-in, and modelling backchannels like mm-hmm.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "Moshi listens and speaks at once over parallel token streams, dropping perceived latency toward 200 milliseconds.",
+          "visual": { "type": "plot", "ys": [1000, 700, 450, 300, 200], "xlabel": "Pipeline collapse", "ylabel": "Latency (ms)", "mark": "fall", "dot": true }
+        }
+      ]
+    }
+  ]
+}

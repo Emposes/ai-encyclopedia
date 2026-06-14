@@ -1,0 +1,167 @@
+[
+  {
+    "id": "multimodal-02-multimodal-llms-s1",
+    "chapter": "multimodal/02-multimodal-llms",
+    "section": "s1",
+    "title": "Why one model for many modalities",
+    "eyebrow": "MULTIMODAL",
+    "beats": [
+      {
+        "text": "A language model is a function from token embeddings to token embeddings, vectors in d-dimensional space, not characters or words.",
+        "visual": { "type": "title", "text": "One Model, Many Senses", "sub": "the transformer attends to vectors, not text" }
+      },
+      {
+        "text": "Self-attention mixes those vectors by relevance and has no built-in notion of text, so any d-dimensional token is fair game.",
+        "visual": { "type": "equation", "tex": "f:\\ \\mathbb{R}^{T\\times d}\\to\\mathbb{R}^{T\\times d}", "note": "the model only ever sees vectors in R^d" }
+      },
+      {
+        "text": "If you turn an image into a handful of d-dimensional vectors, the transformer attends to them exactly as it attends to words.",
+        "visual": { "type": "lattice" }
+      },
+      {
+        "text": "So the dominant vision-language design is one transformer whose context holds image tokens and text tokens side by side.",
+        "visual": { "type": "bars", "values": [256, 16], "labels": ["image tokens", "text tokens"], "highlight": 0 }
+      },
+      {
+        "text": "Older systems were pipelines where a detector, a captioner, and a reasoner each discarded information and compounded errors.",
+        "visual": { "type": "plot", "ys": [3, 2, 1.2, 0.6], "xlabel": "pipeline stage", "ylabel": "usable info", "mark": "down" }
+      },
+      {
+        "text": "The recipe is general: audio, video, depth, or sensor streams all become attendable once chopped into a sequence and embedded.",
+        "visual": { "type": "stat", "value": 1, "label": "differentiable model, pixels to answer", "unit": "model" }
+      }
+    ]
+  },
+  {
+    "id": "multimodal-02-multimodal-llms-s2",
+    "chapter": "multimodal/02-multimodal-llms",
+    "section": "s2",
+    "title": "Tokenizing images — patches & projection",
+    "eyebrow": "MULTIMODAL",
+    "beats": [
+      {
+        "text": "Images have no natural discrete units, so the Vision Transformer recipe manufactures them by cutting the image into fixed-size patches.",
+        "visual": { "type": "title", "text": "Patchify and Project", "sub": "manufacturing tokens from pixels" }
+      },
+      {
+        "text": "A 14 by 14 RGB patch is 588 raw numbers; one shared linear map projects it into a single d-dimensional patch token.",
+        "visual": { "type": "equation", "tex": "z_p = W\\,\\mathrm{flatten}(x_p) + b \\in \\mathbb{R}^{d},\\quad N = \\frac{HW}{P^2}", "note": "the shared projection is a stride-P convolution in disguise" }
+      },
+      {
+        "text": "A 224 by 224 image at patch size 14 gives 16 patches per side, so the encoder emits 256 patch tokens.",
+        "visual": { "type": "stat", "value": 256, "label": "patch tokens at 224 square, P = 14", "unit": "tokens" }
+      },
+      {
+        "text": "Projecting into width 4096 makes the map W a 4096 by 588 matrix, turning the image into 256 tokens of width 4096.",
+        "visual": { "type": "equation", "tex": "W \\in \\mathbb{R}^{4096 \\times 588}", "note": "each 588-vector becomes one 4096-d token" }
+      },
+      {
+        "text": "Token count scales as one over P squared, so halving the patch size quadruples the tokens and the attention cost.",
+        "visual": { "type": "plot", "ys": [16, 64, 256, 1024], "xlabel": "smaller patch P", "ylabel": "token count", "mark": "up" }
+      },
+      {
+        "text": "Every patch token competes with text for the same context budget, so seeing more and reading more text are in direct conflict.",
+        "visual": { "type": "bars", "values": [256, 256, 256], "labels": ["image A", "image B", "image C"], "highlight": 2 }
+      }
+    ]
+  },
+  {
+    "id": "multimodal-02-multimodal-llms-s3",
+    "chapter": "multimodal/02-multimodal-llms",
+    "section": "s3",
+    "title": "Architectures — CLIP, Flamingo, LLaVA",
+    "eyebrow": "MULTIMODAL",
+    "beats": [
+      {
+        "text": "Three landmark systems define the design space, and almost every production vision-language model descends from one of them.",
+        "visual": { "type": "title", "text": "CLIP, Flamingo, LLaVA", "sub": "three ancestors of the modern VLM" }
+      },
+      {
+        "text": "CLIP trains an image tower and a text tower on 400 million pairs with a contrastive objective that aligns vision with language.",
+        "visual": { "type": "stat", "value": 400, "label": "image-caption pairs for CLIP", "unit": "M" }
+      },
+      {
+        "text": "The objective is a softmax cross-entropy that treats the matching caption as the correct class among all B captions in the batch.",
+        "visual": { "type": "equation", "tex": "\\mathcal{L}_{i \\to t} = -\\frac{1}{B}\\sum_{i=1}^{B} \\log \\frac{\\exp(\\langle u_i, v_i\\rangle / \\tau)}{\\sum_{j=1}^{B} \\exp(\\langle u_i, v_j\\rangle / \\tau)}", "note": "captions are the supervision; no labels needed" }
+      },
+      {
+        "text": "Flamingo grafts a frozen vision encoder onto a frozen language model through newly inserted gated cross-attention layers.",
+        "visual": { "type": "lattice" }
+      },
+      {
+        "text": "LLaVA won on simplicity: project frozen CLIP patches with a tiny map and prepend them as extra input tokens to the text.",
+        "visual": { "type": "bars", "values": [1, 5, 0], "labels": ["LLaVA proj", "Flamingo x-attn", "new attn"], "highlight": 0 }
+      },
+      {
+        "text": "BLIP-2 added a Q-Former that learns query tokens to pull information from frozen vision into a frozen language model.",
+        "visual": { "type": "plot", "ys": [1, 2, 3, 4], "xlabel": "2021 to 2023", "ylabel": "lineage", "mark": "up" }
+      }
+    ]
+  },
+  {
+    "id": "multimodal-02-multimodal-llms-s4",
+    "chapter": "multimodal/02-multimodal-llms",
+    "section": "s4",
+    "title": "Cross-attention vs early fusion",
+    "eyebrow": "MULTIMODAL",
+    "beats": [
+      {
+        "text": "Everything reduces to one architectural fork: where do image tokens meet text tokens?",
+        "visual": { "type": "title", "text": "The Fusion Fork", "sub": "where image meets text" }
+      },
+      {
+        "text": "Early fusion concatenates image and text into one sequence so ordinary self-attention mixes both in every layer.",
+        "visual": { "type": "equation", "tex": "\\mathrm{SelfAttn}\\big([\\,z_{1:N}^{\\text{img}};\\, e_{1:T}^{\\text{txt}}\\,]\\big)", "note": "one sequence of length N + T" }
+      },
+      {
+        "text": "Its attention cost grows as N plus T squared, and the N image tokens are spent straight from the context budget.",
+        "visual": { "type": "plot", "ys": [4, 16, 36, 64], "xlabel": "sequence N + T", "ylabel": "attention cost", "mark": "up" }
+      },
+      {
+        "text": "Cross-attention keeps text as the only main sequence and lets it read into a separate image memory through inserted layers.",
+        "visual": { "type": "equation", "tex": "\\mathrm{CrossAttn}\\big(Q{=}e^{\\text{txt}},\\; K,V{=}z^{\\text{img}}\\big)", "note": "cost N times T; text length and base LLM untouched" }
+      },
+      {
+        "text": "Early fusion trades context budget for simplicity; cross-attention trades extra parameters for an unmodified, context-cheap LLM.",
+        "visual": { "type": "bars", "values": [64, 12], "labels": ["early (N+T)^2", "cross N*T"], "highlight": 1 }
+      },
+      {
+        "text": "Query-based resamplers sit between them, compressing many patches into a small fixed set, though heavy compression can drop fine detail.",
+        "visual": { "type": "stat", "value": 32, "label": "compressed query tokens, not hundreds", "unit": "tokens" }
+      }
+    ]
+  },
+  {
+    "id": "multimodal-02-multimodal-llms-s5",
+    "chapter": "multimodal/02-multimodal-llms",
+    "section": "s5",
+    "title": "Training & evaluating VLMs",
+    "eyebrow": "MULTIMODAL",
+    "beats": [
+      {
+        "text": "The modern LLaVA-style recipe trains in two stages on top of a pre-trained language model and a pre-trained vision encoder.",
+        "visual": { "type": "title", "text": "Two Stages, Then Judgment", "sub": "training and evaluating VLMs" }
+      },
+      {
+        "text": "Stage one freezes both encoders and trains only the projection on image-caption pairs with the next-token objective.",
+        "visual": { "type": "bars", "values": [1, 0, 0], "labels": ["projection", "vision enc", "LLM"], "highlight": 0 }
+      },
+      {
+        "text": "Stage two unfreezes the projection and usually the LLM, fine-tuning on instruction data so the model follows instructions about images.",
+        "visual": { "type": "equation", "tex": "\\mathcal{L} = -\\sum_{t \\in \\text{answer}} \\log p(y_t \\mid y_{<t})", "note": "loss over answer tokens only; image tokens masked out" }
+      },
+      {
+        "text": "The standard suites probe distinct skills, from visual question answering and document reading to college-level multimodal reasoning.",
+        "visual": { "type": "lattice" }
+      },
+      {
+        "text": "Three caveats recur: benchmarks leak into training data, answer-matching is brittle, and hallucination is what accuracy hides.",
+        "visual": { "type": "plot", "ys": [3, 2, 1], "xlabel": "headline confidence", "ylabel": "real reliability", "mark": "down" }
+      },
+      {
+        "text": "A vision-language model that scores well on VQA can still confidently invent a clock on an empty wall.",
+        "visual": { "type": "stat", "value": 0, "label": "clocks actually on the wall", "unit": "clocks" }
+      }
+    ]
+  }
+]

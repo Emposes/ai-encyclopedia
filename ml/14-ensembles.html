@@ -1,0 +1,817 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>14 · Ensemble Methods — AI Encyclopedia</title>
+<meta name="description" content="Bagging, boosting, and stacking from first principles: the bias-variance-covariance decomposition that explains why combining weak models works, with a variance-reduction demo, a stagewise residual fitter, and a stacking meta-learner you can run in-browser." />
+<link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
+<meta name="theme-color" content="#000000" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+</head>
+<body data-track="ml" data-level="core">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ MACHINE LEARNING / 14 / ENSEMBLES</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../ml/15-boosting-libraries.html">NEXT: BOOSTING LIBRARIES →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">MACHINE LEARNING · CHAPTER 14 / 15</div>
+    <h1>Ensemble Methods</h1>
+    <p class="lede">A single tree overfits, a single shallow model underfits, and any single model is a single point of failure. <strong>Combine many weak models the right way and their errors largely cancel, the most dependable improvement in applied machine learning.</strong> This chapter derives why ensembling works from the bias-variance-covariance decomposition, then walks the three families that exploit it: bagging (reduce variance), boosting (reduce bias, stagewise), and stacking (let a meta-model learn the blend).</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 24 MIN</b></span>
+      <span>BUILDS ON<b>CH 04 · 06</b></span>
+      <span>INSTRUMENTS<b>VARIANCE DROP · STAGEWISE FIT · STACKER</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">14.1</span>Why ensembles win</a>
+      <a href="#s2"><span class="n">14.2</span>Bagging</a>
+      <a href="#s3"><span class="n">14.3</span>Boosting</a>
+      <a href="#s4"><span class="n">14.4</span>Stacking &amp; blending</a>
+      <a href="#s5"><span class="n">14.5</span>When ensembles fail</a>
+      <a href="#s6"><span class="n">§</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 14.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">14.1</span><h2>Why ensembles win — the error decomposition</h2></div>
+        <p>Start from the only identity that matters here. For a squared-error regression target \(y = f(x) + \varepsilon\) with irreducible noise \(\mathrm{Var}(\varepsilon) = \sigma^2\), the expected test error of an estimator \(\hat f\) — averaged over the randomness in the training set — splits into three terms that cannot interfere with one another:</p>
+
+        <div class="eq"><span class="eq-tag">EQ M14.1 — BIAS-VARIANCE DECOMPOSITION</span>
+        $$ \mathbb{E}\big[(y - \hat f(x))^2\big] \;=\; \underbrace{\big(f(x) - \mathbb{E}[\hat f(x)]\big)^2}_{\text{bias}^2} \;+\; \underbrace{\mathbb{E}\big[(\hat f(x) - \mathbb{E}[\hat f(x)])^2\big]}_{\text{variance}} \;+\; \underbrace{\sigma^2}_{\text{noise}} $$
+        <div class="eq-note"><b>Bias</b> is how far the average model is from the truth (systematic error — too rigid). <b>Variance</b> is how much the model jitters as the training set is resampled (instability — too flexible). <b>Noise</b> is the floor no model can beat. Each ensemble family attacks a different term: bagging shrinks variance, boosting shrinks bias, and a good stack can chip at both. The decomposition is exact for squared loss; for 0–1 classification it only holds in spirit, which is why we reason in regression first.</div>
+        </div>
+
+        <p>Now average \(k\) models. Let each \(\hat f_j\) have the same variance \(\sigma_m^2\), and let any two of them have correlation \(\rho\). The variance of their average is the whole story of ensembling in one line:</p>
+
+        <div class="eq"><span class="eq-tag">EQ M14.2 — VARIANCE OF A CORRELATED AVERAGE</span>
+        $$ \mathrm{Var}\!\left(\frac{1}{k}\sum_{j=1}^{k}\hat f_j\right) \;=\; \rho\,\sigma_m^2 \;+\; \frac{1-\rho}{k}\,\sigma_m^2 $$
+        <div class="eq-note">Two regimes live inside this equation. As \(k \to \infty\) the second term vanishes and you are left with \(\rho\,\sigma_m^2\) — <b>the correlation floor</b>. If the members are <em>independent</em> (\(\rho = 0\)) the average has variance \(\sigma_m^2/k\): error falls like \(1/k\), a true free lunch. If they are <em>identical</em> (\(\rho = 1\)) you gain nothing — averaging a model with copies of itself changes nothing. <b>Every variance-reduction trick in this chapter is an attempt to push \(\rho\) down without letting \(\sigma_m^2\) blow up.</b> Averaging does not touch bias: the mean of \(k\) equally-biased models keeps that bias intact.</div>
+        </div>
+
+        <p>Two consequences follow immediately. First, ensembling helps most when the members are <em>good but different</em> — accurate (small \(\sigma_m^2\)) yet decorrelated (small \(\rho\)). Second, there is a hard limit: no amount of averaging beats the correlation floor \(\rho\,\sigma_m^2\), so the engineering game is decorrelation, not just adding more models. This is exactly why random forests randomize the <em>features</em> at each split (it lowers \(\rho\)) and why diverse model classes stack better than ten retrained copies of the same gradient-boosted tree.</p>
+
+        <div class="exercise" data-answer="2" data-tol="0.001" data-unit="" data-hint="independent models: variance of the average is v divided by k.">
+          <div class="ex-q">You average \(k = 4\) <em>independent</em> models, each with variance \(v = 8\). By EQ M14.2 with \(\rho = 0\), what is the variance of their average \( \tfrac{1}{k}\sum_j \hat f_j \)?</div>
+          <div class="ex-reveal-src">With \(\rho = 0\), EQ M14.2 collapses to \(\mathrm{Var} = v/k = 8/4 = \) <b>2</b>. Independence is what makes the \(1/k\) free lunch real; correlation is what spoils it.</div>
+        </div>
+
+        <div class="exercise" data-answer="true" data-tol="0.001" data-unit="" data-hint="averaging keeps bias fixed but divides the independent part of variance by k.">
+          <div class="ex-q">True or false: bagging (averaging many bootstrap-trained models) primarily reduces the <em>variance</em> term of EQ M14.1, leaving bias roughly unchanged. Answer <b>true</b> or <b>false</b>.</div>
+          <div class="ex-reveal-src">EQ M14.2 shows the averaged variance shrinks toward the correlation floor, while the bias of the average equals the (shared) bias of each member — averaging cannot move it. So bagging buys variance reduction at fixed bias: <b>true</b>.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 14.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">14.2</span><h2>Bagging &amp; variance reduction</h2></div>
+        <p><strong>Bootstrap aggregating</strong> — Breiman's bagging — is the most direct cash-out of EQ M14.2. Draw \(k\) bootstrap samples (each \(n\) points sampled <em>with replacement</em> from the original \(n\)), fit one high-variance, low-bias learner on each, and average their predictions (or majority-vote for classification). Deep decision trees are the canonical base learner because they are exactly what the math wants: nearly unbiased and wildly unstable, so there is a mountain of variance to drain and almost no bias to protect.</p>
+
+        <div class="eq"><span class="eq-tag">EQ M14.3 — THE BAGGED PREDICTOR &amp; ITS OOB FREE LUNCH</span>
+        $$ \hat f_{\text{bag}}(x) = \frac{1}{k}\sum_{j=1}^{k}\hat f_j^{*}(x), \qquad \Pr(\text{point } i \notin \text{bootstrap } j) = \left(1 - \tfrac{1}{n}\right)^{\!n} \xrightarrow[n\to\infty]{} e^{-1} \approx 0.368 $$
+        <div class="eq-note">\(\hat f_j^{*}\) is the model trained on bootstrap sample \(j\). Each bootstrap omits about <b>36.8%</b> of the data purely by chance — those are the <b>out-of-bag (OOB)</b> points for that tree. Average each point's predictions over only the trees that did <em>not</em> see it and you get a validation estimate <em>for free</em>, no held-out set required. OOB error is bagging's built-in cross-validation, and it is why random forests are so cheap to tune.</div>
+        </div>
+
+        <p><strong>Random forests</strong> add the second decorrelation lever EQ M14.2 begged for. Trees grown on bootstrap samples of the same data are still correlated — they all latch onto the few strongest features. So at every split, a random forest considers only a random subset of features (\(\sqrt{p}\) for classification, \(p/3\) for regression are the classic defaults). Forcing weaker features into the splits makes the trees genuinely different, drives \(\rho\) down, and pushes the correlation floor lower than plain bagging can reach. <em>Extremely randomized trees</em> (ExtraTrees) go further still, randomizing the split <em>thresholds</em> too — trading a touch of bias for even less correlation.</p>
+
+        <div class="exercise" data-answer="0.368" data-tol="0.02" data-unit="" data-hint="the large-n limit of (1 - 1/n)^n is e^{-1}.">
+          <div class="ex-q">In a large bootstrap sample (\(n \to \infty\)), what fraction of the original points are left out of any single bootstrap draw — i.e. become out-of-bag? Use the limit in EQ M14.3.</div>
+          <div class="ex-reveal-src">\(\left(1 - \tfrac{1}{n}\right)^n \to e^{-1} = 0.3679\). Rounded, about <b>0.368</b> — roughly 36.8% of points sit out of each tree and form its OOB validation set.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Bagging from scratch: average bootstrapped stumps, watch variance collapse
+import numpy as np
+rng = np.random.default_rng(0)
+
+def stump(x, y):                       # 1-split regression tree (high variance)
+    s = np.argsort(x); xs, ys = x[s], y[s]
+    best, thr, lo, hi = 1e18, x[0], y.mean(), y.mean()
+    for i in range(1, len(x)):         # try every midpoint as a split
+        t = 0.5 * (xs[i-1] + xs[i])
+        l, r = ys[:i], ys[i:]
+        e = ((l - l.mean())**2).sum() + ((r - r.mean())**2).sum()
+        if e < best: best, thr, lo, hi = e, t, l.mean(), r.mean()
+    return lambda xq: np.where(xq < thr, lo, hi)
+
+xg = np.linspace(0, 1, 60)             # fixed grid where we measure variance
+f = lambda x: np.sin(2*np.pi*x)        # ground truth
+def fit_one():                         # one stump on one noisy 25-point sample
+    x = rng.uniform(0, 1, 25); y = f(x) + rng.normal(0, 0.4, 25)
+    return stump(x, y)(xg)
+
+for k in (1, 5, 25, 100):              # average k stumps, repeat to measure var
+    preds = np.array([np.mean([fit_one() for _ in range(k)], 0) for _ in range(40)])
+    print(f"k={k:3d}  avg pointwise variance = {preds.var(0).mean():.4f}")
+print("\nvariance falls ~1/k early, then flattens at the correlation floor (EQ M14.2).")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="ens-bag" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT M14.1 — VARIANCE COLLAPSE</span><span class="w-sub">AVERAGE N NOISY STUMPS · EQ M14.2</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>TREES IN ENSEMBLE k <output id="ens-bag-k-out">16</output></label><input type="range" id="ens-bag-k" min="1" max="60" step="1" value="16"/></div>
+              <div class="ctl"><label>NOISE σ <output id="ens-bag-noise-out">0.40</output></label><input type="range" id="ens-bag-noise" min="0.1" max="0.9" step="0.05" value="0.4"/></div>
+            </div>
+            <canvas class="w-canvas" id="ens-bag-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">SINGLE-TREE VARIANCE</div><div class="r-value" id="ens-bag-v1">—</div></div>
+              <div class="readout acc"><div class="r-label">BAGGED VARIANCE (k TREES)</div><div class="r-value" id="ens-bag-vk">—</div></div>
+              <div class="readout acc"><div class="r-label">VARIANCE REDUCTION</div><div class="r-value" id="ens-bag-drop">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Faint lines are individual bootstrap stumps; the bright mint line is their average; the dashed line is the true curve. Push <b>k</b> up and watch the ragged members fuse into a smooth, accurate fit while the variance readout drops toward the correlation floor — not to zero, because bootstrap stumps stay correlated. Raise the noise to see how much more there is to gain.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 14.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">14.3</span><h2>Boosting — sequential error correction</h2></div>
+        <p>Bagging builds its members <em>in parallel</em> and independently. <strong>Boosting</strong> does the opposite: it builds them <em>in sequence</em>, each new member trained to fix the mistakes of the running ensemble so far. Where bagging attacks variance with strong learners, boosting attacks <em>bias</em> by composing many <em>weak</em> learners (shallow trees, often stumps) into one strong one. The cost is that members are now dependent by construction — \(\rho\) is high — so the variance lever of EQ M14.2 is gone, and boosting trades it for a march down the bias term.</p>
+
+        <p>The cleanest modern view is <strong>gradient boosting</strong> (Friedman): treat the ensemble as a function being optimized by gradient descent <em>in function space</em>. At each round you fit a new weak learner to the negative gradient of the loss — for squared error, that gradient is simply the residual — and take a small, shrunk step:</p>
+
+        <div class="eq"><span class="eq-tag">EQ M14.4 — GRADIENT BOOSTING (FUNCTIONAL GRADIENT DESCENT)</span>
+        $$ r_i^{(m)} = -\left[\frac{\partial L(y_i, F(x_i))}{\partial F(x_i)}\right]_{F = F_{m-1}}, \qquad F_m(x) = F_{m-1}(x) + \nu\, h_m(x),\quad h_m \approx \arg\min_h \sum_i (r_i^{(m)} - h(x_i))^2 $$
+        <div class="eq-note">\(L\) is the loss, \(F_{m-1}\) the ensemble after \(m-1\) rounds, \(h_m\) the weak learner fit to the <b>pseudo-residuals</b> \(r^{(m)}\), and \(\nu \in (0,1]\) the <b>learning rate</b> (shrinkage). For squared loss \(L = \tfrac12(y-F)^2\), the residual is literally \(r_i = y_i - F_{m-1}(x_i)\): each round models what the last one missed. Small \(\nu\) with many rounds nearly always beats large \(\nu\) with few — the same regularize-by-small-steps logic as in SGD (Chapter 08). XGBoost and LightGBM (Chapter 15) are this recipe plus second-order Newton steps and brutal engineering.</div>
+        </div>
+
+        <p>The older, equivalent-in-spirit ancestor is <strong>AdaBoost</strong>, which reweights the <em>data</em> instead of fitting residuals: misclassified points get heavier, so the next weak learner concentrates where the ensemble is failing. Its multiclass form, <strong>SAMME</strong>, assigns each weak learner a vote weighted by how much better than chance it does:</p>
+
+        <div class="eq"><span class="eq-tag">EQ M14.5 — ADABOOST/SAMME WEIGHTS</span>
+        $$ \alpha_m = \log\!\frac{1 - \mathrm{err}_m}{\mathrm{err}_m} + \log(K - 1), \qquad \mathrm{err}_m = \frac{\sum_i w_i\,\mathbb{1}[y_i \neq h_m(x_i)]}{\sum_i w_i} $$
+        <div class="eq-note">\(\mathrm{err}_m\) is the <b>weighted</b> error of weak learner \(m\); \(K\) is the number of classes (\(K = 2\) recovers classic AdaBoost, where the \(\log(K-1)\) term is zero). A learner barely better than random (\(\mathrm{err}_m\) just under \(1 - 1/K\)) gets \(\alpha_m \approx 0\); a strong one gets a large vote. After each round, weights on the still-wrong points are multiplied by \(e^{\alpha_m}\) and renormalized. SAMME merely requires each learner to beat random guessing — far weaker than the 50% bar binary AdaBoost demands.</div>
+        </div>
+
+        <div class="exercise" data-answer="2.197" data-tol="0.02" data-unit="" data-hint="binary case (K=2): alpha = ln((1-err)/err); plug err = 0.1.">
+          <div class="ex-q">A binary (\(K = 2\)) AdaBoost weak learner has weighted error \(\mathrm{err}_m = 0.1\). By EQ M14.5 (the \(\log(K-1)\) term vanishes for \(K=2\)), what is its vote weight \(\alpha_m\)? Use natural log.</div>
+          <div class="ex-reveal-src">\(\alpha_m = \ln\!\dfrac{1 - 0.1}{0.1} = \ln\dfrac{0.9}{0.1} = \ln 9 = \) <b>2.197</b>. A 10%-error learner earns a large, confident vote; a 50%-error (chance) learner would earn \(\ln 1 = 0\).</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># AdaBoost (SAMME, K=2) on toy data: print weighted error + alpha each round
+import numpy as np
+rng = np.random.default_rng(1)
+
+n = 200
+X = rng.normal(0, 1, (n, 2))
+y = np.where(X[:, 0] + X[:, 1] > 0, 1, -1)         # linear boundary, labels +/-1
+
+def stump(X, y, w):                                 # best 1-feature threshold stump
+    best = (1e9, 0, 0.0, 1)
+    for f in range(X.shape[1]):
+        for t in np.quantile(X[:, f], np.linspace(.1, .9, 9)):
+            for s in (1, -1):
+                pred = np.where(s * (X[:, f] - t) > 0, 1, -1)
+                e = w[pred != y].sum()
+                if e < best[0]: best = (e, f, t, s)
+    e, f, t, s = best
+    return (f, t, s), np.where(s * (X[:, f] - t) > 0, 1, -1)
+
+w = np.full(n, 1 / n)                               # uniform sample weights
+print("round  weighted_err   alpha")
+for m in range(5):
+    _, pred = stump(X, y, w)
+    err = max(w[pred != y].sum(), 1e-12)
+    alpha = np.log((1 - err) / err)                 # EQ M14.5, K=2
+    w *= np.exp(alpha * (pred != y))                # up-weight the still-wrong
+    w /= w.sum()
+    print(f"  {m:2d}      {err:8.4f}   {alpha:6.3f}")
+print("\nerror drifts toward 0.5 as easy points are solved and hard ones dominate.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="ens-boost" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT M14.2 — STAGEWISE RESIDUAL FIT</span><span class="w-sub">GRADIENT BOOSTING · EQ M14.4</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>BOOSTING ROUNDS m <output id="ens-boost-m-out">8</output></label><input type="range" id="ens-boost-m" min="0" max="40" step="1" value="8"/></div>
+              <div class="ctl"><label>LEARNING RATE ν <output id="ens-boost-lr-out">0.30</output></label><input type="range" id="ens-boost-lr" min="0.05" max="1" step="0.05" value="0.3"/></div>
+            </div>
+            <canvas class="w-canvas" id="ens-boost-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">ROUNDS USED</div><div class="r-value" id="ens-boost-rounds">—</div></div>
+              <div class="readout acc"><div class="r-label">TRAIN MSE</div><div class="r-value" id="ens-boost-mse">—</div></div>
+              <div class="readout acc"><div class="r-label">RESIDUAL NORM</div><div class="r-value" id="ens-boost-res">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The bright line is the boosted ensemble \(F_m\) chasing the dashed target; the short red sticks are the current residuals \(r^{(m)}\) — what the next stump will be fit to. Step the rounds up and watch the residuals shrink stagewise. Drop the learning rate and you need more rounds for the same fit, but the staircase is smoother and overfits later. At round 0 the model is just the mean.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 14.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">14.4</span><h2>Stacking &amp; blending</h2></div>
+        <p>Bagging and boosting both combine members of <em>one</em> kind with a <em>fixed</em> rule (average, weighted vote). <strong>Stacked generalization</strong> (Wolpert) asks the obvious next question: why hand-pick the combiner when you can <em>learn</em> it? Train several diverse base models — say a random forest, a gradient-boosted tree, a linear model, and a k-NN — then train a second-level <strong>meta-learner</strong> whose inputs are the base models' predictions and whose target is the true label. The meta-model discovers, per region of input space, which base learner to trust.</p>
+
+        <div class="eq"><span class="eq-tag">EQ M14.6 — THE STACKED PREDICTOR</span>
+        $$ \hat y = g\big(\hat f_1(x),\, \hat f_2(x),\, \ldots,\, \hat f_M(x)\big), \qquad g = \arg\min_{g}\ \sum_{i}\, L\big(y_i,\, g(z_i)\big),\ \ z_i = \big(\hat f_1^{(-i)}(x_i),\ldots\big) $$
+        <div class="eq-note">\(g\) is the meta-learner; \(z_i\) is the vector of base predictions for point \(i\). <b>The crucial detail is the \((-i)\) superscript: the base predictions feeding the meta-model must be out-of-fold.</b> Train the bases with k-fold cross-validation and predict each held-out fold, so no base model ever predicts a point it was trained on. Skip this and the meta-learner sees in-sample predictions that are unrealistically good, learns to trust an overfit base, and collapses on real data. A simple, well-regularized \(g\) (ridge, or non-negative-weighted logistic) almost always beats a fancy one. <b>Blending</b> is the lazy cousin: a single fixed holdout split instead of full CV — simpler, leak-resistant, but it wastes data.</div>
+        </div>
+
+        <p>Stacking is the engine behind most Kaggle-winning solutions and many production ranking systems, precisely because EQ M14.2 rewards <em>diversity</em>: a forest and a boosted tree make different mistakes, so their stacked combination has lower \(\rho\) than either family alone. The returns are real but modest — typically a few percent over the best single model — and they come with real operational cost (more models to train, serve, monitor, and debug). That trade is the subject of the next section.</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Stacking toy: two biased base models; a ridge meta-learner finds the blend
+import numpy as np
+rng = np.random.default_rng(3)
+
+n = 400
+x = rng.uniform(-3, 3, n)
+y = np.sin(x) + 0.1 * rng.normal(size=n)            # ground truth + noise
+
+# two deliberately complementary, biased base predictions
+f1 = 0.9 * np.sin(x) - 0.2                          # good shape, wrong offset
+f2 = x / 3.0                                        # a linear approximation
+for name, f in (("base f1", f1), ("base f2", f2)):
+    print(f"{name:8s} MSE = {((y - f)**2).mean():.4f}")
+
+Z = np.column_stack([np.ones(n), f1, f2])           # meta features (+ intercept)
+lam = 1e-3
+beta = np.linalg.solve(Z.T @ Z + lam*np.eye(3), Z.T @ y)   # ridge meta-learner
+stack = Z @ beta
+print(f"\nmeta weights [bias, f1, f2] = {beta.round(3)}")
+print(f"stacked  MSE = {((y - stack)**2).mean():.4f}  <- below both bases")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="ens-stack" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT M14.3 — STACKING META-LEARNER</span><span class="w-sub">TWO BASES + LEARNED BLEND · EQ M14.6</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>BASE 1 WEIGHT w₁ <output id="ens-stack-w1-out">0.50</output></label><input type="range" id="ens-stack-w1" min="0" max="1" step="0.02" value="0.5"/></div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>META-LEARNER</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost" data-ens-stack-mode="manual">MANUAL</button>
+                  <button class="w-btn ghost on" data-ens-stack-mode="learned">RIDGE FIT</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="ens-stack-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">BASE 1 MSE</div><div class="r-value" id="ens-stack-m1">—</div></div>
+              <div class="readout"><div class="r-label">BASE 2 MSE</div><div class="r-value" id="ens-stack-m2">—</div></div>
+              <div class="readout acc"><div class="r-label">STACKED MSE</div><div class="r-value" id="ens-stack-ms">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Two biased base learners (mint, blue) bracket the dashed truth. In <b>MANUAL</b> mode, drag w₁ to blend them by hand and hunt for the lowest stacked MSE. Switch to <b>RIDGE FIT</b> and the meta-learner solves for the optimal weights in closed form — landing at or below the best blend you can find by hand, and below either base alone. That is EQ M14.6 doing its job.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 14.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">14.5</span><h2>When ensembles fail</h2></div>
+        <p>The "free lunch" framing is a useful exaggeration. Ensembles are remarkably robust, but EQ M14.2 also tells you exactly where they stop helping — and several failure modes have nothing to do with the math at all.</p>
+        <table class="data">
+          <thead><tr><th>Failure mode</th><th>Why it happens</th><th>What it looks like</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Correlated members</strong></td><td>High \(\rho\) pins variance at the floor \(\rho\sigma_m^2\)</td><td>The 200th tree adds nothing; OOB error flatlined at tree ~50</td></tr>
+            <tr><td><strong>Bagging a stable learner</strong></td><td>Low-variance bases (linear/SVM) have little variance to drain</td><td>Bagged linear model ≈ the single linear model, at 100× the cost</td></tr>
+            <tr><td><strong>Boosting on noisy labels</strong></td><td>AdaBoost up-weights hard points — which include mislabels</td><td>Train error → 0, test error climbs; the ensemble memorizes noise</td></tr>
+            <tr><td><strong>Stacking with leakage</strong></td><td>In-sample (not out-of-fold) base predictions feed the meta-model</td><td>Spectacular CV scores, collapse in production</td></tr>
+            <tr><td><strong>Distribution shift</strong></td><td>All members agree confidently on the wrong (shifted) inputs</td><td>Calibrated, unanimous, and wrong — diversity gives no safety here</td></tr>
+          </tbody>
+        </table>
+
+        <p>Two of these deserve emphasis because they are genuinely contested in practice. First, <strong>boosting's noise sensitivity</strong>: AdaBoost's exponential loss punishes outliers viciously, which is why robust variants (LogitBoost, gradient boosting with Huber loss, and early stopping) exist — though on clean tabular data, gradient-boosted trees remain the strongest single tool and frequently beat deep nets, a result that surprises newcomers and is still actively debated. Second, the <strong>cost-benefit ledger</strong>: an ensemble multiplies training, serving, latency, memory, and debugging cost, often for a 1–3% metric gain. In a leaderboard that wins; in a latency-bound product it may not be worth it. The honest default is a single well-tuned gradient-boosted model for tabular problems, reaching for stacking only when the last percent genuinely pays.</p>
+
+        <p class="note"><strong>The deeper caveat.</strong> Ensembling reduces variance and bias, never the irreducible noise \(\sigma^2\) of EQ M14.1, and it cannot manufacture <em>signal that the base learners never saw</em>. Diversity is a property of <em>errors</em>, not of confidence: ten models can be diverse, confident, and unanimously wrong under distribution shift. Ensembles buy you stability and a few points of accuracy — not robustness to a world that has moved.</p>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>The theory is settled; the speed is not.</strong> Chapter 15 takes gradient boosting from EQ M14.4 to the libraries that dominate tabular ML — XGBoost, LightGBM, and CatBoost — covering second-order Newton splits, histogram binning, leaf-wise growth, and the regularization knobs that decide whether boosting generalizes or memorizes.</p>
+        </div>
+      </section>
+
+      <!-- ====================== References ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">14.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://doi.org/10.1007/BF00058655" target="_blank" rel="noopener">Breiman, L. (1996). <span class="ref-venue">Bagging Predictors</span>.</a> <span class="ref-meta">Machine Learning 24(2) — bootstrap aggregating and its variance-reduction argument (EQ M14.2, M14.3).</span></li>
+          <li><a href="https://doi.org/10.1023/A:1010933404324" target="_blank" rel="noopener">Breiman, L. (2001). <span class="ref-venue">Random Forests</span>.</a> <span class="ref-meta">Machine Learning 45(1) — feature subsampling as the second decorrelation lever; OOB error (§14.2).</span></li>
+          <li><a href="https://doi.org/10.1016/S0893-6080(05)80023-1" target="_blank" rel="noopener">Wolpert, D. H. (1992). <span class="ref-venue">Stacked Generalization</span>.</a> <span class="ref-meta">Neural Networks 5(2) — learning the combiner with out-of-fold base predictions (EQ M14.6).</span></li>
+          <li><a href="https://doi.org/10.1007/3-540-45014-9_1" target="_blank" rel="noopener">Dietterich, T. G. (2000). <span class="ref-venue">Ensemble Methods in Machine Learning</span>.</a> <span class="ref-meta">Multiple Classifier Systems, LNCS 1857 — the canonical survey of why and when ensembles help (§14.1).</span></li>
+          <li><a href="https://doi.org/10.1006/jcss.1997.1504" target="_blank" rel="noopener">Freund, Y. &amp; Schapire, R. E. (1997). <span class="ref-venue">A Decision-Theoretic Generalization of On-Line Learning and an Application to Boosting</span>.</a> <span class="ref-meta">Journal of Computer and System Sciences 55(1) — AdaBoost and its training-error bound (EQ M14.5).</span></li>
+          <li><a href="https://doi.org/10.1214/aos/1013203451" target="_blank" rel="noopener">Friedman, J. H. (2001). <span class="ref-venue">Greedy Function Approximation: A Gradient Boosting Machine</span>.</a> <span class="ref-meta">Annals of Statistics 29(5) — boosting as functional gradient descent (EQ M14.4).</span></li>
+          <li><a href="https://hastie.su.domains/ElemStatLearn/" target="_blank" rel="noopener">Hastie, T., Tibshirani, R. &amp; Friedman, J. (2009). <span class="ref-venue">The Elements of Statistical Learning</span> (2nd ed.).</a> <span class="ref-meta">Springer — free online; Ch. 8, 10, 15–16 cover bagging, boosting, and random forests with the bias-variance lens used here.</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../ml/13-matrix-factorization.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">13</span> Matrix Factorization</div></a>
+        <a class="next" href="../ml/15-boosting-libraries.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">15</span> Boosting Libraries</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — MACHINE LEARNING · CH 14</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* ============================================================
+   Ensemble Methods — chapter instruments
+   Single IIFE, no globals. Deterministic RNG so the initial
+   render (zero interaction) is meaningful and reproducible.
+   Multi-step animation via setInterval (background-tab safe).
+   ============================================================ */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  function fnum(x, d) { d = d === undefined ? 3 : d; return x.toFixed(d); }
+  function truth(x) { return Math.sin(2 * Math.PI * x); }   // shared target on [0,1]
+
+  // standard-normal sample from a uniform RNG (Box-Muller)
+  function gauss(rnd) {
+    var u = Math.max(1e-9, rnd()), v = rnd();
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+  }
+
+  /* ========================================================
+     INSTRUMENT M14.1 — Variance collapse (bagged stumps)
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("ens-bag");
+    if (!root) return;
+    var canvas = document.getElementById("ens-bag-canvas");
+    var kIn = document.getElementById("ens-bag-k");
+    var kOut = document.getElementById("ens-bag-k-out");
+    var nIn = document.getElementById("ens-bag-noise");
+    var nOut = document.getElementById("ens-bag-noise-out");
+    var v1El = document.getElementById("ens-bag-v1");
+    var vkEl = document.getElementById("ens-bag-vk");
+    var dropEl = document.getElementById("ens-bag-drop");
+
+    var GRID = 50;                       // evaluation grid on [0,1]
+    var xs = [];
+    for (var g = 0; g < GRID; g++) xs.push(g / (GRID - 1));
+
+    // one decision stump (single threshold) on a noisy bootstrap-style sample
+    function fitStump(noise, seed) {
+      var rnd = FM.mulberry32(seed);
+      var m = 22, px = [], py = [], i;
+      for (i = 0; i < m; i++) {
+        var x = rnd();
+        px.push(x); py.push(truth(x) + noise * gauss(rnd));
+      }
+      var idx = px.map(function (_, k) { return k; })
+                  .sort(function (a, b) { return px[a] - px[b]; });
+      var best = Infinity, thr = 0.5, lo = 0, hi = 0;
+      // prefix sums of y over sorted order → fast left/right means
+      var sy = idx.map(function (k) { return py[k]; });
+      var pre = [0];
+      for (i = 0; i < m; i++) pre.push(pre[i] + sy[i]);
+      var total = pre[m];
+      for (i = 1; i < m; i++) {
+        var lMean = pre[i] / i, rMean = (total - pre[i]) / (m - i);
+        var e = 0, j;
+        for (j = 0; j < m; j++) {
+          var d = sy[j] - (j < i ? lMean : rMean); e += d * d;
+        }
+        if (e < best) {
+          best = e; lo = lMean; hi = rMean;
+          thr = 0.5 * (px[idx[i - 1]] + px[idx[i]]);
+        }
+      }
+      var fitVals = new Array(GRID);
+      for (i = 0; i < GRID; i++) fitVals[i] = xs[i] < thr ? lo : hi;
+      return fitVals;
+    }
+
+    function render() {
+      var k = parseInt(kIn.value, 10);
+      var noise = parseFloat(nIn.value);
+      kOut.textContent = k;
+      nOut.textContent = fnum(noise, 2);
+
+      // build k member fits (deterministic seeds), average them
+      var members = [], i, j;
+      for (i = 0; i < k; i++) members.push(fitStump(noise, 1000 + i * 7));
+      var avg = new Array(GRID);
+      for (j = 0; j < GRID; j++) {
+        var s = 0;
+        for (i = 0; i < k; i++) s += members[i][j];
+        avg[j] = s / k;
+      }
+
+      // measure variance of the ensemble across independent fresh ensembles
+      var REPS = 12;
+      function ensembleAt(repSeed) {
+        var out = new Array(GRID), mm = [];
+        for (var a = 0; a < k; a++) mm.push(fitStump(noise, 50000 + repSeed * 997 + a * 7));
+        for (var b = 0; b < GRID; b++) {
+          var sum = 0;
+          for (var c = 0; c < k; c++) sum += mm[c][b];
+          out[b] = sum / k;
+        }
+        return out;
+      }
+      function varOf(buildFn) {
+        var preds = [];
+        for (var r = 0; r < REPS; r++) preds.push(buildFn(r));
+        var tot = 0;
+        for (var p = 0; p < GRID; p++) {
+          var mean = 0, q;
+          for (q = 0; q < REPS; q++) mean += preds[q][p];
+          mean /= REPS;
+          var vv = 0;
+          for (q = 0; q < REPS; q++) { var dd = preds[q][p] - mean; vv += dd * dd; }
+          tot += vv / REPS;
+        }
+        return tot / GRID;
+      }
+      var v1 = varOf(function (r) { return fitStump(noise, 70000 + r * 131); });
+      var vk = varOf(ensembleAt);
+
+      v1El.textContent = fnum(v1, 4);
+      vkEl.textContent = fnum(vk, 4);
+      dropEl.textContent = v1 > 1e-9 ? (100 * (1 - vk / v1)).toFixed(0) + "%" : "—";
+
+      // ---- draw ----
+      var cv = FM.setupCanvas(canvas, 300);
+      var ctx = cv.ctx, w = cv.w, h = cv.h;
+      ctx.clearRect(0, 0, w, h);
+      var padL = 34, padR = 14, padT = 14, padB = 22;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      var ymin = -1.6, ymax = 1.6;
+      function X(t) { return x0 + t * (x1 - x0); }
+      function Y(v) { return y0 - (v - ymin) / (ymax - ymin) * (y0 - y1); }
+
+      // gridlines
+      ctx.strokeStyle = "rgba(47,50,52,.55)"; ctx.lineWidth = 1;
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      [-1, 0, 1].forEach(function (gv) {
+        var gy = Y(gv);
+        ctx.beginPath(); ctx.moveTo(x0, gy); ctx.lineTo(x1, gy); ctx.stroke();
+        ctx.fillText(gv.toFixed(0), x0 - 6, gy);
+      });
+
+      // faint individual members
+      ctx.strokeStyle = "rgba(155,155,155,.28)"; ctx.lineWidth = 1;
+      var show = Math.min(k, 24);
+      for (i = 0; i < show; i++) {
+        ctx.beginPath();
+        for (j = 0; j < GRID; j++) {
+          var xx = X(xs[j]), yy = Y(members[i][j]);
+          if (j === 0) ctx.moveTo(xx, yy); else ctx.lineTo(xx, yy);
+        }
+        ctx.stroke();
+      }
+
+      // true curve (dashed)
+      ctx.strokeStyle = C.SEC; ctx.lineWidth = 1.4; ctx.setLineDash([5, 4]);
+      ctx.beginPath();
+      for (j = 0; j < GRID; j++) {
+        var tx = X(xs[j]), ty = Y(truth(xs[j]));
+        if (j === 0) ctx.moveTo(tx, ty); else ctx.lineTo(tx, ty);
+      }
+      ctx.stroke(); ctx.setLineDash([]);
+
+      // bagged average (bright mint)
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 2.4;
+      ctx.beginPath();
+      for (j = 0; j < GRID; j++) {
+        var ax = X(xs[j]), ay = Y(avg[j]);
+        if (j === 0) ctx.moveTo(ax, ay); else ctx.lineTo(ax, ay);
+      }
+      ctx.stroke();
+
+      // legend
+      ctx.font = C.MONO; ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillStyle = C.MINT; ctx.fillText("BAGGED AVG (k=" + k + ")", x0 + 4, y1 + 2);
+      ctx.fillStyle = C.SEC; ctx.fillText("TRUTH", x0 + 4, y1 + 14);
+    }
+
+    kIn.addEventListener("input", render);
+    nIn.addEventListener("input", render);
+    window.addEventListener("resize", render);
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT M14.2 — Stagewise residual fit (boosting)
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("ens-boost");
+    if (!root) return;
+    var canvas = document.getElementById("ens-boost-canvas");
+    var mIn = document.getElementById("ens-boost-m");
+    var mOut = document.getElementById("ens-boost-m-out");
+    var lrIn = document.getElementById("ens-boost-lr");
+    var lrOut = document.getElementById("ens-boost-lr-out");
+    var roundsEl = document.getElementById("ens-boost-rounds");
+    var mseEl = document.getElementById("ens-boost-mse");
+    var resEl = document.getElementById("ens-boost-res");
+
+    // fixed training set (deterministic) so round 0 is meaningful
+    var N = 40, tx = [], ty = [];
+    var rnd = FM.mulberry32(7);
+    for (var i = 0; i < N; i++) {
+      var x = i / (N - 1);
+      tx.push(x); ty.push(truth(x) + 0.18 * gauss(rnd));
+    }
+
+    // best single regression stump fit to residuals r over (tx, *)
+    function bestStump(r) {
+      var idx = tx.map(function (_, k) { return k; })
+                  .sort(function (a, b) { return tx[a] - tx[b]; });
+      var sr = idx.map(function (k) { return r[k]; });
+      var pre = [0];
+      for (var a = 0; a < N; a++) pre.push(pre[a] + sr[a]);
+      var total = pre[N], best = Infinity, thr = 0.5, lo = 0, hi = 0;
+      for (var s = 1; s < N; s++) {
+        var lMean = pre[s] / s, rMean = (total - pre[s]) / (N - s);
+        var e = 0;
+        for (var j = 0; j < N; j++) {
+          var d = sr[j] - (j < s ? lMean : rMean); e += d * d;
+        }
+        if (e < best) {
+          best = e; lo = lMean; hi = rMean;
+          thr = 0.5 * (tx[idx[s - 1]] + tx[idx[s]]);
+        }
+      }
+      return { thr: thr, lo: lo, hi: hi };
+    }
+
+    function buildModel(rounds, lr) {
+      // F starts at the mean (the optimal constant for squared loss)
+      var base = 0, k;
+      for (k = 0; k < N; k++) base += ty[k];
+      base /= N;
+      var F = new Array(N); for (k = 0; k < N; k++) F[k] = base;
+      var stumps = [];
+      for (var m = 0; m < rounds; m++) {
+        var r = new Array(N);
+        for (k = 0; k < N; k++) r[k] = ty[k] - F[k];     // residual = neg grad
+        var st = bestStump(r); stumps.push(st);
+        for (k = 0; k < N; k++) F[k] += lr * (tx[k] < st.thr ? st.lo : st.hi);
+      }
+      return { base: base, lr: lr, stumps: stumps, F: F };
+    }
+
+    function predict(model, x) {
+      var v = model.base;
+      for (var m = 0; m < model.stumps.length; m++) {
+        var st = model.stumps[m];
+        v += model.lr * (x < st.thr ? st.lo : st.hi);
+      }
+      return v;
+    }
+
+    function render() {
+      var rounds = parseInt(mIn.value, 10);
+      var lr = parseFloat(lrIn.value);
+      mOut.textContent = rounds;
+      lrOut.textContent = fnum(lr, 2);
+
+      var model = buildModel(rounds, lr);
+      var mse = 0, resN = 0, k;
+      for (k = 0; k < N; k++) {
+        var d = ty[k] - model.F[k]; mse += d * d; resN += d * d;
+      }
+      mse /= N;
+      roundsEl.textContent = rounds;
+      mseEl.textContent = fnum(mse, 4);
+      resEl.textContent = fnum(Math.sqrt(resN), 3);
+
+      var cv = FM.setupCanvas(canvas, 300);
+      var ctx = cv.ctx, w = cv.w, h = cv.h;
+      ctx.clearRect(0, 0, w, h);
+      var padL = 34, padR = 14, padT = 14, padB = 22;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      var ymin = -1.7, ymax = 1.7;
+      function X(t) { return x0 + t * (x1 - x0); }
+      function Y(v) { return y0 - (v - ymin) / (ymax - ymin) * (y0 - y1); }
+
+      ctx.strokeStyle = "rgba(47,50,52,.55)"; ctx.lineWidth = 1;
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      [-1, 0, 1].forEach(function (gv) {
+        var gy = Y(gv);
+        ctx.beginPath(); ctx.moveTo(x0, gy); ctx.lineTo(x1, gy); ctx.stroke();
+        ctx.fillText(gv.toFixed(0), x0 - 6, gy);
+      });
+
+      // true curve (dashed)
+      ctx.strokeStyle = C.SEC; ctx.lineWidth = 1.4; ctx.setLineDash([5, 4]);
+      ctx.beginPath();
+      for (k = 0; k <= 60; k++) {
+        var xc = k / 60, xx = X(xc), yy = Y(truth(xc));
+        if (k === 0) ctx.moveTo(xx, yy); else ctx.lineTo(xx, yy);
+      }
+      ctx.stroke(); ctx.setLineDash([]);
+
+      // residual sticks (red) from each data point to the current fit
+      ctx.strokeStyle = "rgba(255,65,54,.8)"; ctx.lineWidth = 1.2;
+      for (k = 0; k < N; k++) {
+        ctx.beginPath();
+        ctx.moveTo(X(tx[k]), Y(ty[k]));
+        ctx.lineTo(X(tx[k]), Y(model.F[k]));
+        ctx.stroke();
+      }
+      // data points
+      ctx.fillStyle = C.MUT;
+      for (k = 0; k < N; k++) {
+        ctx.beginPath(); ctx.arc(X(tx[k]), Y(ty[k]), 1.7, 0, 6.2832); ctx.fill();
+      }
+
+      // boosted ensemble (bright mint), smooth eval grid
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 2.4;
+      ctx.beginPath();
+      for (k = 0; k <= 120; k++) {
+        var xe = k / 120, ex = X(xe), ey = Y(predict(model, xe));
+        if (k === 0) ctx.moveTo(ex, ey); else ctx.lineTo(ex, ey);
+      }
+      ctx.stroke();
+
+      ctx.font = C.MONO; ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillStyle = C.MINT; ctx.fillText("F_m  (m=" + rounds + ")", x0 + 4, y1 + 2);
+      ctx.fillStyle = C.RED; ctx.fillText("RESIDUALS", x0 + 4, y1 + 14);
+    }
+
+    mIn.addEventListener("input", render);
+    lrIn.addEventListener("input", render);
+    window.addEventListener("resize", render);
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT M14.3 — Stacking meta-learner
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("ens-stack");
+    if (!root) return;
+    var canvas = document.getElementById("ens-stack-canvas");
+    var w1In = document.getElementById("ens-stack-w1");
+    var w1Out = document.getElementById("ens-stack-w1-out");
+    var m1El = document.getElementById("ens-stack-m1");
+    var m2El = document.getElementById("ens-stack-m2");
+    var msEl = document.getElementById("ens-stack-ms");
+    var modeBtns = root.querySelectorAll("[data-ens-stack-mode]");
+    var mode = "learned";
+
+    // fixed data + two complementary biased base predictions
+    var N = 80, sx = [], sy = [], f1 = [], f2 = [];
+    var rnd = FM.mulberry32(11);
+    for (var i = 0; i < N; i++) {
+      var x = i / (N - 1);
+      sx.push(x);
+      sy.push(truth(x) + 0.06 * gauss(rnd));
+      f1.push(0.85 * truth(x) - 0.18);          // good shape, wrong offset
+      f2.push(2 * x - 1);                         // a linear approximation
+    }
+
+    function mseOf(pred) {
+      var e = 0; for (var k = 0; k < N; k++) { var d = sy[k] - pred[k]; e += d * d; }
+      return e / N;
+    }
+
+    // closed-form ridge for y ~ b0 + b1*f1 + b2*f2  (3x3 normal equations)
+    function ridgeWeights() {
+      var lam = 1e-3, k;
+      var A = [[lam + N, 0, 0], [0, lam, 0], [0, 0, lam]];
+      var bv = [0, 0, 0];
+      for (k = 0; k < N; k++) {
+        var z = [1, f1[k], f2[k]], a, b;
+        for (a = 0; a < 3; a++) {
+          for (b = 0; b < 3; b++) A[a][b] += z[a] * z[b];
+          bv[a] += z[a] * sy[k];
+        }
+      }
+      // solve 3x3 by Gaussian elimination
+      for (var c = 0; c < 3; c++) {
+        var piv = A[c][c];
+        for (var j = 0; j < 3; j++) A[c][j] /= piv;
+        bv[c] /= piv;
+        for (var r = 0; r < 3; r++) if (r !== c) {
+          var fct = A[r][c];
+          for (j = 0; j < 3; j++) A[r][j] -= fct * A[c][j];
+          bv[r] -= fct * bv[c];
+        }
+      }
+      return bv;   // [b0, b1, b2]
+    }
+
+    function render() {
+      var w1 = parseFloat(w1In.value);
+      w1Out.textContent = fnum(w1, 2);
+      modeBtns.forEach(function (b) {
+        b.classList.toggle("on", b.getAttribute("data-ens-stack-mode") === mode);
+      });
+
+      var m1 = mseOf(f1), m2 = mseOf(f2);
+      var stack = new Array(N), k, beta = null;
+      if (mode === "learned") {
+        beta = ridgeWeights();
+        for (k = 0; k < N; k++) stack[k] = beta[0] + beta[1] * f1[k] + beta[2] * f2[k];
+        w1In.disabled = true;
+      } else {
+        w1In.disabled = false;
+        for (k = 0; k < N; k++) stack[k] = w1 * f1[k] + (1 - w1) * f2[k];
+      }
+      var ms = mseOf(stack);
+
+      m1El.textContent = fnum(m1, 4);
+      m2El.textContent = fnum(m2, 4);
+      msEl.textContent = fnum(ms, 4);
+
+      var cv = FM.setupCanvas(canvas, 300);
+      var ctx = cv.ctx, w = cv.w, h = cv.h;
+      ctx.clearRect(0, 0, w, h);
+      var padL = 34, padR = 14, padT = 14, padB = 22;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      var ymin = -1.6, ymax = 1.6;
+      function X(t) { return x0 + t * (x1 - x0); }
+      function Y(v) { return y0 - (v - ymin) / (ymax - ymin) * (y0 - y1); }
+
+      ctx.strokeStyle = "rgba(47,50,52,.55)"; ctx.lineWidth = 1;
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      [-1, 0, 1].forEach(function (gv) {
+        var gy = Y(gv);
+        ctx.beginPath(); ctx.moveTo(x0, gy); ctx.lineTo(x1, gy); ctx.stroke();
+        ctx.fillText(gv.toFixed(0), x0 - 6, gy);
+      });
+
+      function line(arr, color, wd, dash) {
+        ctx.strokeStyle = color; ctx.lineWidth = wd;
+        ctx.setLineDash(dash || []);
+        ctx.beginPath();
+        for (var j = 0; j < N; j++) {
+          var xx = X(sx[j]), yy = Y(arr[j]);
+          if (j === 0) ctx.moveTo(xx, yy); else ctx.lineTo(xx, yy);
+        }
+        ctx.stroke(); ctx.setLineDash([]);
+      }
+      var tline = sx.map(function (x) { return truth(x); });
+      line(tline, C.SEC, 1.4, [5, 4]);        // truth
+      line(f1, C.MINT, 1.2);                   // base 1
+      line(f2, C.BLUE, 1.2);                   // base 2
+      line(stack, C.BRIGHT, 2.4);              // stacked
+
+      ctx.font = C.MONO; ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillStyle = C.MINT; ctx.fillText("BASE 1", x0 + 4, y1 + 2);
+      ctx.fillStyle = C.BLUE; ctx.fillText("BASE 2", x0 + 64, y1 + 2);
+      ctx.fillStyle = C.BRIGHT;
+      ctx.fillText(mode === "learned" ? "STACKED (RIDGE)" : "STACKED (MANUAL)", x0 + 4, y1 + 14);
+      if (beta) {
+        ctx.fillStyle = C.SEC; ctx.textAlign = "right";
+        ctx.fillText("w=[" + beta[0].toFixed(2) + "," + beta[1].toFixed(2) +
+                     "," + beta[2].toFixed(2) + "]", x1 - 2, y1 + 2);
+      }
+    }
+
+    modeBtns.forEach(function (b) {
+      b.addEventListener("click", function () {
+        mode = b.getAttribute("data-ens-stack-mode"); render();
+      });
+    });
+    w1In.addEventListener("input", render);
+    window.addEventListener("resize", render);
+    render();
+  })();
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

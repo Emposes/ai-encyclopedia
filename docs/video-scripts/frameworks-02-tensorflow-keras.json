@@ -1,0 +1,169 @@
+{
+  "concepts": [
+    {
+      "id": "frameworks-02-tensorflow-keras-s1",
+      "chapter": "frameworks/02-tensorflow-keras",
+      "section": "s1",
+      "title": "TensorFlow & the graph heritage",
+      "eyebrow": "FRAMEWORKS",
+      "beats": [
+        {
+          "text": "TensorFlow launched in 2015 as Google's successor to DistBelief, and its founding bet was the computation graph.",
+          "visual": { "type": "title", "text": "TensorFlow & the graph heritage", "sub": "Describe the computation, then run it" }
+        },
+        {
+          "text": "You did not run arithmetic; you described it as a directed graph whose nodes are operations and whose edges are tensors.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "A static graph lets the framework see the whole program first, so it can fuse ops, place devices, and serialize for deployment.",
+          "visual": { "type": "bars", "values": [4, 3, 2, 1], "labels": ["FUSE", "PRUNE", "PLACE", "EXPORT"], "highlight": 0 }
+        },
+        {
+          "text": "Each op records a forward output and a backward gradient, and the chain rule in reverse order is automatic differentiation.",
+          "visual": { "type": "equation", "tex": "\\frac{\\partial \\mathcal{L}}{\\partial x} = \\frac{\\partial \\mathcal{L}}{\\partial z}\\,\\frac{\\partial z}{\\partial x}", "note": "Reverse-mode autodiff, what GradientTape replays" }
+        },
+        {
+          "text": "TensorFlow 2.0 in 2019 flipped the default to eager execution while keeping graphs on demand through tf.function.",
+          "visual": { "type": "stat", "value": 2019, "label": "Eager became the default", "decimals": 0 }
+        },
+        {
+          "text": "Graph mode pays a one-time tracing cost, then runs cheaply, so it wins once a step runs in a training loop.",
+          "visual": { "type": "plot", "ys": [9, 9.6, 10.2, 10.8, 11.4, 12], "dot": 5, "xlabel": "calls to the step", "ylabel": "wall time", "mark": "crossover" }
+        }
+      ]
+    },
+    {
+      "id": "frameworks-02-tensorflow-keras-s2",
+      "chapter": "frameworks/02-tensorflow-keras",
+      "section": "s2",
+      "title": "Keras — the high-level API",
+      "eyebrow": "FRAMEWORKS",
+      "beats": [
+        {
+          "text": "Keras began in 2015 as a framework-agnostic frontend and became TensorFlow's official high-level API in version 2.0.",
+          "visual": { "type": "title", "text": "Keras — the high-level API", "sub": "Progressive disclosure of complexity" }
+        },
+        {
+          "text": "Its smallest unit is the layer; the workhorse Dense computes an affine transform followed by a nonlinearity.",
+          "visual": { "type": "equation", "tex": "\\mathbf{y} = \\phi(W\\mathbf{x} + \\mathbf{b})", "note": "W is u by d_in, b has length u" }
+        },
+        {
+          "text": "A Dense layer with u units on d_in features holds d_in times u weights plus u biases, totaling d_in plus one times u parameters.",
+          "visual": { "type": "equation", "tex": "(d_{\\text{in}} + 1)\\,u", "note": "The +1 is the bias per unit" }
+        },
+        {
+          "text": "Keras offers three ways to express a network: Sequential as a chain, Functional as a DAG, and Subclassing for dynamic control flow.",
+          "visual": { "type": "bars", "values": [1, 2, 3], "labels": ["SEQUENTIAL", "FUNCTIONAL", "SUBCLASS"], "highlight": 1 }
+        },
+        {
+          "text": "A Dense(64) layer reading 32 features holds 64 times 32 equals 2048 weights, before counting its 64 bias terms.",
+          "visual": { "type": "stat", "value": 2048, "label": "Weights in Dense(64) on 32 features", "decimals": 0 }
+        },
+        {
+          "text": "The classic MNIST classifier on 784 pixels carries about 118 thousand parameters, with the first layer dominating the count.",
+          "visual": { "type": "stat", "value": 118, "label": "MNIST MLP parameters", "unit": "K", "decimals": 0 }
+        }
+      ]
+    },
+    {
+      "id": "frameworks-02-tensorflow-keras-s3",
+      "chapter": "frameworks/02-tensorflow-keras",
+      "section": "s3",
+      "title": "tf.data input pipelines",
+      "eyebrow": "FRAMEWORKS",
+      "beats": [
+        {
+          "text": "A model is only as fast as the data reaching it, and a starved accelerator sits idle while the CPU prepares batches.",
+          "visual": { "type": "title", "text": "tf.data input pipelines", "sub": "Keep the accelerator fed" }
+        },
+        {
+          "text": "If the GPU finishes in eight milliseconds but the CPU needs twenty, the accelerator idles roughly sixty percent of the time.",
+          "visual": { "type": "stat", "value": 60, "label": "Accelerator idle without overlap", "unit": "%", "decimals": 0 }
+        },
+        {
+          "text": "A pipeline chains transformations: map applies preprocessing, shuffle randomizes order, and batch groups examples together.",
+          "visual": { "type": "bars", "values": [1, 1, 1, 1], "labels": ["MAP", "SHUFFLE", "BATCH", "PREFETCH"], "highlight": 3 }
+        },
+        {
+          "text": "Prefetch overlaps preparing batch t plus one with training on batch t, turning a sum of times into a max.",
+          "visual": { "type": "equation", "tex": "t_{\\text{overlapped}} = \\max(t_{\\text{input}}, t_{\\text{compute}})", "note": "Serial cost was t_input + t_compute" }
+        },
+        {
+          "text": "With input and compute both equal to t, serial costs two t per step and overlapped costs t, a clean two times speedup.",
+          "visual": { "type": "plot", "ys": [2, 2, 1, 1, 1, 1], "dot": 2, "xlabel": "with prefetch", "ylabel": "step time", "mark": "2x" }
+        },
+        {
+          "text": "With twelve milliseconds input and twenty compute, an overlapped step takes the max, twenty milliseconds, fully hiding input.",
+          "visual": { "type": "stat", "value": 20, "label": "Overlapped step time", "unit": "ms", "decimals": 0 }
+        }
+      ]
+    },
+    {
+      "id": "frameworks-02-tensorflow-keras-s4",
+      "chapter": "frameworks/02-tensorflow-keras",
+      "section": "s4",
+      "title": "Training — model.fit vs custom loops",
+      "eyebrow": "FRAMEWORKS",
+      "beats": [
+        {
+          "text": "Once a model is built and data is ready, training is a loop, and Keras gives you that loop for free.",
+          "visual": { "type": "title", "text": "Training — fit vs custom loops", "sub": "What model.fit does on your behalf" }
+        },
+        {
+          "text": "After compile, one call to fit iterates batches, runs the forward pass, backpropagates loss, and applies the optimizer update.",
+          "visual": { "type": "bars", "values": [1, 1, 1, 1, 1], "labels": ["FORWARD", "LOSS", "BACKWARD", "STEP", "METRICS"], "highlight": 3 }
+        },
+        {
+          "text": "What fit automates each batch is the gradient-descent step: average the loss, take the gradient, step downhill by eta.",
+          "visual": { "type": "equation", "tex": "\\theta \\leftarrow \\theta - \\eta\\,\\nabla_{\\theta}\\,\\frac{1}{|B|}\\sum_{(\\mathbf{x},y) \\in B}\\mathcal{L}(f_\\theta(\\mathbf{x}), y)", "note": "One fit step over minibatch B" }
+        },
+        {
+          "text": "Callbacks observe and steer training without touching the loop: checkpoint best weights, stop early, reduce learning rate, log.",
+          "visual": { "type": "bars", "values": [1, 1, 1, 1], "labels": ["CHECKPOINT", "EARLYSTOP", "REDUCELR", "TENSORBOARD"], "highlight": 1 }
+        },
+        {
+          "text": "Overriding train_step keeps fit's outer machinery while replacing only the inner forward and backward logic.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "A fully custom loop is the last resort, for multiple optimizers, gradient surgery, or research that inspects every step.",
+          "visual": { "type": "stat", "value": 0, "label": "fit lines you must write by hand", "decimals": 0 }
+        }
+      ]
+    },
+    {
+      "id": "frameworks-02-tensorflow-keras-s5",
+      "chapter": "frameworks/02-tensorflow-keras",
+      "section": "s5",
+      "title": "TensorFlow vs PyTorch — choosing",
+      "eyebrow": "FRAMEWORKS",
+      "beats": [
+        {
+          "text": "Every team eventually asks which framework to use, and the honest answer starts with a fact about the field.",
+          "visual": { "type": "title", "text": "TensorFlow vs PyTorch", "sub": "Choosing in 2026" }
+        },
+        {
+          "text": "By conference citation share and new open-model releases, PyTorch has led research since roughly 2019 and 2020.",
+          "visual": { "type": "stat", "value": 2019, "label": "PyTorch leads research from about", "decimals": 0 }
+        },
+        {
+          "text": "Both default to eager and compile to graphs, so torch.compile and tf.function now mirror each other closely.",
+          "visual": { "type": "bars", "values": [1, 1], "labels": ["torch.compile", "tf.function"], "highlight": 0 }
+        },
+        {
+          "text": "TensorFlow still earns its place on three fronts: deployment breadth, native TPU support, and Keras 3 as a portability hedge.",
+          "visual": { "type": "bars", "values": [3, 3, 3], "labels": ["DEPLOY", "TPU", "KERAS 3"], "highlight": 2 }
+        },
+        {
+          "text": "Keras 3 runs on TensorFlow, JAX, or PyTorch behind one identical API, a genuinely new reason to consider it.",
+          "visual": { "type": "stat", "value": 3, "label": "Keras 3 interchangeable backends", "decimals": 0 }
+        },
+        {
+          "text": "The frameworks have converged, so remaining differences are about ecosystem and deployment surface, not core capability.",
+          "visual": { "type": "plot", "ys": [5, 4, 3, 2, 1.5, 1], "dot": 5, "xlabel": "time", "ylabel": "capability gap", "mark": "convergence" }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,169 @@
+{
+  "concepts": [
+    {
+      "id": "rl-02-dynamic-programming-s1",
+      "chapter": "rl/02-dynamic-programming",
+      "section": "s1",
+      "title": "The Bellman equations",
+      "eyebrow": "REINFORCEMENT LEARNING",
+      "beats": [
+        {
+          "text": "A value function asks one question: starting here and acting forever after, how much reward do I expect to collect?",
+          "visual": { "type": "title", "text": "The Bellman equations", "sub": "Recursion turns an infinite sum into a fixed point" }
+        },
+        {
+          "text": "Recursion makes that infinite sum tractable: a state's value is its immediate reward plus the discounted value of where you land.",
+          "visual": { "type": "equation", "tex": "V^\\pi(s) = \\sum_a \\pi(a \\mid s) \\sum_{s', r} p(s', r \\mid s, a)\\,[\\, r + \\gamma\\, V^\\pi(s') \\,]", "note": "Bellman expectation equation for a fixed policy" }
+        },
+        {
+          "text": "For control we want the best policy, so the average over the policy becomes a maximum over actions.",
+          "visual": { "type": "equation", "tex": "V^{*}(s) = \\max_a \\sum_{s', r} p(s', r \\mid s, a)\\,[\\, r + \\gamma\\, V^{*}(s') \\,] = \\max_a Q^{*}(s, a)", "note": "Bellman optimality equation" }
+        },
+        {
+          "text": "The Bellman operator T takes a guess at the value function and returns a better one; its fixed point is the optimal value.",
+          "visual": { "type": "equation", "tex": "(\\mathcal{T}V)(s) = \\max_a \\sum_{s', r} p(s', r \\mid s, a)\\,[\\, r + \\gamma\\, V(s') \\,]", "note": "T V* = V* is the fixed point" }
+        },
+        {
+          "text": "In the backup explorer a near-zero discount makes the higher-reward action win, while a discount near one favors the richer successor.",
+          "visual": { "type": "bars", "values": [5.0, 1.0, 14.0, 19.0], "labels": ["Q(A) γ→0", "Q(B) γ→0", "Q(A) γ=0.9", "Q(B) γ=0.9"], "highlight": 3 }
+        },
+        {
+          "text": "For a discount below one the operator is a gamma-contraction, which by the Banach theorem guarantees a single value you can iterate to.",
+          "visual": { "type": "stat", "value": 0.9, "label": "discount γ: contraction factor per backup", "decimals": 2 }
+        }
+      ]
+    },
+    {
+      "id": "rl-02-dynamic-programming-s2",
+      "chapter": "rl/02-dynamic-programming",
+      "section": "s2",
+      "title": "Policy evaluation",
+      "eyebrow": "REINFORCEMENT LEARNING",
+      "beats": [
+        {
+          "text": "Before improving a policy you must score it, computing the value of a fixed policy from the Bellman expectation equation.",
+          "visual": { "type": "title", "text": "Policy evaluation", "sub": "Score a fixed policy by iterating one backup" }
+        },
+        {
+          "text": "Turn the equation into an update rule: plug your current estimate into the right-hand side and read off a new one.",
+          "visual": { "type": "equation", "tex": "V_{k+1}(s) \\leftarrow \\sum_a \\pi(a \\mid s) \\sum_{s', r} p(s', r \\mid s, a)\\,[\\, r + \\gamma\\, V_k(s') \\,]", "note": "Iterative policy evaluation, swept until change < θ" }
+        },
+        {
+          "text": "Because this operator is also a gamma-contraction, the estimates converge to the true value geometrically from any start.",
+          "visual": { "type": "plot", "ys": [0, -8, -14, -18, -20, -21, -22], "dot": true, "xlabel": "sweep", "ylabel": "deepest cell value" }
+        },
+        {
+          "text": "On the four-by-four gridworld under a random policy, corner-adjacent cells settle near minus fourteen and the deepest cells reach about minus twenty-two.",
+          "visual": { "type": "bars", "values": [-14, -18, -20, -22], "labels": ["near goal", "mid", "deep", "deepest"], "highlight": 3 }
+        },
+        {
+          "text": "Those numbers are the expected number of steps a random walker takes to stumble out of the grid, negated.",
+          "visual": { "type": "stat", "value": -22, "label": "deepest interior value under random policy", "unit": "steps" }
+        },
+        {
+          "text": "Policy evaluation scores a policy but cannot improve one; the leverage comes from pairing it with a greedy step.",
+          "visual": { "type": "lattice" }
+        }
+      ]
+    },
+    {
+      "id": "rl-02-dynamic-programming-s3",
+      "chapter": "rl/02-dynamic-programming",
+      "section": "s3",
+      "title": "Value iteration",
+      "eyebrow": "REINFORCEMENT LEARNING",
+      "beats": [
+        {
+          "text": "Why fully evaluate a policy you are about to throw away? Value iteration does one backup using the max over actions.",
+          "visual": { "type": "title", "text": "Value iteration", "sub": "One greedy backup per sweep, no inner loop" }
+        },
+        {
+          "text": "That is the Bellman optimality operator applied as an update, driving the value straight to optimal without naming any intermediate policy.",
+          "visual": { "type": "equation", "tex": "V_{k+1}(s) \\leftarrow \\max_a \\sum_{s', r} p(s', r \\mid s, a)\\,[\\, r + \\gamma\\, V_k(s') \\,]", "note": "Value iteration, EQ R2.5" }
+        },
+        {
+          "text": "On the gridworld with no discount this converges in just four sweeps, flooding value outward one ring per sweep.",
+          "visual": { "type": "plot", "ys": [0, -1, -2, -3, -3], "dot": true, "xlabel": "sweep", "ylabel": "max change Δ" }
+        },
+        {
+          "text": "Convergence rests on contraction: each backup shrinks the worst-case error between any two value tables by at least gamma.",
+          "visual": { "type": "equation", "tex": "\\lVert \\mathcal{T}U - \\mathcal{T}V \\rVert_\\infty \\le \\gamma\\, \\lVert U - V \\rVert_\\infty", "note": "T is a γ-contraction in the max-norm" }
+        },
+        {
+          "text": "After k sweeps the error is bounded by gamma to the k, so the discount alone sets the rate of geometric convergence.",
+          "visual": { "type": "plot", "ys": [1.0, 0.9, 0.81, 0.729, 0.6561, 0.59049], "dot": true, "xlabel": "sweep k", "ylabel": "error bound γ^k" }
+        },
+        {
+          "text": "At a discount of zero point nine you lose about one digit of error every twenty-two sweeps; near one the crawl is much slower.",
+          "visual": { "type": "stat", "value": 22, "label": "sweeps to lose one digit of error at γ=0.9", "unit": "sweeps" }
+        }
+      ]
+    },
+    {
+      "id": "rl-02-dynamic-programming-s4",
+      "chapter": "rl/02-dynamic-programming",
+      "section": "s4",
+      "title": "Policy iteration",
+      "eyebrow": "REINFORCEMENT LEARNING",
+      "beats": [
+        {
+          "text": "Policy iteration takes the opposite tack: evaluate the current policy completely, then make it greedy with respect to those values.",
+          "visual": { "type": "title", "text": "Policy iteration", "sub": "Evaluate to convergence, then improve" }
+        },
+        {
+          "text": "The improvement step acts greedily one step then follows the old policy, which can only raise the value.",
+          "visual": { "type": "equation", "tex": "\\pi'(s) = \\arg\\max_a \\sum_{s', r} p(s', r \\mid s, a)\\,[\\, r + \\gamma\\, V^\\pi(s') \\,]", "note": "Policy improvement, greedy step" }
+        },
+        {
+          "text": "The policy improvement theorem guarantees the new policy is at least as good everywhere, with strict gains unless already optimal.",
+          "visual": { "type": "equation", "tex": "V^{\\pi'}(s) \\ge V^\\pi(s) \\quad \\text{for all } s", "note": "Monotone non-decreasing value across rounds" }
+        },
+        {
+          "text": "Since a finite MDP has finitely many deterministic policies, the loop terminates exactly; on the gridworld it takes four rounds.",
+          "visual": { "type": "stat", "value": 4, "label": "improvement rounds to optimal on 4x4 grid", "unit": "rounds" }
+        },
+        {
+          "text": "Policy and value iteration are endpoints of one spectrum, with modified policy iteration running m evaluation sweeps in between.",
+          "visual": { "type": "bars", "values": [1, 5, 100], "labels": ["value iter (1)", "modified (m)", "policy iter (full)"], "highlight": 0 }
+        },
+        {
+          "text": "Both are generalized policy iteration: evaluation and improvement chase each other until they agree at the optimal pair.",
+          "visual": { "type": "lattice" }
+        }
+      ]
+    },
+    {
+      "id": "rl-02-dynamic-programming-s5",
+      "chapter": "rl/02-dynamic-programming",
+      "section": "s5",
+      "title": "Why DP needs the model",
+      "eyebrow": "REINFORCEMENT LEARNING",
+      "beats": [
+        {
+          "text": "Every backup in this chapter sums over the dynamics, an expectation you can only compute if you know the transition model.",
+          "visual": { "type": "title", "text": "Why DP needs the model", "sub": "Every backup is an expectation over p(s',r | s,a)" }
+        },
+        {
+          "text": "You rarely have that model: a robot ships without a transition table and a game agent never sees the opponent's policy.",
+          "visual": { "type": "equation", "tex": "\\sum_{s', r} p(s', r \\mid s, a)\\,[\\,\\cdot\\,]", "note": "The fingerprint requiring a known model" }
+        },
+        {
+          "text": "Even with the model each sweep is expensive, costing order states squared times actions for a dense transition model.",
+          "visual": { "type": "equation", "tex": "O(|\\mathcal{S}|^2\\,|\\mathcal{A}|)", "note": "Per-sweep cost; the curse of dimensionality" }
+        },
+        {
+          "text": "A robot arm with ten joints discretized to a hundred positions each has a hundred to the tenth power states.",
+          "visual": { "type": "stat", "value": 100000000000000000000, "label": "states for a 10-joint arm at 100 positions each" }
+        },
+        {
+          "text": "The escape route is sampling: replace the exact expectation with a transition you actually take and observe.",
+          "visual": { "type": "equation", "tex": "V(s) \\leftarrow V(s) + \\alpha\\,[\\, r + \\gamma V(s') - V(s) \\,]", "note": "TD learning: EQ R2.4 with one sample and rate α" }
+        },
+        {
+          "text": "That single swap turns value iteration into Q-learning and keeps the GPI skeleton; DP is the ground truth the rest approximates.",
+          "visual": { "type": "bars", "values": [1, 1, 1, 0], "labels": ["policy eval", "value iter", "policy iter", "TD/Q-learn"], "highlight": 3 }
+        }
+      ]
+    }
+  ]
+}

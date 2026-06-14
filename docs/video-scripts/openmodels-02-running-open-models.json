@@ -1,0 +1,169 @@
+{
+  "concepts": [
+    {
+      "id": "openmodels-02-running-open-models-s1",
+      "chapter": "openmodels/02-running-open-models",
+      "section": "s1",
+      "title": "The local inference stack",
+      "eyebrow": "OPEN MODELS",
+      "beats": [
+        {
+          "text": "Open weights are just a folder of tensors and a config, inert until an inference engine loads and runs them.",
+          "visual": { "type": "title", "text": "The local inference stack", "sub": "From metal to prompt" }
+        },
+        {
+          "text": "The stack has four layers: hardware sets the memory ceiling, kernels run the matmul, the engine decides quant and cache, and the front-end is how you talk to it.",
+          "visual": { "type": "bars", "values": [4, 3, 2, 1], "labels": ["Hardware", "Kernels", "Engine", "Front-end"], "highlight": 2 }
+        },
+        {
+          "text": "Two questions choose the engine: where the model lives, and how many requests run at once.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "Single-stream decode is bound by memory bandwidth, not FLOPs, because every weight is read from memory for each token.",
+          "visual": { "type": "equation", "tex": "\\text{tok/s} \\lesssim \\frac{\\text{BW}}{N_{\\text{params}} \\times \\frac{\\text{bits}}{8}}", "note": "EQ OM2.1 the decode bandwidth bound" }
+        },
+        {
+          "text": "A 7B model in 4-bit reads about 3.5 GB per token, so a 1 TB/s GPU caps near 285 tokens per second.",
+          "visual": { "type": "stat", "value": 285, "label": "decode ceiling, 7B at 4-bit on 1 TB/s", "unit": "tok/s", "decimals": 0 }
+        },
+        {
+          "text": "Quantizing from 16-bit to 4-bit reads four times fewer bytes per token, so it roughly quadruples decode speed.",
+          "visual": { "type": "plot", "ys": [285, 142, 95, 71], "dot": 0, "xlabel": "precision", "ylabel": "tok/s ceiling", "mark": "4-bit fastest" }
+        }
+      ]
+    },
+    {
+      "id": "openmodels-02-running-open-models-s2",
+      "chapter": "openmodels/02-running-open-models",
+      "section": "s2",
+      "title": "llama.cpp & GGUF",
+      "eyebrow": "OPEN MODELS",
+      "beats": [
+        {
+          "text": "llama.cpp, started in 2023, is the dependency-light C and C++ engine that made local inference mainstream.",
+          "visual": { "type": "title", "text": "llama.cpp & GGUF", "sub": "The engine behind local inference" }
+        },
+        {
+          "text": "GGUF is a single self-describing file holding the quantized tensors, tokenizer, chat template, and metadata, so nothing can mismatch.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "A name like Q4_K_M reads as roughly four bits per weight, k-quant per-block scales, and a medium mix keeping sensitive tensors higher.",
+          "visual": { "type": "bars", "values": [16, 8, 5.5, 4.5], "labels": ["bf16", "Q8_0", "Q5_K_M", "Q4_K_M"], "highlight": 3 }
+        },
+        {
+          "text": "Footprint is just parameters times bits per weight over eight, the whole game on a memory-limited box.",
+          "visual": { "type": "equation", "tex": "\\text{GB} = \\frac{N_{\\text{params}} \\times \\text{bpw}}{8 \\times 10^{9}}", "note": "EQ OM2.2 weight footprint" }
+        },
+        {
+          "text": "For a 7B model that means 14 GB at bf16, 7 GB at Q8, and 3.5 GB at Q4.",
+          "visual": { "type": "plot", "ys": [14, 7, 3.5], "dot": 2, "xlabel": "quant level", "ylabel": "weights GB", "mark": "Q4 = 3.5 GB" }
+        },
+        {
+          "text": "Apple unified memory shares one pool, so a 64 GB Mac can hold a 70B Q4 that no consumer discrete GPU can.",
+          "visual": { "type": "stat", "value": 64, "label": "unified memory holds a 70B Q4", "unit": "GB", "decimals": 0 }
+        }
+      ]
+    },
+    {
+      "id": "openmodels-02-running-open-models-s3",
+      "chapter": "openmodels/02-running-open-models",
+      "section": "s3",
+      "title": "vLLM & production serving",
+      "eyebrow": "OPEN MODELS",
+      "beats": [
+        {
+          "text": "vLLM optimizes the opposite end from llama.cpp: many concurrent users on datacenter GPUs at the lowest cost per token.",
+          "visual": { "type": "title", "text": "vLLM & production serving", "sub": "Throughput over latency" }
+        },
+        {
+          "text": "Naive serving pre-allocates a contiguous cache per request at maximum length, stranding most of that memory.",
+          "visual": { "type": "bars", "values": [100, 30], "labels": ["allocated", "actually used"], "highlight": 0 }
+        },
+        {
+          "text": "PagedAttention borrows virtual memory: the cache becomes fixed-size blocks handed out on demand and shared across identical prefixes.",
+          "visual": { "type": "equation", "tex": "\\text{max seqs} \\approx \\frac{M_{\\text{KV}}}{\\text{bytes/token} \\times \\bar{T}}", "note": "EQ OM2.3 KV blocks and concurrency" }
+        },
+        {
+          "text": "The original paper reports up to two to four times higher throughput at the same latency.",
+          "visual": { "type": "stat", "value": 4, "label": "throughput gain at equal latency", "unit": "x", "decimals": 0 }
+        },
+        {
+          "text": "Throughput rises with batch size while the GPU has spare parallelism, then flattens once you hit the saturation knee.",
+          "visual": { "type": "plot", "ys": [40, 320, 900, 1280, 1300, 1290], "dot": 3, "xlabel": "batch size", "ylabel": "aggregate tok/s", "mark": "saturation knee" }
+        },
+        {
+          "text": "Use llama.cpp for one user and vLLM when you serve traffic; the same weights run on both, only the accounting changes.",
+          "visual": { "type": "lattice" }
+        }
+      ]
+    },
+    {
+      "id": "openmodels-02-running-open-models-s4",
+      "chapter": "openmodels/02-running-open-models",
+      "section": "s4",
+      "title": "Quantization for local (recap)",
+      "eyebrow": "OPEN MODELS",
+      "beats": [
+        {
+          "text": "Quantization is the lever that turns needs-a-datacenter into runs-on-my-desk by storing each weight in fewer bits.",
+          "visual": { "type": "title", "text": "Quantization for local", "sub": "The single biggest lever" }
+        },
+        {
+          "text": "Trained weights cluster near zero, so modern schemes spend their code values where the weights are and protect outlier channels.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "The quality cost is not linear: roughly lossless above 8 bits, small near 4 to 6, and steep below 4.",
+          "visual": { "type": "equation", "tex": "\\Delta q(\\text{bpw}) \\approx \\begin{cases} 0 & \\text{bpw} \\ge 8 \\\\ \\text{small} & \\text{bpw} \\approx 4\\text{-}6 \\\\ \\text{steep} & \\text{bpw} < 4 \\end{cases}", "note": "EQ OM2.4 the quality elbow" }
+        },
+        {
+          "text": "Quality retained holds near full down to about 4 bits, then falls off sharply through Q3 and Q2.",
+          "visual": { "type": "plot", "ys": [99.9, 99.2, 98.5, 94.5, 87.0], "dot": 1, "xlabel": "fewer bits", "ylabel": "quality retained %", "mark": "elbow at Q4" }
+        },
+        {
+          "text": "The practical sweet spot for local use is Q4_K_M to Q5_K_M, around 4.5 to 5.5 effective bits per weight.",
+          "visual": { "type": "stat", "value": 4.5, "label": "sweet-spot bits per weight, Q4_K_M", "unit": "bpw", "decimals": 1 }
+        },
+        {
+          "text": "At a fixed memory budget a 4-bit copy of a bigger model beats an 8-bit copy of a smaller one; parameters buy more than precision.",
+          "visual": { "type": "bars", "values": [98.5, 97.0], "labels": ["bigger @ 4-bit", "smaller @ 8-bit"], "highlight": 0 }
+        }
+      ]
+    },
+    {
+      "id": "openmodels-02-running-open-models-s5",
+      "chapter": "openmodels/02-running-open-models",
+      "section": "s5",
+      "title": "Hardware sizing — will it fit?",
+      "eyebrow": "OPEN MODELS",
+      "beats": [
+        {
+          "text": "Everything reduces to one inequality: the model's total footprint must fit under your memory ceiling.",
+          "visual": { "type": "title", "text": "Will it fit?", "sub": "Weights plus KV plus overhead" }
+        },
+        {
+          "text": "Total inference memory is weights, plus a KV cache that grows with context and batch, plus one to two GB of overhead.",
+          "visual": { "type": "equation", "tex": "M_{\\text{total}} = N_{\\text{params}}\\tfrac{\\text{bpw}}{8} + 2 L\\, h_{kv}\\, d_k\\, T\\, b\\,\\tfrac{\\text{bits}_{kv}}{8} + M_{\\text{ov}}", "note": "EQ OM2.5 total inference memory" }
+        },
+        {
+          "text": "Weights are constant, but for an 8B model the KV cache climbs steeply with context length.",
+          "visual": { "type": "plot", "ys": [0.5, 2.1, 8.6, 34.4], "dot": 3, "xlabel": "context 2K to 128K", "ylabel": "KV cache GB", "mark": "rivals the weights" }
+        },
+        {
+          "text": "A 7B model at 4-bit needs about 3.5 GB of weights, plus 1 GB KV and 1.5 GB overhead, for 6 GB total.",
+          "visual": { "type": "stat", "value": 6, "label": "total memory, 7B at Q4, 8K context", "unit": "GB", "decimals": 0 }
+        },
+        {
+          "text": "That 6 GB fits an 8 GB card with a sliver of headroom, exactly where laptops became viable.",
+          "visual": { "type": "bars", "values": [3.5, 1, 1.5], "labels": ["weights", "KV", "overhead"], "highlight": 0 }
+        },
+        {
+          "text": "Leave headroom: a model sitting at 100 percent of VRAM will OOM the moment context grows, so target about 85 to 90 percent.",
+          "visual": { "type": "stat", "value": 90, "label": "target ceiling utilization", "unit": "%", "decimals": 0 }
+        }
+      ]
+    }
+  ]
+}

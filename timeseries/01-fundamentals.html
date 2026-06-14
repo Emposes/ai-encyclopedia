@@ -1,0 +1,716 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Time Series Fundamentals — AI Encyclopedia</title>
+<meta name="description" content="Data with a clock attached breaks the i.i.d. assumption every other model depends on — trend, seasonality, autocorrelation, white noise, the random walk, and how differencing tames a series into stationarity." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+</head>
+<body data-track="timeseries" data-level="intro">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ TIME SERIES / 01 / FUNDAMENTALS</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../timeseries/02-arima.html">NEXT: 02 ARIMA →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">TIME SERIES &amp; ECONOMETRICS · CHAPTER 01 / 06</div>
+    <h1>Time Series Fundamentals</h1>
+    <p class="lede">Most models assume the rows are interchangeable, so shuffling them loses nothing. Attach a clock and that assumption fails: yesterday shapes today, the order <em>is</em> the signal, and ordinary error bars understate uncertainty. <strong>A time index breaks the i.i.d. assumption every other model relies on, and stationarity is the weaker condition that replaces it.</strong></p>
+    <div class="ch-meta">
+      <span>LEVEL<b>INTRO</b></span>
+      <span>READING TIME<b>≈ 24 MIN</b></span>
+      <span>BUILDS ON<b>STATS 01–03</b></span>
+      <span>INSTRUMENTS<b>DECOMPOSER · ACF/PACF · RANDOM WALK</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">1.1</span>Trend, seasonality &amp; noise</a>
+      <a href="#s2"><span class="n">1.2</span>Stationarity &amp; why it matters</a>
+      <a href="#s3"><span class="n">1.3</span>Autocorrelation — ACF &amp; PACF</a>
+      <a href="#s4"><span class="n">1.4</span>White noise &amp; the random walk</a>
+      <a href="#s5"><span class="n">1.5</span>Differencing &amp; transforms</a>
+      <a href="#s6"><span class="n">1.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 1.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">1.1</span><h2>Trend, seasonality &amp; noise</h2></div>
+        <p>A <strong>time series</strong> is a sequence of observations indexed by time, \(y_1, y_2, \ldots, y_T\), where the index is not a label but a coordinate: \(y_t\) and \(y_{t+1}\) are neighbours, and that adjacency carries information. The first reflex of the field is to read the series as a <em>sum of structured parts plus what is left over</em>. The classical decomposition is additive:</p>
+
+        <div class="eq"><span class="eq-tag">EQ T1.1 — ADDITIVE DECOMPOSITION</span>
+        $$ y_t \;=\; T_t \;+\; S_t \;+\; R_t $$
+        <div class="eq-note">\(T_t\) is the <b>trend-cycle</b> — the slow drift (a growing user base, a warming climate); \(S_t\) is the <b>seasonal</b> component — a pattern that repeats every \(m\) steps (weekly traffic, yearly retail); \(R_t\) is the <b>remainder</b> — everything the first two cannot explain, ideally structureless noise. When the seasonal swings <em>grow with the level</em> of the series, a <b>multiplicative</b> form \(y_t = T_t \times S_t \times R_t\) fits better — and taking logs turns multiplication back into the additive form above, the first hint that a transform can simplify structure.</div>
+        </div>
+
+        <p>This split is descriptive, not causal: it is a lens, and choosing additive versus multiplicative, or the seasonal period \(m\), is a modelling decision you make by looking. The remainder \(R_t\) is the part we actually want to be boring. If \(R_t\) still wiggles in a predictable way — if knowing \(R_{t-1}\) helps you guess \(R_t\) — then the decomposition left structure on the table, and the chapters that follow (ARIMA, ETS, GARCH) exist to mop it up.</p>
+
+        <p class="note"><strong>A note on honesty.</strong> The classical additive split assumes the trend is smooth and the season has a fixed period and shape. Real series violate both — holidays move, regimes shift, the period itself drifts. Robust modern decompositions (STL, the loess-based method) allow the seasonal shape to evolve and resist outliers; treat any decomposition as a hypothesis to check, not a fact to trust.</p>
+
+        <div class="exercise" data-answer="120" data-tol="0.001" data-unit="" data-hint="Add the three components at that timestamp: T + S + R.">
+          <div class="ex-q">Under the additive model (EQ T1.1), at a given month the trend is \( T_t = 100 \), the seasonal term is \( S_t = 25 \), and the remainder is \( R_t = -5 \). What is the observed value \( y_t \)?</div>
+          <div class="ex-reveal-src">The additive decomposition simply sums the parts: \( y_t = T_t + S_t + R_t = 100 + 25 + (-5) = \) <b>120</b>. Each component pulls the level up or down; the remainder is the small correction the structured terms missed.</div>
+        </div>
+
+        <div class="widget" id="ts-decomp-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT T1.1 — TIME-SERIES DECOMPOSER</span><span class="w-sub">COMPOSE T + S + R · EQ T1.1</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>TREND SLOPE <output id="ts-decomp-trend-out">0.40</output></label><input type="range" id="ts-decomp-trend" min="-0.6" max="0.6" step="0.05" value="0.4"/></div>
+              <div class="ctl"><label>SEASONAL AMPLITUDE <output id="ts-decomp-seas-out">8</output></label><input type="range" id="ts-decomp-seas" min="0" max="16" step="1" value="8"/></div>
+              <div class="ctl"><label>NOISE LEVEL σ <output id="ts-decomp-noise-out">3.0</output></label><input type="range" id="ts-decomp-noise" min="0" max="8" step="0.5" value="3"/></div>
+            </div>
+            <canvas class="w-canvas" id="ts-decomp-canvas" height="340"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">OBSERVED RANGE</div><div class="r-value" id="ts-decomp-range">—</div></div>
+              <div class="readout"><div class="r-label">SEASONAL PERIOD m</div><div class="r-value" id="ts-decomp-period">12</div></div>
+              <div class="readout"><div class="r-label">REMAINDER VARIANCE</div><div class="r-value" id="ts-decomp-var">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Four stacked panels: the <span style="color:var(--accent);">observed</span> series on top, then the three components that built it — trend, seasonal, remainder. Push the <b>trend slope</b> negative to watch the whole series tilt down; the seasonal panel never moves, because season is independent of level in the additive model. Crank <b>noise</b> up and the remainder panel fills with hash while the observed series gets ragged — that hash is exactly the \(R_t\) the next chapters try to model. With noise at zero, the observed series is a clean sum of two smooth curves: a perfect, and unrealistic, world.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 1.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">1.2</span><h2>Stationarity &amp; why it matters</h2></div>
+        <p>Here is the assumption almost every classical model needs, and the one a clock loves to break. A series is <strong>(weakly) stationary</strong> if its statistical character does not depend on <em>when</em> you look at it. Concretely, three things must hold for all \(t\) and all lags \(k\):</p>
+
+        <div class="eq"><span class="eq-tag">EQ T1.2 — WEAK (COVARIANCE) STATIONARITY</span>
+        $$ \mathbb{E}[y_t] = \mu \;\;(\text{constant}), \qquad \mathrm{Var}(y_t) = \sigma^2 \;\;(\text{constant}), \qquad \mathrm{Cov}(y_t,\, y_{t+k}) = \gamma_k \;\;(\text{depends on } k \text{ only}) $$
+        <div class="eq-note">The mean is flat, the variance is flat, and the covariance between two points depends only on the <b>gap</b> \(k\) between them, never on their absolute position. A series with a trend fails the first condition; a series whose swings widen over time fails the second; a series with a moving seasonal pattern fails the third. <b>Stationarity is what lets the past stand in for the future</b> — if the rules of the game keep changing, a model fit on history is estimating a target that no longer exists.</div>
+        </div>
+
+        <p>Why is this the load-bearing assumption? Independent-and-identically-distributed (i.i.d.) data is the comfortable world of the rest of this encyclopedia: each row drawn fresh from one fixed distribution, so a sample average converges to the truth and a single split estimates generalization (the holdout logic of MLOPS · §1.1). A time series is emphatically <em>not</em> i.i.d. — the points are dependent by construction. Stationarity is the weaker substitute: it does not require independence, only that the dependence structure be <strong>stable over time</strong>. That stability is enough to make estimation and forecasting well-posed.</p>
+
+        <table class="data">
+          <thead><tr><th>Series</th><th>Violates</th><th>Stationary?</th><th>Fix (§1.5)</th></tr></thead>
+          <tbody>
+            <tr><td>Linear upward trend</td><td class="m">constant mean</td><td class="m">no</td><td>difference once</td></tr>
+            <tr><td>Variance grows with level</td><td class="m">constant variance</td><td class="m">no</td><td>log / Box–Cox</td></tr>
+            <tr><td>Seasonal sales</td><td class="m">const. mean &amp; \(\gamma_k\)</td><td class="m">no</td><td>seasonal difference</td></tr>
+            <tr><td>White noise</td><td class="m">— nothing —</td><td class="hl">yes</td><td>already there</td></tr>
+            <tr><td>Stable AR(1), \(|\phi|&lt;1\)</td><td class="m">— nothing —</td><td class="hl">yes</td><td>already there</td></tr>
+          </tbody>
+        </table>
+
+        <p class="note"><strong>Strict vs weak.</strong> The definition above is <em>weak</em> (second-order) stationarity — it constrains only the first two moments. <em>Strict</em> stationarity asks that the entire joint distribution be time-invariant, a much stronger demand. For Gaussian processes the two coincide, which is why the weak form is the working definition in practice. Most of forecasting lives on the assumption that, after some transform, the series is weakly stationary.</p>
+
+        <div class="exercise" data-answer="no" data-tol="0" data-unit="" data-hint="Does a long-run upward trend keep the mean constant over time?">
+          <div class="ex-q">A company's monthly revenue grows steadily year after year along a clear upward trend. Is that raw revenue series stationary in the sense of EQ T1.2? (Answer <b>yes</b> or <b>no</b>.)</div>
+          <div class="ex-reveal-src">A persistent upward trend means \(\mathbb{E}[y_t]\) climbs with \(t\) — the mean is <em>not</em> constant, so the first condition of EQ T1.2 fails. The series is <b>no</b>t stationary; differencing it (§1.5) removes the trend and usually restores stationarity.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 1.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">1.3</span><h2>Autocorrelation — ACF &amp; PACF</h2></div>
+        <p>If the points are dependent, the natural question is: <em>how</em> dependent, and at what range? The <strong>autocorrelation function (ACF)</strong> answers it by correlating the series with a delayed copy of itself. At lag \(k\) it is the covariance \(\gamma_k\) from EQ T1.2, normalized by the variance so it lives in \([-1, +1]\):</p>
+
+        <div class="eq"><span class="eq-tag">EQ T1.3 — THE AUTOCORRELATION FUNCTION</span>
+        $$ \rho_k \;=\; \frac{\gamma_k}{\gamma_0} \;=\; \frac{\mathrm{Cov}(y_t,\, y_{t+k})}{\mathrm{Var}(y_t)}, \qquad \hat{\rho}_k = \frac{\sum_{t=1}^{T-k} (y_t - \bar{y})(y_{t+k} - \bar{y})}{\sum_{t=1}^{T} (y_t - \bar{y})^2} $$
+        <div class="eq-note">\(\rho_0 = 1\) always (a series is perfectly correlated with itself). The plot of \(\hat{\rho}_k\) against \(k\) is a <b>correlogram</b>. Under the null of pure white noise, the estimates scatter inside a band of roughly \(\pm 1.96/\sqrt{T}\) — bars that poke outside it are evidence of real structure. <b>The shape of the ACF is a fingerprint:</b> a slow geometric decay says "autoregressive memory"; a sharp cut-off after a few lags says "moving-average"; a single tall spike at lag \(m\) says "seasonality of period \(m\)".</div>
+        </div>
+
+        <p>The ACF has a blind spot. If today depends on yesterday, then today also correlates with the day before — not directly, but <em>through</em> yesterday. The ACF cannot tell a direct link from a relayed one. The <strong>partial autocorrelation function (PACF)</strong> closes that gap: \(\alpha_k\) is the correlation between \(y_t\) and \(y_{t-k}\) <em>after removing</em> the linear effect of all the lags in between. It is the <em>direct</em> dependence at range \(k\), with the relayed paths stripped out.</p>
+
+        <div class="eq"><span class="eq-tag">EQ T1.4 — ACF / PACF SIGNATURES</span>
+        $$ \text{AR}(p): \quad \text{ACF decays},\;\; \text{PACF cuts off after lag } p; \qquad \text{MA}(q): \quad \text{ACF cuts off after lag } q,\;\; \text{PACF decays} $$
+        <div class="eq-note">This duality is the classic Box–Jenkins identification rule, and it is why both plots are read together. An <b>AR(\(p\))</b> process — each value a weighted sum of its own past — shows a PACF that drops to zero past lag \(p\), because once you condition on the first \(p\) lags there is no direct link left. An <b>MA(\(q\))</b> process — each value a weighted sum of past shocks — is its mirror image. Chapter 02 turns these fingerprints into fitted models.</div>
+        </div>
+
+        <p>For the workhorse AR(1) process \(y_t = \phi\, y_{t-1} + \varepsilon_t\), the theory is exact and worth memorizing: the ACF is a clean geometric decay, \(\rho_k = \phi^k\), and the PACF is a single spike of height \(\phi\) at lag 1 and exactly zero everywhere after. That pair — exponential ACF, one-spike PACF — is the textbook AR(1) signature, and it is what the next instrument lets you see.</p>
+
+        <div class="exercise" data-answer="0.343" data-tol="0.02" data-unit="" data-hint="For AR(1), the theoretical ACF at lag k is phi to the power k.">
+          <div class="ex-q">An AR(1) process \( y_t = \phi\,y_{t-1} + \varepsilon_t \) has \( \phi = 0.7 \). Using the AR(1) result \( \rho_k = \phi^{k} \), what is its theoretical autocorrelation at lag \( k = 3 \)?</div>
+          <div class="ex-reveal-src">For an AR(1), the ACF decays geometrically: \( \rho_3 = \phi^3 = 0.7^3 = 0.7 \times 0.7 \times 0.7 = \) <b>0.343</b>. Memory fades by a constant factor \(\phi\) per step — the defining shape of an autoregressive correlogram.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Simulate AR(1), then compute and plot its sample ACF (EQ T1.3).
+import numpy as np
+rng = np.random.default_rng(0)
+
+phi, T = 0.7, 600
+eps = rng.normal(0, 1, T)
+y = np.zeros(T)
+for t in range(1, T):            # y_t = phi * y_{t-1} + eps_t
+    y[t] = phi * y[t-1] + eps[t]
+y = y - y.mean()                 # center so the ACF formula is clean
+
+def acf(x, K):                   # sample autocorrelation up to lag K
+    denom = np.sum(x * x)
+    return np.array([np.sum(x[:len(x)-k] * x[k:]) / denom for k in range(K+1)])
+
+K = 12
+r = acf(y, K)
+band = 1.96 / np.sqrt(T)         # +/- white-noise significance band
+print(" lag   sample ACF   theory phi^k")
+for k in range(K+1):
+    flag = "  *" if abs(r[k]) > band and k > 0 else ""
+    print(f" {k:3d}    {r[k]:8.3f}     {phi**k:8.3f}{flag}")
+print(f"\nwhite-noise band +/-{band:.3f}; bars marked * are real memory.")
+print("note the sample ACF tracks the geometric phi^k decay of an AR(1).")
+plot_xy(list(range(K+1)), list(r))</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="ts-acf-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT T1.2 — ACF / PACF EXPLORER</span><span class="w-sub">AR &amp; MA SERIES → CORRELOGRAMS · EQ T1.4</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>PROCESS</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" id="ts-acf-ar">AR(1)</button>
+                  <button class="w-btn ghost" id="ts-acf-ma">MA(1)</button>
+                  <button class="w-btn ghost" id="ts-acf-wn">WHITE NOISE</button>
+                </div>
+              </div>
+              <div class="ctl"><label>COEFFICIENT <output id="ts-acf-coef-out">0.70</output></label><input type="range" id="ts-acf-coef" min="-0.9" max="0.9" step="0.05" value="0.7"/></div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>&nbsp;</label>
+                <div class="seg-row"><button class="w-btn ghost on" id="ts-acf-reshuffle">RESHUFFLE ▶</button></div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="ts-acf-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">PROCESS</div><div class="r-value" id="ts-acf-mode" style="font-size:13px;">—</div></div>
+              <div class="readout acc"><div class="r-label">SIGNATURE</div><div class="r-value" id="ts-acf-sig" style="font-size:12px;">—</div></div>
+              <div class="readout"><div class="r-label">WHITE-NOISE BAND</div><div class="r-value" id="ts-acf-band">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Top panel: a simulated realization. Bottom two: its sample <b>ACF</b> and <b>PACF</b>, with the grey \(\pm 1.96/\sqrt{T}\) band — bars inside it are indistinguishable from noise. Pick <b>AR(1)</b> and watch the ACF decay smoothly while the PACF shows one spike and quits (EQ T1.4); flip to <b>MA(1)</b> and the two plots swap roles. <b>WHITE NOISE</b> keeps almost every bar inside the band — the look of a series with no exploitable memory. Drag the coefficient negative to make the correlogram alternate sign, and press <b>RESHUFFLE</b> to feel how much a finite sample wobbles around the theory.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 1.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">1.4</span><h2>White noise &amp; the random walk</h2></div>
+        <p>Two reference processes anchor the whole subject — one the picture of "no structure," the other the most important non-stationary series in practice. <strong>White noise</strong> is the boring ideal: a sequence of uncorrelated, zero-mean, constant-variance shocks. It is stationary by construction and, crucially, <em>unforecastable beyond its mean</em>.</p>
+
+        <div class="eq"><span class="eq-tag">EQ T1.5 — WHITE NOISE</span>
+        $$ \varepsilon_t \;\sim\; (0,\, \sigma^2), \qquad \mathbb{E}[\varepsilon_t] = 0, \quad \mathrm{Var}(\varepsilon_t) = \sigma^2, \quad \mathrm{Cov}(\varepsilon_t,\, \varepsilon_{t+k}) = 0 \;\; \text{for } k \neq 0 $$
+        <div class="eq-note">Every autocorrelation past lag 0 is zero, so its ACF is a single spike at the origin and flat thereafter. <b>White noise is the goal, not the enemy:</b> when the residuals of a fitted model look like white noise, you have extracted all the linear structure the data offered. Tools like the Ljung–Box test formalize "do these residuals look white?" by checking whether a batch of autocorrelations is jointly indistinguishable from zero.</div>
+        </div>
+
+        <p>Now cumulate that noise. A <strong>random walk</strong> sets each value equal to the previous one plus a fresh independent shock — it is the running sum of white noise, and it is the canonical model for an unpredictable price, a diffusing particle, or any quantity that wanders without an anchor:</p>
+
+        <div class="eq"><span class="eq-tag">EQ T1.6 — RANDOM WALK</span>
+        $$ y_t \;=\; y_{t-1} + \varepsilon_t \;=\; y_0 + \sum_{i=1}^{t} \varepsilon_i, \qquad \mathrm{Var}(y_t) = t\,\sigma^2 $$
+        <div class="eq-note">It is the AR(1) of §1.3 pushed to its boundary, \(\phi = 1\) — a <b>unit root</b>. That single fact is decisive: the variance \(t\sigma^2\) <em>grows without bound</em>, so the constant-variance condition of EQ T1.2 fails and <b>a random walk is not stationary</b>. There is no fixed mean to revert to; a shock today is never forgotten, it is baked permanently into every future value. This is why "the series looks like it has momentum" is so often just a random walk fooling the eye — and why distinguishing a true trend from a unit root (the Dickey–Fuller test, Chapter 03) is one of the field's defining problems.</div>
+        </div>
+
+        <p class="note"><strong>The contested part, stated plainly.</strong> Whether a given real series — GDP, a stock index, an exchange rate — is "trend-stationary" (a deterministic trend plus stationary noise) or "difference-stationary" (a random walk with drift) is genuinely hard to decide from finite data, and decades of econometrics have been spent arguing specific cases. The two imply very different forecasts and very different long-run behaviour. Unit-root tests give evidence, not certainty; honest practice reports the ambiguity rather than hiding it.</p>
+
+        <div class="exercise" data-answer="no" data-tol="0" data-unit="" data-hint="Recall EQ T1.6 — what happens to Var(y_t) as t grows?">
+          <div class="ex-q">Is a random walk \( y_t = y_{t-1} + \varepsilon_t \) a stationary process? (Answer <b>yes</b> or <b>no</b>.)</div>
+          <div class="ex-reveal-src">From EQ T1.6, \(\mathrm{Var}(y_t) = t\,\sigma^2\) grows without bound as \(t\) increases, violating the constant-variance condition of EQ T1.2 — and there is no fixed mean to revert to. A random walk is <b>no</b>t stationary; its first difference \(y_t - y_{t-1} = \varepsilon_t\) is white noise, which is.</div>
+        </div>
+
+        <div class="widget" id="ts-rw-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT T1.3 — RANDOM WALK vs STATIONARY AR(1)</span><span class="w-sub">φ → 1 IS A UNIT ROOT · EQ T1.6</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>AR COEFFICIENT φ <output id="ts-rw-phi-out">0.50</output></label><input type="range" id="ts-rw-phi" min="0" max="1" step="0.01" value="0.5"/></div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>&nbsp;</label>
+                <div class="seg-row"><button class="w-btn ghost on" id="ts-rw-reshuffle">NEW SHOCKS ▶</button></div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="ts-rw-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">REGIME</div><div class="r-value" id="ts-rw-regime" style="font-size:13px;">—</div></div>
+              <div class="readout acc"><div class="r-label">THEORETICAL Var(y∞)</div><div class="r-value" id="ts-rw-var">—</div></div>
+              <div class="readout"><div class="r-label">STATIONARY?</div><div class="r-value" id="ts-rw-stat">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Five independent paths share one set of shocks but differ only in \(\phi\). Down near \(\phi = 0.5\) every path is a <span style="color:var(--accent);">tight, mean-reverting</span> AR(1): pulled back toward zero, finite variance \(\sigma^2/(1-\phi^2)\), the dashed envelope holds them in. Slide \(\phi\) toward 1 and the envelope flares open — at exactly \(\phi = 1\) it becomes a <span style="color:var(--blue);">random walk</span>, the paths wander off and never come home, and the readout's variance goes to ∞. That divergence at the unit root <em>is</em> the loss of stationarity, made visible. Press <b>NEW SHOCKS</b> to redraw.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 1.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">1.5</span><h2>Differencing &amp; transforms to stationarity</h2></div>
+        <p>So a great many real series are not stationary — and the entire toolkit needs them to be. The fix is a pair of cheap, reversible transforms that attack the two ways stationarity fails: a non-constant <em>mean</em>, and a non-constant <em>variance</em>.</p>
+
+        <p>The mean problem — trend — is killed by <strong>differencing</strong>: replace the series with the step-to-step changes. Define the difference operator \(\nabla y_t = y_t - y_{t-1}\). One difference removes a linear trend; a second difference removes a quadratic one. The payoff is exact for the random walk:</p>
+
+        <div class="eq"><span class="eq-tag">EQ T1.7 — FIRST DIFFERENCING</span>
+        $$ \nabla y_t \;=\; y_t - y_{t-1}, \qquad \text{random walk} \;\Rightarrow\; \nabla y_t = (y_{t-1} + \varepsilon_t) - y_{t-1} = \varepsilon_t $$
+        <div class="eq-note">Differencing a random walk returns pure <b>white noise</b> — the non-stationary unit root is annihilated in one step. A series that needs \(d\) differences to become stationary is called <b>integrated of order \(d\)</b>, written \(I(d)\); a random walk is \(I(1)\), white noise is \(I(0)\). That little \(d\) is precisely the "I" in <b>ARIMA</b> (Chapter 02). For seasonal trends, the seasonal difference \(\nabla_m y_t = y_t - y_{t-m}\) does the same job at lag \(m\). Caution: <b>over-differencing injects artificial negative autocorrelation</b> and inflates variance — difference only as much as you must.</div>
+        </div>
+
+        <p>The variance problem — swings that widen as the series grows — is killed by a <strong>variance-stabilizing transform</strong>. The log is the everyday choice; the <strong>Box–Cox</strong> family generalizes it with a single tunable power \(\lambda\), smoothly spanning from "no transform" (\(\lambda = 1\)) through "square root" (\(\lambda = 0.5\)) to "log" (\(\lambda \to 0\)):</p>
+
+        <div class="eq"><span class="eq-tag">EQ T1.8 — THE BOX–COX TRANSFORM</span>
+        $$ y_t^{(\lambda)} = \begin{cases} \dfrac{y_t^{\lambda} - 1}{\lambda} & \lambda \neq 0 \\[4pt] \ln y_t & \lambda = 0 \end{cases} \qquad (y_t > 0) $$
+        <div class="eq-note">Choose \(\lambda\) so the spread of the series stops depending on its level. Because \(\ln\) turns a multiplicative seasonal pattern into an additive one (recall §1.1), the log is also what converts a multiplicative decomposition into the friendly additive form. The standard recipe stacks the two: <b>first stabilize the variance with a transform, then stabilize the mean with differencing</b> — variance before mean, because differencing a heteroscedastic series just relocates the problem.</div>
+        </div>
+
+        <div class="exercise" data-answer="5" data-tol="0.001" data-unit="" data-hint="First difference is the list of consecutive gaps; report the final gap.">
+          <div class="ex-q">Apply the first-difference operator \(\nabla y_t = y_t - y_{t-1}\) to the series \( [\,2,\ 5,\ 9,\ 14\,] \). What is the <b>last</b> value of the differenced series?</div>
+          <div class="ex-reveal-src">The differences are \(5-2 = 3\), \(9-5 = 4\), \(14-9 = 5\), giving \([\,3,\ 4,\ 5\,]\). Differencing shortens the series by one (you cannot difference the first point), and the last value is <b>5</b>. Notice the gaps are themselves rising by 1 each step — a hint this series has quadratic curvature that a <em>second</em> difference would flatten.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Difference a trending series and watch the variance collapse (EQ T1.7).
+import numpy as np
+rng = np.random.default_rng(1)
+
+T = 400
+trend = 0.5 * np.arange(T)               # a steady linear climb: non-stationary mean
+y = trend + np.cumsum(rng.normal(0, 1, T))  # trend + a random-walk wander on top
+
+d1 = np.diff(y)                          # first difference: nabla y_t = y_t - y_{t-1}
+d2 = np.diff(d1)                         # second difference
+
+def stats(name, x):
+    print(f"{name:18s} mean {x.mean():8.3f}   variance {x.var():12.1f}")
+
+print("level vs differenced series:")
+stats("y (level)", y)                    # huge variance: the trend dominates
+stats("diff once (d=1)", d1)             # variance plummets; mean ~ the slope 0.5
+stats("diff twice (d=2)", d2)            # flat mean ~0; over-differenced -> var rises again
+print("\none difference removes the trend (mean -> the slope, variance collapses);")
+print("a SECOND difference over-does it -- variance climbs back. Difference sparingly.")
+plot_xy(list(range(len(d1))), list(d1))  # the stationary-looking differenced series</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>You now have the vocabulary; ARIMA gives it grammar.</strong> Once a series is stationary — variance-stabilized, then differenced \(d\) times — its leftover memory is exactly the AR and MA structure the correlograms revealed. Chapter 02 fuses the three letters: the <em>I</em>ntegration order \(d\) from this chapter, the <em>A</em>uto<em>R</em>egression and <em>M</em>oving <em>A</em>verage orders \(p\) and \(q\) read off the ACF and PACF, into the single most-used forecasting model in the world.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 1.R — References ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">1.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://doi.org/10.1002/9781118619193" target="_blank" rel="noopener">Box, G. E. P., Jenkins, G. M., Reinsel, G. C. &amp; Ljung, G. M. (2015). <span class="ref-venue">Time Series Analysis: Forecasting and Control</span> (5th ed.).</a> <span class="ref-meta">Wiley — the canonical text; the ACF/PACF identification method (§1.3) and integration order \(d\) (§1.5) are its core.</span></li>
+          <li><a href="https://press.princeton.edu/books/hardcover/9780691042893/time-series-analysis" target="_blank" rel="noopener">Hamilton, J. D. (1994). <span class="ref-venue">Time Series Analysis</span>.</a> <span class="ref-meta">Princeton University Press — the graduate-level reference for stationarity, unit roots, and the econometric theory behind §1.2 and §1.4.</span></li>
+          <li><a href="https://otexts.com/fpp3/" target="_blank" rel="noopener">Hyndman, R. J. &amp; Athanasopoulos, G. (2021). <span class="ref-venue">Forecasting: Principles and Practice</span> (3rd ed.).</a> <span class="ref-meta">OTexts (free online) — the modern practitioner's guide; decomposition (§1.1), STL, and Box–Cox (§1.5).</span></li>
+          <li><a href="https://doi.org/10.1080/01621459.1979.10482531" target="_blank" rel="noopener">Dickey, D. A. &amp; Fuller, W. A. (1979). <span class="ref-venue">Distribution of the Estimators for Autoregressive Time Series with a Unit Root</span>.</a> <span class="ref-meta">JASA 74(366) — the unit-root test that decides random walk vs stationary (§1.4).</span></li>
+          <li><a href="https://doi.org/10.1111/j.2517-6161.1964.tb00553.x" target="_blank" rel="noopener">Box, G. E. P. &amp; Cox, D. R. (1964). <span class="ref-venue">An Analysis of Transformations</span>.</a> <span class="ref-meta">J. R. Stat. Soc. B 26(2) — the variance-stabilizing power transform of EQ T1.8.</span></li>
+          <li><a href="https://doi.org/10.1093/biomet/65.2.297" target="_blank" rel="noopener">Ljung, G. M. &amp; Box, G. E. P. (1978). <span class="ref-venue">On a Measure of Lack of Fit in Time Series Models</span>.</a> <span class="ref-meta">Biometrika 65(2) — the portmanteau test for "are these residuals white noise?" (§1.4).</span></li>
+          <li><a href="https://doi.org/10.1098/rsta.1927.0007" target="_blank" rel="noopener">Yule, G. U. (1927). <span class="ref-venue">On a Method of Investigating Periodicities in Disturbed Series</span>.</a> <span class="ref-meta">Phil. Trans. R. Soc. A 226 — the paper that introduced the autoregressive model (§1.3).</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../index.html#toc"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">↖</span> Index</div></a>
+        <a class="next" href="../timeseries/02-arima.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">02</span> ARIMA</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — TIME SERIES &amp; ECONOMETRICS · CH 01</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* ============================================================
+   Time Series Fundamentals — chapter instruments
+   Single IIFE, no globals. Deterministic mulberry32 RNG keeps
+   every render reproducible; setTimeout (never rAF) is used for
+   resize re-renders so background tabs stay quiet.
+   ============================================================ */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  function gaussian(rng) {            /* Box-Muller from a uniform mulberry32 */
+    var u = 1 - rng(), v = 1 - rng();
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+  }
+  function mean(a) { var s = 0, i; for (i = 0; i < a.length; i++) s += a[i]; return a.length ? s / a.length : 0; }
+  function variance(a) {
+    if (a.length < 2) return 0;
+    var m = mean(a), v = 0, i;
+    for (i = 0; i < a.length; i++) v += (a[i] - m) * (a[i] - m);
+    return v / (a.length - 1);
+  }
+
+  /* ========================================================
+     INSTRUMENT T1.1 — Time-series decomposer
+     Composes y = trend + seasonal + remainder (EQ T1.1) and
+     draws four stacked panels: observed, then each component.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("ts-decomp-demo");
+    if (!root) return;
+    var canvas = document.getElementById("ts-decomp-canvas");
+    var trendEl = document.getElementById("ts-decomp-trend");
+    var seasEl = document.getElementById("ts-decomp-seas");
+    var noiseEl = document.getElementById("ts-decomp-noise");
+    var trendOut = document.getElementById("ts-decomp-trend-out");
+    var seasOut = document.getElementById("ts-decomp-seas-out");
+    var noiseOut = document.getElementById("ts-decomp-noise-out");
+    var rangeEl = document.getElementById("ts-decomp-range");
+    var varEl = document.getElementById("ts-decomp-var");
+
+    var N = 96, M = 12, SEED = 73101;   /* 8 years of monthly data, period 12 */
+
+    function build() {
+      var slope = +trendEl.value, amp = +seasEl.value, sigma = +noiseEl.value;
+      var rng = FM.mulberry32(SEED);
+      var T = [], S = [], R = [], Y = [], i;
+      for (i = 0; i < N; i++) {
+        var tr = 50 + slope * i;                                  /* linear trend */
+        var se = amp * Math.sin((2 * Math.PI * i) / M);           /* seasonal */
+        var re = sigma * gaussian(rng);                           /* remainder */
+        T.push(tr); S.push(se); R.push(re); Y.push(tr + se + re);
+      }
+      return { T: T, S: S, R: R, Y: Y };
+    }
+
+    function drawPanel(ctx, x0, y0, w, h, series, color, label, zeroCenter) {
+      var i, lo = Infinity, hi = -Infinity;
+      for (i = 0; i < series.length; i++) { if (series[i] < lo) lo = series[i]; if (series[i] > hi) hi = series[i]; }
+      if (zeroCenter) { var mx = Math.max(Math.abs(lo), Math.abs(hi), 1e-6); lo = -mx; hi = mx; }
+      if (hi - lo < 1e-6) { hi = lo + 1; }
+      var pad = (hi - lo) * 0.12; lo -= pad; hi += pad;
+      /* frame */
+      ctx.strokeStyle = "rgba(47,50,52,.9)"; ctx.lineWidth = 1;
+      ctx.strokeRect(x0 + 0.5, y0 + 0.5, w - 1, h - 1);
+      /* zero line if it falls inside range */
+      if (lo < 0 && hi > 0) {
+        var zy = y0 + h - ((0 - lo) / (hi - lo)) * h;
+        ctx.strokeStyle = "rgba(99,99,99,.4)"; ctx.beginPath();
+        ctx.moveTo(x0, zy); ctx.lineTo(x0 + w, zy); ctx.stroke();
+      }
+      /* path */
+      ctx.strokeStyle = color; ctx.lineWidth = 1.5; ctx.beginPath();
+      for (i = 0; i < series.length; i++) {
+        var px = x0 + (i / (series.length - 1)) * w;
+        var py = y0 + h - ((series[i] - lo) / (hi - lo)) * h;
+        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+      /* label */
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT; ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText(label, x0 + 6, y0 + 5);
+    }
+
+    function render() {
+      trendOut.textContent = (+trendEl.value).toFixed(2);
+      seasOut.textContent = seasEl.value;
+      noiseOut.textContent = (+noiseEl.value).toFixed(1);
+
+      var d = build();
+      var c = FM.setupCanvas(canvas, 340);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      ctx.clearRect(0, 0, w, h);
+
+      var padL = 12, padR = 12, padT = 8, padB = 8, gap = 8;
+      var x0 = padL, pw = w - padL - padR;
+      var ph = (h - padT - padB - 3 * gap) / 4;
+      drawPanel(ctx, x0, padT + 0 * (ph + gap), pw, ph, d.Y, C.MINT, "OBSERVED  y = T + S + R", false);
+      drawPanel(ctx, x0, padT + 1 * (ph + gap), pw, ph, d.T, C.SEC, "TREND  T", false);
+      drawPanel(ctx, x0, padT + 2 * (ph + gap), pw, ph, d.S, C.BLUE, "SEASONAL  S", true);
+      drawPanel(ctx, x0, padT + 3 * (ph + gap), pw, ph, d.R, "rgba(155,155,155,.85)", "REMAINDER  R", true);
+
+      var lo = Math.min.apply(null, d.Y), hi = Math.max.apply(null, d.Y);
+      rangeEl.textContent = lo.toFixed(0) + " … " + hi.toFixed(0);
+      varEl.textContent = variance(d.R).toFixed(2);
+    }
+
+    trendEl.addEventListener("input", render);
+    seasEl.addEventListener("input", render);
+    noiseEl.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT T1.2 — ACF / PACF explorer
+     Simulates AR(1) / MA(1) / white noise, draws the series
+     plus sample ACF and PACF correlograms with a +/-1.96/sqrt(T)
+     band. PACF via Durbin-Levinson recursion.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("ts-acf-demo");
+    if (!root) return;
+    var canvas = document.getElementById("ts-acf-canvas");
+    var bAR = document.getElementById("ts-acf-ar");
+    var bMA = document.getElementById("ts-acf-ma");
+    var bWN = document.getElementById("ts-acf-wn");
+    var coefEl = document.getElementById("ts-acf-coef");
+    var coefOut = document.getElementById("ts-acf-coef-out");
+    var bShuf = document.getElementById("ts-acf-reshuffle");
+    var modeEl = document.getElementById("ts-acf-mode");
+    var sigEl = document.getElementById("ts-acf-sig");
+    var bandEl = document.getElementById("ts-acf-band");
+
+    var T = 240, KMAX = 14, mode = "ar", seed = 9001;
+
+    function simulate() {
+      var rng = FM.mulberry32(seed);
+      var coef = +coefEl.value, y = [], eps = [], i;
+      for (i = 0; i < T; i++) eps.push(gaussian(rng));
+      if (mode === "wn") {
+        for (i = 0; i < T; i++) y.push(eps[i]);
+      } else if (mode === "ar") {
+        y.push(eps[0]);
+        for (i = 1; i < T; i++) y.push(coef * y[i - 1] + eps[i]);
+      } else { /* ma */
+        y.push(eps[0]);
+        for (i = 1; i < T; i++) y.push(eps[i] + coef * eps[i - 1]);
+      }
+      return y;
+    }
+
+    function acf(y, K) {
+      var m = mean(y), denom = 0, i, k, r = [];
+      for (i = 0; i < y.length; i++) denom += (y[i] - m) * (y[i] - m);
+      for (k = 0; k <= K; k++) {
+        var s = 0;
+        for (i = 0; i < y.length - k; i++) s += (y[i] - m) * (y[i + k] - m);
+        r.push(denom > 0 ? s / denom : 0);
+      }
+      return r;
+    }
+
+    /* PACF from ACF via Durbin-Levinson */
+    function pacf(r, K) {
+      var phi = [], p = [0], k, j, prev, num, den, cur;
+      phi[1] = []; phi[1][1] = r[1]; p[1] = r[1];
+      for (k = 2; k <= K; k++) {
+        num = r[k]; den = 1;
+        for (j = 1; j < k; j++) { num -= phi[k - 1][j] * r[k - j]; den -= phi[k - 1][j] * r[j]; }
+        cur = den !== 0 ? num / den : 0;
+        phi[k] = []; phi[k][k] = cur;
+        for (j = 1; j < k; j++) phi[k][j] = phi[k - 1][j] - cur * phi[k - 1][k - j];
+        p[k] = cur;
+      }
+      return p; /* p[1..K] */
+    }
+
+    function drawStems(ctx, x0, y0, w, h, vals, band, title) {
+      /* vals[1..KMAX], a correlogram in [-1,1] (vals[0]=1 omitted) */
+      ctx.strokeStyle = "rgba(47,50,52,.9)"; ctx.lineWidth = 1;
+      ctx.strokeRect(x0 + 0.5, y0 + 0.5, w - 1, h - 1);
+      var zy = y0 + h / 2;
+      ctx.strokeStyle = "rgba(99,99,99,.5)"; ctx.beginPath();
+      ctx.moveTo(x0, zy); ctx.lineTo(x0 + w, zy); ctx.stroke();
+      /* significance band */
+      var bh = (band) * (h / 2);
+      ctx.fillStyle = "rgba(155,155,155,.12)";
+      ctx.fillRect(x0, zy - bh, w, 2 * bh);
+      ctx.strokeStyle = "rgba(155,155,155,.35)";
+      ctx.beginPath(); ctx.moveTo(x0, zy - bh); ctx.lineTo(x0 + w, zy - bh);
+      ctx.moveTo(x0, zy + bh); ctx.lineTo(x0 + w, zy + bh); ctx.stroke();
+      /* stems */
+      var n = KMAX, step = w / (n + 1), k;
+      for (k = 1; k <= n; k++) {
+        var v = Math.max(-1, Math.min(1, vals[k] || 0));
+        var px = x0 + step * k;
+        var py = zy - v * (h / 2 - 2);
+        var sig = Math.abs(v) > band;
+        ctx.strokeStyle = sig ? C.MINT : "rgba(99,99,99,.6)";
+        ctx.lineWidth = 2.5; ctx.beginPath(); ctx.moveTo(px, zy); ctx.lineTo(px, py); ctx.stroke();
+        ctx.fillStyle = sig ? C.MINT : "rgba(99,99,99,.7)";
+        ctx.beginPath(); ctx.arc(px, py, 2.4, 0, 2 * Math.PI); ctx.fill();
+      }
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT; ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText(title, x0 + 6, y0 + 5);
+    }
+
+    function render() {
+      coefOut.textContent = (+coefEl.value).toFixed(2);
+      bAR.classList.toggle("on", mode === "ar");
+      bMA.classList.toggle("on", mode === "ma");
+      bWN.classList.toggle("on", mode === "wn");
+      coefEl.disabled = (mode === "wn");
+
+      var y = simulate();
+      var r = acf(y, KMAX);
+      var pac = pacf(r, KMAX);
+      var band = 1.96 / Math.sqrt(T);
+
+      var c = FM.setupCanvas(canvas, 320);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      ctx.clearRect(0, 0, w, h);
+
+      var padL = 12, padR = 12, padT = 8, padB = 8, gap = 10;
+      var x0 = padL, pw = w - padL - padR;
+      var hTop = (h - padT - padB - 2 * gap) * 0.40;
+      var hBot = (h - padT - padB - 2 * gap - hTop) / 2;
+
+      /* top: the realization */
+      ctx.strokeStyle = "rgba(47,50,52,.9)"; ctx.lineWidth = 1;
+      ctx.strokeRect(x0 + 0.5, padT + 0.5, pw - 1, hTop - 1);
+      var lo = Math.min.apply(null, y), hi = Math.max.apply(null, y), rng2 = hi - lo || 1;
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 1.2; ctx.beginPath();
+      var i;
+      for (i = 0; i < y.length; i++) {
+        var px = x0 + (i / (y.length - 1)) * pw;
+        var py = padT + hTop - ((y[i] - lo) / rng2) * (hTop - 6) - 3;
+        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT; ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText("REALIZATION  (T = " + T + ")", x0 + 6, padT + 5);
+
+      var yA = padT + hTop + gap;
+      drawStems(ctx, x0, yA, pw, hBot, r, band, "ACF  ρ̂(k)");
+      var yP = yA + hBot + gap;
+      drawStems(ctx, x0, yP, pw, hBot, pac, band, "PACF  α̂(k)");
+
+      modeEl.textContent = mode === "ar" ? "AR(1)" : mode === "ma" ? "MA(1)" : "WHITE NOISE";
+      sigEl.textContent = mode === "ar" ? "ACF decays · PACF cuts at 1"
+                        : mode === "ma" ? "ACF cuts at 1 · PACF decays"
+                        : "both flat (no memory)";
+      bandEl.textContent = "±" + band.toFixed(3);
+    }
+
+    bAR.addEventListener("click", function () { mode = "ar"; render(); });
+    bMA.addEventListener("click", function () { mode = "ma"; render(); });
+    bWN.addEventListener("click", function () { mode = "wn"; render(); });
+    coefEl.addEventListener("input", render);
+    bShuf.addEventListener("click", function () { seed = (seed * 1664525 + 1013904223) >>> 0; render(); });
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT T1.3 — Random walk vs stationary AR(1)
+     Five AR(1) paths sharing one shock set, drawn for the chosen
+     phi, with the theoretical +/- envelope. phi -> 1 = unit root.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("ts-rw-demo");
+    if (!root) return;
+    var canvas = document.getElementById("ts-rw-canvas");
+    var phiEl = document.getElementById("ts-rw-phi");
+    var phiOut = document.getElementById("ts-rw-phi-out");
+    var bShuf = document.getElementById("ts-rw-reshuffle");
+    var regimeEl = document.getElementById("ts-rw-regime");
+    var varEl = document.getElementById("ts-rw-var");
+    var statEl = document.getElementById("ts-rw-stat");
+
+    var T = 200, PATHS = 5, seed = 4242;
+
+    function buildShocks() {
+      var rng = FM.mulberry32(seed), shocks = [], p, i;
+      for (p = 0; p < PATHS; p++) {
+        var row = [];
+        for (i = 0; i < T; i++) row.push(gaussian(rng));
+        shocks.push(row);
+      }
+      return shocks;
+    }
+
+    function render() {
+      var phi = +phiEl.value;
+      phiOut.textContent = phi.toFixed(2);
+      var shocks = buildShocks();
+
+      /* simulate paths */
+      var paths = [], p, i;
+      for (p = 0; p < PATHS; p++) {
+        var y = [0];
+        for (i = 1; i < T; i++) y.push(phi * y[i - 1] + shocks[p][i]);
+        paths.push(y);
+      }
+
+      var c = FM.setupCanvas(canvas, 320);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      ctx.clearRect(0, 0, w, h);
+      var padL = 14, padR = 14, padT = 14, padB = 22;
+      var x0 = padL, pw = w - padL - padR, gh = h - padT - padB;
+
+      /* vertical scale: theoretical 3*sigma envelope at the end, with floor */
+      var isUnit = phi >= 0.999;
+      var varInf = isUnit ? (T) : 1 / (1 - phi * phi);   /* sigma=1: var grows ~ t at unit root */
+      var spreadEnd = isUnit ? 3 * Math.sqrt(T) : 3 * Math.sqrt(varInf);
+      var ymax = Math.max(spreadEnd, 4);
+      var zy = padT + gh / 2;
+      function py(v) { return zy - (v / ymax) * (gh / 2); }
+      function px(i) { return x0 + (i / (T - 1)) * pw; }
+
+      /* zero line */
+      ctx.strokeStyle = "rgba(99,99,99,.45)"; ctx.lineWidth = 1; ctx.beginPath();
+      ctx.moveTo(x0, zy); ctx.lineTo(x0 + pw, zy); ctx.stroke();
+
+      /* theoretical +/- envelope: 3*sigma*sqrt of growing/finite variance */
+      ctx.strokeStyle = "rgba(155,155,155,.45)"; ctx.setLineDash([4, 4]); ctx.lineWidth = 1;
+      var sgn, t;
+      for (sgn = -1; sgn <= 1; sgn += 2) {
+        ctx.beginPath();
+        for (t = 0; t < T; t++) {
+          var vt = isUnit ? (t) : (1 - Math.pow(phi * phi, t + 1)) / (1 - phi * phi); /* var at step t */
+          var env = sgn * 3 * Math.sqrt(vt);
+          var X = px(t), Y = py(env);
+          if (t === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y);
+        }
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+
+      /* paths */
+      var col = isUnit ? C.BLUE : C.MINT;
+      for (p = 0; p < PATHS; p++) {
+        ctx.strokeStyle = isUnit ? "rgba(78,138,247,.8)" : "rgba(166,242,204,.8)";
+        ctx.lineWidth = 1.2; ctx.beginPath();
+        for (i = 0; i < T; i++) {
+          var Y2 = py(paths[p][i]);
+          if (i === 0) ctx.moveTo(px(i), Y2); else ctx.lineTo(px(i), Y2);
+        }
+        ctx.stroke();
+      }
+
+      /* labels */
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT; ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText("φ = " + phi.toFixed(2) + "   (dashed = ±3σ envelope)", x0 + 4, padT + 2);
+      ctx.textBaseline = "bottom";
+      ctx.fillText("t = 0", x0 + 2, h - 6);
+      ctx.textAlign = "right";
+      ctx.fillText("t = " + (T - 1), x0 + pw - 2, h - 6);
+
+      regimeEl.textContent = isUnit ? "RANDOM WALK" : "STATIONARY AR(1)";
+      varEl.textContent = isUnit ? "∞ (grows ∝ t)" : varInf.toFixed(2);
+      statEl.textContent = isUnit ? "NO — unit root" : "YES";
+    }
+
+    phiEl.addEventListener("input", render);
+    bShuf.addEventListener("click", function () { seed = (seed * 1664525 + 1013904223) >>> 0; render(); });
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

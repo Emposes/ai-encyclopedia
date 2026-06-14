@@ -1,0 +1,161 @@
+{
+  "concepts": [
+    {
+      "id": "rl-03-model-free-value-s1",
+      "chapter": "rl/03-model-free-value",
+      "section": "s1",
+      "title": "Learning without a model",
+      "eyebrow": "REINFORCEMENT LEARNING",
+      "beats": [
+        {
+          "text": "Dynamic programming could solve any problem, but only if you handed it the transition probabilities and rewards in advance.",
+          "visual": { "type": "title", "text": "Learning without a model", "sub": "Drop the model, keep the goal" }
+        },
+        {
+          "text": "Real agents are never handed the model, so model-free methods replace the expectation over next states with sampled experience.",
+          "visual": { "type": "equation", "tex": "\\mathbb{E}_{s'\\sim P}\\,[\\,\\cdot\\,] \\;\\longrightarrow\\; \\text{sample } (s,a,r,s')", "note": "Average enough samples and the law of large numbers recovers the expectation." }
+        },
+        {
+          "text": "Instead of asking for the average outcome, the agent takes the action, sees one outcome, and nudges its estimate toward it.",
+          "visual": { "type": "plot", "ys": [0.5, 0.42, 0.55, 0.48, 0.61, 0.58, 0.66, 0.69], "dot": true, "xlabel": "samples", "ylabel": "estimate" }
+        },
+        {
+          "text": "Two problems organize everything: prediction estimates the value of a fixed policy, and control searches for a good policy.",
+          "visual": { "type": "bars", "values": [1, 1], "labels": ["PREDICTION", "CONTROL"], "highlight": 1 }
+        },
+        {
+          "text": "One distinction cuts across all of it: on-policy methods learn about the policy they act with, off-policy methods can learn about a different one.",
+          "visual": { "type": "lattice" }
+        }
+      ]
+    },
+    {
+      "id": "rl-03-model-free-value-s2",
+      "chapter": "rl/03-model-free-value",
+      "section": "s2",
+      "title": "Monte-Carlo prediction",
+      "eyebrow": "REINFORCEMENT LEARNING",
+      "beats": [
+        {
+          "text": "The most direct way to estimate a value from experience is to take the definition literally and average actual returns.",
+          "visual": { "type": "title", "text": "Monte-Carlo prediction", "sub": "Average the returns you actually saw" }
+        },
+        {
+          "text": "After an episode ends, compute the return that followed each visit and move the estimate a fraction toward it.",
+          "visual": { "type": "equation", "tex": "V(s) \\leftarrow V(s) + \\alpha\\,[\\,G_t - V(s)\\,]", "note": "With alpha = 1/N(s) this is exactly the running sample mean." }
+        },
+        {
+          "text": "The target is the true observed return, with no model and no bootstrap standing in for it.",
+          "visual": { "type": "equation", "tex": "G_t = \\sum_{k=0}^{\\infty} \\gamma^k\\, R_{t+k+1}" }
+        },
+        {
+          "text": "For an episode of rewards one, one, one with discount zero point nine, the Monte-Carlo target is two point seven one.",
+          "visual": { "type": "stat", "value": 2.71, "label": "MC target G_t", "decimals": 2 }
+        },
+        {
+          "text": "Monte-Carlo is unbiased and makes no Markov assumption, but it must wait for the episode to end and carries high variance.",
+          "visual": { "type": "plot", "ys": [0.5, 0.31, 0.62, 0.4, 0.58, 0.47, 0.53], "dot": true, "xlabel": "episodes", "ylabel": "estimate" }
+        }
+      ]
+    },
+    {
+      "id": "rl-03-model-free-value-s3",
+      "chapter": "rl/03-model-free-value",
+      "section": "s3",
+      "title": "Temporal-difference learning — TD(0)",
+      "eyebrow": "REINFORCEMENT LEARNING",
+      "beats": [
+        {
+          "text": "Here is the idea the chapter is built around: substitute your current guess of the next state for the unknown future return.",
+          "visual": { "type": "title", "text": "Temporal-difference learning", "sub": "Bootstrap a guess from a guess" }
+        },
+        {
+          "text": "The target becomes one real reward plus the discounted estimate of the rest, so the agent can learn from a single step online.",
+          "visual": { "type": "equation", "tex": "V(s_t) \\leftarrow V(s_t) + \\alpha\\,[\\,R_{t+1} + \\gamma V(s_{t+1}) - V(s_t)\\,]", "note": "The bracket is the TD error: surprise between expectation and one step of reality." }
+        },
+        {
+          "text": "That bracket is the temporal-difference error, the gap between two successive predictions of the same return.",
+          "visual": { "type": "equation", "tex": "\\delta_t = R_{t+1} + \\gamma V(s_{t+1}) - V(s_t)" }
+        },
+        {
+          "text": "With reward zero, next-state value one, old estimate zero point five and discount one, the TD error is zero point five.",
+          "visual": { "type": "stat", "value": 0.5, "label": "TD error delta", "decimals": 2 }
+        },
+        {
+          "text": "TD trades bias for lower variance: it leans on a guess but depends on only one reward and one transition.",
+          "visual": { "type": "bars", "values": [3, 1], "labels": ["MC variance", "TD variance"], "highlight": 1 }
+        },
+        {
+          "text": "Updating every step instead of at episode end lets TD work even in continuing tasks that never terminate.",
+          "visual": { "type": "plot", "ys": [0.5, 0.52, 0.55, 0.58, 0.6, 0.62, 0.64, 0.65], "dot": true, "xlabel": "steps", "ylabel": "V estimate" }
+        }
+      ]
+    },
+    {
+      "id": "rl-03-model-free-value-s4",
+      "chapter": "rl/03-model-free-value",
+      "section": "s4",
+      "title": "Q-learning (off-policy)",
+      "eyebrow": "REINFORCEMENT LEARNING",
+      "beats": [
+        {
+          "text": "Control needs action-values, because greedy selection from Q is trivial while you cannot act greedily from V without a model.",
+          "visual": { "type": "title", "text": "Q-learning", "sub": "Off-policy control via the greedy bootstrap" }
+        },
+        {
+          "text": "The update bootstraps from the best next action, regardless of what the agent actually does next.",
+          "visual": { "type": "equation", "tex": "Q(s_t,a_t) \\leftarrow Q(s_t,a_t) + \\alpha\\,[\\,R_{t+1} + \\gamma \\max_{a'} Q(s_{t+1},a') - Q(s_t,a_t)\\,]", "note": "The max over next actions is what makes Q-learning off-policy." }
+        },
+        {
+          "text": "A single update with learning rate one half, reward one, and discount zero gives a new Q-value of zero point five.",
+          "visual": { "type": "stat", "value": 0.5, "label": "new Q(s,a)", "decimals": 2 }
+        },
+        {
+          "text": "Tabular Q-learning provably converges to the optimal Q-star when every pair is visited and the learning rate shrinks correctly.",
+          "visual": { "type": "equation", "tex": "\\sum_t \\alpha_t = \\infty, \\quad \\sum_t \\alpha_t^2 < \\infty", "note": "Robbins-Monro: alpha must shrink, but not too fast." }
+        },
+        {
+          "text": "The max operator picks overestimated values, so Q-learning tends to overestimate action-values until corrected.",
+          "visual": { "type": "bars", "values": [1.0, 1.35], "labels": ["true value", "Q estimate"], "highlight": 1 }
+        },
+        {
+          "text": "Decoupling behavior from learning is exactly the property that later made deep Q-networks possible.",
+          "visual": { "type": "lattice" }
+        }
+      ]
+    },
+    {
+      "id": "rl-03-model-free-value-s5",
+      "chapter": "rl/03-model-free-value",
+      "section": "s5",
+      "title": "SARSA (on-policy) & exploration",
+      "eyebrow": "REINFORCEMENT LEARNING",
+      "beats": [
+        {
+          "text": "Change one symbol and you get SARSA: bootstrap from the action the agent actually takes next under its own policy.",
+          "visual": { "type": "title", "text": "SARSA and exploration", "sub": "Learn the value of the policy you follow" }
+        },
+        {
+          "text": "The only change from Q-learning is replacing the max with the value of the action actually taken.",
+          "visual": { "type": "equation", "tex": "Q(s_t,a_t) \\leftarrow Q(s_t,a_t) + \\alpha\\,[\\,R_{t+1} + \\gamma Q(s_{t+1},a_{t+1}) - Q(s_t,a_t)\\,]", "note": "SARSA learns the value of the policy it is actually following, exploration cost included." }
+        },
+        {
+          "text": "On the cliff-walking example Q-learning takes the optimal edge path while SARSA learns a safer route one row back.",
+          "visual": { "type": "bars", "values": [2, 1], "labels": ["Q edge risk", "SARSA safe"], "highlight": 1 }
+        },
+        {
+          "text": "Exploration is annealed: epsilon must stay positive for convergence but vanish so the final policy stops wasting reward.",
+          "visual": { "type": "equation", "tex": "\\varepsilon_t = \\varepsilon_{\\min} + (\\varepsilon_0 - \\varepsilon_{\\min})\\, e^{-t/\\tau}" }
+        },
+        {
+          "text": "With start one, floor zero point zero five and time constant five hundred, epsilon approaches its floor of zero point zero five.",
+          "visual": { "type": "plot", "ys": [1.0, 0.62, 0.4, 0.27, 0.18, 0.12, 0.08, 0.06, 0.05], "dot": true, "xlabel": "steps", "ylabel": "epsilon" }
+        },
+        {
+          "text": "Too fast a decay and the agent commits before it has seen enough, the most common silent failure in value-based RL.",
+          "visual": { "type": "stat", "value": 0.05, "label": "epsilon floor as t grows", "decimals": 2 }
+        }
+      ]
+    }
+  ]
+}

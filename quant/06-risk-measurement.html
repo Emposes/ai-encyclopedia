@@ -1,0 +1,803 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Risk Measurement — VaR, CVaR &amp; Stress Testing — AI Encyclopedia</title>
+<meta name="description" content="Value at Risk compresses a portfolio's worst days into one number — useful, regulated, and dangerous when mistaken for the whole truth. VaR, Expected Shortfall, backtesting and the Basel stress-testing context." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+</head>
+<body data-track="quant" data-level="advanced">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ QUANT / 06 / RISK MEASUREMENT</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../index.html#toc">NEXT: INDEX →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">QUANTITATIVE FINANCE · CHAPTER 06 / 06</div>
+    <h1>Risk Measurement — VaR, CVaR &amp; Stress Testing</h1>
+    <p class="lede">Every portfolio has a distribution of next-day outcomes, and market-risk management summarizes the loss tail of that distribution into figures a board, a regulator, and a trading desk can act on. <strong>Value at Risk compresses a portfolio's worst days into one number: useful, regulated, and misleading when mistaken for the whole picture.</strong> This chapter builds VaR three ways, replaces it with the coherent measure that fixes its deepest flaw, then tests whether the number held up in practice.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>ADVANCED</b></span>
+      <span>READING TIME<b>≈ 28 MIN</b></span>
+      <span>BUILDS ON<b>QUANT 01 · 05</b></span>
+      <span>INSTRUMENTS<b>VaR/ES · 3-METHOD · BACKTEST</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">6.1</span>Value at Risk</a>
+      <a href="#s2"><span class="n">6.2</span>Three ways to compute it</a>
+      <a href="#s3"><span class="n">6.3</span>Expected Shortfall</a>
+      <a href="#s4"><span class="n">6.4</span>Backtesting VaR</a>
+      <a href="#s5"><span class="n">6.5</span>Stress testing &amp; Basel</a>
+      <a href="#s6"><span class="n">6.6</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 6.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">6.1</span><h2>Value at Risk: the definition</h2></div>
+        <p>A portfolio's profit-and-loss over a horizon \(h\) (one day, ten days) is a random variable \(L\) — by convention, a <em>loss</em>, so positive \(L\) means money lost. <strong>Value at Risk</strong> asks one question: pick a confidence level \(\alpha\) (say 99%); what is the loss threshold the portfolio will not exceed with probability \(\alpha\)? It is, precisely, a quantile of the loss distribution.</p>
+
+        <div class="eq"><span class="eq-tag">EQ Q6.1 — VALUE AT RISK</span>
+        $$ \mathrm{VaR}_\alpha(L) \;=\; \inf\{\, \ell \in \mathbb{R} : \Pr(L \le \ell) \ge \alpha \,\} \;=\; F_L^{-1}(\alpha) $$
+        <div class="eq-note">\(F_L\) is the cumulative distribution of the loss; \(F_L^{-1}(\alpha)\) is its \(\alpha\)-quantile. The 99% one-day VaR is the loss such that <b>only 1 day in 100 should be worse</b>. Note what VaR does <em>not</em> say: it is silent about how much worse those bad days are. It is a threshold, not an average — and that single omission is the seed of every criticism in §6.3.</div>
+        </div>
+
+        <p>Three conventions trip up newcomers, so fix them now. First, <strong>sign</strong>: VaR is reported as a positive number ("our 99% VaR is $4.2M"), even though it lives in the left tail of P&amp;L. Second, <strong>confidence vs. tail</strong>: 99% VaR and "the 1% tail" are the same object — \(\alpha = 0.99\) means a tail probability \(p = 1 - \alpha = 0.01\). Third, <strong>horizon</strong>: a one-day VaR scales to \(h\) days under the i.i.d.-normal assumption by the square-root-of-time rule, \(\mathrm{VaR}_h \approx \sqrt{h}\,\mathrm{VaR}_1\) — an approximation that quietly fails when returns are autocorrelated or fat-tailed.</p>
+
+        <div class="callout">
+          <span class="co-icon">WHY ONE NUMBER</span>
+          <p><strong>VaR's power is sociological as much as mathematical.</strong> Before RiskMetrics popularized it in 1994–96, a bank's market risk lived in a hundred incomparable desk reports. VaR gave one currency-denominated number that aggregates across asset classes, lets a CRO set a firm-wide limit, and lets a regulator demand capital against it. That it throws away the shape of the tail is the price of that universality — and the reason the field spent the next thirty years patching it.</p>
+        </div>
+
+        <p>For a quick desk estimate, assume losses are normal with mean \(\mu\) and standard deviation \(\sigma\). Then the quantile has a closed form, and almost every parametric VaR you will ever see is this one line:</p>
+
+        <div class="eq"><span class="eq-tag">EQ Q6.2 — PARAMETRIC (GAUSSIAN) VaR</span>
+        $$ \mathrm{VaR}_\alpha \;=\; \mu + z_\alpha\,\sigma, \qquad z_\alpha = \Phi^{-1}(\alpha), \qquad z_{0.95} = 1.645,\;\; z_{0.99} = 2.326 $$
+        <div class="eq-note">\(\Phi^{-1}\) is the standard-normal inverse CDF; \(z_\alpha\) is the number of standard deviations into the tail. For a portfolio with <b>zero mean</b> (the usual short-horizon assumption — drift is negligible over a day), VaR collapses to \(z_\alpha\,\sigma\): the 99% VaR is simply <b>2.326 times the daily volatility</b>. This is the workhorse formula, and also the one that most badly under-states risk when returns have fat tails.</div>
+        </div>
+
+        <div class="exercise" data-answer="4.66" data-tol="0.02" data-unit="%" data-hint="Zero-mean Gaussian VaR is z·σ; at 99% the z-multiplier is 2.326.">
+          <div class="ex-q">A portfolio has daily return volatility \(\sigma = 2\%\) and effectively zero mean over one day. Using the Gaussian formula (EQ Q6.2), what is its <b>99% one-day VaR</b>, in percent? (Use \(z_{0.99} = 2.326\).)</div>
+          <div class="ex-reveal-src">Zero mean, so \(\mathrm{VaR}_{0.99} = z_{0.99}\,\sigma = 2.326 \times 2\% = \) <b>4.66</b>%. A 99% one-day VaR of 4.66% means the desk expects to lose more than 4.66% of the book on roughly one trading day in a hundred — about two or three days a year.</div>
+        </div>
+
+        <p class="note">Already the cracks show. The Gaussian VaR multiplier 2.326 assumes returns are normal; in reality equity returns have kurtosis well above 3, so the true 1% quantile sits further out than the formula admits. Two of the three methods in §6.2 exist precisely to escape this assumption.</p>
+      </section>
+
+      <!-- ====================== 6.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">6.2</span><h2>Historical, parametric &amp; Monte-Carlo VaR</h2></div>
+        <p>EQ Q6.1 defines a quantile of the loss distribution — but you never <em>have</em> that distribution; you estimate it. The three industry methods are exactly three answers to "where does the loss distribution come from?"</p>
+
+        <table class="data">
+          <thead><tr><th>Method</th><th>Loss distribution from…</th><th>Strength</th><th>Weakness</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Historical</strong></td><td class="m">the empirical sample of past returns</td><td>No distributional assumption; captures real fat tails &amp; skew</td><td>Backward-looking; blind to risks absent from the window; ghost effects when crises age out</td></tr>
+            <tr><td><strong>Parametric</strong></td><td class="m">a fitted model (usually Gaussian) — EQ Q6.2</td><td>Fast, analytic, aggregates linearly via the covariance matrix</td><td>Normality under-states tails; useless for non-linear payoffs (options)</td></tr>
+            <tr><td><strong>Monte-Carlo</strong></td><td class="m">simulated paths from a chosen model</td><td>Handles non-linearity, path dependence, any distribution you can sample</td><td>Slow; only as good as the model you simulate; sampling noise</td></tr>
+          </tbody>
+        </table>
+
+        <p><strong>Historical VaR</strong> is the most honest and the most popular. Take \(N\) past daily P&amp;L observations, sort them, and read off the empirical \((1-\alpha)\) quantile of the losses. No bell curve is assumed; if the last year held a 6-sigma day, it sits right there in the sample.</p>
+
+        <div class="eq"><span class="eq-tag">EQ Q6.3 — HISTORICAL VaR (EMPIRICAL QUANTILE)</span>
+        $$ \widehat{\mathrm{VaR}}_\alpha \;=\; L_{(\lceil \alpha N \rceil)}, \qquad L_{(1)} \le L_{(2)} \le \cdots \le L_{(N)} \;\;\text{(losses, ascending)} $$
+        <div class="eq-note">Sort the \(N\) historical losses; the \(\lceil \alpha N \rceil\)-th order statistic is the estimate. With \(N = 500\) days and \(\alpha = 0.99\), that is the 5th-worst loss in the sample (\(\lceil 0.99 \times 500 \rceil = 495\) from the bottom, i.e. the 5th from the top). <b>Its great virtue is that it inherits whatever fat tails the market actually printed</b>; its great vice is that it is mute about anything the window never saw.</div>
+        </div>
+
+        <p><strong>Parametric VaR</strong> is EQ Q6.2 with \(\sigma\) estimated from the same window (or from a volatility model — an EWMA or the GARCH machinery of Quant 01). For a linear multi-asset book it aggregates beautifully: portfolio variance is \(\mathbf{w}^\top \Sigma\, \mathbf{w}\), so one covariance matrix prices the VaR of the whole firm. The original RiskMetrics methodology was exactly this — Gaussian, EWMA-weighted covariance, square-root-of-time scaling.</p>
+
+        <p><strong>Monte-Carlo VaR</strong> earns its cost when payoffs are non-linear. An options book's P&amp;L is not a linear function of the underlying, so neither the empirical return sample nor a single \(\sigma\) captures it. Instead you simulate thousands of market scenarios (using the path machinery of Quant 05), fully reprice the book under each, and take the empirical quantile of the simulated P&amp;L — the same order-statistic of EQ Q6.3, but on simulated rather than historical losses.</p>
+
+        <div class="exercise" data-answer="495" data-tol="0.001" data-hint="The α-quantile order statistic is the ⌈αN⌉-th value from the bottom of the sorted losses.">
+          <div class="ex-q">You hold \(N = 500\) sorted daily losses and want the <b>99% historical VaR</b> (EQ Q6.3). Counting from the smallest loss as position 1, which order-statistic position do you read off? (Compute \(\lceil \alpha N \rceil\) with \(\alpha = 0.99\).)</div>
+          <div class="ex-reveal-src">\(\lceil 0.99 \times 500 \rceil = \lceil 495 \rceil = \) <b>495</b>. Position 495 from the bottom of 500 is the 6th-largest loss; reading the very next gap up gives the 5 worst days as the tail beyond VaR — exactly the \(1\% \times 500 = 5\) observations you expect past a 99% threshold.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Historical & parametric VaR + Expected Shortfall from a return series
+import numpy as np
+rng = np.random.default_rng(0)
+
+# 1000 days of fat-tailed returns (Student-t, df=4): heavier tails than normal
+rets = 0.01 * rng.standard_t(df=4, size=1000)     # daily returns, ~1% scale
+losses = -rets                                     # convention: loss = -return
+alpha = 0.99
+
+# Historical VaR/ES: empirical quantile, then mean of the worse tail (EQ Q6.3, Q6.4)
+var_h = np.quantile(losses, alpha)
+es_h  = losses[losses >= var_h].mean()
+
+# Parametric Gaussian VaR/ES (EQ Q6.2): z=2.326, ES uses phi(z)/(1-alpha)
+mu, sd = losses.mean(), losses.std(ddof=1)
+z   = 2.326                                         # Phi^{-1}(0.99)
+var_p = mu + z * sd
+phi   = np.exp(-0.5 * z * z) / np.sqrt(2 * np.pi)   # standard-normal pdf at z
+es_p  = mu + sd * phi / (1 - alpha)                 # Gaussian ES
+
+print(f"sample sd (daily)     : {sd*100:.3f} %")
+print(f"historical  99% VaR   : {var_h*100:.3f} %   ES: {es_h*100:.3f} %")
+print(f"parametric  99% VaR   : {var_p*100:.3f} %   ES: {es_p*100:.3f} %")
+print(f"\nfat tails -> historical VaR exceeds the Gaussian one by "
+      f"{(var_h-var_p)/var_p*100:+.1f}%  (normality under-states the tail)")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="varisk-explorer" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT Q6.1 — VaR / ES TAIL EXPLORER</span><span class="w-sub">P&amp;L DENSITY · CONFIDENCE α · EQ Q6.1–Q6.4</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>CONFIDENCE α <output id="varisk-alpha-out">99.0%</output></label><input type="range" id="varisk-alpha" min="0.90" max="0.995" step="0.005" value="0.99"/></div>
+              <div class="ctl"><label>DAILY VOL σ <output id="varisk-sig-out">2.0%</output></label><input type="range" id="varisk-sig" min="0.5" max="5" step="0.1" value="2"/></div>
+              <div class="ctl"><label>TAIL FATNESS (kurtosis) <output id="varisk-fat-out">3.0</output></label><input type="range" id="varisk-fat" min="3" max="12" step="0.5" value="3"/></div>
+            </div>
+            <canvas class="w-canvas" id="varisk-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">VaR @ α</div><div class="r-value" id="varisk-var">—</div></div>
+              <div class="readout acc"><div class="r-label">EXPECTED SHORTFALL</div><div class="r-value" id="varisk-es">—</div></div>
+              <div class="readout"><div class="r-label">ES / VaR RATIO</div><div class="r-value" id="varisk-ratio">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The <span style="color:var(--danger);">red</span> region is the loss tail beyond VaR — its area is exactly \(1-\alpha\). The <span style="color:var(--accent);">mint</span> line marks VaR (the tail's <em>edge</em>); the <span style="color:var(--blue);">blue</span> line marks ES (the tail's <em>centre of mass</em>), always further out. Slide <b>tail fatness</b> above 3 and watch the density grow heavy tails: VaR creeps right, but ES sprints — the gap between them is the chapter's whole argument. Push α toward 99.5% and the red sliver shrinks while both lines march outward.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 6.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">6.3</span><h2>Expected Shortfall (CVaR)</h2></div>
+        <p>VaR tells you the <em>edge</em> of the bad zone and nothing about its depth. Two portfolios can share an identical 99% VaR while one loses a little past it and the other is wiped out — VaR cannot tell them apart. <strong>Expected Shortfall</strong> (also Conditional VaR, CVaR, or expected tail loss) fixes this by averaging the losses that <em>do</em> breach VaR:</p>
+
+        <div class="eq"><span class="eq-tag">EQ Q6.4 — EXPECTED SHORTFALL</span>
+        $$ \mathrm{ES}_\alpha(L) \;=\; \mathbb{E}\!\left[\, L \mid L \ge \mathrm{VaR}_\alpha \,\right] \;=\; \frac{1}{1-\alpha} \int_\alpha^1 \mathrm{VaR}_u(L)\,\mathrm{d}u $$
+        <div class="eq-note">ES is the average loss <em>conditional on</em> being in the worst \((1-\alpha)\) tail — the mean of everything past the VaR cliff. The integral form shows it as the average of all VaRs deeper than \(\alpha\), which makes its key property obvious: <b>ES \(\ge\) VaR at the same level, always</b>, since you are averaging values that are all \(\ge \mathrm{VaR}_\alpha\). Equality holds only in the degenerate case where the tail beyond VaR is a single point.</div>
+        </div>
+
+        <p>For the Gaussian case ES has a clean closed form, which makes the relationship to VaR exact and lets you feel the multiplier:</p>
+
+        <div class="eq"><span class="eq-tag">EQ Q6.5 — GAUSSIAN EXPECTED SHORTFALL</span>
+        $$ \mathrm{ES}_\alpha \;=\; \mu + \sigma\,\frac{\varphi\big(z_\alpha\big)}{1-\alpha}, \qquad \varphi(z) = \frac{1}{\sqrt{2\pi}}e^{-z^2/2}, \qquad \frac{\varphi(2.326)}{0.01} \approx 2.665 $$
+        <div class="eq-note">\(\varphi\) is the standard-normal density. At 99% the ES multiplier is \(\approx 2.665\) versus the VaR multiplier \(2.326\) — so for a zero-mean Gaussian book, <b>ES is about 15% larger than VaR</b>. Crucially this is the <em>thin-tailed</em> gap; under fat tails ES pulls away much faster, which is exactly why regulators switched to it (§6.5).</div>
+        </div>
+
+        <p>The deeper reason ES won is theoretical. Artzner, Delbaen, Eber and Heath (1999) laid down four axioms any sensible risk measure should obey — monotonicity, translation invariance, positive homogeneity, and <strong>subadditivity</strong> — and called a measure satisfying all four <em>coherent</em>. Subadditivity is the one that bites: \(\rho(A + B) \le \rho(A) + \rho(B)\), i.e. <em>diversification cannot increase risk</em>. ES is coherent. VaR is <strong>not</strong> — it can violate subadditivity, reporting a merged portfolio as riskier than the sum of its parts, which is not just ugly but actively penalizes hedging and diversification.</p>
+
+        <div class="callout warn">
+          <span class="co-icon">THE SUBADDITIVITY TRAP</span>
+          <p><strong>VaR can punish diversification.</strong> Take two independent corporate bonds, each defaulting with probability 4% (loss 100, else 0). The 95% VaR of each <em>alone</em> is 0 — the 4% default sits inside the 5% tail, so the 95th-percentile loss is zero. But a portfolio of both defaults-at-least-once with probability \(1 - 0.96^2 \approx 7.8\% &gt; 5\%\), so its 95% VaR is 100. VaR of the pair (100) exceeds the sum of the parts (0 + 0): <em>diversifying made the reported risk explode</em>. ES suffers no such pathology — averaging the tail restores additivity. This single example, more than any other, is why the Basel framework migrated off VaR.</p>
+        </div>
+
+        <div class="exercise" data-answer="true" data-tol="0" data-hint="ES averages losses that are all at least as large as the VaR threshold.">
+          <div class="ex-q">True or false: at the same confidence level \(\alpha\), Expected Shortfall is always at least as large as Value at Risk — \(\mathrm{ES}_\alpha \ge \mathrm{VaR}_\alpha\). (Answer <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">By EQ Q6.4, ES is the mean of losses that are <em>all</em> \(\ge \mathrm{VaR}_\alpha\) (they live beyond the VaR threshold), so their average cannot be smaller than that threshold. Hence \(\mathrm{ES}_\alpha \ge \mathrm{VaR}_\alpha\) for every distribution, with equality only when the entire tail collapses to a point. The statement is <b>true</b>.</div>
+        </div>
+
+        <div class="widget" id="varisk-methods" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT Q6.2 — THREE-METHOD VaR COMPARISON</span><span class="w-sub">HISTORICAL vs PARAMETRIC vs MONTE-CARLO · 99% / 95%</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>CONFIDENCE α <output id="varisk-m-alpha-out">99.0%</output></label><input type="range" id="varisk-m-alpha" min="0.90" max="0.995" step="0.005" value="0.99"/></div>
+              <div class="ctl"><label>TAIL FATNESS (kurtosis) <output id="varisk-m-fat-out">6.0</output></label><input type="range" id="varisk-m-fat" min="3" max="12" step="0.5" value="6"/></div>
+              <div class="ctl"><label>SAMPLE SIZE N <output id="varisk-m-n-out">750</output></label><input type="range" id="varisk-m-n" min="250" max="1500" step="50" value="750"/></div>
+            </div>
+            <canvas class="w-canvas" id="varisk-m-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">HISTORICAL VaR</div><div class="r-value" id="varisk-m-hist">—</div></div>
+              <div class="readout"><div class="r-label">PARAMETRIC VaR</div><div class="r-value" id="varisk-m-param">—</div></div>
+              <div class="readout"><div class="r-label">MONTE-CARLO VaR</div><div class="r-value" id="varisk-m-mc">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">A deterministic synthetic loss sample (fixed seed, so it renders identically on load). The three bars are the same 99% VaR computed three ways on the <em>same</em> data. At kurtosis 3 they nearly agree — Gaussian is true, so parametric is fine. Crank tail fatness up and the <b>parametric</b> bar falls badly behind: the normal model cannot see the tail the historical and Monte-Carlo estimates capture. Shrink N and watch the historical estimate get noisy — the cost of being assumption-free is needing data.</div>
+        </div>
+
+        <p class="note">ES is not free of trouble. It is harder to <em>backtest</em> than VaR — you are estimating a conditional mean from a handful of tail observations, and a clean pass/fail test (the subject of §6.4) was elusive for years. VaR remains the easier number to validate, which is why both live side by side in the modern regime: ES sets the capital, VaR-style exceedance counting still polices the model.</p>
+      </section>
+
+      <!-- ====================== 6.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">6.4</span><h2>Backtesting VaR — Kupiec &amp; the traffic light</h2></div>
+        <p>A VaR number is a falsifiable prediction: at 99% confidence, losses should exceed VaR on about 1% of days. So <strong>count the exceedances</strong> (days where realized loss &gt; that day's VaR forecast) and ask whether the count is consistent with the model. Over \(T\) days at tail probability \(p = 1 - \alpha\), the number of exceptions \(x\) is, under a correct model, Binomial\((T, p)\) with expected value \(pT\).</p>
+
+        <div class="eq"><span class="eq-tag">EQ Q6.6 — EXPECTED EXCEPTIONS</span>
+        $$ x \sim \mathrm{Binomial}(T, p), \qquad \mathbb{E}[x] = pT, \qquad p = 1 - \alpha $$
+        <div class="eq-note">Over one regulatory year (\(T = 250\) trading days) at 99% (\(p = 0.01\)), you <em>expect</em> \(0.01 \times 250 = 2.5\) exceptions. Too few and your VaR is needlessly conservative (wasting capital); too many and it is dangerously optimistic. The whole game is deciding when an observed count \(x\) is "too many" — and randomness means even a perfect model occasionally throws 6 or 7.</div>
+        </div>
+
+        <p>Kupiec (1995) made "too many" precise with a likelihood-ratio test of the <em>unconditional coverage</em> — the proportion-of-failures (POF) test. It compares the model's claimed rate \(p\) against the observed rate \(x/T\):</p>
+
+        <div class="eq"><span class="eq-tag">EQ Q6.7 — KUPIEC POF LIKELIHOOD-RATIO TEST</span>
+        $$ \mathrm{LR}_{\text{uc}} = -2\ln\!\left[ \frac{(1-p)^{T-x}\,p^{\,x}}{\left(1-\tfrac{x}{T}\right)^{T-x}\left(\tfrac{x}{T}\right)^{x}} \right] \;\;\overset{H_0}{\sim}\;\; \chi^2_1 $$
+        <div class="eq-note">The numerator is the likelihood under the model's rate \(p\); the denominator under the observed rate \(\hat p = x/T\). Under the null "the model is correctly calibrated", \(\mathrm{LR}_{\text{uc}}\) follows a chi-squared with 1 degree of freedom. <b>Reject the model when \(\mathrm{LR}_{\text{uc}} &gt; 3.841\)</b> (the 95% \(\chi^2_1\) critical value). It is a two-sided test — it flags <em>both</em> too many exceptions and suspiciously too few.</div>
+        </div>
+
+        <p>Kupiec's test only counts exceptions; it ignores <em>when</em> they happened. Christoffersen (1998) added an independence test (exceptions should not cluster — a model that fails on five consecutive days is broken even if the count looks fine) and combined the two into a conditional-coverage test. The two ideas — right number, well-spaced — are the backbone of every modern VaR backtest.</p>
+
+        <p>Regulators encode a blunter, more operational version: the <strong>Basel traffic light</strong>. Count exceptions over the last 250 trading days at 99% and bucket the firm:</p>
+
+        <table class="data">
+          <thead><tr><th>Zone</th><th>Exceptions (250 days, 99%)</th><th>Cumulative P(≤x) under correct model</th><th>Consequence</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Green</strong></td><td class="m">0 – 4</td><td class="m">≈ 89.2%</td><td>Model accepted; no capital penalty</td></tr>
+            <tr><td><strong>Yellow</strong></td><td class="m">5 – 9</td><td class="m">89.2% – 99.99%</td><td>Multiplier raised (≈ +0.4 to +0.85); supervisory scrutiny</td></tr>
+            <tr><td><strong>Red</strong></td><td class="m">10+</td><td class="m">&gt; 99.99%</td><td>Model presumed flawed; max multiplier, remediation demanded</td></tr>
+          </tbody>
+        </table>
+
+        <p class="note">The boundaries are not round numbers; they come from the Binomial. At 99% over 250 days the expected count is 2.5, and the probability of seeing 10 or more exceptions if the model is <em>correct</em> is under 0.01% — so 10 exceptions is overwhelming evidence the model is wrong, not bad luck. The yellow zone is the honest middle: bad enough to worry, not damning enough to condemn. The asymmetry (no penalty for too <em>few</em> exceptions) is deliberate — the supervisor cares about under-stated risk, not over-caution.</p>
+
+        <div class="exercise" data-answer="2.5" data-tol="0.001" data-hint="Expected exceptions = p·T with p = 1−α.">
+          <div class="ex-q">Under the Basel backtest you observe a 99% VaR over \(T = 250\) trading days. If the model is correctly calibrated, how many exceptions do you <b>expect</b> on average? (Use EQ Q6.6.)</div>
+          <div class="ex-reveal-src">\(p = 1 - 0.99 = 0.01\), so \(\mathbb{E}[x] = pT = 0.01 \times 250 = \) <b>2.5</b>. The green zone (0–4) brackets this expectation; 5+ tips into yellow because observing that many exceptions becomes improbable under a correct model.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Backtest VaR: count exceedances vs expected, Kupiec POF + Basel zone
+import numpy as np
+rng = np.random.default_rng(1)
+
+T, alpha = 250, 0.99
+p = 1 - alpha                                       # tail probability = 0.01
+
+# A model whose VaR is too LOOSE: true vol 20% above the VaR forecast's vol
+sd_true, sd_model = 0.012, 0.010
+losses   = -sd_true * rng.standard_normal(T)        # realized losses
+var_fcst =  2.326 * sd_model                        # constant 99% Gaussian VaR
+
+x   = int((losses > var_fcst).sum())                # exceptions
+exp = p * T                                         # expected exceptions (EQ Q6.6)
+
+# Kupiec POF likelihood-ratio (EQ Q6.7); guard the x=0 edge case
+ph = x / T
+num = (1 - p)**(T - x) * p**x
+den = (1 - ph)**(T - x) * (ph**x if x > 0 else 1.0)
+LR  = -2 * np.log(num / den) if x > 0 else -2 * np.log((1 - p)**T)
+
+zone = "GREEN" if x <= 4 else ("YELLOW" if x <= 9 else "RED")
+print(f"exceptions observed : {x}   (expected {exp:.1f})")
+print(f"Kupiec LR_uc        : {LR:.3f}   crit chi2(1,95%) = 3.841 "
+      f"-> {'REJECT model' if LR > 3.841 else 'cannot reject'}")
+print(f"Basel traffic light : {zone}")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="varisk-backtest" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT Q6.3 — VaR BACKTEST EXCEEDANCE COUNTER</span><span class="w-sub">250-DAY P&amp;L vs VaR LINE · BASEL ZONE · EQ Q6.6–Q6.7</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>VaR CONFIDENCE α <output id="varisk-bt-alpha-out">99.0%</output></label><input type="range" id="varisk-bt-alpha" min="0.95" max="0.995" step="0.005" value="0.99"/></div>
+              <div class="ctl"><label>MODEL MISCALIBRATION <output id="varisk-bt-mis-out">1.00×</output></label><input type="range" id="varisk-bt-mis" min="0.6" max="1.8" step="0.05" value="1"/></div>
+            </div>
+            <canvas class="w-canvas" id="varisk-bt-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">EXCEPTIONS / EXPECTED</div><div class="r-value" id="varisk-bt-count">—</div></div>
+              <div class="readout"><div class="r-label">KUPIEC LR (crit 3.841)</div><div class="r-value" id="varisk-bt-lr">—</div></div>
+              <div class="readout acc"><div class="r-label">BASEL ZONE</div><div class="r-value" id="varisk-bt-zone">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">250 days of deterministic synthetic losses (bars) against a flat 99% VaR <span style="color:var(--accent);">line</span>; bars that punch through it are <span style="color:var(--danger);">exceptions</span>. <b>Miscalibration 1.0×</b> is an honest model — expect about 2–3 exceptions, comfortably green. Drag it above 1.0 to make true risk outrun the VaR forecast: exceptions multiply, the Kupiec LR climbs past 3.841, and the zone flips yellow then red. Drag below 1.0 to over-state risk and watch exceptions vanish — safe for the firm, but a Kupiec failure for being <em>too</em> conservative and wasting capital.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 6.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">6.5</span><h2>Stress testing &amp; the Basel context</h2></div>
+        <p>VaR and ES are <em>statistical</em> measures: they extrapolate from a sampled or modelled distribution, and they are only as good as that distribution's grip on the future. Their structural blind spot is the event the data never contained — a regime that has not happened in the window, or has not happened at all. <strong>Stress testing</strong> is the deliberate complement: instead of asking "what does the distribution say about the tail?", it asks "what happens to the book under <em>this specific scenario</em>, whether or not the distribution thinks it likely?"</p>
+
+        <ul>
+          <li><strong>Historical scenarios.</strong> Replay a named crisis through today's book: the 1987 crash, the 2008 collapse, the 2020 COVID shock, the 2022 rate spike. No probability is attached — you simply reprice under those moves. Answers "if October 2008 happened again to <em>this</em> portfolio, what would we lose?"</li>
+          <li><strong>Hypothetical scenarios.</strong> Constructed shocks the past never delivered: a coordinated 300 bp rate move with equities down 25% and credit spreads doubling. Forces the desk to imagine correlations snapping to one — the exact failure mode VaR's covariance matrix smooths over.</li>
+          <li><strong>Reverse stress testing.</strong> Invert the question: <em>what scenario breaks us?</em> Solve for the set of market moves that exhausts capital, then judge how plausible that scenario is. Mandated post-2008 precisely because forward stress tests tend to test the shocks management already fears, not the ones that kill.</li>
+          <li><strong>Sensitivity / factor shocks.</strong> Bump one risk factor at a time (parallel yield-curve shift, vol surface up 10 points) to map where the book is most exposed — the macro cousin of the Greeks from Quant 03.</li>
+        </ul>
+
+        <div class="callout">
+          <span class="co-icon">WHY STRESS TESTS EXIST</span>
+          <p><strong>VaR answers "how bad on a normal-ish bad day?"; stress testing answers "how bad on the day the model is wrong?"</strong> The 2007–09 crisis was a catalogue of VaR's limits: short estimation windows had not seen a housing collapse, Gaussian copulas mis-priced tail correlation, and liquidity vanished from instruments the models assumed tradeable. Banks reporting comfortable VaRs lost multiples of them. Stress testing is the institutional memory the rolling window keeps erasing.</p>
+        </div>
+
+        <p>The regulatory arc reflects exactly the lessons of this chapter. The 1996 Market Risk Amendment let banks use internal 99% / 10-day <strong>VaR</strong> models for capital, with the traffic-light backtest of §6.4 as the discipline. After 2008, Basel 2.5 bolted on a <em>stressed</em> VaR (the model re-estimated over a crisis window) to fight the procyclicality of short windows. Then the <strong>Fundamental Review of the Trading Book</strong> (FRTB, finalized 2019) made the decisive move:</p>
+
+        <div class="eq"><span class="eq-tag">EQ Q6.8 — FRTB EXPECTED SHORTFALL CAPITAL (SCHEMATIC)</span>
+        $$ \mathrm{ES}_{97.5\%}^{\text{stressed}} \;=\; \text{ES at } \alpha = 0.975 \text{, calibrated to a stress period, with liquidity-horizon scaling} $$
+        <div class="eq-note">FRTB replaces 99% VaR with <b>97.5% Expected Shortfall</b> as the capital measure, calibrated to a period of significant stress and scaled by instrument-specific liquidity horizons. The level shift (99% → 97.5%) is deliberate: for a normal distribution, 97.5% ES \(\approx\) 99% VaR, so the change is meant to recover similar magnitudes <em>while</em> gaining ES's tail-sensitivity and coherence. VaR does not disappear — exception counting on a 99% VaR still drives the backtesting and the green/yellow/red model-approval test. <b>ES sets the capital; VaR still polices the model.</b></div>
+        </div>
+
+        <div class="callout warn">
+          <span class="co-icon">THE HONEST CAVEAT</span>
+          <p><strong>No single number is the truth.</strong> ES is coherent but harder to backtest and still distribution-dependent. Stress tests are scenario-dependent and can become theatre — testing the shocks everyone already prices in. Historical VaR re-fights the last war; parametric VaR assumes a bell curve markets do not obey. The competent risk function runs all of them, treats each as a partial view, and reserves its deepest distrust for any meeting where one number is presented as <em>the</em> risk. The 2008 survivors were not those with the lowest VaR — they were those who did not believe it.</p>
+        </div>
+
+        <div class="exercise" data-answer="97.5" data-tol="0.001" data-unit="%" data-hint="FRTB moved the capital measure to Expected Shortfall at this confidence level.">
+          <div class="ex-q">Under the FRTB framework (EQ Q6.8), the regulatory capital measure for market risk is Expected Shortfall calibrated at what confidence level \(\alpha\), in percent? (The level chosen so that, for a normal distribution, it roughly matches the old 99% VaR.)</div>
+          <div class="ex-reveal-src">FRTB sets the capital measure at <b>97.5</b>% ES. For a Gaussian loss, \(\mathrm{ES}_{97.5\%} \approx \mathrm{VaR}_{99\%}\) (the ES averaging at the lower confidence reaches about the same magnitude as VaR at the higher one), so the regime gains coherence and tail-sensitivity without a wholesale change in capital magnitude.</div>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>You have reached the end of the Quantitative Finance volume.</strong> From the stochastic processes that model a price (Quant 01), through binomial and Black–Scholes pricing (Quant 02–03), interest-rate models and Monte-Carlo valuation (Quant 04–05), to the risk measurement that governs whether any of it is safe to hold (Quant 06) — the loop is closed: model the world, price the claim, then measure honestly how wrong the model can be. Return to the <a href="../index.html#toc">index</a> to continue across the other volumes.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 6.6 References ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">6.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://doi.org/10.1111/1467-9965.00068" target="_blank" rel="noopener">Artzner, P., Delbaen, F., Eber, J.-M. &amp; Heath, D. (1999). <span class="ref-venue">Coherent Measures of Risk</span>.</a> <span class="ref-meta">Mathematical Finance 9(3) — the four coherence axioms; why VaR fails subadditivity and ES does not.</span></li>
+          <li><a href="https://www.msci.com/documents/10199/5915b101-4206-4ba0-aee2-3449d5c7e95a" target="_blank" rel="noopener">J.P. Morgan / Reuters (1996). <span class="ref-venue">RiskMetrics — Technical Document</span> (4th ed.).</a> <span class="ref-meta">The document that made parametric VaR an industry standard: EWMA covariance, Gaussian quantiles, √-time scaling.</span></li>
+          <li><a href="https://doi.org/10.3905/jod.1995.407942" target="_blank" rel="noopener">Kupiec, P. H. (1995). <span class="ref-venue">Techniques for Verifying the Accuracy of Risk Measurement Models</span>.</a> <span class="ref-meta">Journal of Derivatives 3(2) — the proportion-of-failures likelihood-ratio backtest (EQ Q6.7).</span></li>
+          <li><a href="https://www.bis.org/bcbs/publ/d457.htm" target="_blank" rel="noopener">Basel Committee on Banking Supervision (2019). <span class="ref-venue">Minimum Capital Requirements for Market Risk</span> (FRTB, finalized).</a> <span class="ref-meta">BIS d457 — the switch to 97.5% stressed Expected Shortfall with liquidity-horizon scaling (EQ Q6.8).</span></li>
+          <li><a href="https://doi.org/10.2307/2527341" target="_blank" rel="noopener">Christoffersen, P. F. (1998). <span class="ref-venue">Evaluating Interval Forecasts</span>.</a> <span class="ref-meta">International Economic Review 39(4) — the conditional-coverage / independence test that complements Kupiec.</span></li>
+          <li><a href="https://doi.org/10.21314/JOR.2000.038" target="_blank" rel="noopener">Rockafellar, R. T. &amp; Uryasev, S. (2000). <span class="ref-venue">Optimization of Conditional Value-at-Risk</span>.</a> <span class="ref-meta">Journal of Risk 2(3) — CVaR/ES as a convex, optimizable risk measure.</span></li>
+          <li><a href="https://www.pearson.com/en-us/subject-catalog/p/options-futures-and-other-derivatives/P200000005938" target="_blank" rel="noopener">Hull, J. C. (2021). <span class="ref-venue">Options, Futures, and Other Derivatives</span> (11th ed.).</a> <span class="ref-meta">Pearson — the standard practitioner treatment of VaR, ES, historical simulation and backtesting.</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../quant/05-monte-carlo.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">05</span> Monte Carlo</div></a>
+        <a class="next" href="../index.html#toc"><div class="p-dir">BACK TO</div><div class="p-title"><span class="p-num">··</span> Index</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — QUANT · CH 06</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* ============================================================
+   Risk Measurement — VaR, CVaR & Stress Testing
+   Chapter instruments. Single IIFE, no globals.
+   Shared statistics helpers (erf, normal CDF/PDF/inverse,
+   deterministic fat-tailed sampler) so the three widgets and
+   the Python cells agree numerically.
+   ============================================================ */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  /* --- standard normal CDF / PDF via Abramowitz & Stegun 7.1.26 erf --- */
+  function erf(x) {
+    var s = x < 0 ? -1 : 1;
+    x = Math.abs(x);
+    var t = 1 / (1 + 0.3275911 * x);
+    var y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t
+                  - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x);
+    return s * y;
+  }
+  function ncdf(x) { return 0.5 * (1 + erf(x / Math.SQRT2)); }
+  function npdf(x) { return Math.exp(-0.5 * x * x) / Math.sqrt(2 * Math.PI); }
+
+  /* --- inverse normal CDF: Acklam's rational approximation (~1e-9) --- */
+  function ninv(p) {
+    if (p <= 0) return -Infinity;
+    if (p >= 1) return Infinity;
+    var a = [-3.969683028665376e+01, 2.209460984245205e+02, -2.759285104469687e+02,
+             1.383577518672690e+02, -3.066479806614716e+01, 2.506628277459239e+00];
+    var b = [-5.447609879822406e+01, 1.615858368580409e+02, -1.556989798598866e+02,
+             6.680131188771972e+01, -1.328068155288572e+01];
+    var c = [-7.784894002430293e-03, -3.223964580411365e-01, -2.400758277161838e+00,
+             -2.549732539343734e+00, 4.374664141464968e+00, 2.938163982698783e+00];
+    var d = [7.784695709041462e-03, 3.224671290700398e-01, 2.445134137142996e+00,
+             3.754408661907416e+00];
+    var plow = 0.02425, phigh = 1 - plow, q, r;
+    if (p < plow) {
+      q = Math.sqrt(-2 * Math.log(p));
+      return (((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5]) /
+             ((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1);
+    }
+    if (p > phigh) {
+      q = Math.sqrt(-2 * Math.log(1 - p));
+      return -(((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5]) /
+              ((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1);
+    }
+    q = p - 0.5; r = q * q;
+    return (((((a[0]*r+a[1])*r+a[2])*r+a[3])*r+a[4])*r+a[5])*q /
+           (((((b[0]*r+b[1])*r+b[2])*r+b[3])*r+b[4])*r+1);
+  }
+
+  function fpct(x, d) { d = d === undefined ? 2 : d; return x.toFixed(d) + "%"; }
+
+  /* --- deterministic standardized fat-tailed sampler --------------------
+     mulberry32 RNG -> standard normals (Box-Muller) -> mixed with a wider
+     normal to inject excess kurtosis, then standardized to unit variance.
+     "fat" = 3 gives ~normal; higher fat -> heavier tails. Deterministic so
+     widgets render identically on every load (reduced-motion safe).        */
+  function fatSample(n, fat, seed) {
+    var rng = FM.mulberry32(seed);
+    var out = new Array(n), i;
+    var pJump = Math.min(0.20, (fat - 3) / 30);   // share drawn from wide comp
+    var wide = Math.sqrt(1 + (fat - 3) * 1.6);     // sd of the wide component
+    for (i = 0; i < n; i++) {
+      var u1 = Math.max(1e-12, rng());
+      var u2 = rng();
+      var z = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+      if (rng() < pJump) z *= wide;                // occasional large draw
+      out[i] = z;
+    }
+    /* standardize to mean 0, sd 1 so 'fat' changes shape, not scale */
+    var m = 0; for (i = 0; i < n; i++) m += out[i]; m /= n;
+    var v = 0; for (i = 0; i < n; i++) v += (out[i] - m) * (out[i] - m); v /= n;
+    var sd = Math.sqrt(v) || 1;
+    for (i = 0; i < n; i++) out[i] = (out[i] - m) / sd;
+    return out;
+  }
+  function quantile(sortedAsc, q) {
+    var n = sortedAsc.length;
+    if (n === 0) return 0;
+    var idx = Math.min(n - 1, Math.max(0, Math.ceil(q * n) - 1));
+    return sortedAsc[idx];
+  }
+
+  /* ========================================================
+     INSTRUMENT Q6.1 — VaR / ES tail explorer
+     A Gaussian-shaped density (widened tails via 'fat') with
+     the loss tail beyond VaR shaded; VaR & ES lines drawn.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("varisk-explorer");
+    if (!root) return;
+    var canvas = document.getElementById("varisk-canvas");
+    var aIn = document.getElementById("varisk-alpha");
+    var sIn = document.getElementById("varisk-sig");
+    var fIn = document.getElementById("varisk-fat");
+    var aOut = document.getElementById("varisk-alpha-out");
+    var sOut = document.getElementById("varisk-sig-out");
+    var fOut = document.getElementById("varisk-fat-out");
+    var varEl = document.getElementById("varisk-var");
+    var esEl = document.getElementById("varisk-es");
+    var ratioEl = document.getElementById("varisk-ratio");
+    var NS = 320;
+
+    /* tail-fattening: scale the Gaussian quantile/density by a kurtosis-driven
+       factor that grows in the tail. k(z) lifts the |z|>~1 region.          */
+    function tailFactor(z, fat) {
+      var extra = (fat - 3) / 9;                    // 0 at normal, ~1 at fat=12
+      return 1 + extra * Math.max(0, Math.abs(z) - 0.8) * 0.55;
+    }
+    function lossQuantile(alpha, sigPct, fat) {     // VaR as a loss, in %
+      var z = ninv(alpha);
+      return z * sigPct * tailFactor(z, fat);
+    }
+    function esValue(alpha, sigPct, fat) {          // average tail loss, in %
+      /* numeric average of the loss quantiles beyond alpha */
+      var M = 60, sum = 0, i;
+      for (i = 0; i < M; i++) {
+        var u = alpha + (1 - alpha) * (i + 0.5) / M;
+        sum += lossQuantile(u, sigPct, fat);
+      }
+      return sum / M;
+    }
+
+    function render() {
+      var alpha = +aIn.value, sigPct = +sIn.value, fat = +fIn.value;
+      aOut.textContent = (alpha * 100).toFixed(1) + "%";
+      sOut.textContent = sigPct.toFixed(1) + "%";
+      fOut.textContent = fat.toFixed(1);
+
+      var v = lossQuantile(alpha, sigPct, fat);
+      var es = esValue(alpha, sigPct, fat);
+      varEl.textContent = fpct(v, 2);
+      esEl.textContent = fpct(es, 2);
+      ratioEl.textContent = (es / Math.max(1e-9, v)).toFixed(3) + "×";
+
+      var c = FM.setupCanvas(canvas, 320);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      var padL = 16, padR = 16, padT = 18, padB = 30;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      ctx.clearRect(0, 0, w, h);
+
+      /* x axis in P&L percent: from -span (loss) to +span (gain) */
+      var span = Math.max(v * 1.25, 4 * sigPct);
+      function px(pnl) { return x0 + (pnl + span) / (2 * span) * (x1 - x0); }
+      /* density of P&L (gain = -loss). Use tail-fattened gaussian via dz. */
+      function dens(pnl) {
+        var loss = -pnl;
+        var z = loss / sigPct;
+        var d = npdf(z) / tailFactor(z, fat);       // flatten center, fatten tails
+        return d;
+      }
+      var i, peak = 0, xs = [], ys = [];
+      for (i = 0; i < NS; i++) {
+        var pnl = -span + (2 * span) * i / (NS - 1);
+        var dy = dens(pnl);
+        xs.push(pnl); ys.push(dy);
+        if (dy > peak) peak = dy;
+      }
+      function py(dy) { return y0 - (dy / peak) * (y0 - y1) * 0.92; }
+
+      /* shaded loss tail: P&L <= -VaR  (i.e. loss >= VaR) */
+      ctx.beginPath();
+      ctx.moveTo(px(-span), y0);
+      for (i = 0; i < NS; i++) {
+        if (xs[i] <= -v) ctx.lineTo(px(xs[i]), py(ys[i]));
+      }
+      ctx.lineTo(px(-v), y0);
+      ctx.closePath();
+      ctx.fillStyle = "rgba(255,65,54,0.22)";
+      ctx.fill();
+
+      /* full density curve */
+      ctx.strokeStyle = C.SEC; ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      for (i = 0; i < NS; i++) {
+        var X = px(xs[i]), Y = py(ys[i]);
+        if (i === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y);
+      }
+      ctx.stroke();
+
+      /* baseline + zero P&L marker */
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y0); ctx.stroke();
+      ctx.setLineDash([2, 3]); ctx.strokeStyle = C.MUT;
+      ctx.beginPath(); ctx.moveTo(px(0), y1); ctx.lineTo(px(0), y0); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "center"; ctx.textBaseline = "top";
+      ctx.fillText("P&L 0", px(0), y0 + 6);
+      ctx.textAlign = "left"; ctx.fillText("← LOSS", x0, y0 + 6);
+
+      /* VaR line (mint) */
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(px(-v), y1); ctx.lineTo(px(-v), y0); ctx.stroke();
+      ctx.fillStyle = C.MINT; ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+      ctx.fillText("VaR " + v.toFixed(1) + "%", px(-v), y1 + 12);
+
+      /* ES line (blue) */
+      ctx.strokeStyle = C.BLUE; ctx.lineWidth = 2; ctx.setLineDash([5, 4]);
+      ctx.beginPath(); ctx.moveTo(px(-es), y1); ctx.lineTo(px(-es), y0); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = C.BLUE; ctx.textAlign = "center";
+      ctx.fillText("ES " + es.toFixed(1) + "%", px(-es), y1 + 24);
+
+      /* tail-area label */
+      ctx.fillStyle = C.RED; ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText("TAIL = " + ((1 - alpha) * 100).toFixed(1) + "%", x0 + 4, y1);
+    }
+    [aIn, sIn, fIn].forEach(function (el) { el.addEventListener("input", render); });
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT Q6.2 — Three-method VaR comparison
+     One deterministic synthetic loss sample, VaR three ways.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("varisk-methods");
+    if (!root) return;
+    var canvas = document.getElementById("varisk-m-canvas");
+    var aIn = document.getElementById("varisk-m-alpha");
+    var fIn = document.getElementById("varisk-m-fat");
+    var nIn = document.getElementById("varisk-m-n");
+    var aOut = document.getElementById("varisk-m-alpha-out");
+    var fOut = document.getElementById("varisk-m-fat-out");
+    var nOut = document.getElementById("varisk-m-n-out");
+    var histEl = document.getElementById("varisk-m-hist");
+    var paramEl = document.getElementById("varisk-m-param");
+    var mcEl = document.getElementById("varisk-m-mc");
+    var SIG = 2.0;   /* base daily vol in % */
+
+    function compute() {
+      var alpha = +aIn.value, fat = +fIn.value, N = +nIn.value;
+      /* historical: empirical quantile of a fat-tailed loss sample */
+      var sampN = fatSample(N, fat, 12345);
+      var losses = sampN.map(function (z) { return z * SIG; });   // % losses
+      var sorted = losses.slice().sort(function (a, b) { return a - b; });
+      var histVar = quantile(sorted, alpha);
+
+      /* parametric: gaussian fit (z * sample sd) — blind to kurtosis */
+      var m = 0, i; for (i = 0; i < N; i++) m += losses[i]; m /= N;
+      var vv = 0; for (i = 0; i < N; i++) vv += (losses[i] - m) * (losses[i] - m);
+      var sd = Math.sqrt(vv / (N - 1));
+      var paramVar = m + ninv(alpha) * sd;
+
+      /* monte-carlo: independent fat-tailed draws, empirical quantile.
+         different seed & size -> distinct from the historical sample,
+         but converges to the same tail (assumption-free, like historical) */
+      var mcSamp = fatSample(20000, fat, 99999).map(function (z) { return z * SIG; });
+      mcSamp.sort(function (a, b) { return a - b; });
+      var mcVar = quantile(mcSamp, alpha);
+      return { alpha: alpha, fat: fat, N: N, hist: histVar, param: paramVar, mc: mcVar };
+    }
+
+    function render() {
+      var r = compute();
+      aOut.textContent = (r.alpha * 100).toFixed(1) + "%";
+      fOut.textContent = r.fat.toFixed(1);
+      nOut.textContent = r.N;
+      histEl.textContent = fpct(r.hist, 2);
+      paramEl.textContent = fpct(r.param, 2);
+      mcEl.textContent = fpct(r.mc, 2);
+
+      var c = FM.setupCanvas(canvas, 300);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      var padL = 44, padR = 16, padT = 24, padB = 40;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      ctx.clearRect(0, 0, w, h);
+
+      var bars = [
+        { name: "HISTORICAL", v: r.hist, col: C.MINT },
+        { name: "PARAMETRIC", v: r.param, col: C.BLUE },
+        { name: "MONTE-CARLO", v: r.mc, col: C.SEC }
+      ];
+      var maxV = Math.max(r.hist, r.param, r.mc) * 1.18 || 1;
+      function py(v) { return y0 - (v / maxV) * (y0 - y1); }
+
+      /* gridlines */
+      ctx.strokeStyle = "rgba(47,50,52,.55)"; ctx.lineWidth = 1;
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      var g;
+      for (g = 0; g <= 4; g++) {
+        var gv = maxV * g / 4, gy = py(gv);
+        ctx.beginPath(); ctx.moveTo(x0, gy); ctx.lineTo(x1, gy); ctx.stroke();
+        ctx.fillText(gv.toFixed(1) + "%", x0 - 6, gy);
+      }
+
+      var bw = (x1 - x0) / bars.length;
+      bars.forEach(function (b, i) {
+        var cx = x0 + bw * (i + 0.5);
+        var bwi = bw * 0.5;
+        var top = py(b.v);
+        ctx.fillStyle = b.col;
+        ctx.globalAlpha = 0.85;
+        ctx.fillRect(cx - bwi / 2, top, bwi, y0 - top);
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = C.BRIGHT; ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+        ctx.font = "11px ui-monospace, Menlo, monospace";
+        ctx.fillText(b.v.toFixed(2) + "%", cx, top - 4);
+        ctx.fillStyle = C.SEC; ctx.font = C.MONO; ctx.textBaseline = "top";
+        ctx.fillText(b.name, cx, y0 + 8);
+      });
+      ctx.fillStyle = C.MUT; ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText((r.alpha * 100).toFixed(1) + "% VaR · same data, three estimators",
+                   x0, y1 - 16);
+    }
+    [aIn, fIn, nIn].forEach(function (el) { el.addEventListener("input", render); });
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT Q6.3 — VaR backtest exceedance counter
+     250 deterministic daily losses vs a flat VaR line.
+     Counts exceptions, runs Kupiec POF, assigns Basel zone.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("varisk-backtest");
+    if (!root) return;
+    var canvas = document.getElementById("varisk-bt-canvas");
+    var aIn = document.getElementById("varisk-bt-alpha");
+    var mIn = document.getElementById("varisk-bt-mis");
+    var aOut = document.getElementById("varisk-bt-alpha-out");
+    var mOut = document.getElementById("varisk-bt-mis-out");
+    var cntEl = document.getElementById("varisk-bt-count");
+    var lrEl = document.getElementById("varisk-bt-lr");
+    var zoneEl = document.getElementById("varisk-bt-zone");
+    var T = 250, SIG_MODEL = 1.0;   /* model assumes 1% daily vol */
+
+    /* deterministic standard-normal day series (fixed seed) */
+    var Z = (function () {
+      var rng = FM.mulberry32(424242), z = [], i;
+      for (i = 0; i < T; i++) {
+        var u1 = Math.max(1e-12, rng()), u2 = rng();
+        z.push(Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2));
+      }
+      return z;
+    })();
+
+    function render() {
+      var alpha = +aIn.value, mis = +mIn.value;
+      aOut.textContent = (alpha * 100).toFixed(1) + "%";
+      mOut.textContent = mis.toFixed(2) + "×";
+      var p = 1 - alpha;
+      var varLine = ninv(alpha) * SIG_MODEL;            /* VaR forecast, % */
+      var sigTrue = SIG_MODEL * mis;                    /* realized vol, % */
+      var losses = Z.map(function (z) { return z * sigTrue; });
+
+      var x = 0, i;
+      for (i = 0; i < T; i++) if (losses[i] > varLine) x++;
+      var exp = p * T;
+
+      /* Kupiec POF LR (EQ Q6.7), guarding x = 0 */
+      var ph = x / T, LR;
+      if (x === 0) {
+        LR = -2 * T * Math.log(1 - p);
+      } else {
+        var lnNum = (T - x) * Math.log(1 - p) + x * Math.log(p);
+        var lnDen = (T - x) * Math.log(1 - ph) + x * Math.log(ph);
+        LR = -2 * (lnNum - lnDen);
+      }
+      var zone = x <= 4 ? "GREEN" : (x <= 9 ? "YELLOW" : "RED");
+      var zoneCol = x <= 4 ? C.MINT : (x <= 9 ? "#d8b34a" : C.RED);
+
+      cntEl.textContent = x + " / " + exp.toFixed(1);
+      lrEl.textContent = LR.toFixed(2) + (LR > 3.841 ? " ✗" : " ✓");
+      lrEl.style.color = LR > 3.841 ? C.RED : C.MINT;
+      zoneEl.textContent = zone;
+      zoneEl.style.color = zoneCol;
+
+      var c = FM.setupCanvas(canvas, 300);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      var padL = 40, padR = 14, padT = 18, padB = 26;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      ctx.clearRect(0, 0, w, h);
+
+      /* vertical scale: symmetric around 0, covers losses & the VaR line */
+      var maxAbs = Math.max(varLine * 1.3, 1);
+      for (i = 0; i < T; i++) maxAbs = Math.max(maxAbs, Math.abs(losses[i]));
+      function py(v) { return y0 - (v + maxAbs) / (2 * maxAbs) * (y0 - y1); }
+      var zeroY = py(0);
+
+      /* zero line */
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x0, zeroY); ctx.lineTo(x1, zeroY); ctx.stroke();
+
+      /* daily loss bars (up = loss) */
+      var bw = (x1 - x0) / T;
+      for (i = 0; i < T; i++) {
+        var bx = x0 + bw * i;
+        var lv = losses[i];
+        var top = py(lv);
+        var exc = lv > varLine;
+        ctx.fillStyle = exc ? C.RED : "rgba(155,155,155,0.55)";
+        var yA = Math.min(top, zeroY), yB = Math.max(top, zeroY);
+        ctx.fillRect(bx, yA, Math.max(0.8, bw - 0.4), yB - yA);
+      }
+
+      /* VaR line */
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 1.8;
+      var vy = py(varLine);
+      ctx.beginPath(); ctx.moveTo(x0, vy); ctx.lineTo(x1, vy); ctx.stroke();
+      ctx.font = C.MONO; ctx.fillStyle = C.MINT;
+      ctx.textAlign = "left"; ctx.textBaseline = "bottom";
+      ctx.fillText("99% VaR = " + varLine.toFixed(2) + "% loss", x0 + 4, vy - 3);
+
+      /* axis labels */
+      ctx.fillStyle = C.MUT; ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      ctx.fillText(maxAbs.toFixed(1) + "%", x0 - 5, py(maxAbs));
+      ctx.fillText("0", x0 - 5, zeroY);
+      ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText("250 TRADING DAYS →", x0, y0 + 6);
+      ctx.fillStyle = C.RED; ctx.textAlign = "right";
+      ctx.fillText(x + " EXCEPTIONS", x1, y0 + 6);
+    }
+    [aIn, mIn].forEach(function (el) { el.addEventListener("input", render); });
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

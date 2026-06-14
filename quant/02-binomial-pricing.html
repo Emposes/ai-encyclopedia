@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Binomial Option Pricing — AI Encyclopedia</title>
+<meta name="description" content="Replication and no-arbitrage let you price an option without ever knowing the stock's expected return — the binomial tree turns that idea into an algorithm that converges to Black–Scholes." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+</head>
+<body data-track="quant" data-level="core">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ QUANT / 02 / BINOMIAL PRICING</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../quant/03-black-scholes.html">NEXT: BLACK–SCHOLES →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">QUANTITATIVE FINANCE · CHAPTER 02 / 06</div>
+    <h1>Binomial Option Pricing</h1>
+    <p class="lede">An option appears to depend on whether the stock rises or falls, yet its price does not. <strong>You can price an option without knowing the stock's expected return: replication and no-arbitrage make the drift vanish.</strong> This chapter builds that argument from one step of a tree, extends it to the Cox–Ross–Rubinstein lattice, and traces its convergence to the Black–Scholes price covered next.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 24 MIN</b></span>
+      <span>BUILDS ON<b>QUANT 01</b></span>
+      <span>INSTRUMENTS<b>TREE · RISK-NEUTRAL p · AMERICAN</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">2.1</span>No-arbitrage &amp; one price</a>
+      <a href="#s2"><span class="n">2.2</span>Risk-neutral valuation</a>
+      <a href="#s3"><span class="n">2.3</span>The one-step model</a>
+      <a href="#s4"><span class="n">2.4</span>Multi-step CRR trees</a>
+      <a href="#s5"><span class="n">2.5</span>American options</a>
+      <a href="#s6"><span class="n">2.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 2.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">2.1</span><h2>No-arbitrage &amp; the law of one price</h2></div>
+        <p>Everything in option pricing rests on a single principle, and it is almost embarrassingly mundane: <strong>two portfolios that pay the same thing in every future state must cost the same today.</strong> If they did not, you would buy the cheap one, sell the dear one, pocket the difference, and walk away holding offsetting positions that cancel in every scenario — a riskless profit from nothing. Markets are not perfectly efficient, but they are efficient enough that such free lunches are arbitraged away in seconds. This is the <em>law of one price</em>, and it is the only economic assumption the binomial model needs.</p>
+
+        <p>The leap is to notice that an option <em>is</em> such a portfolio in disguise. Over a short enough interval the stock can do only a limited number of things, and we can assemble a position in the stock and a risk-free bond that reproduces the option's payoff exactly. If we can build the option's payoff out of instruments whose prices we already know, then the law of one price hands us the option's price: it must equal the cost of that <strong>replicating portfolio</strong>. We never forecast the market; we manufacture the option and read off the bill of materials.</p>
+
+        <div class="callout">
+          <span class="co-icon">KEY</span>
+          <p><strong>Pricing is replication, not prediction.</strong> A binomial model does not ask "will the stock rise?" It asks "what mix of stock and cash exactly mimics this option?" — and then charges what that mix costs. Two traders who violently disagree about the stock's direction must still quote the <em>same</em> option price, because both can build it the same way at the same cost. This is the seed of the entire field; §2.3 makes it arithmetic.</p>
+        </div>
+
+        <p>One more piece of furniture. Throughout we discount with a risk-free rate. Over a step of length \(\Delta t\) a dollar in the bank grows by the gross factor \(e^{r\Delta t}\) (continuous compounding) or \(1+r\Delta t\) (simple); a payoff received at the end of the step is worth \(e^{-r\Delta t}\) times its face value today. To rule out arbitrage in the stock itself, the up and down moves must straddle the bond: \(d &lt; e^{r\Delta t} &lt; u\). If the stock could only ever beat the bond (\(d &gt; e^{r\Delta t}\)) you would borrow infinitely to buy it; if it could only ever lag (\(u &lt; e^{r\Delta t}\)) you would short it without limit. The no-arbitrage band is exactly what makes a finite price possible.</p>
+      </section>
+
+      <!-- ====================== 2.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">2.2</span><h2>Risk-neutral valuation</h2></div>
+        <p>The replication argument has a second face that is often easier to compute with. Suppose we insist on writing the option's value today as a discounted expectation of its payoff. The real-world probabilities of up and down moves — driven by the stock's true expected return — are <em>not</em> the right weights; if they were, two traders with different forecasts would price the option differently, contradicting §2.1. Instead there is a single, fictitious set of probabilities under which the discounted price of <em>every</em> traded asset is a fair game (a martingale). These are the <strong>risk-neutral probabilities</strong>, and under them the stock's expected growth is exactly the risk-free rate.</p>
+
+        <div class="eq"><span class="eq-tag">EQ Q2.1 — RISK-NEUTRAL VALUATION</span>
+        $$ V_0 \;=\; e^{-r\Delta t}\,\mathbb{E}^{\mathbb{Q}}\!\big[\,V_{\Delta t}\,\big] \;=\; e^{-r\Delta t}\big[\,p\,V_u + (1-p)\,V_d\,\big], \qquad \text{where } \; \mathbb{E}^{\mathbb{Q}}[S_{\Delta t}] = e^{r\Delta t} S_0 $$
+        <div class="eq-note">\(p\) is the risk-neutral probability of an up move, \(V_u\) and \(V_d\) the option's values after up and down. The price is just the <b>discounted, probability-weighted average payoff</b> — but weighted by \(\mathbb{Q}\), not by anyone's beliefs. The defining constraint is on the last term: under \(\mathbb{Q}\) the stock drifts at the riskless rate, so the expected return \(\mu\) of the real world has been engineered out of the problem. Black–Scholes (Quant 03) is the continuous-time limit of exactly this expectation.</div>
+        </div>
+
+        <p>This is the most counter-intuitive fact in the chapter, so it is worth stating plainly: <strong>the drift vanishes.</strong> A stock everyone expects to soar and a stock everyone expects to crash will produce the <em>same</em> option price if they have the same volatility and the same up/down factors, because both can be replicated for the same cost. Risk-neutral valuation is not a claim that investors are indifferent to risk — they are not — but a bookkeeping trick: by discounting at the riskless rate and re-weighting with \(\mathbb{Q}\), we absorb the market's risk preferences into the probabilities so they never have to be estimated. The two views — replicate-and-cost (§2.1) and discount-the-Q-expectation (here) — are provably identical; §2.3 derives \(p\) from the no-arbitrage condition and they fall out the same.</p>
+
+        <p class="note">A caveat experts insist on: a unique \(\mathbb{Q}\) exists only when the market is <em>complete</em> — when every payoff can in fact be replicated. The one-step binomial market is complete precisely because two outcomes can be hedged with two instruments (stock and bond). Add a third outcome per step without a third instrument and replication fails, \(\mathbb{Q}\) is no longer unique, and prices live in a no-arbitrage interval rather than at a point. The binomial model's elegance is that it stays exactly on the knife-edge of completeness.</p>
+      </section>
+
+      <!-- ====================== 2.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">2.3</span><h2>The one-step binomial model</h2></div>
+        <p>Now the arithmetic. Over one step the stock \(S_0\) moves to either \(S_0 u\) (up) or \(S_0 d\) (down), with \(d &lt; u\). An option on it is worth \(V_u\) or \(V_d\) at the end of the step. Build a portfolio of \(\Delta\) shares and \(B\) dollars of bond, and choose \(\Delta\) and \(B\) so it matches the option in <em>both</em> states:</p>
+
+        <div class="eq"><span class="eq-tag">EQ Q2.2 — THE HEDGE RATIO (DELTA)</span>
+        $$ \Delta\,S_0 u + B\,e^{r\Delta t} = V_u, \qquad \Delta\,S_0 d + B\,e^{r\Delta t} = V_d \;\;\Longrightarrow\;\; \Delta = \frac{V_u - V_d}{S_0(u - d)} $$
+        <div class="eq-note">Subtract the two equations and the bond term cancels: \(\Delta\) is the <b>spread of option values divided by the spread of stock values</b> — how many shares hedge the option's exposure over this step. This is the discrete ancestor of the Black–Scholes delta. Because the portfolio reproduces the option in every state, no-arbitrage forces the option's price to equal the portfolio's cost today, \(\Delta S_0 + B\).</div>
+        </div>
+
+        <p>Substitute \(\Delta\) and \(B\) back and simplify. The expected-return term collapses and what survives is a clean weighted average — exactly EQ Q2.1, with the weight \(p\) determined entirely by the no-arbitrage band:</p>
+
+        <div class="eq"><span class="eq-tag">EQ Q2.3 — RISK-NEUTRAL PROBABILITY &amp; PRICE</span>
+        $$ p = \frac{e^{r\Delta t} - d}{u - d}, \qquad V_0 = e^{-r\Delta t}\big[\,p\,V_u + (1-p)\,V_d\,\big] $$
+        <div class="eq-note">\(p\) is the only weight that makes the stock itself fairly priced under EQ Q2.1: plug \(V_u = S_0u,\ V_d = S_0d\) and you recover \(\mathbb{E}^{\mathbb{Q}}[S] = e^{r\Delta t}S_0\). The condition \(d &lt; e^{r\Delta t} &lt; u\) is exactly what keeps \(p \in (0,1)\), a genuine probability. <b>Notice what is absent: no \(\mu\), no risk premium, no view on direction.</b> The real-world odds of up versus down never appear.</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><div>A call, \(S_0 = 100\), \(u = 1.1\), \(d = 0.9\), strike \(K = 100\), one step, \(r = 0\) so \(e^{r\Delta t} = 1\).</div></div>
+          <div class="x-step"><span class="x-n">02</span><div>Stock goes to \(110\) or \(90\). Call payoffs: \(V_u = \max(110-100,0) = 10\), \(V_d = \max(90-100,0) = 0\).</div></div>
+          <div class="x-step"><span class="x-n">03</span><div>Risk-neutral prob: \(p = \dfrac{1 - 0.9}{1.1 - 0.9} = \dfrac{0.1}{0.2} = 0.5\). Price: \(V_0 = 1\cdot[0.5\cdot 10 + 0.5\cdot 0] = 5\).</div></div>
+          <div class="x-step"><span class="x-n">04</span><div>Hedge: \(\Delta = \dfrac{10 - 0}{100(1.1 - 0.9)} = \dfrac{10}{20} = 0.5\). Hold half a share, borrow \(B = (V_u - \Delta S_0 u) = 10 - 0.5\cdot 110 = -45\); cost today \(= 0.5\cdot 100 - 45 = 5\). Same answer, two routes.</div></div>
+          <span class="x-result">RESULT: p = 0.5, call price = 5, hedge Δ = 0.5</span>
+        </div></div>
+        </div>
+
+        <div class="exercise" data-answer="0.5" data-tol="0.001" data-hint="p = (e^{rΔt} − d)/(u − d); with r = 0 the numerator is 1 − d.">
+          <div class="ex-q">One step with \( u = 1.1 \), \( d = 0.9 \), and \( r = 0 \) (so \( e^{r\Delta t} = 1 \)). What is the risk-neutral probability of an up move, \( p = \dfrac{e^{r\Delta t} - d}{u - d} \)?</div>
+          <div class="ex-reveal-src">\( p = \dfrac{1 - 0.9}{1.1 - 0.9} = \dfrac{0.1}{0.2} = \) <b>0.5</b>. With zero rate and symmetric moves the risk-neutral measure is a fair coin — but note it is set by \(u\) and \(d\), never by the real-world odds.</div>
+        </div>
+
+        <div class="exercise" data-answer="0.5" data-tol="0.001" data-hint="Δ = (V_u − V_d) / (S₀(u − d)); the up payoff is 10, the down payoff 0.">
+          <div class="ex-q">For that same call (\( S_0 = 100,\ u = 1.1,\ d = 0.9,\ K = 100 \)), the up payoff is \( V_u = 10 \) and the down payoff is \( V_d = 0 \). How many shares does the replicating hedge hold, \( \Delta = \dfrac{V_u - V_d}{S_0(u-d)} \)?</div>
+          <div class="ex-reveal-src">\( \Delta = \dfrac{10 - 0}{100\,(1.1 - 0.9)} = \dfrac{10}{20} = \) <b>0.5</b>. Half a share, financed by borrowing, exactly replicates the call — and replication is the price.</div>
+        </div>
+
+        <div class="widget" id="bin-rn" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT Q2.1 — RISK-NEUTRAL PROBABILITY EXPLORER</span><span class="w-sub">ONE STEP · EQ Q2.3 · LIVE</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>UP FACTOR u <output id="bin-rn-u-out">1.10</output></label><input type="range" id="bin-rn-u" min="1.01" max="1.60" step="0.01" value="1.10"/></div>
+              <div class="ctl"><label>DOWN FACTOR d <output id="bin-rn-d-out">0.90</output></label><input type="range" id="bin-rn-d" min="0.55" max="0.99" step="0.01" value="0.90"/></div>
+              <div class="ctl"><label>RATE r/step <output id="bin-rn-r-out">0.00</output></label><input type="range" id="bin-rn-r" min="0" max="0.10" step="0.005" value="0"/></div>
+            </div>
+            <div style="border:1px solid var(--hairline);border-radius:4px;padding:14px;margin-top:4px;">
+              <div style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.16em;color:#636363;margin-bottom:8px;">RISK-NEUTRAL WEIGHT p &nbsp;·&nbsp; NO-ARBITRAGE BAND d &lt; e^{rΔt} &lt; u</div>
+              <div style="height:14px;background:rgba(47,50,52,.4);border-radius:2px;overflow:hidden;">
+                <div id="bin-rn-bar" style="height:100%;width:50%;background:#a6f2cc;transition:width .25s ease-in-out;"></div>
+              </div>
+              <div id="bin-rn-warn" style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.12em;color:#636363;margin-top:8px;">band OK — p is a valid probability</div>
+            </div>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">RISK-NEUTRAL p</div><div class="r-value" id="bin-rn-p">—</div></div>
+              <div class="readout"><div class="r-label">GROSS RATE e^{rΔt}</div><div class="r-value" id="bin-rn-gross">—</div></div>
+              <div class="readout"><div class="r-label">𝔼ᵠ[S]/S₀ (= gross)</div><div class="r-value" id="bin-rn-check">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Defaults reproduce the worked example: \(u=1.1,\ d=0.9,\ r=0 \Rightarrow p = 0.5\). The third readout confirms the defining identity — \(p u + (1-p)d\) always equals the gross rate \(e^{r\Delta t}\), which is what "risk-neutral" means. Push \(d\) above the gross rate and the bar turns <span style="color:var(--danger);">red</span>: the band breaks, \(p\) leaves \([0,1]\), and the market admits arbitrage. Raise \(r\) toward \(u\) and watch \(p\) climb toward 1.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 2.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">2.4</span><h2>Multi-step CRR trees</h2></div>
+        <p>One step is a cartoon of the market; many steps approximate it. Cox, Ross and Rubinstein's 1979 insight was to chain the one-step rule into a <strong>recombining lattice</strong> — "up then down" lands on the same node as "down then up", so after \(N\) steps there are only \(N+1\) terminal nodes instead of \(2^N\). The tree is built forward; the option is priced <em>backward</em>, applying EQ Q2.3 at every node from the leaves to the root.</p>
+
+        <div class="eq"><span class="eq-tag">EQ Q2.4 — CRR PARAMETERS &amp; BACKWARD INDUCTION</span>
+        $$ u = e^{\sigma\sqrt{\Delta t}}, \quad d = \frac{1}{u} = e^{-\sigma\sqrt{\Delta t}}, \quad p = \frac{e^{r\Delta t} - d}{u - d}, \qquad V_i^{(n)} = e^{-r\Delta t}\big[\,p\,V_{i+1}^{(n+1)} + (1-p)\,V_{i}^{(n+1)}\,\big] $$
+        <div class="eq-note">The CRR choice \(ud = 1\) makes the lattice recombine and centres it on \(S_0\); the \(\sqrt{\Delta t}\) scaling matches the variance of log-returns to \(\sigma^2\Delta t\) per step. Start with terminal payoffs \(V_i^{(N)} = \text{payoff}(S_0 u^i d^{\,N-i})\) and sweep the recursion back to \(V_0^{(0)}\). <b>The whole pricer is one loop over the lattice — a dozen lines of NumPy</b> (below).</div>
+        </div>
+
+        <p>As the step count \(N\) grows, the binomial price marches toward the Black–Scholes value. This is not a coincidence: with the CRR parametrization the multiplicative random walk converges (by the central limit theorem applied to log-returns) to geometric Brownian motion, and the discounted-expectation recursion converges to the Black–Scholes integral. The convergence is famously <em>oscillatory</em> — even and odd \(N\) approach from opposite sides because the strike sits differently relative to the terminal grid — so practitioners average adjacent \(N\), or reach for smoothing tricks, rather than trusting any single small tree.</p>
+
+        <div class="exercise" data-answer="true" data-hint="The CRR random walk converges to geometric Brownian motion as N → ∞.">
+          <div class="ex-q">True or false: as the number of steps \( N \) increases, the CRR binomial price of a European option converges to the Black–Scholes price. (Answer <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">With \( u = e^{\sigma\sqrt{\Delta t}},\ d = 1/u \), the multiplicative binomial walk converges to geometric Brownian motion and the backward-induction expectation converges to the Black–Scholes integral. So the statement is <b>true</b> — though the approach oscillates with \(N\) rather than decreasing monotonically.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># CRR binomial European call -> converges to Black-Scholes as steps grow
+import numpy as np, math
+
+def bs_call(S, K, r, sig, T):                      # closed-form benchmark
+    d1 = (math.log(S/K) + (r + 0.5*sig*sig)*T) / (sig*math.sqrt(T))
+    d2 = d1 - sig*math.sqrt(T)
+    Nf = lambda x: 0.5*(1 + math.erf(x/math.sqrt(2)))
+    return S*Nf(d1) - K*math.exp(-r*T)*Nf(d2)
+
+def crr_call(S, K, r, sig, T, N):                  # EQ Q2.4, backward induction
+    dt = T/N
+    u  = math.exp(sig*math.sqrt(dt)); d = 1/u
+    p  = (math.exp(r*dt) - d) / (u - d); disc = math.exp(-r*dt)
+    j  = np.arange(N+1)
+    V  = np.maximum(S*u**j*d**(N-j) - K, 0.0)       # terminal call payoffs
+    for n in range(N, 0, -1):                        # sweep leaves -> root
+        V = disc*(p*V[1:n+1] + (1-p)*V[0:n])
+    return V[0]
+
+S, K, r, sig, T = 100, 100, 0.05, 0.20, 1.0
+exact = bs_call(S, K, r, sig, T)
+Ns, errs = [1, 2, 5, 10, 50, 200, 1000], []
+print(f"Black-Scholes call = {exact:.4f}\n  N      binomial     error")
+for N in Ns:
+    c = crr_call(S, K, r, sig, T, N); errs.append(abs(c-exact))
+    print(f"{N:5d}   {c:9.4f}   {c-exact:+.4f}")
+plot_xy(Ns, errs)                                   # |error| shrinking with N</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="bin-tree" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT Q2.2 — BINOMIAL-TREE PRICER</span><span class="w-sub">CRR LATTICE · CONVERGES TO BLACK–SCHOLES · EQ Q2.4</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>VOL σ <output id="bin-tree-sig-out">0.20</output></label><input type="range" id="bin-tree-sig" min="0.05" max="0.80" step="0.01" value="0.20"/></div>
+              <div class="ctl"><label>STEPS N <output id="bin-tree-n-out">4</output></label><input type="range" id="bin-tree-n" min="1" max="60" step="1" value="4"/></div>
+              <div class="ctl"><label>STRIKE K <output id="bin-tree-k-out">100</output></label><input type="range" id="bin-tree-k" min="70" max="130" step="1" value="100"/></div>
+            </div>
+            <canvas class="w-canvas" id="bin-tree-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">BINOMIAL CALL (N STEPS)</div><div class="r-value" id="bin-tree-price">—</div></div>
+              <div class="readout"><div class="r-label">BLACK–SCHOLES LIMIT</div><div class="r-value" id="bin-tree-bs">—</div></div>
+              <div class="readout"><div class="r-label">ERROR vs B–S</div><div class="r-value" id="bin-tree-err">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Fixed: \(S_0 = 100,\ r = 0.05,\ T = 1\) year. The lattice draws nodes coloured by stock price (brighter = higher); the readout prices a European call by backward induction (EQ Q2.4) and compares it to the Black–Scholes limit. Start at \(N = 4\) — a coarse, visibly wrong tree — and drag \(N\) up: the error collapses toward zero and visibly <em>oscillates</em> as it does. Raise σ and the lattice fans wider, the call gets dearer.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 2.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">2.5</span><h2>American options &amp; early exercise</h2></div>
+        <p>So far the option could only be exercised at expiry — a <strong>European</strong> option. An <strong>American</strong> option may be exercised on any date up to expiry, and that extra freedom is exactly where the binomial tree earns its keep: Black–Scholes has no clean closed form for it, but the lattice handles it with a one-line change. At every node, instead of simply taking the discounted continuation value, you take the <em>larger</em> of continuing and exercising right now:</p>
+
+        <div class="eq"><span class="eq-tag">EQ Q2.5 — AMERICAN BACKWARD INDUCTION</span>
+        $$ V_i^{(n)} = \max\!\Big(\,\underbrace{\text{payoff}\big(S_i^{(n)}\big)}_{\text{exercise now}},\;\; \underbrace{e^{-r\Delta t}\big[\,p\,V_{i+1}^{(n+1)} + (1-p)\,V_i^{(n+1)}\,\big]}_{\text{hold (continuation)}}\Big) $$
+        <div class="eq-note">The European recursion (EQ Q2.4) is the right-hand branch alone; the American option adds the left branch — the option to stop. Because the holder optimizes at every node, an American option is <b>worth at least as much</b> as its European twin. The gap is the <em>early-exercise premium</em>. The set of nodes where exercising beats holding forms the <b>early-exercise boundary</b> — the curve the instrument below draws.</div>
+        </div>
+
+        <p>When does early exercise actually pay? Two classic facts orient the intuition. First, <strong>it is never optimal to exercise an American call on a non-dividend-paying stock early</strong> — you would throw away remaining time value and the interest you could earn on the strike by waiting, so the American call equals the European call (Merton's result). Dividends break this: a large dividend can make exercising a call just before the ex-date optimal. Second, <strong>American puts genuinely can pay to exercise early</strong>: deep in the money, the put is worth nearly \(K - S\), and exercising now banks that cash to earn interest rather than waiting for a payoff capped at \(K\). The higher the rate, the stronger the pull.</p>
+
+        <div class="eq"><span class="eq-tag">EQ Q2.6 — EARLY-EXERCISE PREMIUM</span>
+        $$ \pi_{\text{early}} \;=\; V^{\text{American}} - V^{\text{European}} \;\ge\; 0 $$
+        <div class="eq-note">The premium is zero for a call on a non-dividend stock and strictly positive for a sufficiently in-the-money put at a positive rate. <b>It is precisely the value of the option to stop early</b> — and it is exactly the quantity the worked example below isolates, node by node.</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><div>Two-step American <b>put</b>: \(S_0 = 100\), \(u = 1.2\), \(d = 0.8\), strike \(K = 100\), per-step gross rate \(R = 1.05\). Then \(p = \dfrac{1.05 - 0.8}{1.2 - 0.8} = \dfrac{0.25}{0.40} = 0.625\), discount \(=\tfrac{1}{1.05} = 0.9524\).</div></div>
+          <div class="x-step"><span class="x-n">02</span><div>Terminal puts at \(S = 144, 96, 64\): payoffs \(0,\ 4,\ 36\).</div></div>
+          <div class="x-step"><span class="x-n">03</span><div>Down node (\(S = 80\)): continuation \(= 0.9524(0.625\cdot 4 + 0.375\cdot 36) = 15.24\); exercise now \(= 100 - 80 = 20\). Hold? No — <b>exercise early</b>, node value \(20\). Up node (\(S = 120\)): continuation \(1.43\) vs exercise \(0\) → hold.</div></div>
+          <div class="x-step"><span class="x-n">04</span><div>Root, European: \(0.9524(0.625\cdot 1.43 + 0.375\cdot 15.24) = 6.29\). American (down node now \(20\)): \(0.9524(0.625\cdot 1.43 + 0.375\cdot 20) = 7.99\). Early-exercise premium \(= 7.99 - 6.29 = 1.70\).</div></div>
+          <span class="x-result">RESULT: Euro put 6.29 · Amer put 7.99 · early-exercise premium ≈ 1.70</span>
+        </div></div>
+        </div>
+
+        <div class="exercise" data-answer="0.625" data-tol="0.005" data-hint="p = (R − d)/(u − d) with gross rate R = 1.05.">
+          <div class="ex-q">Two-step tree with \( u = 1.2 \), \( d = 0.8 \), and a per-step gross interest factor \( R = e^{r\Delta t} = 1.05 \). What is the risk-neutral probability \( p = \dfrac{R - d}{u - d} \)?</div>
+          <div class="ex-reveal-src">\( p = \dfrac{1.05 - 0.8}{1.2 - 0.8} = \dfrac{0.25}{0.40} = \) <b>0.625</b>. This is the weight used at every node of the American-put backward induction in the worked example.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># American put via backward induction; isolate the early-exercise premium
+import numpy as np, math
+
+def binom_put(S, K, r, sig, T, N, american):
+    dt = T/N
+    u  = math.exp(sig*math.sqrt(dt)); d = 1/u
+    p  = (math.exp(r*dt) - d) / (u - d); disc = math.exp(-r*dt)
+    j  = np.arange(N+1)
+    ST = S*u**j*d**(N-j)
+    V  = np.maximum(K - ST, 0.0)                     # terminal put payoffs
+    for n in range(N, 0, -1):
+        V = disc*(p*V[1:n+1] + (1-p)*V[0:n])         # continuation value
+        if american:                                # ... or exercise now?
+            Sn = S*u**np.arange(n)*d**(n-1-np.arange(n))
+            V  = np.maximum(V, K - Sn)               # EQ Q2.5: take the max
+    return V[0]
+
+S, K, r, sig, T, N = 100, 110, 0.05, 0.30, 1.0, 500
+eu = binom_put(S, K, r, sig, T, N, american=False)
+am = binom_put(S, K, r, sig, T, N, american=True)
+print(f"European put : {eu:.4f}")
+print(f"American put : {am:.4f}   (>= European, EQ Q2.6)")
+print(f"early-exercise premium : {am - eu:.4f}")
+print("the premium is the value of the right to exercise the put early.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="bin-amer" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT Q2.3 — AMERICAN vs EUROPEAN BOUNDARY</span><span class="w-sub">PUT · EARLY-EXERCISE FRONTIER · EQ Q2.5</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>VOL σ <output id="bin-amer-sig-out">0.30</output></label><input type="range" id="bin-amer-sig" min="0.10" max="0.70" step="0.01" value="0.30"/></div>
+              <div class="ctl"><label>RATE r <output id="bin-amer-r-out">0.08</output></label><input type="range" id="bin-amer-r" min="0" max="0.15" step="0.005" value="0.08"/></div>
+              <div class="ctl"><label>STRIKE K <output id="bin-amer-k-out">100</output></label><input type="range" id="bin-amer-k" min="80" max="120" step="1" value="100"/></div>
+            </div>
+            <canvas class="w-canvas" id="bin-amer-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">EUROPEAN PUT</div><div class="r-value" id="bin-amer-eu">—</div></div>
+              <div class="readout acc"><div class="r-label">AMERICAN PUT</div><div class="r-value" id="bin-amer-am">—</div></div>
+              <div class="readout acc"><div class="r-label">EARLY-EXERCISE PREMIUM</div><div class="r-value" id="bin-amer-prem">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Fixed: \(S_0 = 100,\ T = 1\) year, \(N = 80\) steps. The lattice shades each node by its optimal action: <span style="color:var(--accent);">mint</span> nodes are where exercising the put beats holding (the early-exercise region), grey nodes are "hold". The jagged frontier between them is the <b>early-exercise boundary</b>. Crank the rate up and the mint region swells — high rates make banking \(K-S\) now, to earn interest, increasingly worth it — and the premium readout climbs. Drop the rate to zero and the boundary nearly disappears: with no interest to earn, there is little reason to exercise a put early.</div>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>The tree is the same idea Black–Scholes packages in closed form — just discretized.</strong> Quant 03 takes \(N \to \infty\): the recombining lattice becomes geometric Brownian motion, EQ Q2.3's weighted average becomes a Gaussian integral, and the price collapses to \(C = S\,N(d_1) - Ke^{-rT}N(d_2)\). The hedge ratio \(\Delta\) you computed here becomes the first of the Greeks — and the whole binomial scaffolding turns into the smooth surface a derivatives desk lives on.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 2.R References ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">2.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://doi.org/10.1016/0304-405X(79)90015-1" target="_blank" rel="noopener">Cox, J. C., Ross, S. A. &amp; Rubinstein, M. (1979). <span class="ref-venue">Option Pricing: A Simplified Approach</span>.</a> <span class="ref-meta">Journal of Financial Economics 7(3) — the original recombining binomial lattice, the CRR parameters of EQ Q2.4, and the convergence to Black–Scholes.</span></li>
+          <li><a href="https://doi.org/10.2307/3003143" target="_blank" rel="noopener">Merton, R. C. (1973). <span class="ref-venue">Theory of Rational Option Pricing</span>.</a> <span class="ref-meta">Bell Journal of Economics and Management Science 4(1) — the no-arbitrage bounds and the proof that an American call on a non-dividend stock is never exercised early (§2.5).</span></li>
+          <li><a href="https://doi.org/10.1086/260062" target="_blank" rel="noopener">Black, F. &amp; Scholes, M. (1973). <span class="ref-venue">The Pricing of Options and Corporate Liabilities</span>.</a> <span class="ref-meta">Journal of Political Economy 81(3) — the continuous-time closed form the binomial tree converges to as N → ∞ (Quant 03); the lattice is its discrete, fully constructive counterpart.</span></li>
+          <li><a href="https://www.pearson.com/en-us/subject-catalog/p/options-futures-and-other-derivatives/P200000005938" target="_blank" rel="noopener">Hull, J. C. (2021). <span class="ref-venue">Options, Futures, and Other Derivatives</span> (11th ed.).</a> <span class="ref-meta">Pearson — Ch. 13–21: the standard practitioner treatment of binomial trees, risk-neutral valuation, and American-option pricing.</span></li>
+          <li><a href="https://link.springer.com/book/10.1007/978-0-387-22527-2" target="_blank" rel="noopener">Shreve, S. E. (2004). <span class="ref-venue">Stochastic Calculus for Finance I: The Binomial Asset Pricing Model</span>.</a> <span class="ref-meta">Springer — a rigorous, self-contained development of replication, the risk-neutral measure, and market completeness (§2.1–§2.2).</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../quant/01-stochastic-processes.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">01</span> Stochastic Processes</div></a>
+        <a class="next" href="../quant/03-black-scholes.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">03</span> Black–Scholes</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — QUANT · CH 02</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* ============================================================
+   Binomial Option Pricing — chapter instruments
+   Single IIFE, no globals. All three widgets share one CRR
+   pricer so the lattice, the readouts and the Python cells
+   agree to floating-point precision.
+   ============================================================ */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  /* --- shared math ---------------------------------------- */
+  function erf(x) {                                  /* Abramowitz & Stegun 7.1.26 */
+    var s = x < 0 ? -1 : 1; x = Math.abs(x);
+    var t = 1 / (1 + 0.3275911 * x);
+    var y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t
+                  - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x);
+    return s * y;
+  }
+  function ncdf(x) { return 0.5 * (1 + erf(x / Math.SQRT2)); }
+  function bsCall(S, K, r, sig, T) {
+    var d1 = (Math.log(S / K) + (r + 0.5 * sig * sig) * T) / (sig * Math.sqrt(T));
+    var d2 = d1 - sig * Math.sqrt(T);
+    return S * ncdf(d1) - K * Math.exp(-r * T) * ncdf(d2);
+  }
+  /* CRR European call by backward induction (EQ Q2.4) */
+  function crrCall(S, K, r, sig, T, N) {
+    var dt = T / N, u = Math.exp(sig * Math.sqrt(dt)), d = 1 / u;
+    var p = (Math.exp(r * dt) - d) / (u - d), disc = Math.exp(-r * dt);
+    var V = new Array(N + 1), i, n;
+    for (i = 0; i <= N; i++) V[i] = Math.max(S * Math.pow(u, i) * Math.pow(d, N - i) - K, 0);
+    for (n = N; n > 0; n--)
+      for (i = 0; i < n; i++) V[i] = disc * (p * V[i + 1] + (1 - p) * V[i]);
+    return V[0];
+  }
+  function fnum(x, dgt) { dgt = dgt === undefined ? 4 : dgt; return x.toFixed(dgt); }
+
+  /* ========================================================
+     INSTRUMENT Q2.1 — Risk-neutral probability explorer
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("bin-rn");
+    if (!root) return;
+    var u = document.getElementById("bin-rn-u");
+    var d = document.getElementById("bin-rn-d");
+    var r = document.getElementById("bin-rn-r");
+    var uOut = document.getElementById("bin-rn-u-out");
+    var dOut = document.getElementById("bin-rn-d-out");
+    var rOut = document.getElementById("bin-rn-r-out");
+    var bar = document.getElementById("bin-rn-bar");
+    var warn = document.getElementById("bin-rn-warn");
+    var pEl = document.getElementById("bin-rn-p");
+    var grossEl = document.getElementById("bin-rn-gross");
+    var checkEl = document.getElementById("bin-rn-check");
+    function render() {
+      var U = +u.value, D = +d.value, R = +r.value;
+      var gross = Math.exp(R);                       /* one step, Δt = 1 */
+      uOut.textContent = fnum(U, 2);
+      dOut.textContent = fnum(D, 2);
+      rOut.textContent = fnum(R, 2);
+      var p = (gross - D) / (U - D);
+      var ok = D < gross && gross < U;               /* no-arbitrage band */
+      grossEl.textContent = fnum(gross, 4);
+      pEl.textContent = fnum(p, 4);
+      checkEl.textContent = fnum(p * U + (1 - p) * D, 4);  /* == gross, the Q identity */
+      var clamped = Math.max(0, Math.min(1, p));
+      bar.style.width = (clamped * 100).toFixed(1) + "%";
+      bar.style.background = ok ? C.MINT : C.RED;
+      pEl.style.color = ok ? C.BRIGHT : C.RED;
+      warn.textContent = ok
+        ? "band OK — p is a valid probability"
+        : "ARBITRAGE — d < e^{rΔt} < u violated, p ∉ [0,1]";
+      warn.style.color = ok ? C.MUT : C.RED;
+    }
+    u.addEventListener("input", render);
+    d.addEventListener("input", render);
+    r.addEventListener("input", render);
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT Q2.2 — Binomial-tree pricer + convergence
+     ======================================================== */
+  (function () {
+    var canvas = document.getElementById("bin-tree-canvas");
+    if (!canvas) return;
+    var S0 = 100, r = 0.05, T = 1;
+    var sig = document.getElementById("bin-tree-sig");
+    var Ninp = document.getElementById("bin-tree-n");
+    var Kinp = document.getElementById("bin-tree-k");
+    var sigOut = document.getElementById("bin-tree-sig-out");
+    var nOut = document.getElementById("bin-tree-n-out");
+    var kOut = document.getElementById("bin-tree-k-out");
+    var priceEl = document.getElementById("bin-tree-price");
+    var bsEl = document.getElementById("bin-tree-bs");
+    var errEl = document.getElementById("bin-tree-err");
+    var DRAW_MAX = 16;                                /* cap nodes drawn for clarity */
+
+    function render() {
+      var s = +sig.value, N = +Ninp.value, K = +Kinp.value;
+      sigOut.textContent = fnum(s, 2);
+      nOut.textContent = N;
+      kOut.textContent = K;
+      var price = crrCall(S0, K, r, s, T, N);
+      var bs = bsCall(S0, K, r, s, T);
+      priceEl.textContent = fnum(price, 4);
+      bsEl.textContent = fnum(bs, 4);
+      errEl.textContent = (price - bs >= 0 ? "+" : "") + fnum(price - bs, 4);
+      errEl.style.color = Math.abs(price - bs) < 0.02 ? C.MINT : C.SEC;
+
+      /* draw the lattice (use a coarse view tree if N is large) */
+      var Nv = Math.min(N, DRAW_MAX);
+      var dt = T / Nv, u = Math.exp(s * Math.sqrt(dt)), dn = 1 / u;
+      var c = FM.setupCanvas(canvas, 320);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      var padL = 18, padR = 64, padT = 16, padB = 22;
+      var x0 = padL, x1 = w - padR, y0 = padT, y1 = h - padB;
+      ctx.clearRect(0, 0, w, h);
+
+      /* stock-price range for colour scaling */
+      var smin = S0 * Math.pow(dn, Nv), smax = S0 * Math.pow(u, Nv);
+      function nodeX(n) { return x0 + (x1 - x0) * (Nv === 0 ? 0 : n / Nv); }
+      function nodeY(n, i) {                          /* i up-moves of n */
+        if (n === 0) return (y0 + y1) / 2;
+        var frac = i / n;                             /* 0..1 bottom..top */
+        var spread = (n / Nv);                        /* widen with depth */
+        var mid = (y0 + y1) / 2, half = (y1 - y0) / 2 * spread;
+        return mid - (frac - 0.5) * 2 * half;
+      }
+      /* edges first */
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = "rgba(47,50,52,.8)";
+      var n, i;
+      for (n = 0; n < Nv; n++) {
+        for (i = 0; i <= n; i++) {
+          var X = nodeX(n), Y = nodeY(n, i);
+          ctx.beginPath(); ctx.moveTo(X, Y); ctx.lineTo(nodeX(n + 1), nodeY(n + 1, i + 1)); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(X, Y); ctx.lineTo(nodeX(n + 1), nodeY(n + 1, i)); ctx.stroke();
+        }
+      }
+      /* nodes coloured by stock price (brighter mint = higher) */
+      for (n = 0; n <= Nv; n++) {
+        for (i = 0; i <= n; i++) {
+          var Sx = S0 * Math.pow(u, i) * Math.pow(dn, n - i);
+          var t = smax > smin ? (Sx - smin) / (smax - smin) : 0.5;
+          var rr = Math.round(60 + t * 106), gg = Math.round(60 + t * 182), bb = Math.round(60 + t * 144);
+          ctx.fillStyle = "rgb(" + rr + "," + gg + "," + bb + ")";
+          ctx.beginPath(); ctx.arc(nodeX(n), nodeY(n, i), Nv > 10 ? 2.6 : 4, 0, 2 * Math.PI); ctx.fill();
+        }
+      }
+      /* strike reference line + labels */
+      ctx.font = C.MONO; ctx.fillStyle = C.SEC;
+      ctx.textAlign = "left"; ctx.textBaseline = "middle";
+      ctx.fillText("S₀=" + S0, x1 + 6, nodeY(0, 0));
+      ctx.fillStyle = C.MINT;
+      ctx.fillText("↑ S=" + smax.toFixed(0), x1 + 6, nodeY(Nv, Nv));
+      ctx.fillStyle = C.MUT;
+      ctx.fillText("↓ S=" + smin.toFixed(0), x1 + 6, nodeY(Nv, 0));
+      ctx.fillStyle = C.MUT; ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText("LATTICE (" + (N > DRAW_MAX ? "first " + DRAW_MAX + " of " + N : N) + " steps) · K=" + K, x0, y1 + 6);
+    }
+    sig.addEventListener("input", render);
+    Ninp.addEventListener("input", render);
+    Kinp.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT Q2.3 — American vs European early-exercise boundary
+     ======================================================== */
+  (function () {
+    var canvas = document.getElementById("bin-amer-canvas");
+    if (!canvas) return;
+    var S0 = 100, T = 1, N = 80;
+    var sig = document.getElementById("bin-amer-sig");
+    var rinp = document.getElementById("bin-amer-r");
+    var Kinp = document.getElementById("bin-amer-k");
+    var sigOut = document.getElementById("bin-amer-sig-out");
+    var rOut = document.getElementById("bin-amer-r-out");
+    var kOut = document.getElementById("bin-amer-k-out");
+    var euEl = document.getElementById("bin-amer-eu");
+    var amEl = document.getElementById("bin-amer-am");
+    var premEl = document.getElementById("bin-amer-prem");
+
+    /* price a put and record, per step n, the highest stock price at which
+       exercising beats holding (the early-exercise boundary) */
+    function priceAndBoundary(K, r, s) {
+      var dt = T / N, u = Math.exp(s * Math.sqrt(dt)), d = 1 / u;
+      var p = (Math.exp(r * dt) - d) / (u - d), disc = Math.exp(-r * dt);
+      var eu = new Array(N + 1), am = new Array(N + 1), i, n;
+      for (i = 0; i <= N; i++) {
+        var ST = S0 * Math.pow(u, i) * Math.pow(d, N - i);
+        eu[i] = am[i] = Math.max(K - ST, 0);
+      }
+      var boundary = new Array(N + 1); boundary[N] = K;   /* boundary at expiry ~ K */
+      for (n = N - 1; n >= 0; n--) {
+        var bnd = -Infinity, anyEx = false;
+        for (i = 0; i <= n; i++) {
+          var cont = disc * (p * am[i + 1] + (1 - p) * am[i]);
+          var Sn = S0 * Math.pow(u, i) * Math.pow(d, n - i);
+          var ex = Math.max(K - Sn, 0);
+          am[i] = Math.max(cont, ex);
+          eu[i] = disc * (p * eu[i + 1] + (1 - p) * eu[i]);
+          if (ex > cont && ex > 0) { anyEx = true; if (Sn > bnd) bnd = Sn; }
+        }
+        boundary[n] = anyEx ? bnd : null;               /* null = no exercise this step */
+      }
+      return { eu: eu[0], am: am[0], u: u, d: d, boundary: boundary };
+    }
+
+    function render() {
+      var s = +sig.value, r = +rinp.value, K = +Kinp.value;
+      sigOut.textContent = fnum(s, 2);
+      rOut.textContent = fnum(r, 3);
+      kOut.textContent = K;
+      var res = priceAndBoundary(K, r, s);
+      euEl.textContent = fnum(res.eu, 4);
+      amEl.textContent = fnum(res.am, 4);
+      var prem = res.am - res.eu;
+      premEl.textContent = (prem >= 0 ? "+" : "") + fnum(prem, 4);
+      premEl.style.color = prem > 1e-4 ? C.MINT : C.SEC;
+
+      var c = FM.setupCanvas(canvas, 320);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      var padL = 46, padR = 16, padT = 16, padB = 28;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      ctx.clearRect(0, 0, w, h);
+
+      /* vertical axis: stock price; show a window around K */
+      var Smin = S0 * Math.pow(res.d, N) * 1.0;
+      Smin = Math.max(Smin, K * 0.35);
+      var Smax = K * 1.25;
+      function px(n) { return x0 + (x1 - x0) * n / N; }
+      function py(S) { return y0 - (S - Smin) / (Smax - Smin) * (y0 - y1); }
+
+      /* frame + gridlines */
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(x0, y1, x1 - x0, y0 - y1);
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      var g;
+      for (g = 0; g <= 4; g++) {
+        var Sv = Smin + (Smax - Smin) * g / 4, gy = py(Sv);
+        ctx.strokeStyle = "rgba(47,50,52,.5)";
+        ctx.beginPath(); ctx.moveTo(x0, gy); ctx.lineTo(x1, gy); ctx.stroke();
+        ctx.fillStyle = C.MUT; ctx.fillText(Sv.toFixed(0), x0 - 6, gy);
+      }
+      /* strike line */
+      ctx.setLineDash([4, 4]); ctx.strokeStyle = C.SEC; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x0, py(K)); ctx.lineTo(x1, py(K)); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = C.SEC; ctx.textAlign = "left"; ctx.textBaseline = "bottom";
+      ctx.fillText("K=" + K, x0 + 4, py(K) - 2);
+
+      /* mint exercise-region fill: below the boundary curve */
+      ctx.beginPath();
+      var started = false, n, anyBoundary = false;
+      for (n = 0; n <= N; n++) {
+        var b = res.boundary[n];
+        if (b === null || b === undefined) continue;
+        anyBoundary = true;
+        var X = px(n), Y = py(Math.min(b, Smax));
+        if (!started) { ctx.moveTo(X, y0); ctx.lineTo(X, Y); started = true; }
+        else ctx.lineTo(X, Y);
+      }
+      if (anyBoundary) {
+        /* close down to the bottom axis */
+        for (n = N; n >= 0; n--) {
+          var bb = res.boundary[n];
+          if (bb === null || bb === undefined) continue;
+          ctx.lineTo(px(n), y0); break;
+        }
+        ctx.closePath();
+        ctx.fillStyle = "rgba(166,242,204,.16)";
+        ctx.fill();
+      }
+      /* boundary curve itself (mint) */
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 2;
+      ctx.beginPath(); started = false;
+      for (n = 0; n <= N; n++) {
+        var b2 = res.boundary[n];
+        if (b2 === null || b2 === undefined) { started = false; continue; }
+        var X2 = px(n), Y2 = py(Math.min(b2, Smax));
+        if (!started) { ctx.moveTo(X2, Y2); started = true; } else ctx.lineTo(X2, Y2);
+      }
+      ctx.stroke();
+
+      /* labels */
+      ctx.font = C.MONO; ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillStyle = C.MINT; ctx.fillText("■ EXERCISE EARLY", x0 + 6, y1 + 4);
+      ctx.fillStyle = C.MUT; ctx.fillText("□ HOLD", x0 + 6, y1 + 18);
+      ctx.fillStyle = C.MUT; ctx.textAlign = "right"; ctx.textBaseline = "bottom";
+      ctx.fillText("t=0", x0 + 14, y0 + 18);
+      ctx.textAlign = "right";
+      ctx.fillText("expiry", x1, y0 + 18);
+    }
+    sig.addEventListener("input", render);
+    rinp.addEventListener("input", render);
+    Kinp.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

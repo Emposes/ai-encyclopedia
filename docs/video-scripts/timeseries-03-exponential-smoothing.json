@@ -1,0 +1,169 @@
+{
+  "concepts": [
+    {
+      "id": "timeseries-03-exponential-smoothing-s1",
+      "chapter": "timeseries/03-exponential-smoothing",
+      "section": "s1",
+      "title": "Simple exponential smoothing",
+      "eyebrow": "TIME SERIES",
+      "beats": [
+        {
+          "text": "Simple exponential smoothing forecasts a level that wanders in noise by weighting recent observations more than old ones.",
+          "visual": { "type": "title", "text": "Simple exponential smoothing", "sub": "One parameter, one pass over the data" }
+        },
+        {
+          "text": "Each new reading nudges the running level toward it by a fraction alpha, the smoothing learning rate.",
+          "visual": { "type": "equation", "tex": "\\ell_t = \\alpha\\, y_t + (1-\\alpha)\\,\\ell_{t-1}, \\quad \\hat{y}_{t+1\\mid t} = \\ell_t", "note": "0 < alpha < 1" }
+        },
+        {
+          "text": "With alpha of 0.3, a level of 10 and a new reading of 20 update to 13, moving thirty percent of the gap.",
+          "visual": { "type": "stat", "value": 13, "label": "Updated level after y=20", "decimals": 0 }
+        },
+        {
+          "text": "The error-correction form reads like online learning: each forecast miss pulls the level a fraction alpha toward fixing it.",
+          "visual": { "type": "equation", "tex": "\\ell_t = \\ell_{t-1} + \\alpha\\,(y_t - \\ell_{t-1}) = \\ell_{t-1} + \\alpha\\, e_t", "note": "gradient step on squared error" }
+        },
+        {
+          "text": "Unrolled, the weight on each past point decays geometrically: 0.30, then 0.21, then 0.147, each step losing a factor of 0.7.",
+          "visual": { "type": "bars", "values": [0.30, 0.21, 0.147, 0.103, 0.072], "labels": ["lag 0", "lag 1", "lag 2", "lag 3", "lag 4"], "highlight": 0 }
+        },
+        {
+          "text": "Small alpha means a long memory and slow fade; large alpha means a short memory that tracks the latest point.",
+          "visual": { "type": "plot", "ys": [0.30, 0.21, 0.147, 0.103, 0.072, 0.050, 0.035], "xlabel": "steps into the past", "ylabel": "weight", "mark": "decay" }
+        }
+      ]
+    },
+    {
+      "id": "timeseries-03-exponential-smoothing-s2",
+      "chapter": "timeseries/03-exponential-smoothing",
+      "section": "s2",
+      "title": "Holt's linear trend method",
+      "eyebrow": "TIME SERIES",
+      "beats": [
+        {
+          "text": "Simple smoothing forecasts a flat line, so it lags on any series that is climbing or falling.",
+          "visual": { "type": "title", "text": "Holt's linear trend", "sub": "Adding a second smoothed component" }
+        },
+        {
+          "text": "Holt added a trend term updated by its own parameter beta, so two recurrences run in lockstep.",
+          "visual": { "type": "equation", "tex": "\\begin{aligned} \\ell_t &= \\alpha\\, y_t + (1-\\alpha)(\\ell_{t-1} + b_{t-1}) \\\\ b_t &= \\beta\\,(\\ell_t - \\ell_{t-1}) + (1-\\beta)\\,b_{t-1} \\end{aligned}", "note": "level and trend" }
+        },
+        {
+          "text": "The forecast is no longer flat but a straight line of slope b, projected h steps ahead.",
+          "visual": { "type": "plot", "ys": [10, 11.5, 13, 14.5, 16, 17.5, 19], "xlabel": "horizon h", "ylabel": "forecast", "mark": "trend line" }
+        },
+        {
+          "text": "A linear trend projected far out is usually too aggressive, since real series tend to flatten.",
+          "visual": { "type": "equation", "tex": "\\hat{y}_{t+h\\mid t} = \\ell_t + (\\phi + \\phi^2 + \\cdots + \\phi^{h})\\,b_t", "note": "damped trend, 0 < phi < 1" }
+        },
+        {
+          "text": "The damped trend bends the forecast toward a finite ceiling and is one of the most reliable automatic forecasters known.",
+          "visual": { "type": "plot", "ys": [10, 12, 13.6, 14.9, 15.9, 16.7, 17.3], "xlabel": "horizon h", "ylabel": "forecast", "mark": "damped" }
+        },
+        {
+          "text": "The naming just counts recurrences: single tracks level, double adds trend, triple will add season.",
+          "visual": { "type": "bars", "values": [1, 2, 3], "labels": ["SES", "Holt", "Holt-Winters"], "highlight": 1 }
+        }
+      ]
+    },
+    {
+      "id": "timeseries-03-exponential-smoothing-s3",
+      "chapter": "timeseries/03-exponential-smoothing",
+      "section": "s3",
+      "title": "Holt-Winters seasonal method",
+      "eyebrow": "TIME SERIES",
+      "beats": [
+        {
+          "text": "Most operational series breathe on a calendar: weekly retail, daily electricity, monthly tourism.",
+          "visual": { "type": "title", "text": "Holt-Winters seasonal", "sub": "A third recurrence for the calendar" }
+        },
+        {
+          "text": "Winters added a vector of m seasonal indices, each updated by its own parameter gamma.",
+          "visual": { "type": "equation", "tex": "s_t = \\gamma\\,(y_t - \\ell_t) + (1-\\gamma)\\,s_{t-m}", "note": "seasonal index from detrended residual" }
+        },
+        {
+          "text": "The additive form smooths the deseasonalised observation and adds the matching seasonal index back to the forecast.",
+          "visual": { "type": "equation", "tex": "\\ell_t = \\alpha\\,(y_t - s_{t-m}) + (1-\\alpha)(\\ell_{t-1} + b_{t-1})", "note": "additive seasonality" }
+        },
+        {
+          "text": "Use additive when the swing is a constant size and multiplicative when the swing grows with the level.",
+          "visual": { "type": "equation", "tex": "\\hat{y}_{t+h\\mid t} = (\\ell_t + h\\,b_t)\\, s_{t+h-m(k+1)}", "note": "multiplicative form" }
+        },
+        {
+          "text": "With a level of 200 and a December multiplier of 1.4, the one-step forecast is 280, forty percent above the level.",
+          "visual": { "type": "stat", "value": 280, "label": "December forecast at level 200", "decimals": 0 }
+        },
+        {
+          "text": "The seasonal recurrence lets the fit hug peaks and troughs a flat level would slice straight through.",
+          "visual": { "type": "plot", "ys": [40, 52, 50, 44, 38, 46, 58, 56, 48, 42, 50, 62], "xlabel": "month", "ylabel": "value", "mark": "season" }
+        }
+      ]
+    },
+    {
+      "id": "timeseries-03-exponential-smoothing-s4",
+      "chapter": "timeseries/03-exponential-smoothing",
+      "section": "s4",
+      "title": "The ETS state-space framework",
+      "eyebrow": "TIME SERIES",
+      "beats": [
+        {
+          "text": "For forty years smoothing was a bag of recurrences with no probability model, so uncertainty could not be quantified.",
+          "visual": { "type": "title", "text": "The ETS framework", "sub": "Error, Trend, Season" }
+        },
+        {
+          "text": "Hyndman and colleagues showed each method is the point forecast of a state-space model with one source of error.",
+          "visual": { "type": "equation", "tex": "y_t = \\ell_{t-1} + b_{t-1} + s_{t-m} + \\varepsilon_t", "note": "measurement equation" }
+        },
+        {
+          "text": "A single shock drives both the observation and every state update through the smoothing constants.",
+          "visual": { "type": "equation", "tex": "\\ell_t = \\ell_{t-1} + b_{t-1} + \\alpha\\,\\varepsilon_t,\\;\\; b_t = b_{t-1} + \\beta\\,\\varepsilon_t,\\;\\; s_t = s_{t-m} + \\gamma\\,\\varepsilon_t", "note": "single source of error" }
+        },
+        {
+          "text": "A three-letter code labels error, trend and season, giving thirty admissible models chosen by AIC.",
+          "visual": { "type": "bars", "values": [2, 3, 3], "labels": ["Error", "Trend", "Season"], "highlight": 1 }
+        },
+        {
+          "text": "The payoff is a likelihood to maximise, AIC for selection, and exact prediction intervals the old recurrences could not give.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "Across the M3 and M4 competitions covering over a hundred thousand series, ETS variants stayed brutally hard to beat.",
+          "visual": { "type": "stat", "value": 100000, "label": "series in the M4 competition", "decimals": 0 }
+        }
+      ]
+    },
+    {
+      "id": "timeseries-03-exponential-smoothing-s5",
+      "chapter": "timeseries/03-exponential-smoothing",
+      "section": "s5",
+      "title": "Choosing the smoothing parameters",
+      "eyebrow": "TIME SERIES",
+      "beats": [
+        {
+          "text": "You do not set the smoothing parameters by hand; a fitting procedure picks them along with the initial states.",
+          "visual": { "type": "title", "text": "Choosing the parameters", "sub": "Minimising the sum of squared errors" }
+        },
+        {
+          "text": "The standard objective minimises the in-sample sum of squared one-step forecast errors.",
+          "visual": { "type": "equation", "tex": "(\\hat{\\alpha}, \\hat{\\beta}, \\hat{\\gamma}) = \\arg\\min \\sum_{t=1}^{n} \\big(y_t - \\hat{y}_{t\\mid t-1}\\big)^2", "note": "nonlinear in the parameters" }
+        },
+        {
+          "text": "Because each forecast comes from the recurrences, the objective is nonlinear and solved by numerical optimisation.",
+          "visual": { "type": "plot", "ys": [420, 360, 320, 305, 310, 340, 400], "dot": 3, "xlabel": "alpha from 0 to 1", "ylabel": "SSE", "mark": "objective" }
+        },
+        {
+          "text": "More observation noise slides the optimal alpha left, while more genuine drift slides it right.",
+          "visual": { "type": "bars", "values": [0.22, 0.45, 0.72], "labels": ["high noise", "balanced", "high drift"], "highlight": 2 }
+        },
+        {
+          "text": "Do not minimise error on the same data you report accuracy on; hold out the tail or use rolling-origin evaluation.",
+          "visual": { "type": "equation", "tex": "e_t = y_t - \\hat{y}_{t\\mid t-1}", "note": "evaluate out of sample" }
+        },
+        {
+          "text": "When the curve goes flat the data does not pin alpha down, and any value in the basin forecasts about the same.",
+          "visual": { "type": "plot", "ys": [340, 320, 312, 310, 311, 313, 318], "dot": 3, "xlabel": "alpha", "ylabel": "SSE", "mark": "flat basin" }
+        }
+      ]
+    }
+  ]
+}

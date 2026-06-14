@@ -1,0 +1,169 @@
+{
+  "concepts": [
+    {
+      "id": "timeseries-06-forecasting-practice-s1",
+      "chapter": "timeseries/06-forecasting-practice",
+      "section": "s1",
+      "title": "Backtesting & walk-forward validation",
+      "eyebrow": "TIME SERIES",
+      "beats": [
+        {
+          "text": "Random cross-validation poisons a time series, because shuffled folds let the model train on the future to predict the past.",
+          "visual": { "type": "title", "text": "Backtesting & Walk-Forward", "sub": "Train on the past, test on the future, never the reverse" }
+        },
+        {
+          "text": "Walk-forward validation fixes a horizon, trains up to an origin, forecasts ahead, scores it, then slides the origin forward and repeats.",
+          "visual": { "type": "plot", "ys": [1, 2, 3, 5, 7, 10, 14, 18], "dot": 5, "xlabel": "time", "ylabel": "value", "mark": "origin t" }
+        },
+        {
+          "text": "The rolling-origin backtest error averages a per-point loss across every horizon step and across every forecast origin.",
+          "visual": { "type": "equation", "tex": "\\mathrm{CV}(h)=\\frac{1}{|\\mathcal{O}|}\\sum_{t\\in\\mathcal{O}}\\frac{1}{h}\\sum_{k=1}^{h}\\ell\\big(y_{t+k},\\hat{y}_{t+k\\mid t}\\big)", "note": "average over all origins and horizon steps" }
+        },
+        {
+          "text": "An expanding window keeps all history when the process is stationary, while a sliding window forgets stale data when the process drifts.",
+          "visual": { "type": "bars", "values": [36, 48, 60, 72], "labels": ["o1", "o2", "o3", "o4"], "highlight": 3 }
+        },
+        {
+          "text": "Leave a gap between train and test when features look back or labels arrive late, so information cannot bleed across the seam.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "Refit the model at every origin if you can afford it, since frozen parameters quietly over-state how stable the model really is.",
+          "visual": { "type": "stat", "value": 1, "label": "horizon h in the runnable backtest", "unit": "step" }
+        }
+      ]
+    },
+    {
+      "id": "timeseries-06-forecasting-practice-s2",
+      "chapter": "timeseries/06-forecasting-practice",
+      "section": "s2",
+      "title": "Forecast accuracy — MAPE, MASE, sMAPE",
+      "eyebrow": "TIME SERIES",
+      "beats": [
+        {
+          "text": "A backtest gives you errors, and a metric turns them into one comparable number, but every metric carries its own failure mode.",
+          "visual": { "type": "title", "text": "Accuracy Metrics", "sub": "MAPE, MASE, sMAPE and where each one breaks" }
+        },
+        {
+          "text": "MAPE averages absolute error as a fraction of the actual value, so being off by ten on a hundred reads as ten percent.",
+          "visual": { "type": "equation", "tex": "\\mathrm{MAPE}=\\frac{100\\%}{n}\\sum_{t=1}^{n}\\left|\\frac{y_t-\\hat{y}_t}{y_t}\\right|", "note": "scale-free but explodes near zero and is asymmetric" }
+        },
+        {
+          "text": "A forecast of ninety against an actual of one hundred scores a ten percent MAPE on that single point.",
+          "visual": { "type": "stat", "value": 10, "label": "single-point MAPE for y_hat 90, y 100", "unit": "%" }
+        },
+        {
+          "text": "MASE divides the model's mean absolute error by the naive forecast's error, making it unitless and defined even when actuals hit zero.",
+          "visual": { "type": "equation", "tex": "\\mathrm{MASE}=\\frac{\\frac{1}{n}\\sum_{t=1}^{n}|y_t-\\hat{y}_t|}{\\frac{1}{T-1}\\sum_{i=2}^{T}|y_i-y_{i-1}|}", "note": "below 1 beats naive, above 1 loses to copy-the-last-value" }
+        },
+        {
+          "text": "A MASE of zero point seven means the model is about thirty percent more accurate than copying the last value forward.",
+          "visual": { "type": "bars", "values": [0.7, 1.0], "labels": ["model", "naive"], "highlight": 0 }
+        },
+        {
+          "text": "Symmetric MAPE puts both actual and forecast in the denominator, but it is still mildly biased and undefined when both reach zero.",
+          "visual": { "type": "equation", "tex": "\\mathrm{sMAPE}=\\frac{100\\%}{n}\\sum_{t=1}^{n}\\frac{|y_t-\\hat{y}_t|}{(|y_t|+|\\hat{y}_t|)/2}", "note": "each term bounded in 0 to 200 percent" }
+        }
+      ]
+    },
+    {
+      "id": "timeseries-06-forecasting-practice-s3",
+      "chapter": "timeseries/06-forecasting-practice",
+      "section": "s3",
+      "title": "Prediction intervals",
+      "eyebrow": "TIME SERIES",
+      "beats": [
+        {
+          "text": "A single point forecast is a lie of omission, since decisions about safety stock and capital hinge on the downside, not the median.",
+          "visual": { "type": "title", "text": "Prediction Intervals", "sub": "Point forecasts are decent, intervals are usually too narrow" }
+        },
+        {
+          "text": "Under Gaussian errors the interval is a z-band around the point forecast, using 1.96 for ninety-five percent and 1.645 for ninety.",
+          "visual": { "type": "equation", "tex": "\\hat{y}_{t+h}\\pm z_{1-\\alpha/2}\\,\\sigma_h,\\quad z_{0.975}\\approx 1.96", "note": "sigma grows with the horizon h" }
+        },
+        {
+          "text": "Forecast uncertainty compounds with horizon, so for a random walk the band widens as sigma times the square root of h.",
+          "visual": { "type": "plot", "ys": [1.0, 1.41, 1.73, 2.0, 2.24, 2.45, 2.65, 2.83], "xlabel": "horizon h", "ylabel": "sigma_h" }
+        },
+        {
+          "text": "An interval is calibrated only if the truth lands inside it close to the nominal rate, so measure empirical coverage directly.",
+          "visual": { "type": "equation", "tex": "\\mathrm{Coverage}=\\frac{1}{n}\\sum_{t=1}^{n}\\mathbf{1}\\!\\left[\\ell_t\\le y_t\\le u_t\\right]", "note": "compare empirical coverage to the nominal level" }
+        },
+        {
+          "text": "If a model thinks sigma is zero point seven of the truth, its nominal ninety-five percent band covers only about eighty-three percent.",
+          "visual": { "type": "stat", "value": 83, "label": "empirical coverage at sigma ratio 0.70", "unit": "%" }
+        },
+        {
+          "text": "Calibrated bands come from empirical quantiles of backtest residuals or from conformal prediction with finite-sample guarantees.",
+          "visual": { "type": "bars", "values": [83, 95, 99], "labels": ["over-confident", "nominal", "over-wide"], "highlight": 1 }
+        }
+      ]
+    },
+    {
+      "id": "timeseries-06-forecasting-practice-s4",
+      "chapter": "timeseries/06-forecasting-practice",
+      "section": "s4",
+      "title": "ML & DL for time series — Prophet, DeepAR, TFT",
+      "eyebrow": "TIME SERIES",
+      "beats": [
+        {
+          "text": "Classical ARIMA and exponential smoothing are hard to beat on a single series, but machine learning earns its keep across many.",
+          "visual": { "type": "title", "text": "ML & DL Forecasting", "sub": "Prophet, DeepAR, and the Temporal Fusion Transformer" }
+        },
+        {
+          "text": "Prophet is a decomposable additive model of trend, seasonality, holidays, and noise, fit in a Bayesian framework for legible baselines.",
+          "visual": { "type": "equation", "tex": "y(t)=g(t)+s(t)+h(t)+\\varepsilon_t", "note": "trend, seasonality, holidays, noise" }
+        },
+        {
+          "text": "DeepAR trains one autoregressive RNN across all series and outputs distribution parameters, giving calibrated prediction intervals for free.",
+          "visual": { "type": "plot", "ys": [2, 3, 2.5, 4, 5.5, 5, 6.5, 8], "dot": 4, "xlabel": "time", "ylabel": "sampled paths" }
+        },
+        {
+          "text": "The Temporal Fusion Transformer separates static, known-future, and observed-past inputs and reads off quantiles via pinball loss.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "Four families trade interpretability against scale, from per-series ARIMA up to the covariate-rich attention transformer.",
+          "visual": { "type": "bars", "values": [1, 2, 3, 4], "labels": ["ARIMA", "Prophet", "DeepAR", "TFT"], "highlight": 3 }
+        },
+        {
+          "text": "The M4 competition was won by a hybrid and M5 by gradient-boosted trees, so backtest any foundation model before believing the leaderboard.",
+          "visual": { "type": "title", "text": "The honest caveat", "sub": "Deep models are not free wins" }
+        }
+      ]
+    },
+    {
+      "id": "timeseries-06-forecasting-practice-s5",
+      "chapter": "timeseries/06-forecasting-practice",
+      "section": "s5",
+      "title": "Pitfalls — leakage, look-ahead & drift",
+      "eyebrow": "TIME SERIES",
+      "beats": [
+        {
+          "text": "Almost every forecasting disaster traces to one cause: the offline score used information the model would never have had in production.",
+          "visual": { "type": "title", "text": "Leakage & Drift", "sub": "The model looks brilliant, then falls apart on day one" }
+        },
+        {
+          "text": "Scaling on the full series bakes future statistics into training features, so fit every scaler inside each fold on past data only.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "Late-arriving data leaks the target, since a revised figure known only after the outcome is not available at forecast time.",
+          "visual": { "type": "bars", "values": [1, 2, 3, 4], "labels": ["split-CV", "preproc", "intervals", "drift"], "highlight": 0 }
+        },
+        {
+          "text": "Tuning hyper-parameters on the reported period is the slowest leak, hiding in your workflow rather than in your code.",
+          "visual": { "type": "stat", "value": 4, "label": "forecasting illusions to guard against", "unit": "" }
+        },
+        {
+          "text": "Even a clean backtest is perishable, because regimes change and a pandemic can rewrite every demand curve overnight.",
+          "visual": { "type": "plot", "ys": [5, 6, 7, 8, 9, 3, 4, 5], "dot": 5, "xlabel": "time", "ylabel": "demand", "mark": "regime break" }
+        },
+        {
+          "text": "The one rule that prevents most of this is to simulate production exactly and report MASE against the naive forecast.",
+          "visual": { "type": "title", "text": "Simulate production exactly", "sub": "What did I actually know at this instant?" }
+        }
+      ]
+    }
+  ]
+}

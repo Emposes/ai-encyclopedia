@@ -1,0 +1,713 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Autoencoders &amp; VAEs — AI Encyclopedia</title>
+<meta name="description" content="Autoencoders learn a data manifold's hidden coordinates through a bottleneck; the variational twist turns that latent space into a generative model. Linear AE = PCA, denoising variants, the reparameterization trick, and the ELBO." />
+<link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
+<meta name="theme-color" content="#000000" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+</head>
+<body data-track="dl" data-level="core">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ DEEP LEARNING / 05 / AUTOENCODERS</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../dl/06-gans.html">NEXT: 06 GANs →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">DEEP LEARNING · CHAPTER 05 / 07</div>
+    <h1>Autoencoders &amp; VAEs</h1>
+    <p class="lede">Force a network to reconstruct its input through a narrow bottleneck and it learns the data's <strong>hidden coordinates</strong>, the few axes along which the data actually varies. The variational form replaces that single code with a probability distribution and regularizes it toward a known prior, turning the bottleneck into something you can <em>sample from</em>: a generative model.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 26 MIN</b></span>
+      <span>BUILDS ON<b>DEEP LEARNING 01–04</b></span>
+      <span>INSTRUMENTS<b>BOTTLENECK · VAE SAMPLER · DENOISER</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">5.1</span>Learning to compress</a>
+      <a href="#s2"><span class="n">5.2</span>Denoising &amp; overcomplete</a>
+      <a href="#s3"><span class="n">5.3</span>The latent space</a>
+      <a href="#s4"><span class="n">5.4</span>Variational autoencoders</a>
+      <a href="#s5"><span class="n">5.5</span>Representation &amp; uses</a>
+      <a href="#s6"><span class="n">5.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 5.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">5.1</span><h2>Autoencoders — learning to compress</h2></div>
+        <p>An <strong>autoencoder</strong> is a network trained to copy its input to its output — a task that sounds trivial until you choke the path between them. An <em>encoder</em> \(f_\theta\) maps the input \(x \in \mathbb{R}^d\) down to a code \(z \in \mathbb{R}^k\) with \(k \ll d\); a <em>decoder</em> \(g_\phi\) maps the code back up to a reconstruction \(\hat{x}\). Both are trained jointly to make \(\hat{x}\) look like \(x\):</p>
+
+        <div class="eq"><span class="eq-tag">EQ N5.1 — RECONSTRUCTION OBJECTIVE</span>
+        $$ z = f_\theta(x), \qquad \hat{x} = g_\phi(z), \qquad \mathcal{L}(\theta,\phi) = \frac{1}{N}\sum_{i=1}^{N} \big\lVert x^{(i)} - g_\phi\!\big(f_\theta(x^{(i)})\big) \big\rVert_2^2 $$
+        <div class="eq-note">Mean squared error is the default for continuous inputs (pixels, embeddings); binary cross-entropy per pixel is standard for \([0,1]\) images. The whole trick is the <b>bottleneck</b>: the code \(z\) is narrower than \(x\), so a perfect copy is impossible and the network must spend its few code dimensions on whatever explains the most variance. Nothing in the loss says "find structure" — structure is the <em>only</em> way to win at copying through a constriction.</div>
+        </div>
+
+        <p>The label is the input itself, so autoencoders are <strong>self-supervised</strong>: they need no annotations, just data. What they learn is a coordinate system — a chart of the low-dimensional <em>manifold</em> that the high-dimensional data lives near. A 28×28 image has 784 pixels, but the set of <em>handwritten digits</em> occupies a far thinner sheet inside that 784-dimensional cube; the bottleneck is the network's estimate of how thin.</p>
+
+        <p>The cleanest case is fully linear. Let the encoder be a matrix \(W \in \mathbb{R}^{k\times d}\) and the decoder \(W^\top\), with mean-centered data and squared-error loss. The optimum is not unique, but the subspace it spans is: it is exactly the span of the top \(k\) <strong>principal components</strong> of the data (Baldi &amp; Hornik, 1989). A linear autoencoder rediscovers PCA from scratch — gradient descent on reconstruction error walks straight to the eigenvectors of the covariance matrix.</p>
+
+        <div class="callout">
+          <span class="co-icon">WHY IT MATTERS</span>
+          <p>The linear case is the Rosetta stone. It tells you an autoencoder's job is <strong>dimensionality reduction</strong>, and that the bottleneck width \(k\) is choosing how many directions of variance to keep. Nonlinear encoders simply bend PCA's flat hyperplane into a curved manifold — same goal, more expressive chart. See <b>Vol I · EQ 4.x</b> for PCA via the SVD.</p>
+        </div>
+
+        <div class="exercise" data-answer="true" data-tol="0" data-hint="Baldi and Hornik (1989); the optimum spans the top-k PCA subspace.">
+          <div class="ex-q">A single-hidden-layer <em>linear</em> autoencoder with code width \(k\), trained to minimize squared reconstruction error on mean-centered data, recovers the same subspace as the top \(k\) principal components. True or false? (Enter <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">With linear \(f,g\) and MSE loss, the global optimum projects onto the span of the top-\(k\) eigenvectors of the data covariance — exactly PCA's subspace. Individual weights differ (any invertible mixing of the \(k\) directions reconstructs equally well), but the <em>subspace</em> is identical. Answer: <b>true</b>.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Linear autoencoder == PCA: train by gradient descent, compare to eigenvectors
+import numpy as np
+rng = np.random.default_rng(0)
+d, k, N = 8, 2, 600
+
+# data on a 2D plane (k=2) embedded in 8D, plus small noise -> intrinsic rank 2
+basis = np.linalg.qr(rng.normal(size=(d, k)))[0]       # true 2D subspace
+X = rng.normal(size=(N, k)) @ basis.T + 0.02 * rng.normal(size=(N, d))
+X -= X.mean(0)                                          # center (PCA assumes this)
+
+# PCA: top-k right-singular vectors = the "answer" subspace
+_, _, Vt = np.linalg.svd(X, full_matrices=False)
+P = Vt[:k]                                              # k x d principal axes
+
+# Linear AE: encoder We (d->k), decoder Wd (k->d). Minimize ||X - (X We) Wd||^2
+We = 0.1 * rng.normal(size=(d, k))
+Wd = 0.1 * rng.normal(size=(k, d))
+for step in range(6000):
+    Z = X @ We                                         # codes:  N x k
+    R = Z @ Wd - X                                     # residual: N x d
+    We -= 0.08 * (X.T @ (R @ Wd.T) / N)                # dL/dWe
+    Wd -= 0.08 * (Z.T @ R / N)                         # dL/dWd
+
+err = np.linalg.norm(X - (X @ We) @ Wd) / np.linalg.norm(X)
+Wq = np.linalg.qr(We)[0]                                # orthonormal basis of code space
+overlap = np.linalg.svd(P @ Wq, compute_uv=False)      # cos(principal angles); 1 == aligned
+print(f"AE relative reconstruction error : {err:.4f}")
+print(f"cos(principal angles) AE vs PCA  : {np.round(overlap, 4)}")
+print("error tiny, cosines ~1  ->  the AE found the PCA plane, just rotated in it")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="ae-bottleneck" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT N5.1 — BOTTLENECK EXPLORER</span><span class="w-sub">LATENT WIDTH k vs RECONSTRUCTION · PCA SURROGATE</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>LATENT WIDTH k <output id="ae-bn-k-out">8</output></label><input type="range" id="ae-bn-k" min="1" max="64" step="1" value="8"/></div>
+            </div>
+            <canvas class="w-canvas" id="ae-bn-canvas" height="260"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">INPUT DIM d</div><div class="r-value" id="ae-bn-d">64</div></div>
+              <div class="readout acc"><div class="r-label">VARIANCE KEPT</div><div class="r-value" id="ae-bn-var">—</div></div>
+              <div class="readout acc"><div class="r-label">COMPRESSION d / k</div><div class="r-value" id="ae-bn-comp">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">A synthetic 64-dim dataset whose variance decays across components (the usual heavy-headed spectrum). The bars show how much of each component a width-\(k\) code can keep; the mint curve is cumulative variance retained — the best possible reconstruction at that bottleneck. Slide \(k\) low to feel the squeeze: the first handful of axes carry most of the signal, and every dimension past the manifold's intrinsic rank buys almost nothing.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 5.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">5.2</span><h2>Denoising &amp; overcomplete variants</h2></div>
+        <p>A bottleneck is one way to stop an autoencoder from learning the useless identity map. It is not the only way, and not always the best. If you let \(k \ge d\) — an <strong>overcomplete</strong> code — a vanilla autoencoder can cheat by copying the input straight through, learning nothing. Three families of regularizer break that shortcut while keeping a wide, expressive code.</p>
+
+        <p><strong>Denoising autoencoders (DAE)</strong> corrupt the input, then demand a clean reconstruction. The network sees \(\tilde{x} = x + \varepsilon\) (added Gaussian noise, or random pixel masking) and must produce the original \(x\):</p>
+
+        <div class="eq"><span class="eq-tag">EQ N5.2 — DENOISING OBJECTIVE</span>
+        $$ \tilde{x} \sim q(\tilde{x}\mid x), \qquad \mathcal{L}_{\text{DAE}} = \mathbb{E}_{x}\,\mathbb{E}_{\tilde{x}\sim q(\cdot\mid x)} \big\lVert x - g_\phi\!\big(f_\theta(\tilde{x})\big) \big\rVert_2^2 $$
+        <div class="eq-note">Copying is now impossible — the noisy input is not the target. To undo corruption the network must learn the <em>shape of the data</em>: it pushes corrupted points back onto the clean manifold. Vincent et al. (2008) showed the denoiser implicitly learns the <b>score</b> — the gradient of the log-density, \(\nabla_x \log p(x)\) — pointing toward where real data lives. That same insight is the seed of modern <b>diffusion models</b> (Chapter 07): a diffusion model is, in essence, a denoising autoencoder trained at every noise level at once.</div>
+        </div>
+
+        <p>Two cousins regularize differently. <strong>Sparse autoencoders</strong> allow a wide code but penalize how many units fire at once — an \(L_1\) penalty or a KL term that pins each unit's average activation to a small target. The code stays overcomplete, but any single input lights up only a few dimensions, so each one specializes into an interpretable feature. (This is exactly the mechanism behind today's <em>sparse-autoencoder interpretability</em> work, which decomposes an LLM's dense activations into thousands of monosemantic features.) <strong>Contractive autoencoders</strong> add \(\lVert J_f(x)\rVert_F^2\), the squared Frobenius norm of the encoder's Jacobian, forcing the code to be insensitive to small input perturbations — flat along directions that don't matter, responsive only along the manifold.</p>
+
+        <table class="data">
+          <thead><tr><th>Variant</th><th>What stops the identity map</th><th>What the code becomes</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Undercomplete</strong></td><td class="m">narrow bottleneck \(k &lt; d\)</td><td>Top directions of variance (PCA-like).</td></tr>
+            <tr><td><strong>Denoising</strong></td><td class="m">corrupt input, clean target</td><td>A projection back onto the data manifold; learns the score.</td></tr>
+            <tr><td><strong>Sparse</strong></td><td class="m">\(L_1\) / KL activation penalty</td><td>Overcomplete but few-active; specialized, often interpretable features.</td></tr>
+            <tr><td><strong>Contractive</strong></td><td class="m">Jacobian-norm penalty</td><td>Locally invariant code, flat off the manifold.</td></tr>
+          </tbody>
+        </table>
+
+        <p class="note">All four share one moral: an autoencoder is only as good as the <em>pressure</em> you put on its code. Remove every constraint and it learns the identity; impose the right one and it learns the data's geometry.</p>
+
+        <div class="widget" id="ae-denoise" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT N5.2 — DENOISING AUTOENCODER</span><span class="w-sub">CORRUPT → ENCODE → RECONSTRUCT · 1D SIGNAL</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>NOISE σ <output id="ae-dn-sigma-out">0.30</output></label><input type="range" id="ae-dn-sigma" min="0" max="1" step="0.02" value="0.3"/></div>
+              <div class="ctl"><label>CODE WIDTH k <output id="ae-dn-k-out">4</output></label><input type="range" id="ae-dn-k" min="1" max="12" step="1" value="4"/></div>
+            </div>
+            <canvas class="w-canvas" id="ae-dn-canvas" height="280"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">CORRUPTED MSE</div><div class="r-value" id="ae-dn-noisy">—</div></div>
+              <div class="readout acc"><div class="r-label">DENOISED MSE</div><div class="r-value" id="ae-dn-clean">—</div></div>
+              <div class="readout acc"><div class="r-label">NOISE REMOVED</div><div class="r-value" id="ae-dn-gain">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The clean signal is a smooth manifold spanned by a few low-frequency basis functions (the "data"). We add noise σ, then project the corrupted signal onto the top-\(k\) basis — the linear denoiser an autoencoder converges to. Watch the reconstruction snap back toward the clean curve: a \(k\)-dimensional code can't represent the high-frequency noise, so the noise is discarded. Raise σ and the denoised MSE stays far below the corrupted MSE — that gap is the autoencoder doing its job.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 5.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">5.3</span><h2>The latent space</h2></div>
+        <p>The code \(z\) is not just a compressed file — it is a <em>place</em>. The set of all codes the encoder can produce is the <strong>latent space</strong>, and its geometry is where autoencoders earn their keep. Distances in latent space correspond to perceptual or semantic distances in data space far better than raw pixel distance does: two photos of the same face under different lighting are far apart in pixels but close in a good latent.</p>
+
+        <p>This is what makes the latent space useful for more than compression. You can <em>interpolate</em>: decode \(g_\phi\big((1-t)\,z_a + t\,z_b\big)\) and sweep \(t\) from 0 to 1 to morph smoothly from one example to another. You can <em>cluster</em> in latent space, where classes separate cleanly. You can do <em>nearest-neighbour retrieval</em> on codes instead of inputs. And you can detect <em>anomalies</em>: a point the autoencoder reconstructs poorly is, by construction, off the manifold it learned — high reconstruction error is an unsupervised novelty score.</p>
+
+        <div class="callout warn">
+          <span class="co-icon">THE CATCH</span>
+          <p>A plain autoencoder's latent space has <strong>holes</strong>. Training only constrains the codes the encoder actually emits; the space <em>between</em> and <em>around</em> them is unconstrained. Decode a random point — or a midpoint between two clusters — and you often get garbage, because the decoder was never asked to make that region meaningful. The latent is a scatter of trained islands in an empty sea. You cannot reliably <em>sample</em> new data from it. Fixing this hole is the entire motivation for the variational autoencoder.</p>
+        </div>
+
+        <div class="figure" aria-label="Plain autoencoder latent: trained points with empty gaps; VAE latent: a filled, continuous Gaussian cloud.">
+          <svg viewBox="0 0 680 230" xmlns="http://www.w3.org/2000/svg">
+            <g data-pop>
+              <rect class="dg-box" x="24" y="40" width="280" height="160" rx="4"></rect>
+              <text class="dg-label" x="164" y="28" text-anchor="middle">PLAIN AE — ISLANDS &amp; HOLES</text>
+              <circle cx="80" cy="90" r="4" fill="#a6f2cc"></circle>
+              <circle cx="92" cy="105" r="4" fill="#a6f2cc"></circle>
+              <circle cx="70" cy="118" r="4" fill="#a6f2cc"></circle>
+              <circle cx="230" cy="75" r="4" fill="#a6f2cc"></circle>
+              <circle cx="248" cy="92" r="4" fill="#a6f2cc"></circle>
+              <circle cx="236" cy="108" r="4" fill="#a6f2cc"></circle>
+              <circle cx="150" cy="165" r="4" fill="#a6f2cc"></circle>
+              <circle cx="170" cy="178" r="4" fill="#a6f2cc"></circle>
+              <text class="dg-label" x="164" y="135" text-anchor="middle" fill="#ff4136">? sample here = garbage</text>
+            </g>
+            <g data-pop>
+              <rect class="dg-box-accent" x="376" y="40" width="280" height="160" rx="4"></rect>
+              <text class="dg-label" x="516" y="28" text-anchor="middle">VAE — FILLED GAUSSIAN CLOUD</text>
+              <circle cx="516" cy="120" r="68" fill="rgba(166,242,204,0.05)" stroke="#2b5945" stroke-dasharray="3 4"></circle>
+              <circle cx="516" cy="120" r="44" fill="rgba(166,242,204,0.08)" stroke="#2b5945" stroke-dasharray="3 4"></circle>
+              <circle cx="500" cy="108" r="3.5" fill="#a6f2cc"></circle>
+              <circle cx="528" cy="100" r="3.5" fill="#a6f2cc"></circle>
+              <circle cx="540" cy="130" r="3.5" fill="#a6f2cc"></circle>
+              <circle cx="496" cy="138" r="3.5" fill="#a6f2cc"></circle>
+              <circle cx="518" cy="122" r="3.5" fill="#a6f2cc"></circle>
+              <circle cx="475" cy="118" r="3.5" fill="#a6f2cc"></circle>
+              <circle cx="556" cy="112" r="3.5" fill="#a6f2cc"></circle>
+              <text class="dg-label" x="516" y="200" text-anchor="middle" fill="#a6f2cc">sample anywhere = valid</text>
+            </g>
+          </svg>
+        </div>
+      </section>
+
+      <!-- ====================== 5.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">5.4</span><h2>Variational autoencoders</h2></div>
+        <p>The <strong>variational autoencoder (VAE)</strong> of Kingma &amp; Welling (2013) closes the holes by making two changes. First, the encoder no longer outputs a single point — it outputs a <em>distribution</em>: a mean \(\mu(x)\) and a (log-)variance \(\log\sigma^2(x)\) defining \(q_\phi(z\mid x) = \mathcal{N}(\mu, \sigma^2 I)\). Second, the loss <em>regularizes</em> that distribution toward a standard normal <strong>prior</strong> \(p(z) = \mathcal{N}(0, I)\). Encode a point and you get a fuzzy ball, not a dot; train the whole dataset and the balls overlap to tile a smooth, gap-free Gaussian cloud you can sample from at will.</p>
+
+        <p>The objective is a lower bound on the data log-likelihood, the <strong>evidence lower bound (ELBO)</strong>:</p>
+
+        <div class="eq"><span class="eq-tag">EQ N5.3 — THE ELBO (VAE LOSS)</span>
+        $$ \log p_\theta(x) \;\ge\; \underbrace{\mathbb{E}_{q_\phi(z\mid x)}\!\big[\log p_\theta(x\mid z)\big]}_{\text{reconstruction}} \;-\; \underbrace{D_{\mathrm{KL}}\!\big(q_\phi(z\mid x)\,\Vert\,p(z)\big)}_{\text{regularizer}} $$
+        <div class="eq-note">The VAE <em>maximizes</em> the ELBO, equivalently <em>minimizes</em> \(-\text{ELBO}\). Two terms in tension: the first says "encode enough of \(x\) that the decoder can rebuild it"; the second says "keep \(q(z\mid x)\) close to the prior so the latent stays a tidy, sampleable Gaussian." <b>The VAE loss is reconstruction error plus the KL divergence to the prior</b> — that single sentence is the whole model. Crank a weight \(\beta\) on the KL term and you get the \(\beta\)-VAE (Higgins et al., 2017), which trades reconstruction sharpness for more disentangled, axis-aligned latents.</div>
+        </div>
+
+        <p>For diagonal Gaussians the KL term has a clean closed form — no sampling needed to compute it:</p>
+
+        <div class="eq"><span class="eq-tag">EQ N5.4 — KL OF DIAGONAL GAUSSIAN TO N(0, I)</span>
+        $$ D_{\mathrm{KL}}\!\big(\mathcal{N}(\mu,\sigma^2 I)\,\Vert\,\mathcal{N}(0,I)\big) \;=\; \frac{1}{2}\sum_{j=1}^{k}\Big(\sigma_j^2 + \mu_j^2 - 1 - \log\sigma_j^2\Big) $$
+        <div class="eq-note">Each latent dimension contributes independently. The term is zero exactly when \(\mu_j = 0\) and \(\sigma_j = 1\) — i.e. when that dimension <em>is</em> the prior. It penalizes a code for drifting from the origin (\(\mu_j^2\)) or collapsing to a spike (\(-\log\sigma_j^2\) blows up as \(\sigma_j \to 0\)). This pressure is what fills the gaps: every encoded ball is pushed to overlap the others around the origin.</div>
+        </div>
+
+        <p>One obstacle remains. The ELBO contains an expectation over \(z \sim q_\phi(z\mid x)\), and <em>sampling</em> \(z\) is not differentiable — you can't backpropagate through a random draw. The fix is the <strong>reparameterization trick</strong>: move the randomness outside the network. Instead of sampling \(z\) directly, sample a fixed-noise \(\varepsilon \sim \mathcal{N}(0, I)\) and build \(z\) as a deterministic, differentiable function of \(\mu\), \(\sigma\), and \(\varepsilon\):</p>
+
+        <div class="eq"><span class="eq-tag">EQ N5.5 — REPARAMETERIZATION TRICK</span>
+        $$ z = \mu(x) + \sigma(x) \odot \varepsilon, \qquad \varepsilon \sim \mathcal{N}(0, I) $$
+        <div class="eq-note">Now \(z\) is a smooth function of the parameters \((\mu,\sigma)\) with the stochasticity quarantined in \(\varepsilon\), so gradients flow through \(\mu\) and \(\sigma\) cleanly. \(\odot\) is elementwise product. This one line is what makes the VAE trainable end-to-end by ordinary backprop — arguably the paper's most reused idea, now standard far beyond VAEs (it powers the policy-gradient reparameterizations in <b>Vol III</b> and the noise schedules of diffusion).</div>
+        </div>
+
+        <div class="exercise" data-answer="true" data-tol="0" data-hint="Look at EQ N5.3: the two terms are reconstruction and KL-to-prior.">
+          <div class="ex-q">The VAE training objective (the negative ELBO it minimizes) is the reconstruction loss <em>plus</em> the KL divergence from the approximate posterior \(q_\phi(z\mid x)\) to the prior \(p(z)\). True or false? (Enter <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">EQ N5.3 maximizes \(\mathbb{E}_q[\log p(x\mid z)] - D_{\mathrm{KL}}(q\Vert p)\). Flipping sign to a loss: minimize \((-\text{reconstruction}) + D_{\mathrm{KL}}(q\Vert p)\) — i.e. reconstruction loss plus KL to the prior. Answer: <b>true</b>.</div>
+        </div>
+
+        <div class="exercise" data-answer="0.5" data-tol="0.01" data-hint="Use EQ N5.4 with one dimension: ½(σ² + μ² − 1 − ln σ²).">
+          <div class="ex-q">A one-dimensional VAE latent has \(\mu = 1\) and \(\sigma = 1\). Using EQ N5.4, what is the KL divergence \(D_{\mathrm{KL}}\big(\mathcal{N}(1,1)\,\Vert\,\mathcal{N}(0,1)\big)\)? (Recall \(\log 1 = 0\).)</div>
+          <div class="ex-reveal-src">\(\tfrac12\big(\sigma^2 + \mu^2 - 1 - \log\sigma^2\big) = \tfrac12\big(1 + 1 - 1 - \log 1\big) = \tfrac12(1 + 1 - 1 - 0) = \tfrac12 \cdot 1 = \) <b>0.5</b> nats. The mean is one standard deviation off the prior; the variance already matches, so all the cost comes from \(\mu^2\).</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># VAE reparameterization trick: z = mu + sigma*eps, plus the closed-form KL
+import numpy as np
+rng = np.random.default_rng(0)
+
+mu      = np.array([1.0, -0.5, 0.0])     # encoder mean for one input
+log_var = np.array([0.0,  0.0, 2.0])     # encoder log-variance (sigma^2)
+sigma   = np.exp(0.5 * log_var)          # -> sigma = [1, 1, e]
+
+# draw many z via the trick; randomness lives only in eps ~ N(0, I)
+eps = rng.normal(size=(20000, 3))
+z   = mu + sigma * eps                    # broadcast: deterministic in (mu, sigma)
+print("sample mean  ~ mu   :", np.round(z.mean(0), 3), " target", mu)
+print("sample std   ~ sigma:", np.round(z.std(0),  3), " target", np.round(sigma, 3))
+
+# closed-form KL( N(mu,sigma^2) || N(0,I) ) = 0.5 * sum(sigma^2 + mu^2 - 1 - log sigma^2)
+kl = 0.5 * np.sum(sigma**2 + mu**2 - 1.0 - log_var)
+print(f"\nKL to prior (nats)  : {kl:.4f}")
+print("check dim 0 (mu=1, sig=1): 0.5*(1+1-1-0) =", 0.5*(1+1-1-0), "-> 0.5")
+print("dim 2 (mu=0, sig=e) pays for an over-wide variance, log_var=2")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="ae-vae" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT N5.3 — VAE LATENT SAMPLER</span><span class="w-sub">2D LATENT GRID → DECODED OUTPUTS · EQ N5.5</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>LATENT RANGE (± std) <output id="ae-vae-range-out">2.5</output></label><input type="range" id="ae-vae-range" min="1" max="3.5" step="0.1" value="2.5"/></div>
+              <div class="ctl"><label>KL WEIGHT β <output id="ae-vae-beta-out">1.0</output></label><input type="range" id="ae-vae-beta" min="0" max="4" step="0.1" value="1"/></div>
+            </div>
+            <canvas class="w-canvas" id="ae-vae-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">PRIOR MASS COVERED</div><div class="r-value" id="ae-vae-cov">—</div></div>
+              <div class="readout acc"><div class="r-label">GRID KL (mean)</div><div class="r-value" id="ae-vae-kl">—</div></div>
+              <div class="readout acc"><div class="r-label">DISENTANGLEMENT</div><div class="r-value" id="ae-vae-dis">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">We walk a grid across the 2D latent and decode each cell — the classic VAE "latent atlas." Because the prior is \(\mathcal{N}(0,I)\), the centre is dense (common samples) and the corners are rare. Each tile shows a synthetic decoded shape whose two factors of variation (curvature, orientation) are driven by the two latent axes. Raise β and the axes become more independent — disentangled — at the cost of blurrier, lower-contrast outputs. The dashed contours are the prior's 1σ and 2σ rings: anything inside them is a plausible sample.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 5.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">5.5</span><h2>Representation learning &amp; uses</h2></div>
+        <p>Autoencoders matter today less as standalone generators and more as <strong>representation learners</strong> — machinery for turning raw data into compact, structured codes that everything downstream consumes.</p>
+        <ul>
+          <li><strong>Pretraining &amp; transfer.</strong> Train an encoder unsupervised on a mountain of unlabelled data, then attach a small classifier head and fine-tune on a little labelled data. The masked-autoencoding idea (mask patches, reconstruct them) is the visual analogue of masked language modelling — MAE (He et al., 2022) made it the dominant self-supervised recipe for vision transformers.</li>
+          <li><strong>Anomaly detection.</strong> Train on normal data only; flag inputs the model reconstructs poorly. High reconstruction error means "off the learned manifold" — fraud, defects, intrusions, equipment faults.</li>
+          <li><strong>The latent backbone of generative AI.</strong> The single most consequential use: a VAE compresses images into a small latent grid, and a diffusion model (Chapter 07) does its expensive denoising <em>in that latent space</em> instead of in pixels. This is the "VAE" inside Stable Diffusion and its descendants — latent diffusion is why a consumer GPU can generate megapixel images. The autoencoder isn't the generator; it's the compression layer that makes the generator affordable.</li>
+          <li><strong>Discrete codes for sequence models.</strong> The VQ-VAE (van den Oord et al., 2017) replaces the Gaussian latent with a learned codebook, turning images, audio, or video into sequences of discrete tokens that an autoregressive transformer can then model exactly like text — the basis of many modern image and audio generators.</li>
+        </ul>
+
+        <p>It is worth being honest about the trade-offs experts actually argue over. <strong>VAE samples are notoriously blurry</strong> compared to GANs (Chapter 06) and diffusion: the Gaussian decoder and the averaging implied by the ELBO smear high-frequency detail. <strong>Posterior collapse</strong> is the classic failure — when the decoder is powerful enough to ignore \(z\), the KL term drives \(q(z\mid x)\) all the way to the prior and the latent carries no information; KL-annealing, free-bits, and weaker decoders are the usual countermeasures. And the ELBO is a <em>bound</em>, not the likelihood itself: a higher ELBO does not guarantee better samples, and "good representation" and "good generation" are not the same objective. The VAE's enduring win is not photorealism — it is a <em>well-organized, sampleable latent space</em>, which is exactly what the rest of the generative stack needed.</p>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>The VAE buys a smooth latent at the price of blur.</strong> The next chapter takes the opposite bet: drop the explicit likelihood entirely and learn to generate by <em>competition</em>. Chapter 06 — <strong>GANs</strong>: a generator and a discriminator locked in a minimax game, the sharpest samples in deep learning and the hardest training dynamics to tame.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 5.R — References ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">5.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://doi.org/10.1126/science.1127647" target="_blank" rel="noopener">Hinton, G. E. &amp; Salakhutdinov, R. R. (2006). <span class="ref-venue">Reducing the Dimensionality of Data with Neural Networks</span>.</a> <span class="ref-meta">Science 313(5786) — deep autoencoders, trained layer-wise, beat PCA at nonlinear dimensionality reduction (§5.1).</span></li>
+          <li><a href="https://arxiv.org/abs/1312.6114" target="_blank" rel="noopener">Kingma, D. P. &amp; Welling, M. (2013). <span class="ref-venue">Auto-Encoding Variational Bayes</span>.</a> <span class="ref-meta">ICLR 2014 — the VAE, the ELBO (EQ N5.3), and the reparameterization trick (EQ N5.5).</span></li>
+          <li><a href="https://doi.org/10.1145/1390156.1390294" target="_blank" rel="noopener">Vincent, P., Larochelle, H., Bengio, Y. &amp; Manzagol, P.-A. (2008). <span class="ref-venue">Extracting and Composing Robust Features with Denoising Autoencoders</span>.</a> <span class="ref-meta">ICML 2008 — the denoising autoencoder (EQ N5.2) and the manifold-projection view that seeds diffusion.</span></li>
+          <li><a href="https://doi.org/10.1016/0893-6080(89)90014-2" target="_blank" rel="noopener">Baldi, P. &amp; Hornik, K. (1989). <span class="ref-venue">Neural Networks and Principal Component Analysis: Learning from Examples without Local Minima</span>.</a> <span class="ref-meta">Neural Networks 2(1) — proves the linear autoencoder optimum spans the top-k PCA subspace (§5.1).</span></li>
+          <li><a href="https://openreview.net/forum?id=Sy2fzU9gl" target="_blank" rel="noopener">Higgins, I. et al. (2017). <span class="ref-venue">β-VAE: Learning Basic Visual Concepts with a Constrained Variational Framework</span>.</a> <span class="ref-meta">ICLR 2017 — weighting the KL term to encourage disentangled latent factors (§5.4).</span></li>
+          <li><a href="https://arxiv.org/abs/1711.00937" target="_blank" rel="noopener">van den Oord, A., Vinyals, O. &amp; Kavukcuoglu, K. (2017). <span class="ref-venue">Neural Discrete Representation Learning (VQ-VAE)</span>.</a> <span class="ref-meta">NeurIPS 2017 — discrete codebook latents that let autoregressive models generate over autoencoder tokens (§5.5).</span></li>
+          <li><a href="https://arxiv.org/abs/2112.10752" target="_blank" rel="noopener">Rombach, R., Blattmann, A., Lorenz, D., Esser, P. &amp; Ommer, B. (2022). <span class="ref-venue">High-Resolution Image Synthesis with Latent Diffusion Models</span>.</a> <span class="ref-meta">CVPR 2022 — the VAE-compressed latent space that makes Stable Diffusion affordable (§5.5).</span></li>
+          <li><a href="https://arxiv.org/abs/2111.06377" target="_blank" rel="noopener">He, K., Chen, X., Xie, S., Li, Y., Dollár, P. &amp; Girshick, R. (2022). <span class="ref-venue">Masked Autoencoders Are Scalable Vision Learners</span>.</a> <span class="ref-meta">CVPR 2022 — masked autoencoding as a strong self-supervised pretext for vision transformers (§5.5).</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../dl/04-seq2seq-attention.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">04</span> Seq2Seq &amp; Attention</div></a>
+        <a class="next" href="../dl/06-gans.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">06</span> GANs</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — DEEP LEARNING · CH 05</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* ============================================================
+   Autoencoders & VAEs — chapter instruments
+   Single IIFE, no globals. setTimeout-only animation.
+   Every widget guarded by element existence; meaningful
+   initial render with zero interaction.
+   ============================================================ */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  /* ========================================================
+     INSTRUMENT N5.1 — BOTTLENECK EXPLORER
+     A synthetic variance spectrum (geometric decay). A width-k
+     code keeps the top-k components; mint curve = cumulative
+     variance retained = best-possible reconstruction at k.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("ae-bottleneck");
+    if (!root) return;
+    var canvas = document.getElementById("ae-bn-canvas");
+    var kIn = document.getElementById("ae-bn-k");
+    var kOut = document.getElementById("ae-bn-k-out");
+    var dEl = document.getElementById("ae-bn-d");
+    var varEl = document.getElementById("ae-bn-var");
+    var compEl = document.getElementById("ae-bn-comp");
+
+    var D = 64;
+    /* eigenvalue spectrum: a heavy head that decays, normalized to sum 1 */
+    var spec = [], total = 0, i;
+    for (i = 0; i < D; i++) { var lam = Math.pow(0.86, i) + 0.004; spec.push(lam); total += lam; }
+    for (i = 0; i < D; i++) spec[i] /= total;
+    var cum = []; var acc = 0;
+    for (i = 0; i < D; i++) { acc += spec[i]; cum.push(acc); }
+
+    function render() {
+      var k = parseInt(kIn.value, 10);
+      kOut.textContent = k;
+      dEl.textContent = D;
+      var kept = cum[k - 1];
+      varEl.textContent = (kept * 100).toFixed(1) + "%";
+      compEl.textContent = (D / k).toFixed(1) + "×";
+
+      var c = FM.setupCanvas(canvas, 260);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      var padL = 40, padR = 16, padT = 16, padB = 26;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      ctx.clearRect(0, 0, w, h);
+
+      var maxBar = spec[0] * 1.08;
+      function bx(idx) { return x0 + (idx + 0.5) / D * (x1 - x0); }
+      function bw() { return Math.max(2, (x1 - x0) / D - 1.5); }
+      function byVar(v) { return y0 - v / maxBar * (y0 - y1); }
+      function byCum(v) { return y0 - v * (y0 - y1); }
+
+      /* frame + horizontal gridlines for cumulative axis (0..100%) */
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(x0, y1, x1 - x0, y0 - y1);
+      ctx.font = C.MONO; ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      for (i = 0; i <= 4; i++) {
+        var gy = byCum(i / 4);
+        ctx.strokeStyle = "rgba(47,50,52,.5)";
+        ctx.beginPath(); ctx.moveTo(x0, gy); ctx.lineTo(x1, gy); ctx.stroke();
+        ctx.fillStyle = C.MUT; ctx.fillText((i * 25) + "%", x0 - 5, gy);
+      }
+
+      /* per-component variance bars: kept (mint) vs discarded (muted) */
+      for (i = 0; i < D; i++) {
+        var bh = y0 - byVar(spec[i]);
+        ctx.fillStyle = (i < k) ? "rgba(166,242,204,.55)" : "rgba(99,99,99,.40)";
+        ctx.fillRect(bx(i) - bw() / 2, byVar(spec[i]), bw(), bh);
+      }
+
+      /* cumulative-variance curve */
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 2; ctx.beginPath();
+      for (i = 0; i < D; i++) {
+        var px = bx(i), py = byCum(cum[i]);
+        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+
+      /* marker at the chosen k */
+      var mx = bx(k - 1), my = byCum(cum[k - 1]);
+      ctx.fillStyle = C.BRIGHT;
+      ctx.beginPath(); ctx.arc(mx, my, 3.5, 0, 2 * Math.PI); ctx.fill();
+      ctx.strokeStyle = "rgba(255,255,255,.35)"; ctx.setLineDash([2, 3]); ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(mx, my); ctx.lineTo(mx, y0); ctx.stroke();
+      ctx.setLineDash([]);
+
+      ctx.fillStyle = C.SEC; ctx.font = C.MONO;
+      ctx.textAlign = "left"; ctx.textBaseline = "bottom";
+      ctx.fillText("k = " + k, x0 + 6, y1 + 14);
+      ctx.textAlign = "right";
+      ctx.fillText("variance kept " + (cum[k - 1] * 100).toFixed(0) + "%", x1 - 6, y1 + 14);
+    }
+
+    kIn.addEventListener("input", render);
+    window.addEventListener("resize", render);
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT N5.2 — DENOISING AUTOENCODER
+     Clean signal = sum of low-frequency cosine basis funcs.
+     Corrupt with noise sigma; the linear denoiser projects the
+     corrupted signal onto the top-k basis (DAE limit, EQ N5.2).
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("ae-denoise");
+    if (!root) return;
+    var canvas = document.getElementById("ae-dn-canvas");
+    var sigIn = document.getElementById("ae-dn-sigma");
+    var kIn = document.getElementById("ae-dn-k");
+    var sigOut = document.getElementById("ae-dn-sigma-out");
+    var kOut = document.getElementById("ae-dn-k-out");
+    var noisyEl = document.getElementById("ae-dn-noisy");
+    var cleanEl = document.getElementById("ae-dn-clean");
+    var gainEl = document.getElementById("ae-dn-gain");
+
+    var N = 96, KB = 12;   /* sample count; basis size (max code width) */
+    /* orthonormal cosine basis on N points (DCT-II style), columns are funcs */
+    var basis = [];
+    for (var b = 0; b < KB; b++) {
+      var col = new Array(N), norm = 0;
+      for (var n = 0; n < N; n++) {
+        var v = Math.cos(Math.PI * (n + 0.5) * b / N);
+        col[n] = v; norm += v * v;
+      }
+      norm = Math.sqrt(norm);
+      for (n = 0; n < N; n++) col[n] /= norm;
+      basis.push(col);
+    }
+    /* clean signal: a fixed combination of the first few basis funcs */
+    var clean = new Array(N).fill(0);
+    var coeffs = [0.0, 1.0, 0.55, -0.35, 0.2];
+    for (b = 0; b < coeffs.length; b++)
+      for (n = 0; n < N; n++) clean[n] += coeffs[b] * basis[b][n] * Math.sqrt(N) * 0.5;
+
+    /* fixed seeded noise vector, scaled by sigma at render time */
+    var rnd = FM.mulberry32(50505);
+    var z = new Array(N);
+    for (n = 0; n < N; n++) {
+      var u1 = Math.max(rnd(), 1e-12), u2 = rnd();
+      z[n] = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+    }
+
+    function render() {
+      var sigma = +sigIn.value, k = parseInt(kIn.value, 10);
+      sigOut.textContent = sigma.toFixed(2);
+      kOut.textContent = k;
+
+      /* corrupted signal */
+      var noisy = new Array(N);
+      for (var n = 0; n < N; n++) noisy[n] = clean[n] + sigma * z[n];
+
+      /* denoise = project corrupted onto top-k basis (encode -> decode) */
+      var code = new Array(k);
+      for (var j = 0; j < k; j++) {
+        var dot = 0;
+        for (n = 0; n < N; n++) dot += noisy[n] * basis[j][n];
+        code[j] = dot;
+      }
+      var recon = new Array(N).fill(0);
+      for (j = 0; j < k; j++)
+        for (n = 0; n < N; n++) recon[n] += code[j] * basis[j][n];
+
+      var mseNoisy = 0, mseClean = 0;
+      for (n = 0; n < N; n++) {
+        mseNoisy += (noisy[n] - clean[n]) * (noisy[n] - clean[n]);
+        mseClean += (recon[n] - clean[n]) * (recon[n] - clean[n]);
+      }
+      mseNoisy /= N; mseClean /= N;
+      noisyEl.textContent = mseNoisy.toFixed(3);
+      cleanEl.textContent = mseClean.toFixed(3);
+      var removed = mseNoisy > 1e-9 ? (1 - mseClean / mseNoisy) * 100 : 0;
+      gainEl.textContent = (removed > 0 ? removed : 0).toFixed(0) + "%";
+
+      var c = FM.setupCanvas(canvas, 280);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      var padL = 16, padR = 16, padT = 16, padB = 24;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      ctx.clearRect(0, 0, w, h);
+
+      var lo = -2.2, hi = 2.2;
+      function px(idx) { return x0 + idx / (N - 1) * (x1 - x0); }
+      function py(v) { return y0 - (v - lo) / (hi - lo) * (y0 - y1); }
+
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(x0, y1, x1 - x0, y0 - y1);
+      var zeroY = py(0);
+      ctx.strokeStyle = "rgba(47,50,52,.7)";
+      ctx.beginPath(); ctx.moveTo(x0, zeroY); ctx.lineTo(x1, zeroY); ctx.stroke();
+
+      /* corrupted samples as faint dots */
+      ctx.fillStyle = "rgba(155,155,155,.45)";
+      for (n = 0; n < N; n++) { ctx.beginPath(); ctx.arc(px(n), py(noisy[n]), 1.6, 0, 2 * Math.PI); ctx.fill(); }
+
+      /* clean signal (muted dashed) */
+      ctx.strokeStyle = C.SEC; ctx.lineWidth = 1.5; ctx.setLineDash([4, 4]); ctx.beginPath();
+      for (n = 0; n < N; n++) { if (n === 0) ctx.moveTo(px(n), py(clean[n])); else ctx.lineTo(px(n), py(clean[n])); }
+      ctx.stroke(); ctx.setLineDash([]);
+
+      /* denoised reconstruction (mint, solid) */
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 2.5; ctx.beginPath();
+      for (n = 0; n < N; n++) { if (n === 0) ctx.moveTo(px(n), py(recon[n])); else ctx.lineTo(px(n), py(recon[n])); }
+      ctx.stroke();
+
+      /* legend */
+      ctx.font = C.MONO; ctx.textBaseline = "middle"; ctx.textAlign = "left";
+      ctx.fillStyle = C.SEC; ctx.fillText("• corrupted", x0 + 6, y1 + 10);
+      ctx.fillStyle = C.SEC; ctx.fillText("- - clean", x0 + 90, y1 + 10);
+      ctx.fillStyle = C.MINT; ctx.fillText("— denoised", x0 + 165, y1 + 10);
+    }
+
+    sigIn.addEventListener("input", render);
+    kIn.addEventListener("input", render);
+    window.addEventListener("resize", render);
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT N5.3 — VAE LATENT SAMPLER
+     Walk a grid over the 2D latent; "decode" each cell into a
+     synthetic shape whose two factors (curvature, orientation)
+     are driven by z1, z2. beta scales the KL pull toward N(0,I)
+     and the per-axis disentanglement readout.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("ae-vae");
+    if (!root) return;
+    var canvas = document.getElementById("ae-vae-canvas");
+    var rIn = document.getElementById("ae-vae-range");
+    var bIn = document.getElementById("ae-vae-beta");
+    var rOut = document.getElementById("ae-vae-range-out");
+    var bOut = document.getElementById("ae-vae-beta-out");
+    var covEl = document.getElementById("ae-vae-cov");
+    var klEl = document.getElementById("ae-vae-kl");
+    var disEl = document.getElementById("ae-vae-dis");
+
+    var GRID = 9;
+
+    /* standard-normal CDF via erf approximation (Abramowitz & Stegun 7.1.26) */
+    function ncdf(x) {
+      var s = x < 0 ? -1 : 1; x = Math.abs(x) / Math.SQRT2;
+      var t = 1 / (1 + 0.3275911 * x);
+      var y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t
+              - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x);
+      return 0.5 * (1 + s * y);
+    }
+
+    function render() {
+      var range = +rIn.value, beta = +bIn.value;
+      rOut.textContent = range.toFixed(1);
+      bOut.textContent = beta.toFixed(1);
+
+      /* prior mass inside the +/- range box (two independent N(0,1) axes) */
+      var p1 = ncdf(range) - ncdf(-range);
+      var cov = p1 * p1;
+      covEl.textContent = (cov * 100).toFixed(1) + "%";
+
+      /* mean KL of the grid points to the prior: 0.5 * sum(mu_j^2) since sigma=1
+         here mu_j are the grid coordinates; report mean over the grid */
+      var klSum = 0, count = 0, gi, gj;
+      for (gi = 0; gi < GRID; gi++) for (gj = 0; gj < GRID; gj++) {
+        var z1 = -range + 2 * range * gi / (GRID - 1);
+        var z2 = -range + 2 * range * gj / (GRID - 1);
+        klSum += 0.5 * (z1 * z1 + z2 * z2); count++;
+      }
+      klEl.textContent = (klSum / count).toFixed(2) + " nats";
+
+      /* disentanglement grows with beta, saturating */
+      var dis = 1 - Math.exp(-0.9 * beta);
+      disEl.textContent = (dis * 100).toFixed(0) + "%";
+
+      var c = FM.setupCanvas(canvas, 320);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      ctx.clearRect(0, 0, w, h);
+
+      /* square plotting region, centered */
+      var size = Math.min(w, h) - 24;
+      var ox = (w - size) / 2, oy = (h - size) / 2;
+      var cell = size / GRID;
+      var pad = cell * 0.16;
+
+      function gx(j) { return ox + j * cell; }
+      function gy(i) { return oy + i * cell; }
+      /* latent value -> screen for the prior-ring overlay */
+      function sx(z) { return ox + (z + range) / (2 * range) * size; }
+      function sy(z) { return oy + (range - z) / (2 * range) * size; }
+
+      for (gi = 0; gi < GRID; gi++) for (gj = 0; gj < GRID; gj++) {
+        var zz1 = -range + 2 * range * gj / (GRID - 1);  /* x-axis */
+        var zz2 = range - 2 * range * gi / (GRID - 1);   /* y-axis (top = +) */
+        var cx = gx(gj) + cell / 2, cy = gy(gi) + cell / 2;
+        var rad = cell / 2 - pad;
+
+        /* prior density at this cell -> opacity (centre dense, corners rare) */
+        var dens = Math.exp(-0.5 * (zz1 * zz1 + zz2 * zz2));
+        var alpha = 0.18 + 0.62 * dens;
+
+        /* tile backdrop */
+        ctx.strokeStyle = "rgba(47,50,52,.5)"; ctx.lineWidth = 1;
+        ctx.strokeRect(gx(gj) + 1, gy(gi) + 1, cell - 2, cell - 2);
+
+        /* decoded "shape": an arc whose curvature ~ z2, orientation ~ z1.
+           beta de-correlates the two factors (cleaner axis alignment). */
+        var orient = zz1 * 0.7;                       /* rotation from z1 */
+        var curve = 0.35 + 0.5 * (zz2 / range);       /* sweep from z2 */
+        var leak = (1 - (1 - Math.exp(-0.9 * beta))) * 0.4; /* axis cross-talk */
+        orient += leak * zz2; curve += leak * (zz1 / range) * 0.3;
+
+        ctx.strokeStyle = "rgba(166,242,204," + alpha.toFixed(3) + ")";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        var segs = 18;
+        for (var t = 0; t <= segs; t++) {
+          var a = -Math.PI * curve + (2 * Math.PI * curve) * t / segs;
+          var px = cx + rad * Math.cos(a + orient);
+          var py = cy + rad * Math.sin(a + orient) * 0.75;
+          if (t === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+        }
+        ctx.stroke();
+      }
+
+      /* prior rings: 1-sigma and 2-sigma (only the part inside the box) */
+      ctx.setLineDash([3, 4]); ctx.strokeStyle = C.DEEP; ctx.lineWidth = 1.25;
+      [1, 2].forEach(function (sd) {
+        ctx.beginPath();
+        ctx.ellipse((ox + ox + size) / 2, (oy + oy + size) / 2,
+          (sd / range) * (size / 2), (sd / range) * (size / 2), 0, 0, 2 * Math.PI);
+        ctx.stroke();
+      });
+      ctx.setLineDash([]);
+
+      /* centre crosshair = the mean of the prior (most-typical sample) */
+      var midx = ox + size / 2, midy = oy + size / 2;
+      ctx.strokeStyle = "rgba(78,138,247,.55)"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(midx - 7, midy); ctx.lineTo(midx + 7, midy);
+      ctx.moveTo(midx, midy - 7); ctx.lineTo(midx, midy + 7); ctx.stroke();
+
+      /* axis labels */
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "center"; ctx.textBaseline = "top";
+      ctx.fillText("z₁  →", ox + size / 2, oy + size + 6);
+      ctx.save();
+      ctx.translate(ox - 6, oy + size / 2); ctx.rotate(-Math.PI / 2);
+      ctx.textBaseline = "bottom"; ctx.fillText("z₂  →", 0, 0);
+      ctx.restore();
+    }
+
+    rIn.addEventListener("input", render);
+    bIn.addEventListener("input", render);
+    window.addEventListener("resize", render);
+    render();
+  })();
+
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

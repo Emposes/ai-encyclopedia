@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Multivariate Time Series — VAR, VECM &amp; Cointegration — AI Encyclopedia</title>
+<meta name="description" content="When several series move together, a Vector Autoregression captures their feedback — and cointegration finds the long-run tether between random walks. VAR estimation, impulse responses, the VECM, and Granger causality." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+</head>
+<body data-track="timeseries" data-level="advanced">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ TIME SERIES / 05 / VAR &amp; COINTEGRATION</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../timeseries/06-forecasting-practice.html">NEXT: FORECASTING IN PRACTICE →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">TIME SERIES &amp; ECONOMETRICS · CHAPTER 05 / 06</div>
+    <h1>Multivariate Time Series — VAR, VECM &amp; Cointegration</h1>
+    <p class="lede">When several series move together, a <strong>Vector Autoregression captures their feedback</strong>: every variable is regressed on the recent past of all the others, so the model encodes which series lead which. When those series are individually non-stationary random walks, cointegration identifies a long-run tether between them, a linear combination that does not wander and that anchors an error-correction dynamic pulling the system back toward equilibrium.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>ADVANCED</b></span>
+      <span>READING TIME<b>≈ 30 MIN</b></span>
+      <span>BUILDS ON<b>TIME SERIES 01–04 · STATS 06</b></span>
+      <span>INSTRUMENTS<b>VAR · IRF · COINTEGRATION</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">5.1</span>From AR to VAR</a>
+      <a href="#s2"><span class="n">5.2</span>Estimation &amp; order selection</a>
+      <a href="#s3"><span class="n">5.3</span>Impulse response &amp; FEVD</a>
+      <a href="#s4"><span class="n">5.4</span>Cointegration &amp; the VECM</a>
+      <a href="#s5"><span class="n">5.5</span>Granger causality</a>
+      <a href="#s6"><span class="n">5.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 5.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">5.1</span><h2>From AR to Vector Autoregression (VAR)</h2></div>
+        <p>A scalar autoregression \(y_t = \phi_1 y_{t-1} + \cdots + \phi_p y_{t-p} + \varepsilon_t\) (the AR\((p)\) of the earlier chapters) explains a series by its own past. But the world rarely hands you one series in isolation: interest rates, output and inflation move <em>together</em>; an order book's bid and ask co-evolve. The <strong>Vector Autoregression</strong> is the minimal generalization — stack \(K\) series into a vector \(y_t \in \mathbb{R}^K\) and let every component depend on the recent past of <em>every</em> component, itself included:</p>
+
+        <div class="eq"><span class="eq-tag">EQ T5.1 — VAR(p), REDUCED FORM</span>
+        $$ y_t \;=\; c \;+\; A_1\, y_{t-1} \;+\; A_2\, y_{t-2} \;+\; \cdots \;+\; A_p\, y_{t-p} \;+\; \varepsilon_t, \qquad \varepsilon_t \sim (0,\ \Sigma) $$
+        <div class="eq-note">\(y_t\) is \(K\times 1\); each \(A_i\) is a \(K\times K\) matrix of lag coefficients; \(c\) is a \(K\times 1\) intercept; the innovations \(\varepsilon_t\) are serially uncorrelated with contemporaneous covariance \(\Sigma\) (generally <b>not</b> diagonal — the series are shocked together). The off-diagonal entries of the \(A_i\) are the whole point: \(\big(A_1\big)_{12}\neq 0\) means yesterday's series&nbsp;2 helps predict today's series&nbsp;1. <b>A VAR is just \(K\) ordinary regressions sharing the same right-hand side.</b></div>
+        </div>
+
+        <p>Sims (1980) proposed the VAR as a deliberate rebellion against the "incredible" identifying restrictions of large structural macro models: let the data speak by regressing everything on lagged everything, then ask the model questions afterward (§5.3). Each equation has an intercept plus \(K\) coefficients per lag — so a VAR\((p)\) on \(K\) variables carries \(K(Kp + 1)\) parameters in the mean, and the count explodes as \(K\) and \(p\) grow. That parameter profligacy is the VAR's defining tension, and the reason §5.2 obsesses over order selection.</p>
+
+        <div class="exercise" data-answer="3" data-tol="0.001" data-hint="lag coefficients per equation = number of variables K times the number of lags p.">
+          <div class="ex-q">A VAR(1) is fitted on \(K = 3\) variables. Ignoring the intercept, how many <b>lag coefficients does each equation contain</b> (the number of entries in one row of \(A_1\))?</div>
+          <div class="ex-reveal-src">Each equation regresses one variable on the previous values of all \(K = 3\) variables, and there is \(p = 1\) lag, so a row of \(A_1\) has \(K\cdot p = 3\times 1 = \) <b>3</b> coefficients. (A VAR\((2)\) on 3 variables would carry \(3\times 2 = 6\) lag coefficients per equation.)</div>
+        </div>
+
+        <p>For analysis it is convenient to <em>fold</em> a VAR\((p)\) into a VAR\((1)\) on a stacked state. Define the <strong>companion matrix</strong> \(F\), an exact analogue of the scalar companion form: a single matrix whose powers generate the entire dynamics.</p>
+
+        <div class="eq"><span class="eq-tag">EQ T5.2 — COMPANION FORM &amp; STABILITY</span>
+        $$ \underbrace{\begin{pmatrix} y_t \\ y_{t-1} \\ \vdots \\ y_{t-p+1} \end{pmatrix}}_{Y_t} = \underbrace{\begin{pmatrix} A_1 &amp; A_2 &amp; \cdots &amp; A_p \\ I &amp; 0 &amp; \cdots &amp; 0 \\ &amp; \ddots &amp; &amp; \vdots \\ 0 &amp; \cdots &amp; I &amp; 0 \end{pmatrix}}_{F}\, Y_{t-1} + \, E_t, \qquad \text{stable} \iff \max_i \lvert \lambda_i(F) \rvert &lt; 1 $$
+        <div class="eq-note">\(F\) is \(Kp \times Kp\). The VAR is <b>stationary (stable)</b> exactly when every eigenvalue of \(F\) lies strictly inside the unit circle — equivalently, every root of \(\det(I - A_1 z - \cdots - A_p z^p) = 0\) lies <em>outside</em> it. Shocks then decay geometrically and the process has a finite, time-invariant mean \((I - A_1 - \cdots - A_p)^{-1}c\). An eigenvalue <em>on</em> the unit circle is a unit root — the gateway to cointegration in §5.4.</div>
+        </div>
+
+        <p>A VAR also has a clean infinite-history rewrite, the <strong>Wold / VMA(\(\infty\)) representation</strong> \(y_t = \mu + \sum_{i=0}^{\infty} \Psi_i\,\varepsilon_{t-i}\) with \(\Psi_0 = I\). The matrices \(\Psi_i\) are precisely the impulse responses of §5.3, and for a VAR\((1)\) they are simply \(\Psi_i = A_1^{\,i}\) — powers of the coefficient matrix.</p>
+
+        <div class="widget" id="vecm-var-sim" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT T5.1 — TWO-VARIABLE VAR SIMULATOR</span><span class="w-sub">COEFFICIENT MATRIX A₁ DRIVES COUPLED DYNAMICS · EQ T5.1</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>a₁₁ (y₁ ← y₁) <output id="vecm-a11-out">0.50</output></label><input type="range" id="vecm-a11" min="-0.95" max="0.95" step="0.01" value="0.5"/></div>
+              <div class="ctl"><label>a₁₂ (y₁ ← y₂) <output id="vecm-a12-out">0.30</output></label><input type="range" id="vecm-a12" min="-0.95" max="0.95" step="0.01" value="0.3"/></div>
+            </div>
+            <div class="ctl-row">
+              <div class="ctl"><label>a₂₁ (y₂ ← y₁) <output id="vecm-a21-out">0.20</output></label><input type="range" id="vecm-a21" min="-0.95" max="0.95" step="0.01" value="0.2"/></div>
+              <div class="ctl"><label>a₂₂ (y₂ ← y₂) <output id="vecm-a22-out">0.40</output></label><input type="range" id="vecm-a22" min="-0.95" max="0.95" step="0.01" value="0.4"/></div>
+            </div>
+            <canvas class="w-canvas" id="vecm-var-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">SPECTRAL RADIUS |λ|ₘₐₓ</div><div class="r-value" id="vecm-var-rho">—</div></div>
+              <div class="readout acc"><div class="r-label">REGIME</div><div class="r-value" id="vecm-var-regime">—</div></div>
+              <div class="readout"><div class="r-label">CROSS-FEEDBACK a₁₂·a₂₁</div><div class="r-value" id="vecm-var-cross">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">A single fixed seed of shocks drives both series so you compare apples to apples. Push the diagonal terms toward ±1 and the system slows and wanders; raise the off-diagonals and watch the two series lock into shared swings (cross-feedback). The instant the spectral radius crosses 1 the regime flips to UNSTABLE and trajectories diverge — exactly the eigenvalue boundary of EQ T5.2.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 5.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">5.2</span><h2>Estimation &amp; order selection</h2></div>
+        <p>Because every equation of a reduced-form VAR has the <em>identical</em> regressor set — a constant plus the same stacked lags — the seemingly-unrelated-regressions efficiency gain vanishes: <strong>equation-by-equation OLS is the (conditional) maximum-likelihood estimator</strong> under Gaussian errors, and it is consistent and asymptotically normal whether or not \(\Sigma\) is diagonal. You can fit a VAR with nothing more than the normal equations.</p>
+
+        <div class="eq"><span class="eq-tag">EQ T5.3 — MULTIVARIATE LEAST SQUARES</span>
+        $$ \widehat{B} \;=\; \big( Z^{\top} Z \big)^{-1} Z^{\top} Y, \qquad \widehat{\Sigma} \;=\; \frac{1}{T - Kp - 1}\, \widehat{U}^{\top}\widehat{U}, \qquad \widehat{U} = Y - Z\widehat{B} $$
+        <div class="eq-note">Stack the \(T\) observations as rows of \(Y\) (\(T\times K\)); each row of the design \(Z\) is \([\,1,\ y_{t-1}^{\top},\ \ldots,\ y_{t-p}^{\top}\,]\). Then \(\widehat{B}\) holds the intercept and all \(A_i\) at once — one matrix solve recovers the entire VAR. \(\widehat\Sigma\) is the residual covariance, divided by the degrees of freedom \(T - (Kp+1)\) per equation. <b>OLS row-by-row equals system MLE here because the regressors are shared.</b></div>
+        </div>
+
+        <p>The hard part is not estimation but <strong>order selection</strong>: too few lags and residuals stay autocorrelated (biasing everything downstream); too many and you burn degrees of freedom on noise. The standard tools are information criteria, which add a complexity penalty to the log-likelihood. Let \(n = K(Kp+1)\) be the total parameter count and \(\lvert\widehat\Sigma_p\rvert\) the residual-covariance determinant at lag \(p\):</p>
+
+        <div class="eq"><span class="eq-tag">EQ T5.4 — INFORMATION CRITERIA FOR VAR ORDER</span>
+        $$ \mathrm{AIC}(p) = \ln\lvert\widehat\Sigma_p\rvert + \frac{2}{T}\,n, \qquad \mathrm{BIC}(p) = \ln\lvert\widehat\Sigma_p\rvert + \frac{\ln T}{T}\,n, \qquad \mathrm{HQ}(p) = \ln\lvert\widehat\Sigma_p\rvert + \frac{2\ln\ln T}{T}\,n $$
+        <div class="eq-note">All three reward fit (the determinant term falls as \(p\) grows) and punish parameters \(n = K(Kp+1)\). The penalties differ in strength: BIC's \(\ln T\) is harshest and is <b>consistent</b> (it selects the true order as \(T\to\infty\)); AIC's \(2\) is mild, tends to over-fit, but is asymptotically efficient for forecasting; Hannan–Quinn sits between. <b>Pick the \(p\) that minimizes the criterion</b> — and in practice prefer BIC for inference, AIC when prediction is the goal. Always confirm the chosen model leaves white-noise residuals.</div>
+        </div>
+
+        <p class="note"><strong>The curse of dimensionality is real here.</strong> A VAR\((4)\) on 8 macro variables already has \(8\times(8\times 4 + 1) = 264\) parameters — easily more than a typical quarterly sample of post-war data. The modern responses are Bayesian VARs with shrinkage priors (the Minnesota prior pulls coefficients toward a random walk), factor-augmented VARs that compress many series into a few factors, and large-VAR estimators with elementwise penalties. None of that changes the OLS skeleton above; they change the prior on \(B\).</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Fit a VAR(1) on two simulated series by OLS (EQ T5.3) and recover A1
+import numpy as np
+rng = np.random.default_rng(0)
+
+A = np.array([[0.5, 0.3],            # the true coefficient matrix A1
+              [0.2, 0.4]])           # off-diagonals = cross-feedback
+T = 600
+y = np.zeros((T, 2))
+for t in range(1, T):                # simulate the VAR(1) data
+    y[t] = A @ y[t - 1] + rng.normal(0, 1, 2)
+
+Z = y[:-1]                           # regressors: y_{t-1}   (T-1 x 2)
+Y = y[1:]                            # targets:    y_t       (T-1 x 2)
+B = np.linalg.solve(Z.T @ Z, Z.T @ Y).T   # OLS, one solve -> A1_hat (2x2)
+
+np.set_printoptions(precision=3, suppress=True)
+print("true A1:\n", A)
+print("OLS A1_hat:\n", B)
+ev = np.linalg.eigvals(B)
+print("\neigenvalue moduli:", np.round(np.abs(ev), 3),
+      "-> stable" if np.all(np.abs(ev) < 1) else "-> UNSTABLE")
+print("max |lambda| =", round(float(np.max(np.abs(ev))), 3), "(must be < 1)")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 5.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">5.3</span><h2>Impulse-response &amp; variance decomposition</h2></div>
+        <p>A fitted VAR is a dense block of coefficients that almost no one can read directly. The two devices that make it interpretable are the <strong>impulse-response function</strong> (IRF) — how the whole system reacts over time to a one-off shock — and the <strong>forecast-error variance decomposition</strong> (FEVD) — what share of each variable's unpredictability traces back to each shock. Both fall straight out of the VMA(\(\infty\)) coefficients \(\Psi_i\).</p>
+
+        <div class="eq"><span class="eq-tag">EQ T5.5 — IMPULSE-RESPONSE FUNCTION</span>
+        $$ \Psi_i \;=\; \frac{\partial\, y_{t+i}}{\partial\, \varepsilon_t^{\top}}, \qquad \Psi_0 = I, \qquad \Psi_i = \sum_{j=1}^{\min(i,p)} A_j\,\Psi_{i-j} \quad\Big(\text{VAR(1): } \Psi_i = A_1^{\,i}\Big) $$
+        <div class="eq-note">\((\Psi_i)_{mn}\) is the response of variable \(m\) at horizon \(i\) to a unit reduced-form shock in variable \(n\) at time 0. In a stable VAR the \(\Psi_i\) decay to zero, so every shock is transient. For the worked default \(A_1=\big(\begin{smallmatrix}0.5&amp;0.3\\0.2&amp;0.4\end{smallmatrix}\big)\), a unit shock to variable 1 traces \((\Psi_i)_{11} = 1,\ 0.5,\ 0.31,\ 0.209,\ldots\) and the long-run cumulative multiplier is \((I-A_1)^{-1}\) — for variable 1 onto itself, \(2.5\). <b>The IRF turns a coefficient matrix into a story.</b></div>
+        </div>
+
+        <p><strong>The identification caveat — say it out loud.</strong> Reduced-form shocks \(\varepsilon_t\) are contemporaneously correlated (\(\Sigma\) is not diagonal), so "a shock to variable 1 alone" is not well defined: in the data, variable 2 tends to move at the same instant. To read <em>structural</em> impulse responses you must impose identifying assumptions that orthogonalize the shocks. The textbook choice is a <strong>Cholesky (recursive) ordering</strong> — factor \(\Sigma = P P^{\top}\) with \(P\) lower-triangular and report \(\Psi_i P\) — which assumes a causal ordering of the variables (those earlier in the list can shock those later within the period, but not vice versa). Different orderings give different stories, and that ambiguity is the central, contested limitation of VAR analysis; sign restrictions, long-run (Blanchard–Quah) restrictions, and external-instrument (proxy-SVAR) methods are the modern alternatives.</p>
+
+        <div class="eq"><span class="eq-tag">EQ T5.6 — FORECAST-ERROR VARIANCE DECOMPOSITION</span>
+        $$ \mathrm{MSE}\big(y_{t+h}\big) = \sum_{i=0}^{h-1} \Theta_i\,\Theta_i^{\top}, \quad \Theta_i = \Psi_i P, \qquad \omega_{mn}(h) = \frac{\sum_{i=0}^{h-1} \big(\Theta_i\big)_{mn}^2}{\big(\mathrm{MSE}(y_{t+h})\big)_{mm}} $$
+        <div class="eq-note">\(\omega_{mn}(h)\) is the fraction of the \(h\)-step forecast-error variance of variable \(m\) attributable to (orthogonalized) shock \(n\); the row \(\sum_n \omega_{mn}(h) = 1\). At \(h=1\) a variable's variance is dominated by its own shock; as \(h\) grows, cross-effects accumulate and the decomposition reveals how much of one series' long-run uncertainty is really <em>imported</em> from another. <b>FEVD answers "where does this variable's surprise come from?"</b> — and like the IRF it inherits the ordering dependence above.</div>
+        </div>
+
+        <div class="widget" id="vecm-irf" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT T5.2 — IMPULSE-RESPONSE EXPLORER</span><span class="w-sub">Ψᵢ = A₁ⁱ · UNIT SHOCK · EQ T5.5</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>a₁₁ <output id="vecm-irf-a11-out">0.60</output></label><input type="range" id="vecm-irf-a11" min="-0.9" max="0.9" step="0.01" value="0.6"/></div>
+              <div class="ctl"><label>a₁₂ <output id="vecm-irf-a12-out">0.20</output></label><input type="range" id="vecm-irf-a12" min="-0.9" max="0.9" step="0.01" value="0.2"/></div>
+            </div>
+            <div class="ctl-row">
+              <div class="ctl"><label>a₂₁ <output id="vecm-irf-a21-out">0.10</output></label><input type="range" id="vecm-irf-a21" min="-0.9" max="0.9" step="0.01" value="0.1"/></div>
+              <div class="ctl"><label>a₂₂ <output id="vecm-irf-a22-out">0.50</output></label><input type="range" id="vecm-irf-a22" min="-0.9" max="0.9" step="0.01" value="0.5"/></div>
+            </div>
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>SHOCK TO</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-vecm-shock="0">VARIABLE 1</button>
+                  <button class="w-btn ghost" data-vecm-shock="1">VARIABLE 2</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="vecm-irf-canvas" height="280"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">PEAK RESPONSE y₁</div><div class="r-value" id="vecm-irf-peak1">—</div></div>
+              <div class="readout acc"><div class="r-label">PEAK RESPONSE y₂</div><div class="r-value" id="vecm-irf-peak2">—</div></div>
+              <div class="readout"><div class="r-label">LONG-RUN MULTIPLIER (I−A)⁻¹</div><div class="r-value" id="vecm-irf-lr">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">A unit reduced-form shock hits the chosen variable at horizon 0; the curves are \(\Psi_i = A_1^{\,i}\) applied to that impulse. In a stable system both responses decay to zero — the long-run multiplier is the area under the cumulative response, \((I-A_1)^{-1}\). Note the model uses reduced-form shocks; structural IRFs would require the Cholesky ordering of EQ T5.6.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 5.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">5.4</span><h2>Cointegration &amp; the VECM</h2></div>
+        <p>Everything above assumed stability — eigenvalues strictly inside the unit circle. But most economic and financial level series are <strong>integrated of order one, \(I(1)\)</strong>: they have a unit root, wander like random walks, and only their <em>differences</em> are stationary. Run a VAR on the raw levels of two \(I(1)\) series and OLS will happily report a high \(R^2\) that is mostly <strong>spurious regression</strong> — two independent random walks look correlated purely because both trend.</p>
+
+        <p>The remarkable exception is <strong>cointegration</strong>. Two (or more) \(I(1)\) series are cointegrated if some linear combination of them is \(I(0)\) — stationary. Intuitively, the series share a common stochastic trend, and although each wanders without bound, they cannot wander <em>independently</em>: a spread between them is mean-reverting. Engle and Granger (1987) formalized this and, crucially, the <strong>Granger representation theorem</strong> proved that cointegration is equivalent to the existence of an error-correction representation.</p>
+
+        <div class="eq"><span class="eq-tag">EQ T5.7 — COINTEGRATION</span>
+        $$ y_t \sim I(1)^K, \qquad \exists\, \beta \neq 0:\ \ \beta^{\top} y_t \sim I(0). \qquad \text{Common-trend form: } \begin{cases} x_t = w_t + u_t \\ z_t = w_t + v_t \end{cases},\ \ w_t = w_{t-1} + \eta_t $$
+        <div class="eq-note">\(\beta\) is a <b>cointegrating vector</b>; \(\beta^\top y_t\) is the stationary equilibrium error. In the two-series common-trend example, \(x_t\) and \(z_t\) each inherit the random walk \(w_t\) and are individually \(I(1)\), yet \(x_t - z_t = u_t - v_t\) cancels the trend and is \(I(0)\): here \(\beta = (1,-1)^\top\). The number of independent cointegrating vectors is the <b>cointegration rank</b> \(r\), \(0 \le r &lt; K\). \(r=0\) means no long-run tie (difference everything and fit a VAR); \(r=K\) would mean the levels were stationary all along.</div>
+        </div>
+
+        <div class="exercise" data-answer="true" data-hint="a cointegrating vector beta makes beta-transpose-y stationary, i.e. I(0).">
+          <div class="ex-q">True or false: if two series are each \(I(1)\) but some linear combination of them is stationary (\(I(0)\)), the series are <b>cointegrated</b>. (Answer <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">This is the definition of cointegration (EQ T5.7): individually non-stationary \(I(1)\) series whose linear combination \(\beta^\top y_t\) is stationary share a common stochastic trend that the combination cancels. The statement is <b>true</b>.</div>
+        </div>
+
+        <p>The error-correction form is the <strong>Vector Error-Correction Model (VECM)</strong>. Re-parameterize the levels VAR in differences, with one term in levels left behind:</p>
+
+        <div class="eq"><span class="eq-tag">EQ T5.8 — VECTOR ERROR-CORRECTION MODEL</span>
+        $$ \Delta y_t \;=\; \Pi\, y_{t-1} \;+\; \sum_{i=1}^{p-1} \Gamma_i\, \Delta y_{t-i} \;+\; c \;+\; \varepsilon_t, \qquad \Pi \;=\; \alpha\,\beta^{\top}, \quad \mathrm{rank}(\Pi) = r $$
+        <div class="eq-note">Everything except \(\Pi y_{t-1}\) is in stationary differences. The <b>long-run information lives entirely in \(\Pi\)</b>: its rank is the cointegration rank \(r\). When \(0&lt;r&lt;K\), \(\Pi\) factors as \(\alpha\beta^\top\) where \(\beta\) (\(K\times r\)) holds the cointegrating vectors and \(\alpha\) (\(K\times r\)) holds the <b>speed-of-adjustment</b> loadings. The term \(\alpha(\beta^\top y_{t-1})\) reads: measure how far the system is from equilibrium (\(\beta^\top y_{t-1}\)), then pull each variable back at rate \(\alpha\). It is a thermostat for a system of random walks.</div>
+        </div>
+
+        <p>Estimating \(r\) and \(\beta\) is the <strong>Johansen procedure</strong> (1991): a reduced-rank regression of \(\Delta y_t\) and \(y_{t-1}\) on the lagged differences yields canonical correlations whose eigenvalues drive two likelihood-ratio tests — the <em>trace</em> test and the <em>maximum-eigenvalue</em> test — for the null \(\mathrm{rank}(\Pi)\le r\). Johansen handles multiple cointegrating relations simultaneously, unlike the two-step Engle–Granger residual test, which is simplest for the single-equation \(r=1\) case.</p>
+
+        <div class="exercise" data-answer="2" data-tol="0.001" data-hint="speed of adjustment times the equilibrium error: alpha * (beta' y).">
+          <div class="ex-q">In a VECM the error-correction term is \(\alpha\,(\beta^{\top} y_{t-1})\). Suppose the equilibrium error \(\beta^{\top} y_{t-1} = -5\) and the speed-of-adjustment loading for this equation is \(\alpha = -0.4\). What is the error-correction contribution \(\alpha\,(\beta^{\top}y_{t-1})\) to \(\Delta y_t\) this period?</div>
+          <div class="ex-reveal-src">\(\alpha\,(\beta^\top y_{t-1}) = (-0.4)\times(-5) = \) <b>2</b>. The series is below its long-run equilibrium (negative error), and the negative loading \(\alpha&lt;0\) produces a positive push of \(+2\) — the system corrects upward, back toward equilibrium.</div>
+        </div>
+
+        <div class="widget" id="vecm-coint" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT T5.3 — COINTEGRATION DEMO</span><span class="w-sub">TWO I(1) WALKS SHARING A STOCHASTIC TREND · EQ T5.7</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>COMMON-TREND WEIGHT θ <output id="vecm-coint-theta-out">1.00</output></label><input type="range" id="vecm-coint-theta" min="0" max="1" step="0.01" value="1"/></div>
+              <div class="ctl"><label>IDIOSYNCRATIC NOISE σ <output id="vecm-coint-sig-out">1.0</output></label><input type="range" id="vecm-coint-sig" min="0.2" max="4" step="0.1" value="1"/></div>
+            </div>
+            <canvas class="w-canvas" id="vecm-coint-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">VAR(LEVELS) — STD(x)</div><div class="r-value" id="vecm-coint-vx">—</div></div>
+              <div class="readout acc"><div class="r-label">STD(SPREAD x−z)</div><div class="r-value" id="vecm-coint-vs">—</div></div>
+              <div class="readout acc"><div class="r-label">VERDICT</div><div class="r-value" id="vecm-coint-verdict">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">At θ = 1 both series \(x\) and \(z\) ride the <em>same</em> random walk \(w_t\), so each is \(I(1)\) and wanders freely (top panel) — yet the spread \(x-z\) (bottom panel, mint) stays pinned near zero: they are cointegrated with \(\beta=(1,-1)\). Slide θ toward 0 to decouple the trends; the spread itself becomes a random walk and the verdict flips to NOT COINTEGRATED. Raising σ widens the stationary spread band without breaking the long-run tether.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 5.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">5.5</span><h2>Granger causality</h2></div>
+        <p>A VAR also lets us ask a precise, modest question about lead–lag structure. Series \(x\) <strong>Granger-causes</strong> \(y\) if the past of \(x\) helps predict \(y\) <em>beyond</em> what the past of \(y\) already explains. It is a statement about <em>predictive content</em>, framed by Granger (1969), and it is deliberately humble: Granger causality is not structural causation. Reverse causality through an omitted common driver, or anticipation (markets pricing in a future move), can produce Granger causality with no mechanism running in that direction.</p>
+
+        <div class="eq"><span class="eq-tag">EQ T5.9 — GRANGER-CAUSALITY F-TEST</span>
+        $$ H_0:\ \big(A_1\big)_{yx} = \cdots = \big(A_p\big)_{yx} = 0, \qquad F \;=\; \frac{\big(\mathrm{SSR}_r - \mathrm{SSR}_u\big)/q}{\mathrm{SSR}_u/\big(T - k\big)} \ \sim\ F_{q,\,T-k} $$
+        <div class="eq-note">Fit the \(y\)-equation twice: <b>restricted</b> (only lags of \(y\)) and <b>unrestricted</b> (lags of \(y\) <em>and</em> \(x\)), with sums of squared residuals \(\mathrm{SSR}_r,\ \mathrm{SSR}_u\). Here \(q=p\) is the number of zero restrictions (the \(x\)-lag coefficients) and \(k\) is the parameter count of the unrestricted equation. A large \(F\) — the unrestricted model fits enough better to justify its extra terms — <b>rejects \(H_0\)</b>, concluding \(x\) Granger-causes \(y\). The Wald/\(\chi^2\) form \(qF\) is the usual large-sample variant.</div>
+        </div>
+
+        <p class="note"><strong>Caveats experts insist on.</strong> Granger tests are sensitive to the lag order \(p\) and to non-stationarity: applying the plain F-test to \(I(1)\) levels gives invalid critical values, so test on stationary (differenced or cointegration-corrected) data, or use the Toda–Yamamoto lag-augmented approach. Bivariate Granger causality can also be an artifact of a third, omitted variable — always interpret it as conditional on the variables actually in the VAR, and never read it as a license to claim mechanism.</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Granger-causality F-test by hand (EQ T5.9): does x help predict y?
+import numpy as np
+rng = np.random.default_rng(1)
+
+# toy data: x is its own AR; y depends on LAGGED x -> x should Granger-cause y
+T = 300
+x = np.zeros(T); y = np.zeros(T)
+for t in range(1, T):
+    x[t] = 0.5 * x[t-1] + rng.normal(0, 1)
+    y[t] = 0.4 * y[t-1] + 0.6 * x[t-1] + rng.normal(0, 1)   # y <- x[t-1]
+
+yv, ylag, xlag = y[2:], y[1:-1], x[1:-1]          # align one lag
+n = len(yv); ones = np.ones(n)
+
+def ssr(X, t):                                     # OLS residual sum of squares
+    b, *_ = np.linalg.lstsq(X, t, rcond=None)
+    r = t - X @ b
+    return float(r @ r)
+
+Xr = np.column_stack([ones, ylag])                 # restricted: y on its own lag
+Xu = np.column_stack([ones, ylag, xlag])           # unrestricted: + x lag
+ssr_r, ssr_u = ssr(Xr, yv), ssr(Xu, yv)
+q, k = 1, Xu.shape[1]                              # 1 restriction; k params
+F = ((ssr_r - ssr_u) / q) / (ssr_u / (n - k))
+print(f"SSR restricted   = {ssr_r:8.2f}")
+print(f"SSR unrestricted = {ssr_u:8.2f}")
+print(f"F({q}, {n-k}) = {F:7.2f}")
+print("large F (>~3.9 at 5%) => reject H0 => x Granger-causes y")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>You now have the full multivariate toolkit; the last chapter puts it to work.</strong> Chapter 06 — Forecasting in Practice — covers backtesting protocols, walk-forward validation, combining models, prediction intervals, and the brutal lesson that a careful univariate baseline often beats an elaborate VAR out of sample.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 5.R — References ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">5.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://doi.org/10.2307/1912017" target="_blank" rel="noopener">Sims, C. A. (1980). <span class="ref-venue">Macroeconomics and Reality</span>.</a> <span class="ref-meta">Econometrica 48(1) — introduced the VAR as an atheoretical alternative to large structural macro models (EQ T5.1).</span></li>
+          <li><a href="https://doi.org/10.2307/1913236" target="_blank" rel="noopener">Engle, R. F. &amp; Granger, C. W. J. (1987). <span class="ref-venue">Co-integration and Error Correction: Representation, Estimation, and Testing</span>.</a> <span class="ref-meta">Econometrica 55(2) — defines cointegration and the Granger representation theorem linking it to the VECM (EQ T5.7–T5.8).</span></li>
+          <li><a href="https://doi.org/10.2307/1912791" target="_blank" rel="noopener">Granger, C. W. J. (1969). <span class="ref-venue">Investigating Causal Relations by Econometric Models and Cross-spectral Methods</span>.</a> <span class="ref-meta">Econometrica 37(3) — the original definition of Granger causality (EQ T5.9).</span></li>
+          <li><a href="https://doi.org/10.2307/2938278" target="_blank" rel="noopener">Johansen, S. (1991). <span class="ref-venue">Estimation and Hypothesis Testing of Cointegration Vectors in Gaussian Vector Autoregressive Models</span>.</a> <span class="ref-meta">Econometrica 59(6) — the maximum-likelihood (trace and max-eigenvalue) tests for cointegration rank (§5.4).</span></li>
+          <li><a href="https://doi.org/10.1007/978-3-540-27752-1" target="_blank" rel="noopener">Lütkepohl, H. (2005). <span class="ref-venue">New Introduction to Multiple Time Series Analysis</span>.</a> <span class="ref-meta">Springer — the standard graduate reference for VAR estimation, IRFs, FEVD, and the companion form (EQ T5.2–T5.6).</span></li>
+          <li><a href="https://doi.org/10.1016/0304-4076(94)01616-8" target="_blank" rel="noopener">Toda, H. Y. &amp; Yamamoto, T. (1995). <span class="ref-venue">Statistical Inference in Vector Autoregressions with Possibly Integrated Processes</span>.</a> <span class="ref-meta">Journal of Econometrics 66(1–2) — the lag-augmented Granger test valid under unit roots and cointegration (§5.5 caveat).</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../timeseries/04-volatility-garch.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">04</span> GARCH</div></a>
+        <a class="next" href="../timeseries/06-forecasting-practice.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">06</span> Forecasting in Practice</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — TIME SERIES · CH 05</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* chapter instruments — single IIFE, no globals */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  function fnum(x, d) { return (Math.round(x * Math.pow(10, d)) / Math.pow(10, d)).toFixed(d); }
+
+  /* 2x2 helpers */
+  function mat(a11, a12, a21, a22) { return [a11, a12, a21, a22]; }      // row-major
+  function mul(m, v) { return [m[0] * v[0] + m[1] * v[1], m[2] * v[0] + m[3] * v[1]]; }
+  function spectralRadius(m) {                                           // |eig| max of 2x2
+    var tr = m[0] + m[3], det = m[0] * m[3] - m[1] * m[2];
+    var disc = tr * tr - 4 * det;
+    if (disc >= 0) {
+      var s = Math.sqrt(disc);
+      return Math.max(Math.abs((tr + s) / 2), Math.abs((tr - s) / 2));
+    }
+    return Math.sqrt(det);                                               // complex pair modulus
+  }
+  function inv2(m) {                                                     // (I - A)^-1 column 0
+    var b = [1 - m[0], -m[1], -m[2], 1 - m[3]];
+    var det = b[0] * b[3] - b[1] * b[2];
+    if (Math.abs(det) < 1e-9) return null;
+    return [b[3] / det, -b[1] / det, -b[2] / det, b[0] / det];
+  }
+
+  /* fixed shock sequences (deterministic, comparable across slider changes) */
+  function shockSeq(n, seed) {
+    var rng = FM.mulberry32(seed), out = [];
+    for (var i = 0; i < n; i++) {
+      // Box-Muller from two uniforms -> two standard normals
+      var u1 = Math.max(rng(), 1e-9), u2 = rng();
+      var r = Math.sqrt(-2 * Math.log(u1));
+      out.push([r * Math.cos(2 * Math.PI * u2), r * Math.sin(2 * Math.PI * u2)]);
+    }
+    return out;
+  }
+
+  /* ============ INSTRUMENT T5.1 — TWO-VARIABLE VAR SIMULATOR ============ */
+  (function () {
+    var root = document.getElementById("vecm-var-sim");
+    if (!root) return;
+    var cv = document.getElementById("vecm-var-canvas");
+    var ids = ["a11", "a12", "a21", "a22"];
+    var sl = {}, ou = {};
+    ids.forEach(function (k) {
+      sl[k] = document.getElementById("vecm-" + k);
+      ou[k] = document.getElementById("vecm-" + k + "-out");
+    });
+    var rhoEl = document.getElementById("vecm-var-rho");
+    var regEl = document.getElementById("vecm-var-regime");
+    var crossEl = document.getElementById("vecm-var-cross");
+    var N = 160;
+    var shocks = shockSeq(N, 12345);
+
+    function render() {
+      var A = mat(+sl.a11.value, +sl.a12.value, +sl.a21.value, +sl.a22.value);
+      ids.forEach(function (k) { ou[k].textContent = fnum(+sl[k].value, 2); });
+      var rho = spectralRadius(A);
+      var stable = rho < 1;
+
+      // simulate
+      var y = [0, 0], series1 = [], series2 = [];
+      for (var t = 0; t < N; t++) {
+        y = mul(A, y);
+        y[0] += shocks[t][0]; y[1] += shocks[t][1];
+        // clamp display only (do not feed back) when unstable so the canvas survives
+        series1.push(y[0]); series2.push(y[1]);
+        if (!stable && (Math.abs(y[0]) > 1e6 || Math.abs(y[1]) > 1e6)) { y = [0, 0]; }
+      }
+
+      var s = FM.setupCanvas(cv, 300), ctx = s.ctx, W = s.w, H = s.h;
+      ctx.clearRect(0, 0, W, H);
+      var padL = 8, padR = 8, padT = 12, padB = 16;
+      var x0 = padL, x1 = W - padR, y0t = padT, y1b = H - padB;
+      // bounds
+      var lo = Infinity, hi = -Infinity, i;
+      for (i = 0; i < N; i++) {
+        lo = Math.min(lo, series1[i], series2[i]); hi = Math.max(hi, series1[i], series2[i]);
+      }
+      if (!isFinite(lo) || !isFinite(hi) || hi - lo < 1e-6) { lo = -4; hi = 4; }
+      var pad = (hi - lo) * 0.08; lo -= pad; hi += pad;
+      function px(i) { return x0 + (i / (N - 1)) * (x1 - x0); }
+      function py(v) { return y1b - ((v - lo) / (hi - lo)) * (y1b - y0t); }
+      // zero line
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x0, py(0)); ctx.lineTo(x1, py(0)); ctx.stroke();
+      function plot(series, color) {
+        ctx.strokeStyle = color; ctx.lineWidth = 1.6; ctx.beginPath();
+        for (var j = 0; j < N; j++) { var X = px(j), Y = py(series[j]); if (j === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y); }
+        ctx.stroke();
+      }
+      plot(series1, C.MINT);
+      plot(series2, C.BLUE);
+      // legend
+      ctx.font = C.MONO; ctx.textBaseline = "top"; ctx.textAlign = "left";
+      ctx.fillStyle = C.MINT; ctx.fillText("— y1", x0 + 2, y0t);
+      ctx.fillStyle = C.BLUE; ctx.fillText("— y2", x0 + 34, y0t);
+
+      rhoEl.textContent = fnum(rho, 3);
+      regEl.textContent = stable ? "STABLE" : "UNSTABLE";
+      regEl.style.color = stable ? C.MINT : C.RED;
+      crossEl.textContent = fnum(A[1] * A[2], 3);
+    }
+
+    ids.forEach(function (k) { sl[k].addEventListener("input", render); });
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ============ INSTRUMENT T5.2 — IMPULSE-RESPONSE EXPLORER ============ */
+  (function () {
+    var root = document.getElementById("vecm-irf");
+    if (!root) return;
+    var cv = document.getElementById("vecm-irf-canvas");
+    var ids = ["a11", "a12", "a21", "a22"];
+    var sl = {}, ou = {};
+    ids.forEach(function (k) {
+      sl[k] = document.getElementById("vecm-irf-" + k);
+      ou[k] = document.getElementById("vecm-irf-" + k + "-out");
+    });
+    var peak1El = document.getElementById("vecm-irf-peak1");
+    var peak2El = document.getElementById("vecm-irf-peak2");
+    var lrEl = document.getElementById("vecm-irf-lr");
+    var btns = root.querySelectorAll("[data-vecm-shock]");
+    var shockIdx = 0;
+    var H_STEPS = 16;
+
+    function render() {
+      var A = mat(+sl.a11.value, +sl.a12.value, +sl.a21.value, +sl.a22.value);
+      ids.forEach(function (k) { ou[k].textContent = fnum(+sl[k].value, 2); });
+
+      // Psi_i = A^i applied to unit shock e_shockIdx
+      var e = shockIdx === 0 ? [1, 0] : [0, 1];
+      var r1 = [], r2 = [], cur = e.slice();
+      for (var i = 0; i < H_STEPS; i++) {
+        r1.push(cur[0]); r2.push(cur[1]);
+        cur = mul(A, cur);
+      }
+      var p1 = 0, p2 = 0;
+      for (i = 0; i < H_STEPS; i++) { p1 = Math.abs(r1[i]) > Math.abs(p1) ? r1[i] : p1; p2 = Math.abs(r2[i]) > Math.abs(p2) ? r2[i] : p2; }
+
+      var s = FM.setupCanvas(cv, 280), ctx = s.ctx, W = s.w, Ht = s.h;
+      ctx.clearRect(0, 0, W, Ht);
+      var x0 = 10, x1 = W - 10, y0t = 12, y1b = Ht - 18;
+      var lo = Infinity, hi = -Infinity;
+      for (i = 0; i < H_STEPS; i++) { lo = Math.min(lo, r1[i], r2[i], 0); hi = Math.max(hi, r1[i], r2[i], 0); }
+      if (hi - lo < 1e-6) { lo = -1; hi = 1; }
+      var pad = (hi - lo) * 0.1; lo -= pad; hi += pad;
+      function px(i) { return x0 + (i / (H_STEPS - 1)) * (x1 - x0); }
+      function py(v) { return y1b - ((v - lo) / (hi - lo)) * (y1b - y0t); }
+      // zero
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x0, py(0)); ctx.lineTo(x1, py(0)); ctx.stroke();
+      function plot(series, color) {
+        ctx.strokeStyle = color; ctx.lineWidth = 1.8; ctx.beginPath();
+        for (var j = 0; j < H_STEPS; j++) { var X = px(j), Y = py(series[j]); if (j === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y); }
+        ctx.stroke();
+        ctx.fillStyle = color;
+        for (j = 0; j < H_STEPS; j++) { ctx.beginPath(); ctx.arc(px(j), py(series[j]), 2.2, 0, 2 * Math.PI); ctx.fill(); }
+      }
+      plot(r1, C.MINT);
+      plot(r2, C.BLUE);
+      // x ticks
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT; ctx.textAlign = "center"; ctx.textBaseline = "top";
+      [0, 4, 8, 12].forEach(function (h) { ctx.fillText("h=" + h, px(h), y1b + 4); });
+      ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillStyle = C.MINT; ctx.fillText("— y1", x0 + 2, y0t);
+      ctx.fillStyle = C.BLUE; ctx.fillText("— y2", x0 + 34, y0t);
+
+      peak1El.textContent = fnum(p1, 3);
+      peak2El.textContent = fnum(p2, 3);
+      var inv = inv2(A);
+      if (inv) {
+        // long-run cumulative response of shocked variable onto itself
+        var col = shockIdx === 0 ? inv[0] : inv[3];
+        lrEl.textContent = fnum(col, 3);
+      } else { lrEl.textContent = "∞ (unit root)"; }
+    }
+
+    btns.forEach(function (b) {
+      b.addEventListener("click", function () {
+        btns.forEach(function (o) { o.classList.remove("on"); });
+        b.classList.add("on");
+        shockIdx = parseInt(b.getAttribute("data-vecm-shock"), 10);
+        render();
+      });
+    });
+    ids.forEach(function (k) { sl[k].addEventListener("input", render); });
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ============ INSTRUMENT T5.3 — COINTEGRATION DEMO ============ */
+  (function () {
+    var root = document.getElementById("vecm-coint");
+    if (!root) return;
+    var cv = document.getElementById("vecm-coint-canvas");
+    var thetaEl = document.getElementById("vecm-coint-theta");
+    var thetaOut = document.getElementById("vecm-coint-theta-out");
+    var sigEl = document.getElementById("vecm-coint-sig");
+    var sigOut = document.getElementById("vecm-coint-sig-out");
+    var vxEl = document.getElementById("vecm-coint-vx");
+    var vsEl = document.getElementById("vecm-coint-vs");
+    var verdEl = document.getElementById("vecm-coint-verdict");
+    var N = 240;
+    // fixed innovation streams so changes are comparable
+    var etaW = shockSeq(N, 7);    // common trend innovations (use col 0)
+    var etaP = shockSeq(N, 99);   // private trend innovations (use col 0)
+    var nz = shockSeq(N, 555);    // idiosyncratic noise (cols 0,1)
+
+    function render() {
+      var theta = +thetaEl.value;
+      var sig = +sigEl.value;
+      thetaOut.textContent = fnum(theta, 2);
+      sigOut.textContent = fnum(sig, 1);
+
+      // common random walk w; x and z each = theta*w + (1-theta)*ownWalk + noise
+      var w = 0, px_walk = 0, pz_walk = 0;
+      var xs = [], zs = [], sp = [], i;
+      for (i = 0; i < N; i++) {
+        w += etaW[i][0];
+        px_walk += etaP[i][0];
+        pz_walk += etaP[i][1];
+        var x = theta * w + (1 - theta) * px_walk + sig * nz[i][0];
+        var z = theta * w + (1 - theta) * pz_walk + sig * nz[i][1];
+        xs.push(x); zs.push(z); sp.push(x - z);
+      }
+      // sample std (population) of levels and spread
+      function std(a) { var m = 0, j; for (j = 0; j < a.length; j++) m += a[j]; m /= a.length; var v = 0; for (j = 0; j < a.length; j++) v += (a[j] - m) * (a[j] - m); return Math.sqrt(v / a.length); }
+      var sx = std(xs), ssp = std(sp);
+      // cointegrated when spread variance stays small relative to level variance
+      var coint = (ssp / Math.max(sx, 1e-6)) < 0.6;
+
+      var s = FM.setupCanvas(cv, 320), ctx = s.ctx, W = s.w, Ht = s.h;
+      ctx.clearRect(0, 0, W, Ht);
+      var x0 = 10, x1 = W - 10;
+      // two panels: levels (top 62%) and spread (bottom)
+      var splitGap = 14;
+      var topT = 12, topB = Math.round(Ht * 0.60);
+      var botT = topB + splitGap, botB = Ht - 16;
+
+      var lo = Infinity, hi = -Infinity;
+      for (i = 0; i < N; i++) { lo = Math.min(lo, xs[i], zs[i]); hi = Math.max(hi, xs[i], zs[i]); }
+      if (hi - lo < 1e-6) { lo = -1; hi = 1; }
+      var padv = (hi - lo) * 0.08; lo -= padv; hi += padv;
+      function px(i) { return x0 + (i / (N - 1)) * (x1 - x0); }
+      function pyT(v) { return topB - ((v - lo) / (hi - lo)) * (topB - topT); }
+
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT; ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText("LEVELS  x, z  ~ I(1)", x0 + 2, topT - 2);
+      function plotT(series, color) {
+        ctx.strokeStyle = color; ctx.lineWidth = 1.5; ctx.beginPath();
+        for (var j = 0; j < N; j++) { var X = px(j), Y = pyT(series[j]); if (j === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y); }
+        ctx.stroke();
+      }
+      plotT(xs, C.MINT); plotT(zs, C.BLUE);
+
+      // spread panel
+      var slo = Infinity, shi = -Infinity;
+      for (i = 0; i < N; i++) { slo = Math.min(slo, sp[i]); shi = Math.max(shi, sp[i]); }
+      var srange = Math.max(shi - slo, 1e-6); slo -= srange * 0.12; shi += srange * 0.12;
+      function pyB(v) { return botB - ((v - slo) / (shi - slo)) * (botB - botT); }
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x0, pyB(0)); ctx.lineTo(x1, pyB(0)); ctx.stroke();
+      ctx.fillStyle = C.MUT; ctx.fillText("SPREAD  x − z  (β = 1,−1)", x0 + 2, botT - 12);
+      ctx.strokeStyle = coint ? C.MINT : C.RED; ctx.lineWidth = 1.6; ctx.beginPath();
+      for (i = 0; i < N; i++) { var X = px(i), Y = pyB(sp[i]); if (i === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y); }
+      ctx.stroke();
+
+      vxEl.textContent = fnum(sx, 2);
+      vsEl.textContent = fnum(ssp, 2);
+      verdEl.textContent = coint ? "COINTEGRATED" : "NOT COINTEGRATED";
+      verdEl.style.color = coint ? C.MINT : C.RED;
+    }
+
+    thetaEl.addEventListener("input", render);
+    sigEl.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

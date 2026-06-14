@@ -1,0 +1,696 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>PyTorch — Tensors, Autograd & Training — AI Encyclopedia</title>
+<meta name="description" content="PyTorch is NumPy with two superpowers — a GPU and automatic differentiation: tensors, the dynamic autograd graph, nn.Module, and the training loop." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+</head>
+<body data-track="frameworks" data-level="core">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ FRAMEWORKS / 01 / PYTORCH</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../frameworks/02-tensorflow-keras.html">NEXT: 02 TENSORFLOW &amp; KERAS →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">FRAMEWORKS · CHAPTER 01 / 03</div>
+    <h1>PyTorch — Tensors, Autograd &amp; Training</h1>
+    <p class="lede">PyTorch extends the NumPy array model with two additions that account for most of its use in deep learning: <strong>GPU execution and automatic differentiation</strong>. The working surface is small. Once you understand the tensor, the autograd graph it records, and the training loop, the rest of the library is detail.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 24 MIN</b></span>
+      <span>BUILDS ON<b>Vol I · GRADIENT DESCENT</b></span>
+      <span>INSTRUMENTS<b>AUTOGRAD GRAPH · BROADCASTING · TRAIN LOOP</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">1.1</span>Tensors &amp; the GPU</a>
+      <a href="#s2"><span class="n">1.2</span>Autograd — the dynamic graph</a>
+      <a href="#s3"><span class="n">1.3</span>nn.Module &amp; building models</a>
+      <a href="#s4"><span class="n">1.4</span>The training loop</a>
+      <a href="#s5"><span class="n">1.5</span>Datasets, DataLoaders &amp; devices</a>
+      <a href="#s6"><span class="n">1.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 1.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">1.1</span><h2>Tensors &amp; the GPU</h2></div>
+        <p>A <strong>tensor</strong> is PyTorch's only data structure that matters: an n-dimensional array of one dtype, laid out in a contiguous block of memory with a <em>shape</em> (the logical dimensions) and a <em>stride</em> (how many elements to step to advance along each dimension). If you know NumPy's <code>ndarray</code>, you already know 90% of <code>torch.Tensor</code> — the API was deliberately built to rhyme. The first superpower is that the same tensor can live on a different <strong>device</strong>: <code>x.to("cuda")</code> moves the bytes to GPU VRAM, after which every operation on <code>x</code> dispatches to a CUDA kernel instead of a CPU one. The math is identical; only the silicon changes.</p>
+
+        <p>Stride is the quiet hero. <code>view</code>, <code>transpose</code>, <code>permute</code> and most slices return a new tensor that <em>shares storage</em> with the original and merely reinterprets the strides — zero copies, zero allocation. That is why reshaping a billion-element tensor is instant, and also why a transposed tensor is non-contiguous and sometimes needs <code>.contiguous()</code> before an op that demands a packed layout.</p>
+
+        <div class="eq"><span class="eq-tag">EQ F1.1 — STRIDED ADDRESSING</span>
+        $$ \text{offset}(i_0,\dots,i_{n-1}) \;=\; \sum_{k=0}^{n-1} i_k \cdot s_k, \qquad s_k = \prod_{j>k} d_j \;\;(\text{row-major}) $$
+        <div class="eq-note">The flat memory address of element \((i_0,\dots,i_{n-1})\) is just a dot product of its index with the stride vector \(s\). For a contiguous \(2\times3\) tensor the strides are \((3,1)\): element \((1,2)\) lives at offset \(1\cdot3 + 2\cdot1 = 5\). <b>A "view" never moves data — it only hands you a new \((\text{shape}, \text{stride})\) lens onto the same bytes.</b></div>
+        </div>
+
+        <h3>Broadcasting</h3>
+        <p>The second piece of tensor fluency is <strong>broadcasting</strong>: the rule that lets operands of different shapes combine without explicit replication. Align shapes from the right; a pair of dimensions is compatible if they are equal or one of them is 1; a size-1 dimension is stretched (virtually, with stride 0 — no memory is copied) to match. A <code>(64, 1)</code> bias added to a <code>(64, 768)</code> activation is broadcast across all 768 columns. Get broadcasting wrong and you get a silent <code>(64, 64)</code> outer-product-shaped bug, not a crash — the single most common source of shape errors in real code.</p>
+
+        <div class="eq"><span class="eq-tag">EQ F1.2 — BROADCAST COMPATIBILITY</span>
+        $$ \text{out}_k = \max(a_k,\, b_k) \quad\text{is defined} \iff a_k = b_k \;\lor\; a_k = 1 \;\lor\; b_k = 1 $$
+        <div class="eq-note">Read shapes right-to-left, padding the shorter with leading 1s. Each axis must match exactly or have a 1 on one side; the output takes the larger. \((64,1)\) with \((768,)\) → \((64,768)\); \((3,)\) with \((4,)\) → <b>error</b>, because \(3\neq4\) and neither is 1. The stretched axis costs no memory: it is broadcast by setting its stride to zero.</div>
+        </div>
+
+        <div class="exercise" data-answer="6" data-tol="0.001" data-hint="Read shapes right to left; a 1 stretches, a missing axis is padded with 1, then take the larger per axis. Multiply the result dimensions.">
+          <div class="ex-q">You add a tensor of shape \((1, 3)\) to one of shape \((2, 1)\). Broadcasting produces an output shape \((R, C)\). What is the total number of elements \(R \times C\) in the result?</div>
+          <div class="ex-reveal-src">Align right: axis 1 is \(3\) vs \(1 \to 3\); axis 0 is \(1\) vs \(2 \to 2\). Output shape is \((2, 3)\), so \(R\times C = 2\times3 = \) <b>6</b>. Each input is virtually stretched along its size-1 axis with no copy.</div>
+        </div>
+
+        <div class="widget" id="pt-bc" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT F1.1 — SHAPE &amp; BROADCASTING EXPLORER</span><span class="w-sub">EQ F1.2 · ALIGN-RIGHT RULE</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>A · DIM 0 <output id="pt-bc-a0-out">64</output></label><input type="range" id="pt-bc-a0" min="1" max="8" step="1" value="7"/></div>
+              <div class="ctl"><label>A · DIM 1 <output id="pt-bc-a1-out">1</output></label><input type="range" id="pt-bc-a1" min="0" max="8" step="1" value="0"/></div>
+            </div>
+            <div class="ctl-row">
+              <div class="ctl"><label>B · DIM 0 <output id="pt-bc-b0-out">64</output></label><input type="range" id="pt-bc-b0" min="1" max="8" step="1" value="7"/></div>
+              <div class="ctl"><label>B · DIM 1 <output id="pt-bc-b1-out">768</output></label><input type="range" id="pt-bc-b1" min="1" max="11" step="1" value="10"/></div>
+            </div>
+            <canvas class="w-canvas" id="pt-bc-canvas" height="210"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">A.shape</div><div class="r-value" id="pt-bc-as">—</div></div>
+              <div class="readout"><div class="r-label">B.shape</div><div class="r-value" id="pt-bc-bs">—</div></div>
+              <div class="readout acc"><div class="r-label">RESULT</div><div class="r-value" id="pt-bc-res">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Set "A · DIM 1" to 1 to broadcast a column across B's width — the green result is bigger than either input, allocated for free. Now make A's last dim 3 and B's last dim 768 (neither is 1, neither matches): the explorer flags the exact axis PyTorch would reject. This single rule explains most real-world shape bugs.</div>
+        </div>
+
+        <p class="note"><strong>One honest caveat.</strong> "NumPy with a GPU" is the right intuition, not the whole truth. PyTorch tensors carry an autograd history NumPy arrays do not; default float dtype is <code>float32</code> (NumPy defaults to <code>float64</code>); and bit-exact results differ between CPU and GPU because floating-point reductions run in different orders. The mental model is excellent for learning and slightly wrong for numerical forensics.</p>
+      </section>
+
+      <!-- ====================== 1.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">1.2</span><h2>Autograd — the dynamic graph</h2></div>
+        <p>The second superpower is <strong>automatic differentiation</strong>. Set <code>requires_grad=True</code> on a tensor and PyTorch begins recording every operation that touches it into a directed acyclic graph — the <em>autograd graph</em>. Each node remembers the operation that produced it and a <code>grad_fn</code> that knows how to compute its local derivative. Crucially the graph is <strong>dynamic</strong>: it is built on the fly during the forward pass and torn down after the backward pass, so an <code>if</code> or a Python <code>for</code> in your model produces a different graph every iteration. This "define-by-run" design is the single biggest reason PyTorch displaced static-graph frameworks for research.</p>
+
+        <p>Calling <code>loss.backward()</code> walks that graph in reverse, applying the <strong>chain rule</strong> at each node, and deposits \(\partial \text{loss} / \partial \theta\) into each leaf tensor's <code>.grad</code> field. This is <em>reverse-mode</em> autodiff: one backward pass computes the gradient of one scalar output with respect to <em>all</em> inputs at once — exactly the regime of deep learning, where loss is a scalar and parameters number in the billions.</p>
+
+        <div class="eq"><span class="eq-tag">EQ F1.3 — REVERSE-MODE CHAIN RULE</span>
+        $$ \bar{x} \;\equiv\; \frac{\partial L}{\partial x} \;=\; \sum_{y \,\in\, \text{children}(x)} \frac{\partial L}{\partial y}\,\frac{\partial y}{\partial x} \;=\; \sum_{y} \bar{y}\,\frac{\partial y}{\partial x} $$
+        <div class="eq-note">The <em>adjoint</em> \(\bar{x}\) of a node is the sum of contributions flowing back from every child it feeds. Backward visits nodes in reverse topological order so every \(\bar{y}\) is finished before \(x\) needs it. <b>When a tensor fans out to several children, its gradient is the <em>sum</em> over all paths</b> — which is exactly why a leaf used twice accumulates both contributions in <code>.grad</code>.</div>
+        </div>
+
+        <p>Two facts trip up everyone once. First, <code>.grad</code> <strong>accumulates</strong> — each <code>backward()</code> <em>adds</em> to whatever is already there — so you must call <code>optimizer.zero_grad()</code> (or <code>x.grad = None</code>) every step or your gradients will sum across iterations. This is a feature, not a bug: it is how you split a large batch across several backward passes. Second, only <strong>leaf</strong> tensors (the ones you created with <code>requires_grad=True</code>, typically parameters) keep a <code>.grad</code>; intermediate tensors discard theirs to save memory unless you ask with <code>retain_grad()</code>.</p>
+
+        <div class="exercise" data-answer="64" data-tol="0.001" data-hint="L = d², d = c + a, c = a·b with a=2, b=3. Note a feeds BOTH c and d, so sum the two paths.">
+          <div class="ex-q">Build the graph \(c = a\cdot b\), \(d = c + a\), \(L = d^2\) at \(a = 2,\ b = 3\). After <code>L.backward()</code>, what value lands in <code>a.grad</code> \(= \dfrac{\partial L}{\partial a}\)? (Remember \(a\) feeds both \(c\) and \(d\).)</div>
+          <div class="ex-reveal-src">Forward: \(c=6,\ d=8,\ L=64\). Backward: \(\bar d = 2d = 16\); \(\bar c = \bar d \cdot 1 = 16\). Now \(a\) has two children: through \(c\), \(\bar c\,\partial c/\partial a = 16\cdot b = 48\); through \(d\), \(\bar d\,\partial d/\partial a = 16\cdot 1 = 16\). Sum the paths (EQ F1.3): \(48 + 16 = \) <b>64</b>.</div>
+        </div>
+
+        <div class="exercise" data-answer="true" data-tol="0.001" data-hint="Read the paragraph on .grad accumulation; what does PyTorch store on a leaf?">
+          <div class="ex-q">True or false: a leaf tensor accumulates its gradient in <code>tensor.grad</code>. (Answer <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">Leaf tensors created with <code>requires_grad=True</code> have their \(\partial L/\partial\theta\) deposited — and <em>added</em> — into <code>.grad</code> on every <code>backward()</code>; intermediates do not keep one unless you call <code>retain_grad()</code>. So the statement is <b>true</b>.</div>
+        </div>
+
+        <div class="exercise" data-answer="true" data-tol="0.001" data-hint="What rule does backward() walk the graph with, node by node?">
+          <div class="ex-q">True or false: <code>backward()</code> computes gradients via the chain rule. (Answer <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src"><code>backward()</code> traverses the autograd graph in reverse topological order and applies EQ F1.3 — the chain rule — at every node, multiplying each child's adjoint by the local derivative and summing over paths. <b>True</b>.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Reverse-mode autodiff by hand in numpy -- mimic .backward() on a tiny graph
+# Graph:  c = a*b ;  d = c + a ;  L = d**2   at a=2, b=3
+import numpy as np
+a, b = 2.0, 3.0
+
+# ---- forward pass: compute values, remember them as "tape" ----
+c = a * b          # multiply
+d = c + a          # add (a fans out: feeds both c and d)
+L = d * d          # square
+print(f"forward : c={c}, d={d}, L={L}")
+
+# ---- backward pass: seed dL/dL = 1, push adjoints back ----
+gL = 1.0
+gd = gL * (2 * d)              # d/dd of d**2
+gc = gd * 1.0                  # d = c + a  ->  dd/dc = 1
+ga = gc * b + gd * 1.0         # a -> c (dc/da=b) AND a -> d (dd/da=1): SUM paths
+gb = gc * a                    # c = a*b  ->  dc/db = a
+print(f"backward: dL/da={ga}, dL/db={gb}")
+
+# ---- check against a numerical gradient (finite differences) ----
+h = 1e-6
+fd_a = ((a+h)*b + (a+h) + (a+h))  # rebuild L(a+h): messy, so use a function
+def Lf(a, b): c=a*b; d=c+a; return d*d
+print("numeric dL/da:", round((Lf(a+h,b)-Lf(a-h,b))/(2*h), 4),
+      "| numeric dL/db:", round((Lf(a,b+h)-Lf(a,b-h))/(2*h), 4))</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="pt-ag" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT F1.2 — AUTOGRAD GRAPH VISUALIZER</span><span class="w-sub">FORWARD VALUES · BACKWARD ADJOINTS · EQ F1.3</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>LEAF a <output id="pt-ag-a-out">2.0</output></label><input type="range" id="pt-ag-a" min="-4" max="4" step="0.5" value="2"/></div>
+              <div class="ctl"><label>LEAF b <output id="pt-ag-b-out">3.0</output></label><input type="range" id="pt-ag-b" min="-4" max="4" step="0.5" value="3"/></div>
+            </div>
+            <canvas class="w-canvas" id="pt-ag-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">FORWARD L</div><div class="r-value" id="pt-ag-l">—</div></div>
+              <div class="readout acc"><div class="r-label">a.grad (∂L/∂a)</div><div class="r-value" id="pt-ag-ga">—</div></div>
+              <div class="readout acc"><div class="r-label">b.grad (∂L/∂b)</div><div class="r-value" id="pt-ag-gb">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The graph \(c=a\cdot b,\ d=c+a,\ L=d^2\). Black numbers on nodes are forward <em>values</em>; mint numbers on edges are the <em>adjoints</em> \(\bar y\,\partial y/\partial x\) that <code>backward()</code> pushes leftward. Leaf <code>a</code> fans out to two children, so its two incoming edges <strong>add</strong> — drag the sliders and watch <code>a.grad</code> track \(16b + 16\) exactly as EQ F1.3 predicts.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 1.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">1.3</span><h2>nn.Module &amp; building models</h2></div>
+        <p>You could build a network from bare tensors and <code>requires_grad</code>, but PyTorch gives you <strong><code>nn.Module</code></strong>: a base class that bookkeeps parameters for you. Subclass it, register child modules and <code>nn.Parameter</code> tensors as attributes in <code>__init__</code>, and define <code>forward(self, x)</code>. Then <code>module.parameters()</code> recursively yields every learnable tensor — exactly what you hand to the optimizer — and <code>module.to(device)</code>, <code>module.state_dict()</code> (for saving), and <code>module.train()</code>/<code>module.eval()</code> all just work.</p>
+
+        <pre><code><span class="c"># A two-layer MLP — the canonical nn.Module shape</span>
+<span class="k">import</span> torch.nn <span class="k">as</span> nn
+
+<span class="k">class</span> MLP(nn.Module):
+    <span class="k">def</span> __init__(self, d_in, d_hidden, d_out):
+        super().__init__()
+        self.fc1 = nn.Linear(d_in, d_hidden)   <span class="c"># weight + bias auto-registered</span>
+        self.fc2 = nn.Linear(d_hidden, d_out)
+    <span class="k">def</span> forward(self, x):
+        x = torch.relu(self.fc1(x))            <span class="c"># define-by-run: just write the math</span>
+        <span class="k">return</span> self.fc2(x)
+
+model = MLP(<span class="v">784</span>, <span class="v">128</span>, <span class="v">10</span>)
+n = sum(p.numel() <span class="k">for</span> p <span class="k">in</span> model.parameters())   <span class="c"># count params</span></code></pre>
+
+        <p>A single <code>nn.Linear(d_in, d_out)</code> holds a weight of shape \((d_{\text{out}}, d_{\text{in}})\) and a bias of shape \((d_{\text{out}})\), and computes the affine map below. The shape convention — output dim first — exists so the forward pass can write <code>x @ W.T + b</code> with <code>x</code> batched on the leading axis.</p>
+
+        <div class="eq"><span class="eq-tag">EQ F1.4 — nn.Linear</span>
+        $$ y \;=\; x W^{\top} + b, \qquad W \in \mathbb{R}^{d_{\text{out}}\times d_{\text{in}}},\; b \in \mathbb{R}^{d_{\text{out}}},\; x \in \mathbb{R}^{B \times d_{\text{in}}} $$
+        <div class="eq-note">A linear (fully-connected) layer is a learned affine transform. Parameter count is \(d_{\text{out}}(d_{\text{in}} + 1)\): the \(+1\) is the bias. Batched inputs \(x\) of shape \((B, d_{\text{in}})\) map to outputs \((B, d_{\text{out}})\) — the batch axis rides along for free via broadcasting (EQ F1.2) of the bias. <b>Everything in this encyclopedia, Transformers included, is towers of EQ F1.4 with nonlinearities between them.</b></div>
+        </div>
+
+        <div class="exercise" data-answer="101770" data-tol="0.001" data-hint="Each nn.Linear has d_out·(d_in+1) params. Sum fc1 (784→128) and fc2 (128→10).">
+          <div class="ex-q">The MLP above is <code>nn.Linear(784,128)</code> then <code>nn.Linear(128,10)</code>, each with bias. Using \(d_{\text{out}}(d_{\text{in}}+1)\) per layer, how many learnable parameters does the whole model have?</div>
+          <div class="ex-reveal-src">Layer 1: \(128\times(784+1) = 128\times785 = 100{,}480\). Layer 2: \(10\times(128+1) = 10\times129 = 1{,}290\). Total \(= 100{,}480 + 1{,}290 = \) <b>101770</b>. ReLU adds none — it has no parameters.</div>
+        </div>
+
+        <p class="note"><strong>Why <code>nn.Parameter</code> and not a plain tensor?</strong> <code>nn.Parameter</code> is a tensor subclass that is automatically (a) registered in <code>parameters()</code> so the optimizer sees it, and (b) given <code>requires_grad=True</code>. Assign a raw tensor as a module attribute and it is invisible to the optimizer — a classic "my loss won't go down" bug. For tensors that should move with the model but never train (e.g. running stats), use <code>register_buffer</code>.</p>
+      </section>
+
+      <!-- ====================== 1.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">1.4</span><h2>The training loop</h2></div>
+        <p>Everything above converges on five lines that you will write thousands of times. PyTorch deliberately does <strong>not</strong> hide the loop — you write it yourself, which is why the framework is so easy to debug. The canonical step:</p>
+
+        <pre><code><span class="k">for</span> xb, yb <span class="k">in</span> loader:                 <span class="c"># 0. a minibatch</span>
+    optimizer.zero_grad()           <span class="c"># 1. clear last step's grads (they accumulate!)</span>
+    pred = model(xb)                <span class="c"># 2. FORWARD  — builds the autograd graph</span>
+    loss = loss_fn(pred, yb)        <span class="c"># 3. LOSS     — a single scalar</span>
+    loss.backward()                 <span class="c"># 4. BACKWARD — chain rule fills every .grad</span>
+    optimizer.step()                <span class="c"># 5. STEP     — theta -= lr * theta.grad</span></code></pre>
+
+        <p>The optimizer's <code>step()</code> is where learning happens. For plain SGD it is one line of the gradient-descent rule you met in Volume I; for Adam it adds per-parameter adaptive scaling from running moment estimates. Either way the update consumes the <code>.grad</code> values <code>backward()</code> just deposited.</p>
+
+        <div class="eq"><span class="eq-tag">EQ F1.5 — THE SGD UPDATE optimizer.step()</span>
+        $$ \theta_{t+1} \;=\; \theta_t - \eta\,\nabla_\theta L, \qquad \nabla_\theta L = \theta.\texttt{grad} $$
+        <div class="eq-note">After <code>backward()</code>, each parameter's <code>.grad</code> holds \(\partial L/\partial\theta\); <code>step()</code> walks every parameter and subtracts the learning rate \(\eta\) times that gradient. <b>The order is load-bearing:</b> <code>zero_grad → forward → loss → backward → step</code>. Forget <code>zero_grad</code> and gradients sum across iterations (EQ F1.3 accumulation); call <code>step</code> before <code>backward</code> and you update on stale or empty gradients.</div>
+        </div>
+
+        <div class="exercise" data-answer="1.4" data-tol="0.01" data-hint="One SGD step: theta_new = theta - lr * grad, with theta=2.0, grad=3.0, lr=0.2.">
+          <div class="ex-q">A parameter sits at \(\theta = 2.0\). After <code>backward()</code> its <code>.grad</code> is \(3.0\). With <code>SGD(lr=0.2)</code>, what is \(\theta\) after one <code>optimizer.step()</code> (EQ F1.5)?</div>
+          <div class="ex-reveal-src">\(\theta_{t+1} = \theta_t - \eta\,\nabla = 2.0 - 0.2\times3.0 = 2.0 - 0.6 = \) <b>1.4</b>. (Then <code>zero_grad</code> would reset the \(.grad\) to zero before the next forward.)</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># A full PyTorch-style training loop in numpy: forward / loss / backward / step
+# Fit y = 2x + 1 with a 1-param-per-weight linear model, by hand.
+import numpy as np
+rng = np.random.default_rng(0)
+X = rng.uniform(-2, 2, 64)               # 64 examples
+y = 2.0 * X + 1.0 + rng.normal(0, 0.1, 64)   # true line + noise
+
+w, b = 0.0, 0.0                          # parameters (our "leaves")
+lr = 0.1
+hist = []
+for epoch in range(60):
+    # 1. zero_grad is implicit: we recompute grads fresh each step
+    pred = w * X + b                     # 2. FORWARD
+    err  = pred - y
+    loss = np.mean(err ** 2)            # 3. LOSS (MSE, a scalar)
+    # 4. BACKWARD: dL/dw, dL/db by the chain rule on mean((wx+b-y)^2)
+    gw = np.mean(2 * err * X)
+    gb = np.mean(2 * err)
+    w -= lr * gw                        # 5. STEP (EQ F1.5)
+    b -= lr * gb
+    hist.append(loss)
+
+print(f"learned w={w:.3f} (true 2.0), b={b:.3f} (true 1.0)")
+print(f"loss: {hist[0]:.3f} -> {hist[-1]:.5f} over 60 steps")
+plot_xy(list(range(len(hist))), hist)   # the loss curve descending</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="pt-loop" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT F1.3 — TRAINING-LOOP ANATOMY</span><span class="w-sub">FIVE STEPS · WHAT EACH LINE TOUCHES</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>STEP <output id="pt-loop-step-out">0 · IDLE</output></label><input type="range" id="pt-loop-step" min="0" max="5" step="1" value="0"/></div>
+            </div>
+            <canvas class="w-canvas" id="pt-loop-canvas" height="270"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">CALL</div><div class="r-value" id="pt-loop-call" style="font-size:12px;">—</div></div>
+              <div class="readout acc"><div class="r-label">GRAPH STATE</div><div class="r-value" id="pt-loop-graph" style="font-size:12px;">—</div></div>
+              <div class="readout acc"><div class="r-label">.grad STATE</div><div class="r-value" id="pt-loop-grad" style="font-size:12px;">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Drag the slider through the five canonical lines. Watch how <code>zero_grad</code> empties <code>.grad</code>, <code>forward</code> grows the autograd graph, <code>backward</code> fills the gradients (and frees the graph), and <code>step</code> consumes them. The cycle is what every PyTorch model — from this MLP to a frontier LLM — runs millions of times.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 1.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">1.5</span><h2>Datasets, DataLoaders &amp; devices</h2></div>
+        <p>The loop above iterates over <code>loader</code> — and that object is the last primitive worth knowing. A <strong><code>Dataset</code></strong> answers two questions: <code>__len__</code> (how many examples) and <code>__getitem__(i)</code> (return example <em>i</em>, usually a <code>(features, label)</code> tuple). A <strong><code>DataLoader</code></strong> wraps a Dataset and handles the operational concerns: <em>batching</em> (collate many examples into one tensor), <em>shuffling</em> (reorder each epoch so batches are i.i.d.), and <em>parallel loading</em> (<code>num_workers</code> subprocesses fetch the next batch while the GPU chews the current one, hiding I/O latency).</p>
+
+        <div class="eq"><span class="eq-tag">EQ F1.6 — STEPS PER EPOCH</span>
+        $$ \text{steps/epoch} \;=\; \left\lceil \frac{N}{B} \right\rceil, \qquad \text{last batch has } N - B\!\left\lfloor \frac{N}{B}\right\rfloor \text{ examples (if } \texttt{drop\_last=False)} $$
+        <div class="eq-note">\(N\) examples, batch size \(B\): the loader yields \(\lceil N/B\rceil\) minibatches, hence that many optimizer steps per pass over the data. The final batch is ragged unless \(B\) divides \(N\) or you set <code>drop_last=True</code>. <b>One epoch = one full sweep; total optimizer steps = epochs \(\times \lceil N/B\rceil\)</b> — the number that actually sets your training budget.</div>
+        </div>
+
+        <div class="exercise" data-answer="79" data-tol="0.001" data-hint="ceil(N / B) with N = 10000 and B = 128.">
+          <div class="ex-q">A dataset has \(N = 10{,}000\) examples and you use batch size \(B = 128\) with <code>drop_last=False</code>. How many optimizer steps does <em>one</em> epoch take (EQ F1.6)?</div>
+          <div class="ex-reveal-src">\(\lceil 10000/128\rceil = \lceil 78.125\rceil = \) <b>79</b>. The first 78 batches hold 128 each (\(78\times128 = 9984\)); the 79th holds the remaining \(16\) examples.</div>
+        </div>
+
+        <p>The final practical concern is <strong>device discipline</strong>. A tensor and the parameters it meets must live on the same device, or PyTorch raises a "expected all tensors to be on the same device" error. The idiom is to pick one device up front and move both model and each batch to it:</p>
+
+        <pre><code>device = <span class="v">"cuda"</span> <span class="k">if</span> torch.cuda.is_available() <span class="k">else</span> <span class="v">"cpu"</span>
+model = model.to(device)              <span class="c"># parameters now on the GPU</span>
+<span class="k">for</span> xb, yb <span class="k">in</span> loader:
+    xb, yb = xb.to(device), yb.to(device)   <span class="c"># move the batch too</span>
+    ...                              <span class="c"># the loop from 1.4, unchanged</span></code></pre>
+
+        <p class="note"><strong>Where to go from here.</strong> <code>torch.compile</code> (stable since 2.0) traces your define-by-run model into a fused, optimized graph for large speedups with no code change; mixed precision (<code>torch.autocast</code> + <code>GradScaler</code>) halves memory and accelerates matmuls; and <code>DistributedDataParallel</code> scales the very same loop across many GPUs. None of them change the four ideas in this chapter — tensor, autograd, module, loop.</p>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>PyTorch hands you the loop; the next framework hides it.</strong> Chapter 02 covers TensorFlow and its Keras front-end — static graphs, <code>model.fit()</code>, and the engineering trade-offs of declaring your computation up front instead of running it line by line.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 1.R — REFERENCES ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">1.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://arxiv.org/abs/1912.01703" target="_blank" rel="noopener">Paszke, A., Gross, S., Massa, F. et al. (2019). <span class="ref-venue">PyTorch: An Imperative Style, High-Performance Deep Learning Library</span>.</a> <span class="ref-meta">NeurIPS 32 — the system paper for define-by-run autograd.</span></li>
+          <li><a href="https://pytorch.org/docs/stable/index.html" target="_blank" rel="noopener">The PyTorch Team. <span class="ref-venue">PyTorch Documentation (stable)</span>.</a> <span class="ref-meta">Official reference for tensors, autograd, nn, and optim.</span></li>
+          <li><a href="https://jmlr.org/papers/v18/17-468.html" target="_blank" rel="noopener">Baydin, A. G., Pearlmutter, B. A., Radul, A. A. &amp; Siskind, J. M. (2018). <span class="ref-venue">Automatic Differentiation in Machine Learning: a Survey</span>.</a> <span class="ref-meta">JMLR 18(153) — forward vs reverse mode, the theory behind EQ F1.3.</span></li>
+          <li><a href="https://pytorch.org/tutorials/beginner/basics/autogradqs_tutorial.html" target="_blank" rel="noopener">The PyTorch Team. <span class="ref-venue">Automatic Differentiation with torch.autograd</span>.</a> <span class="ref-meta">Tutorial — the dynamic graph, .grad accumulation, and zero_grad.</span></li>
+          <li><a href="https://openreview.net/forum?id=BygdyxHFDS" target="_blank" rel="noopener">Ansel, J. et al. (2024). <span class="ref-venue">PyTorch 2: Faster Machine Learning Through Dynamic Python Bytecode Transformation and Graph Compilation</span>.</a> <span class="ref-meta">ASPLOS 2024 — torch.compile and TorchDynamo.</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../index.html#toc"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">··</span> INDEX</div></a>
+        <a class="next" href="../frameworks/02-tensorflow-keras.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">02</span> TensorFlow &amp; Keras</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — FRAMEWORKS · CH 01</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* chapter instruments — single IIFE, no globals */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  var C = (FM && FM.C) || {
+    MINT: "#a6f2cc", DEEP: "#2b5945", BLUE: "#4e8af7", RED: "#ff4136",
+    HAIR: "#2f3234", MUT: "#636363", SEC: "#9b9b9b", BRIGHT: "#ffffff",
+    MONO: "10px ui-monospace, SF Mono, Menlo, monospace"
+  };
+  var MONO = C.MONO || "10px ui-monospace, SF Mono, Menlo, monospace";
+
+  /* ============================================================
+     INSTRUMENT F1.1 — SHAPE & BROADCASTING EXPLORER
+     ============================================================ */
+  (function broadcastExplorer() {
+    var root = document.getElementById("pt-bc");
+    if (!root) return;
+    var canvas = document.getElementById("pt-bc-canvas");
+    if (!canvas) return;
+    // dim sliders are exponents of 2 (clamped to small "logical" labels)
+    var a0 = document.getElementById("pt-bc-a0"), a1 = document.getElementById("pt-bc-a1");
+    var b0 = document.getElementById("pt-bc-b0"), b1 = document.getElementById("pt-bc-b1");
+    var a0o = document.getElementById("pt-bc-a0-out"), a1o = document.getElementById("pt-bc-a1-out");
+    var b0o = document.getElementById("pt-bc-b0-out"), b1o = document.getElementById("pt-bc-b1-out");
+    var asEl = document.getElementById("pt-bc-as"), bsEl = document.getElementById("pt-bc-bs"), resEl = document.getElementById("pt-bc-res");
+
+    function dimVal(slider) {
+      // value 0 => dimension 1 (broadcastable); else 2^value
+      var v = parseInt(slider.value, 10);
+      return v === 0 ? 1 : Math.pow(2, v);
+    }
+    function combine(x, y) {
+      // returns {ok:bool, out:number}
+      if (x === y) return { ok: true, out: x };
+      if (x === 1) return { ok: true, out: y };
+      if (y === 1) return { ok: true, out: x };
+      return { ok: false, out: Math.max(x, y) };
+    }
+    function render() {
+      var A = [dimVal(a0), dimVal(a1)];
+      var B = [dimVal(b0), dimVal(b1)];
+      a0o.textContent = A[0]; a1o.textContent = A[1];
+      b0o.textContent = B[0]; b1o.textContent = B[1];
+      var d0 = combine(A[0], B[0]);
+      var d1 = combine(A[1], B[1]);
+      var ok = d0.ok && d1.ok;
+      asEl.textContent = "(" + A[0] + ", " + A[1] + ")";
+      bsEl.textContent = "(" + B[0] + ", " + B[1] + ")";
+      resEl.textContent = ok ? "(" + d0.out + ", " + d1.out + ")" : "ERROR";
+
+      var s = FM.setupCanvas(canvas, 210);
+      var ctx = s.ctx, w = s.w, h = s.h;
+      ctx.clearRect(0, 0, w, h);
+
+      // three boxes: A, B, RESULT. size scaled by log of element count.
+      var boxes = [
+        { label: "A", shp: A, ok: true, color: C.SEC, x: w * 0.16 },
+        { label: "B", shp: B, ok: true, color: C.SEC, x: w * 0.5 },
+        { label: ok ? "A + B" : "INVALID", shp: ok ? [d0.out, d1.out] : null, ok: ok, color: ok ? C.MINT : C.RED, x: w * 0.84 }
+      ];
+      var cy = h * 0.46;
+      var maxLog = Math.log2(Math.max(d0.out, d1.out, 2)) + 1;
+      function dimToPx(d) { return 12 + (Math.log2(d) / maxLog) * 70; }
+
+      for (var i = 0; i < boxes.length; i++) {
+        var bx = boxes[i];
+        var bw, bh;
+        if (bx.shp) { bw = dimToPx(bx.shp[1]); bh = dimToPx(bx.shp[0]); }
+        else { bw = 50; bh = 50; }
+        var x0 = bx.x - bw / 2, y0 = cy - bh / 2;
+        ctx.fillStyle = bx.label.indexOf("A +") === 0 ? "rgba(166,242,204,.14)" :
+          (bx.label === "INVALID" ? "rgba(255,65,54,.14)" : "rgba(155,155,155,.08)");
+        ctx.strokeStyle = bx.color;
+        ctx.lineWidth = bx.label.indexOf("A +") === 0 ? 1.6 : 1;
+        ctx.fillRect(x0, y0, bw, bh);
+        ctx.strokeRect(x0, y0, bw, bh);
+        ctx.fillStyle = bx.color;
+        ctx.font = "11px ui-monospace, Menlo, monospace";
+        ctx.textAlign = "center";
+        ctx.fillText(bx.label, bx.x, y0 - 20);
+        ctx.fillStyle = bx.label === "INVALID" ? C.RED : C.SEC;
+        ctx.font = MONO;
+        ctx.fillText(bx.shp ? "(" + bx.shp[0] + ", " + bx.shp[1] + ")" : "no broadcast", bx.x, y0 + bh + 16);
+      }
+      // operator glyphs
+      ctx.fillStyle = C.MUT;
+      ctx.font = "16px ui-monospace, Menlo, monospace";
+      ctx.textAlign = "center";
+      ctx.fillText("+", (boxes[0].x + boxes[1].x) / 2, cy + 5);
+      ctx.fillText("=", (boxes[1].x + boxes[2].x) / 2, cy + 5);
+
+      // per-axis verdict strip
+      ctx.font = MONO;
+      ctx.textAlign = "left";
+      var msgs = [
+        "axis 0: " + A[0] + " vs " + B[0] + (d0.ok ? "  ✓ -> " + d0.out : "  ✗ mismatch"),
+        "axis 1: " + A[1] + " vs " + B[1] + (d1.ok ? "  ✓ -> " + d1.out : "  ✗ mismatch")
+      ];
+      for (var m = 0; m < msgs.length; m++) {
+        ctx.fillStyle = (m === 0 ? d0.ok : d1.ok) ? C.SEC : C.RED;
+        ctx.fillText(msgs[m], 12, h - 26 + m * 14);
+      }
+    }
+    [a0, a1, b0, b1].forEach(function (el) { el.addEventListener("input", render); });
+    window.addEventListener("resize", render);
+    render();
+  })();
+
+  /* ============================================================
+     INSTRUMENT F1.2 — AUTOGRAD GRAPH VISUALIZER
+     Graph: c = a*b ; d = c + a ; L = d^2
+     ============================================================ */
+  (function autogradGraph() {
+    var root = document.getElementById("pt-ag");
+    if (!root) return;
+    var canvas = document.getElementById("pt-ag-canvas");
+    if (!canvas) return;
+    var aEl = document.getElementById("pt-ag-a"), bEl = document.getElementById("pt-ag-b");
+    var aOut = document.getElementById("pt-ag-a-out"), bOut = document.getElementById("pt-ag-b-out");
+    var lEl = document.getElementById("pt-ag-l"), gaEl = document.getElementById("pt-ag-ga"), gbEl = document.getElementById("pt-ag-gb");
+
+    function fmt(x) {
+      if (!isFinite(x)) return "—";
+      return (Math.round(x * 100) / 100).toString();
+    }
+    function render() {
+      var a = parseFloat(aEl.value), b = parseFloat(bEl.value);
+      aOut.textContent = a.toFixed(1); bOut.textContent = b.toFixed(1);
+      // forward
+      var c = a * b, d = c + a, L = d * d;
+      // backward (EQ F1.3)
+      var gd = 2 * d;          // dL/dd
+      var gc = gd * 1;         // dL/dc
+      var ga_c = gc * b;       // path a->c
+      var ga_d = gd * 1;       // path a->d
+      var ga = ga_c + ga_d;    // sum of paths
+      var gb = gc * a;         // path b->c
+      lEl.textContent = fmt(L);
+      gaEl.textContent = fmt(ga);
+      gbEl.textContent = fmt(gb);
+
+      var s = FM.setupCanvas(canvas, 300);
+      var ctx = s.ctx, w = s.w, h = s.h;
+      ctx.clearRect(0, 0, w, h);
+
+      // node layout (x fractions, y fractions)
+      var R = 19;
+      var nodes = {
+        a: { x: w * 0.12, y: h * 0.30, label: "a", val: a, leaf: true },
+        b: { x: w * 0.12, y: h * 0.74, label: "b", val: b, leaf: true },
+        c: { x: w * 0.42, y: h * 0.62, label: "c=a·b", val: c, leaf: false },
+        d: { x: w * 0.68, y: h * 0.44, label: "d=c+a", val: d, leaf: false },
+        L: { x: w * 0.90, y: h * 0.44, label: "L=d²", val: L, leaf: false }
+      };
+      // edges: from -> to, with adjoint label (the gradient flowing back along it)
+      var edges = [
+        { f: "a", t: "c", g: ga_c, bow: 0 },
+        { f: "b", t: "c", g: gb, bow: 0 },
+        { f: "c", t: "d", g: gc, bow: 0 },
+        { f: "a", t: "d", g: ga_d, bow: -0.32 }, // the fan-out edge, bowed
+        { f: "d", t: "L", g: gd, bow: 0 }
+      ];
+
+      // draw edges first
+      ctx.font = MONO;
+      for (var i = 0; i < edges.length; i++) {
+        var e = edges[i];
+        var n1 = nodes[e.f], n2 = nodes[e.t];
+        var mx = (n1.x + n2.x) / 2, my = (n1.y + n2.y) / 2 + e.bow * (n2.x - n1.x);
+        ctx.strokeStyle = C.HAIR;
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(n1.x, n1.y);
+        ctx.quadraticCurveTo(mx, my, n2.x, n2.y);
+        ctx.stroke();
+        // backward-flow arrowhead near the SOURCE (gradients go right->left)
+        var ang = Math.atan2(n1.y - my, n1.x - mx);
+        var ax = n1.x + Math.cos(ang) * (R + 4), ay = n1.y + Math.sin(ang) * (R + 4);
+        ctx.fillStyle = C.MINT;
+        ctx.beginPath();
+        ctx.moveTo(ax, ay);
+        ctx.lineTo(ax - Math.cos(ang - 0.4) * 7, ay - Math.sin(ang - 0.4) * 7);
+        ctx.lineTo(ax - Math.cos(ang + 0.4) * 7, ay - Math.sin(ang + 0.4) * 7);
+        ctx.closePath();
+        ctx.fill();
+        // adjoint label
+        ctx.fillStyle = C.MINT;
+        ctx.textAlign = "center";
+        ctx.fillText("∂=" + fmt(e.g), mx, my - 5 + e.bow * 30);
+      }
+
+      // draw nodes
+      var keys = Object.keys(nodes);
+      for (var k = 0; k < keys.length; k++) {
+        var n = nodes[keys[k]];
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, R, 0, Math.PI * 2);
+        ctx.fillStyle = n.leaf ? "rgba(78,138,247,.16)" : "rgba(166,242,204,.10)";
+        ctx.fill();
+        ctx.lineWidth = 1.4;
+        ctx.strokeStyle = n.leaf ? C.BLUE : C.MINT;
+        ctx.stroke();
+        ctx.fillStyle = C.BRIGHT;
+        ctx.font = "11px ui-monospace, Menlo, monospace";
+        ctx.textAlign = "center";
+        ctx.fillText(fmt(n.val), n.x, n.y + 4);
+        ctx.fillStyle = n.leaf ? C.BLUE : C.SEC;
+        ctx.font = MONO;
+        ctx.fillText(n.label, n.x, n.y - R - 6);
+      }
+      // legend
+      ctx.textAlign = "left";
+      ctx.font = MONO;
+      ctx.fillStyle = C.BLUE; ctx.fillText("● leaf (requires_grad)", 8, h - 22);
+      ctx.fillStyle = C.MINT; ctx.fillText("→ adjoint flows back (∂L/∂·)", 8, h - 8);
+    }
+    aEl.addEventListener("input", render);
+    bEl.addEventListener("input", render);
+    window.addEventListener("resize", render);
+    render();
+  })();
+
+  /* ============================================================
+     INSTRUMENT F1.3 — TRAINING-LOOP ANATOMY
+     ============================================================ */
+  (function trainingLoop() {
+    var root = document.getElementById("pt-loop");
+    if (!root) return;
+    var canvas = document.getElementById("pt-loop-canvas");
+    if (!canvas) return;
+    var stepEl = document.getElementById("pt-loop-step");
+    var stepOut = document.getElementById("pt-loop-step-out");
+    var callEl = document.getElementById("pt-loop-call");
+    var graphEl = document.getElementById("pt-loop-graph");
+    var gradEl = document.getElementById("pt-loop-grad");
+
+    var STEPS = [
+      { name: "0 · IDLE", call: "for xb,yb in loader", graph: "empty", grad: "stale", lit: -1, gstate: 0, gradstate: 2 },
+      { name: "1 · ZERO_GRAD", call: "optimizer.zero_grad()", graph: "empty", grad: "= 0", lit: 0, gstate: 0, gradstate: 0 },
+      { name: "2 · FORWARD", call: "pred = model(xb)", graph: "BUILDING", grad: "= 0", lit: 1, gstate: 1, gradstate: 0 },
+      { name: "3 · LOSS", call: "loss = loss_fn(pred,yb)", graph: "BUILT (scalar root)", grad: "= 0", lit: 2, gstate: 2, gradstate: 0 },
+      { name: "4 · BACKWARD", call: "loss.backward()", graph: "FREED", grad: "FILLED ∂L/∂θ", lit: 3, gstate: 0, gradstate: 1 },
+      { name: "5 · STEP", call: "optimizer.step()", graph: "empty", grad: "consumed", lit: 4, gstate: 0, gradstate: 2 }
+    ];
+    var LINES = [
+      "optimizer.zero_grad()",
+      "pred = model(xb)",
+      "loss = loss_fn(pred, yb)",
+      "loss.backward()",
+      "optimizer.step()"
+    ];
+
+    function render() {
+      var idx = parseInt(stepEl.value, 10);
+      var st = STEPS[idx];
+      stepOut.textContent = st.name;
+      callEl.textContent = st.call;
+      graphEl.textContent = st.graph;
+      gradEl.textContent = st.grad;
+
+      var s = FM.setupCanvas(canvas, 270);
+      var ctx = s.ctx, w = s.w, h = s.h;
+      ctx.clearRect(0, 0, w, h);
+
+      // left column: the five code lines, highlight the active one
+      ctx.font = "11px ui-monospace, Menlo, monospace";
+      ctx.textAlign = "left";
+      var lx = 12, ly0 = 26, dy = 26;
+      for (var i = 0; i < LINES.length; i++) {
+        var active = i === st.lit;
+        if (active) {
+          ctx.fillStyle = "rgba(166,242,204,.14)";
+          ctx.fillRect(lx - 6, ly0 + i * dy - 13, w * 0.52, 20);
+        }
+        ctx.fillStyle = active ? C.MINT : C.MUT;
+        ctx.fillText((i + 1) + ".  " + LINES[i], lx, ly0 + i * dy);
+      }
+
+      // right column: state panel — graph diagram + grad chip
+      var px = w * 0.60;
+      // mini autograd-graph indicator (3 stacked nodes growing with gstate)
+      ctx.font = MONO;
+      ctx.fillStyle = C.SEC;
+      ctx.textAlign = "left";
+      ctx.fillText("AUTOGRAD GRAPH", px, 24);
+      var nodeColors = [C.HAIR, C.HAIR, C.HAIR];
+      // gstate: 0 none, 1 building (2 nodes lit), 2 built (3 nodes lit)
+      var lit = st.gstate === 1 ? 2 : (st.gstate === 2 ? 3 : 0);
+      for (var g = 0; g < 3; g++) {
+        var on = g < lit;
+        var gx = px + 16 + g * 46, gy = 56;
+        ctx.beginPath();
+        ctx.arc(gx, gy, 13, 0, Math.PI * 2);
+        ctx.fillStyle = on ? "rgba(166,242,204,.16)" : "rgba(155,155,155,.05)";
+        ctx.fill();
+        ctx.strokeStyle = on ? C.MINT : C.HAIR;
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+        if (g < 2) {
+          ctx.strokeStyle = (g + 1 < lit) ? C.MINT : C.HAIR;
+          ctx.beginPath();
+          ctx.moveTo(gx + 13, gy);
+          ctx.lineTo(gx + 33, gy);
+          ctx.stroke();
+        }
+      }
+      ctx.fillStyle = st.gstate === 0 ? C.MUT : C.MINT;
+      ctx.font = MONO;
+      ctx.fillText(st.graph, px + 16, 86);
+
+      // .grad chip
+      ctx.fillStyle = C.SEC;
+      ctx.fillText("θ.grad", px, 128);
+      var chipColor = st.gradstate === 1 ? C.MINT : (st.gradstate === 0 ? C.MUT : C.SEC);
+      var chipFill = st.gradstate === 1 ? "rgba(166,242,204,.16)" :
+        (st.gradstate === 0 ? "rgba(99,99,99,.10)" : "rgba(155,155,155,.08)");
+      ctx.fillStyle = chipFill;
+      ctx.fillRect(px + 16, 140, 150, 26);
+      ctx.strokeStyle = chipColor;
+      ctx.lineWidth = 1.2;
+      ctx.strokeRect(px + 16, 140, 150, 26);
+      ctx.fillStyle = chipColor;
+      ctx.font = "11px ui-monospace, Menlo, monospace";
+      ctx.fillText(st.grad, px + 26, 157);
+
+      // EQ reminder for step 5
+      ctx.font = MONO;
+      ctx.fillStyle = idx === 5 ? C.MINT : C.MUT;
+      ctx.fillText("θ ← θ − η · θ.grad   (EQ F1.5)", px, 200);
+
+      // bottom progress dots
+      for (var p = 0; p < STEPS.length; p++) {
+        ctx.beginPath();
+        ctx.arc(20 + p * 18, h - 14, 4, 0, Math.PI * 2);
+        ctx.fillStyle = p === idx ? C.MINT : C.HAIR;
+        ctx.fill();
+      }
+    }
+    stepEl.addEventListener("input", render);
+    window.addEventListener("resize", render);
+    render();
+  })();
+
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

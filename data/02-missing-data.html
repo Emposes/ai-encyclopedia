@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Missing Data &amp; Imputation — AI Encyclopedia</title>
+<meta name="description" content="How a value went missing — MCAR, MAR, or MNAR — decides how you may fill it; why naive mean-imputation shrinks variance and destroys correlation, and how kNN, MICE, and model-based methods do better." />
+<link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
+<meta name="theme-color" content="#000000" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+</head>
+<body data-track="data" data-level="core">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ DATA / 02 / MISSING DATA</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../data/03-encoding-scaling.html">NEXT: ENCODING &amp; SCALING →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">DATA &amp; FEATURE ENGINEERING · CHAPTER 02 / 05</div>
+    <h1>Missing Data &amp; Imputation</h1>
+    <p class="lede">Real datasets arrive with holes, and the holes are rarely random. <strong>How a value went missing constrains how you may fill it, and naive mean-imputation degrades the relationships a model depends on.</strong> This chapter starts with Rubin's three missingness mechanisms, then works through the fixes: simple fills, kNN, multiple imputation by chained equations (MICE), and model-based strategies, noting where each one fails.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 22 MIN</b></span>
+      <span>BUILDS ON<b>DATA 01</b></span>
+      <span>INSTRUMENTS<b>IMPUTATION COMPARATOR · MECHANISM TOY · VARIANCE SHRINKAGE</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">2.1</span>Missingness mechanisms</a>
+      <a href="#s2"><span class="n">2.2</span>Simple imputation</a>
+      <a href="#s3"><span class="n">2.3</span>kNN imputation</a>
+      <a href="#s4"><span class="n">2.4</span>MICE</a>
+      <a href="#s5"><span class="n">2.5</span>Choosing in practice</a>
+      <a href="#s6"><span class="n">2.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 2.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">2.1</span><h2>Missingness mechanisms: MCAR, MAR, MNAR</h2></div>
+        <p>Before you fill a single cell, ask <em>why</em> it is empty. Donald Rubin's 1976 framework — still the field's bedrock — sorts the reason into three mechanisms by asking what the probability of a value being missing depends on. Write \(R\) for the missingness indicator (\(R=1\) if a cell is observed, \(0\) if missing), \(X_{\text{obs}}\) for the data you can see, and \(X_{\text{mis}}\) for the values that are hidden.</p>
+
+        <div class="eq"><span class="eq-tag">EQ D2.1 — THE THREE MECHANISMS</span>
+        $$
+        \begin{aligned}
+        \textbf{MCAR:}\quad & P(R \mid X_{\text{obs}}, X_{\text{mis}}) = P(R) \\
+        \textbf{MAR:}\quad  & P(R \mid X_{\text{obs}}, X_{\text{mis}}) = P(R \mid X_{\text{obs}}) \\
+        \textbf{MNAR:}\quad & P(R \mid X_{\text{obs}}, X_{\text{mis}}) \text{ depends on } X_{\text{mis}}
+        \end{aligned}
+        $$
+        <div class="eq-note"><b>MCAR</b> (missing completely at random): the holes are pure coincidence — a dropped sensor reading, a corrupted row. <b>MAR</b> (missing at random): the chance of missingness depends only on things you <em>did</em> observe — older respondents skip the income question, but you recorded age. <b>MNAR</b> (missing not at random): missingness depends on the hidden value itself — high earners refuse to state their income <em>because</em> it is high. The names are notoriously misleading: MAR is not "random", it is "explainable by observed data".</div>
+        </div>
+
+        <p>The distinction is not academic — it dictates what is recoverable:</p>
+        <table class="data">
+          <thead><tr><th>Mechanism</th><th>Depends on</th><th>Complete-case analysis</th><th>Imputation</th></tr></thead>
+          <tbody>
+            <tr><td><strong>MCAR</strong></td><td class="m">nothing</td><td class="hl">unbiased (just less efficient)</td><td>Optional; any sensible fill is safe</td></tr>
+            <tr><td><strong>MAR</strong></td><td class="m">observed \(X_{\text{obs}}\)</td><td>Biased in general</td><td class="hl">Recoverable — condition on the observed predictors</td></tr>
+            <tr><td><strong>MNAR</strong></td><td class="m">unseen \(X_{\text{mis}}\)</td><td>Biased</td><td>Not fixable from the data alone — needs a model of the missingness</td></tr>
+          </tbody>
+        </table>
+
+        <p><strong>You cannot test MAR vs MNAR from the data.</strong> The only difference between them lives in the values you never saw, so no statistic computed on the observed data can distinguish them — this is the contested, uncomfortable heart of the field. In practice you assume MAR (it makes the math tractable and the assumption is often defensible once you condition on enough covariates), then probe sensitivity to MNAR with explicit what-if models. Honesty about this assumption is the difference between an imputation that helps and one that launders bias into a clean-looking table.</p>
+
+        <div class="exercise" data-answer="MCAR" data-tol="0" data-hint="Which mechanism makes the observed rows a fair, unbiased sample of all rows?">
+          <div class="ex-q">Under which missingness mechanism is a <b>complete-case analysis</b> (simply dropping rows with any missing value) guaranteed unbiased — losing only efficiency, not correctness? Answer with the acronym.</div>
+          <div class="ex-reveal-src">Only when missingness is independent of everything — observed and unobserved — are the complete cases a representative subsample of the full data. That is the definition of missing completely at random: <b>MCAR</b>. Under MAR or MNAR the surviving rows are a skewed slice and dropping them biases estimates.</div>
+        </div>
+
+        <div class="widget" id="miss-mech" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT D2.1 — MECHANISM TOY</span><span class="w-sub">MEAN-IMPUTATION BIAS BY MECHANISM</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>MECHANISM</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-miss-mech="mcar">MCAR</button>
+                  <button class="w-btn ghost" data-miss-mech="mar">MAR</button>
+                  <button class="w-btn ghost" data-miss-mech="mnar">MNAR</button>
+                </div>
+              </div>
+              <div class="ctl"><label>MISSING FRACTION <output id="miss-mech-frac-out">35%</output></label><input type="range" id="miss-mech-frac" min="5" max="70" step="5" value="35"/></div>
+            </div>
+            <canvas class="w-canvas" id="miss-mech-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">TRUE MEAN</div><div class="r-value" id="miss-mech-true">—</div></div>
+              <div class="readout acc"><div class="r-label">OBSERVED MEAN (FILL)</div><div class="r-value" id="miss-mech-obs">—</div></div>
+              <div class="readout"><div class="r-label">BIAS</div><div class="r-value" id="miss-mech-bias">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Each column is a value of \(Y\); grey dots are hidden, mint dots observed. Mean-imputation fills holes at the <em>observed</em> mean (mint line) and reports it as the estimate. Under <b>MCAR</b> the observed mean tracks the true mean (dashed) — bias near zero. Switch to <b>MNAR</b>, where the largest values hide themselves, and watch the fill collapse downward: the estimate is biased no matter how cleverly you fill, because the information is gone.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 2.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">2.2</span><h2>Simple imputation — and what it costs</h2></div>
+        <p>The reflex fix is to replace every missing entry of a column with a single constant: the <strong>mean</strong> (numeric, roughly symmetric), the <strong>median</strong> (numeric, skewed or outlier-prone), or the <strong>mode</strong> (categorical). It is one line of code and it is the most over-used tool in applied machine learning.</p>
+
+        <div class="eq"><span class="eq-tag">EQ D2.2 — MEAN IMPUTATION</span>
+        $$ \hat{x}_i = \bar{x}_{\text{obs}} = \frac{1}{|O|}\sum_{j \in O} x_j, \qquad O = \{\, j : x_j \text{ observed} \,\} $$
+        <div class="eq-note">Every hole in the column gets the same number. This is unbiased for the column mean <em>only under MCAR</em>, and even then it commits two quieter crimes: it <b>shrinks the variance</b> (every imputed point sits exactly on the mean, contributing zero spread) and it <b>destroys correlations</b> (a flat fill is unrelated to every other column). Your downstream model sees a column that is artificially calm and artificially independent.</div>
+        </div>
+
+        <p>The variance damage is exact and worth committing to memory. If you mean-impute \(m\) of the \(n\) entries in a column, the population variance of the completed column is the original observed variance scaled down by the fraction of real data:</p>
+
+        <div class="eq"><span class="eq-tag">EQ D2.3 — VARIANCE SHRINKAGE</span>
+        $$ \mathrm{Var}_{\text{filled}} \;=\; \frac{n-m}{n}\,\mathrm{Var}_{\text{obs}}, \qquad \text{so } 40\% \text{ missing} \Rightarrow \text{variance} \times 0.6 $$
+        <div class="eq-note">The mean of the column is preserved, but the spread is not: \(m\) points contribute a squared deviation of exactly zero. Standard errors computed downstream are <b>too small</b>, confidence intervals too narrow, and significance overstated — the model is confident about data it never had. The collapse is linear in the missing fraction, which is why mean-imputing a column that is 50% empty halves its variance.</div>
+        </div>
+
+        <div class="exercise" data-answer="4.67" data-tol="0.01" data-hint="Average only the observed values, then that average fills the hole.">
+          <div class="ex-q">You mean-impute the column \([\,2,\ 4,\ \text{NA},\ 8\,]\) per EQ D2.2. What single value fills the missing entry?</div>
+          <div class="ex-reveal-src">Average the observed entries only: \(\bar{x}_{\text{obs}} = \dfrac{2 + 4 + 8}{3} = \dfrac{14}{3} = 4.6\overline{6} \approx\) <b>4.67</b>. Every hole in the column would be filled with this same number.</div>
+        </div>
+
+        <div class="exercise" data-answer="0.6" data-tol="0.02" data-unit="×" data-hint="Use EQ D2.3: the variance multiplier is (n − m) / n.">
+          <div class="ex-q">A column has \(n = 1000\) rows, of which \(m = 400\) are missing and get mean-imputed. By what factor is the column's variance multiplied, relative to the variance of the observed values (EQ D2.3)?</div>
+          <div class="ex-reveal-src">The multiplier is \(\dfrac{n-m}{n} = \dfrac{1000 - 400}{1000} = \dfrac{600}{1000} = \) <b>0.6</b>. The filled column keeps 60% of its true spread; the missing 40% all pile onto the mean and contribute nothing.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Mean vs kNN imputation: RMSE-to-truth on a masked, correlated column
+import numpy as np
+rng = np.random.default_rng(0)
+n = 300
+x = rng.normal(0, 1, n)                       # a predictor we always observe
+y = 2.0 * x + rng.normal(0, 0.4, n)           # truth: y is strongly tied to x
+
+mask = rng.random(n) &lt; 0.35                    # 35% of y goes missing (MAR on nothing here = MCAR)
+y_obs = y.copy(); y_obs[mask] = np.nan
+
+# (1) mean imputation: one flat number for every hole
+y_mean = y_obs.copy()
+y_mean[mask] = np.nanmean(y_obs)
+
+# (2) kNN imputation in x-space: average the k nearest observed neighbours' y
+def knn_impute(x, y_obs, mask, k=7):
+    out = y_obs.copy()
+    obs = ~mask
+    for i in np.where(mask)[0]:
+        d = np.abs(x[obs] - x[i])             # distance in the observed feature
+        nn = np.argsort(d)[:k]
+        out[i] = y_obs[obs][nn].mean()
+    return out
+y_knn = knn_impute(x, y_obs, mask)
+
+rmse = lambda a: np.sqrt(np.mean((a[mask] - y[mask])**2))
+print(f"mean-impute RMSE to truth : {rmse(y_mean):.3f}")
+print(f"kNN-impute  RMSE to truth : {rmse(y_knn):.3f}")
+print(f"std(observed y)           : {np.nanstd(y_obs):.3f}")
+print(f"std(after mean-impute)    : {np.std(y_mean):.3f}   &lt;- shrunk")
+plot_scatter(x[mask], y[mask], [0]*mask.sum())   # the points we had to guess</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="miss-shrink" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT D2.2 — VARIANCE SHRINKAGE</span><span class="w-sub">EQ D2.3 · MEAN-FILL COLLAPSES A DISTRIBUTION</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>MISSING FRACTION <output id="miss-shrink-frac-out">40%</output></label><input type="range" id="miss-shrink-frac" min="0" max="80" step="5" value="40"/></div>
+            </div>
+            <canvas class="w-canvas" id="miss-shrink-canvas" height="280"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">ORIGINAL VARIANCE</div><div class="r-value" id="miss-shrink-orig">—</div></div>
+              <div class="readout acc"><div class="r-label">AFTER MEAN-FILL</div><div class="r-value" id="miss-shrink-after">—</div></div>
+              <div class="readout"><div class="r-label">MULTIPLIER (n−m)/n</div><div class="r-value" id="miss-shrink-mult">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The mint curve is the true distribution; the bar at the mean is the spike of imputed points that mean-fill manufactures. As you raise the missing fraction, real spread is replaced by a stack of identical values at the center — the variance multiplier drops exactly as \((n-m)/n\). At 80% missing, four-fifths of the column is a single repeated number masquerading as data.</div>
+        </div>
+
+        <p class="note"><strong>Median and mode</strong> share the same structural flaw — a single constant per column — but resist outliers (median) and apply to categories (mode). They are reasonable defaults for a quick baseline or a column you do not believe carries much signal; they are never the right answer for a feature whose <em>relationships</em> matter.</p>
+      </section>
+
+      <!-- ====================== 2.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">2.3</span><h2>kNN imputation: borrow from your neighbours</h2></div>
+        <p>The first real upgrade is to stop filling with a global constant and start filling with a <em>local</em> one. <strong>k-nearest-neighbour imputation</strong> finds the \(k\) most similar rows (by distance over the columns you <em>do</em> observe) and fills each hole with their average — a weighted average if you weight by distance. It made its name imputing DNA microarray expression matrices, where it beat row-average filling decisively.</p>
+
+        <div class="eq"><span class="eq-tag">EQ D2.4 — WEIGHTED kNN FILL</span>
+        $$ \hat{x}_{ic} \;=\; \frac{\sum_{j \in N_k(i)} w_{ij}\, x_{jc}}{\sum_{j \in N_k(i)} w_{ij}}, \qquad w_{ij} = \frac{1}{d(i,j) + \varepsilon}, \quad d(i,j) = \!\!\sqrt{\sum_{c' \in O_{ij}} (x_{ic'} - x_{jc'})^2} $$
+        <div class="eq-note">\(N_k(i)\) are the \(k\) donors nearest to row \(i\); the distance \(d(i,j)\) is computed only over columns \(O_{ij}\) that both rows observe (so missingness does not poison the metric). Because the fill is conditioned on a row's own neighbourhood, kNN <b>preserves local structure and inter-column correlation</b> that a flat mean erases. The price: distances need features on a comparable scale (Chapter 03), it is sensitive to the curse of dimensionality, and scoring is \(O(n^2)\) in the naive form.</div>
+        </div>
+
+        <p>Two parameters decide its behaviour. Small \(k\) is flexible but noisy — a single odd neighbour swings the fill; large \(k\) smooths toward the global mean and re-introduces the very shrinkage you were trying to avoid. As always with kNN, you must <strong>scale your features first</strong>: an unscaled distance is dominated by whichever column happens to have the largest units, and the "nearest" neighbours become an artifact of measurement choice rather than similarity.</p>
+
+        <div class="widget" id="miss-comp" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT D2.3 — IMPUTATION COMPARATOR</span><span class="w-sub">MEAN vs kNN vs REGRESSION · RMSE TO TRUTH</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>METHOD</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-miss-comp="mean">MEAN</button>
+                  <button class="w-btn ghost" data-miss-comp="knn">kNN</button>
+                  <button class="w-btn ghost" data-miss-comp="reg">REGRESSION</button>
+                </div>
+              </div>
+              <div class="ctl"><label>NEIGHBOURS k <output id="miss-comp-k-out">7</output></label><input type="range" id="miss-comp-k" min="1" max="25" step="1" value="7"/></div>
+            </div>
+            <canvas class="w-canvas" id="miss-comp-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">METHOD</div><div class="r-value" id="miss-comp-mode">—</div></div>
+              <div class="readout acc"><div class="r-label">RMSE TO TRUTH</div><div class="r-value" id="miss-comp-rmse">—</div></div>
+              <div class="readout"><div class="r-label">CORR x↔ŷ RECOVERED</div><div class="r-value" id="miss-comp-corr">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">A fixed scatter of \(y\) against \(x\); the largest-\(x\) points have their \(y\) hidden (open circles) and each method guesses them (mint crosses). <b>MEAN</b> fills a flat horizontal line — RMSE high, the \(x\)–\(y\) correlation gone. <b>kNN</b> tracks the local trend; the \(k\) slider trades noise for over-smoothing. <b>REGRESSION</b> fits the line and lands the crosses on it — lowest RMSE here precisely because the truth <em>is</em> linear. Change the method and read how RMSE and recovered correlation move.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 2.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">2.4</span><h2>MICE: multiple imputation by chained equations</h2></div>
+        <p>Every method so far fills a <em>single</em> best guess and then proceeds as if it were ground truth — which pretends the imputed values carry no uncertainty. <strong>Multiple imputation</strong> fixes that at the root: generate several complete datasets, each with plausibly <em>different</em> fills, analyse each, and pool the results so the extra variance from imputation flows into your final standard errors. <strong>MICE</strong> (also called fully conditional specification) is the dominant way to generate those datasets.</p>
+
+        <p>The chained-equations idea is elegant. Initialize every hole with a simple fill, then sweep the columns one at a time: for each column with missing data, regress it on <em>all the others</em> using the currently-filled rows, and draw new imputations from that conditional model. Repeat the sweep until the fills stop changing.</p>
+
+        <div class="eq"><span class="eq-tag">EQ D2.5 — ONE MICE SWEEP (FULLY CONDITIONAL)</span>
+        $$ \text{for each } c:\quad x^{(t+1)}_{\cdot c\,\in\,\text{mis}} \;\sim\; P\!\left(x_{\cdot c} \,\middle|\, x_{\cdot 1}, \ldots, x_{\cdot c-1}, x_{\cdot c+1}, \ldots, x_{\cdot p};\ \hat{\theta}_c\right) $$
+        <div class="eq-note">Each column gets its own conditional model \(\hat{\theta}_c\) (linear regression for a continuous column, logistic for binary, and so on) fit on the other columns. Sweeping cycles until convergence — a Gibbs-sampler-style procedure that, under MAR, draws from the joint posterior of the missing data. Run it \(M\) times with different random draws to get \(M\) complete datasets. <b>Drawing from the conditional distribution — not just its mean — is what injects honest uncertainty</b>: take the conditional mean instead and you get a sharper point estimate but lose the variance MICE exists to preserve.</div>
+        </div>
+
+        <p>The payoff is the pooling step, <strong>Rubin's rules</strong>: average the \(M\) point estimates, and combine their variances so the total reflects both within-imputation and between-imputation uncertainty:</p>
+
+        <div class="eq"><span class="eq-tag">EQ D2.6 — RUBIN'S POOLING</span>
+        $$ \bar{Q} = \frac{1}{M}\sum_{m=1}^{M} \hat{Q}_m, \qquad T = \underbrace{\frac{1}{M}\sum_{m=1}^{M} U_m}_{\text{within } \bar{U}} \;+\; \underbrace{\left(1 + \tfrac{1}{M}\right) \frac{1}{M-1}\sum_{m=1}^{M}\!\big(\hat{Q}_m - \bar{Q}\big)^2}_{\text{between } B} $$
+        <div class="eq-note">\(\hat{Q}_m\) is your estimate (a coefficient, a mean) from imputed dataset \(m\); \(U_m\) is its own variance. The total variance \(T\) adds the <b>between-imputation</b> spread \(B\) — the part single-imputation throws away. The \((1 + 1/M)\) factor corrects for using a finite number of imputations. This is why \(M = 5\!-\!20\) imputations beat one perfect-looking fill: the disagreement <em>between</em> them is the uncertainty you would otherwise hide.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Mini-MICE: iteratively regress each column on the others; watch it converge
+import numpy as np
+rng = np.random.default_rng(1)
+n, p = 200, 3
+# correlated columns: a shared factor plus noise
+f = rng.normal(0, 1, (n, 1))
+X = f * np.array([1.0, 0.8, -0.6]) + rng.normal(0, 0.5, (n, p))
+
+M = rng.random((n, p)) &lt; 0.20                  # 20% missing, scattered
+Xm = X.copy(); Xm[M] = np.nan
+col_mean = np.nanmean(Xm, axis=0)
+Xf = Xm.copy()
+for c in range(p):                            # step 0: mean-init every hole
+    Xf[M[:, c], c] = col_mean[c]
+
+for sweep in range(8):                         # chained equations
+    prev = Xf.copy()
+    for c in range(p):                         # regress column c on the rest
+        rows = M[:, c]
+        if not rows.any():
+            continue
+        others = [k for k in range(p) if k != c]
+        A = np.column_stack([np.ones(n), Xf[:, others]])
+        beta, *_ = np.linalg.lstsq(A[~rows], Xf[~rows, c], rcond=None)
+        Xf[rows, c] = A[rows] @ beta           # conditional-mean fill
+    delta = np.abs(Xf - prev)[M].mean()
+    print(f"sweep {sweep+1}: mean change in filled cells = {delta:.5f}")
+
+err = np.sqrt(np.mean((Xf[M] - X[M])**2))
+print(f"\nfinal RMSE of MICE fills to truth: {err:.3f}")
+print("change shrinks toward 0 -> the chained equations reached a fixed point.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <p class="note"><strong>The honest caveat.</strong> Chained equations specify each column's conditional separately, so there is no guarantee a coherent joint distribution exists that matches all of them — yet the procedure is remarkably robust in practice and is the default in R's <code>mice</code> and scikit-learn's <code>IterativeImputer</code>. Convergence is monitored by eye (trace plots of imputed means across sweeps), not a hard stopping rule.</p>
+      </section>
+
+      <!-- ====================== 2.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">2.5</span><h2>Model-based &amp; indicator strategies; choosing in practice</h2></div>
+        <p>Two more tools round out the kit. <strong>Model-based imputation</strong> fits a single probabilistic model of the whole feature matrix and reads the missing values off it — Gaussian/EM imputation (maximum-likelihood under a multivariate-normal assumption), low-rank matrix completion (SVD/soft-impute, the engine behind recommender systems), and increasingly tree- and neural-network-based imputers. <strong>The missing-indicator method</strong> adds a binary "was-this-missing" column alongside the (imputed) feature, letting a flexible model learn whether the <em>fact</em> of missingness is itself predictive — which it very often is under MNAR.</p>
+
+        <table class="data">
+          <thead><tr><th>Strategy</th><th>Preserves variance</th><th>Preserves correlation</th><th>Quantifies uncertainty</th><th>Reach for it when…</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Mean / median / mode</strong></td><td class="m">no</td><td class="m">no</td><td class="m">no</td><td>Quick baseline; a low-signal column; MCAR and you only need a point estimate</td></tr>
+            <tr><td><strong>kNN</strong></td><td class="m">partly</td><td class="hl">yes (local)</td><td class="m">no</td><td>Nonlinear local structure, modest dimensionality, features already scaled</td></tr>
+            <tr><td><strong>MICE</strong></td><td class="hl">yes</td><td class="hl">yes</td><td class="hl">yes</td><td>Inference, reported standard errors, MAR data — the statistical gold standard</td></tr>
+            <tr><td><strong>Model-based (EM / low-rank)</strong></td><td class="hl">yes</td><td class="hl">yes</td><td>partly</td><td>A defensible global model; wide sparse matrices (completion)</td></tr>
+            <tr><td><strong>Missing-indicator</strong></td><td>n/a</td><td>adds signal</td><td class="m">no</td><td>Suspected MNAR; tree/GBM models that can use the flag directly</td></tr>
+          </tbody>
+        </table>
+
+        <p>A few rules survive contact with reality. <strong>Impute inside the cross-validation fold, never before</strong> — fitting the imputer on the full dataset leaks test information into training and inflates your scores. <strong>Match the method to the mechanism</strong>: MCAR forgives anything, MAR rewards conditioning on observed predictors (kNN, MICE, model-based), MNAR demands you model the missingness explicitly and report a sensitivity analysis. And <strong>when you need honest standard errors, single imputation is not enough</strong> — multiple imputation is the only one of these that carries the uncertainty of the guess into the final answer. Some learners (notably gradient-boosted trees like XGBoost and LightGBM) handle <code>NaN</code> natively by learning a default split direction, which is frequently the strongest baseline of all — try it before you impute.</p>
+
+        <div class="callout warn">
+          <span class="co-icon">PITFALLS</span>
+          <p><strong>The four ways imputation goes wrong:</strong> (1) imputing before the train/test split — leakage that makes offline metrics fiction; (2) mean-filling a feature whose correlations matter — quiet variance collapse and washed-out relationships; (3) assuming MAR when the value hides itself — MNAR bias dressed up as a tidy table; (4) reporting single-imputation standard errors as if the fill were certain — overconfident intervals.</p>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>Once the holes are filled, the values still need to be made comparable.</strong> kNN and most distance- or gradient-based methods assume features share a scale and that categories are numbers a model can read — Chapter 03 covers encoding categoricals and scaling numerics, the step that makes everything in this chapter actually work.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 2.R ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">2.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://doi.org/10.1093/biomet/63.3.581" target="_blank" rel="noopener">Rubin, D. B. (1976). <span class="ref-venue">Inference and Missing Data</span>.</a> <span class="ref-meta">Biometrika 63(3):581–592 — the paper that defined MCAR, MAR, and MNAR.</span></li>
+          <li><a href="https://doi.org/10.1002/9781119482260" target="_blank" rel="noopener">Little, R. J. A. &amp; Rubin, D. B. (2019). <span class="ref-venue">Statistical Analysis with Missing Data</span> (3rd ed.).</a> <span class="ref-meta">Wiley — the canonical textbook on mechanisms, likelihood-based, and multiple imputation.</span></li>
+          <li><a href="https://stefvanbuuren.name/fimd/" target="_blank" rel="noopener">van Buuren, S. (2018). <span class="ref-venue">Flexible Imputation of Missing Data</span> (2nd ed.).</a> <span class="ref-meta">CRC Press — the practical, freely-readable reference for MICE / chained equations.</span></li>
+          <li><a href="https://doi.org/10.1093/bioinformatics/17.6.520" target="_blank" rel="noopener">Troyanskaya, O. et al. (2001). <span class="ref-venue">Missing value estimation methods for DNA microarrays</span>.</a> <span class="ref-meta">Bioinformatics 17(6):520–525 — the kNN-impute (KNNimpute) paper.</span></li>
+          <li><a href="https://doi.org/10.1002/sim.4067" target="_blank" rel="noopener">White, I. R., Royston, P. &amp; Wood, A. M. (2011). <span class="ref-venue">Multiple imputation using chained equations: Issues and guidance for practice</span>.</a> <span class="ref-meta">Statistics in Medicine 30(4):377–399 — practical guidance on running and pooling MICE.</span></li>
+          <li><a href="https://scikit-learn.org/stable/modules/impute.html" target="_blank" rel="noopener">scikit-learn developers. <span class="ref-venue">Imputation of missing values</span> (User Guide).</a> <span class="ref-meta">Official docs — SimpleImputer, KNNImputer, and IterativeImputer (MICE).</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../data/01-the-data-problem.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">01</span> The Data Problem</div></a>
+        <a class="next" href="../data/03-encoding-scaling.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">03</span> Encoding &amp; Scaling</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — DATA · CH 02</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* ============================================================
+   Missing Data & Imputation — chapter instruments
+   Single IIFE, no globals. Three widgets share a deterministic
+   RNG and a small canvas plotter so the page is reproducible
+   and self-consistent. setTimeout only; each guarded by id.
+   ============================================================ */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  function fnum(x, d) { d = d === undefined ? 2 : d; return x.toFixed(d); }
+  function mean(a) { var s = 0, i; for (i = 0; i < a.length; i++) s += a[i]; return a.length ? s / a.length : 0; }
+  function popVar(a) {
+    if (!a.length) return 0;
+    var m = mean(a), s = 0, i;
+    for (i = 0; i < a.length; i++) s += (a[i] - m) * (a[i] - m);
+    return s / a.length;
+  }
+  function corr(xs, ys) {
+    var n = xs.length, mx = mean(xs), my = mean(ys), sxy = 0, sxx = 0, syy = 0, i, dx, dy;
+    for (i = 0; i < n; i++) { dx = xs[i] - mx; dy = ys[i] - my; sxy += dx * dy; sxx += dx * dx; syy += dy * dy; }
+    var den = Math.sqrt(sxx * syy);
+    return den === 0 ? 0 : sxy / den;
+  }
+  /* simple OLS y = a + b x over arrays */
+  function ols(xs, ys) {
+    var n = xs.length, mx = mean(xs), my = mean(ys), sxy = 0, sxx = 0, i, dx;
+    for (i = 0; i < n; i++) { dx = xs[i] - mx; sxy += dx * (ys[i] - my); sxx += dx * dx; }
+    var b = sxx === 0 ? 0 : sxy / sxx;
+    return { a: my - b * mx, b: b };
+  }
+
+  /* ========================================================
+     INSTRUMENT D2.1 — Mechanism toy (mean-imputation bias)
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("miss-mech");
+    if (!root) return;
+    var canvas = document.getElementById("miss-mech-canvas");
+    var fracIn = document.getElementById("miss-mech-frac");
+    var fracOut = document.getElementById("miss-mech-frac-out");
+    var trueEl = document.getElementById("miss-mech-true");
+    var obsEl = document.getElementById("miss-mech-obs");
+    var biasEl = document.getElementById("miss-mech-bias");
+    var mech = "mcar";
+
+    /* fixed population of Y values (deterministic, gaussian-ish) */
+    var N = 70, rnd = FM.mulberry32(424242), ys = [], i, u, v;
+    for (i = 0; i < N; i++) {
+      u = rnd(); v = rnd();
+      /* Box-Muller -> shift/scale into a tidy positive range */
+      ys.push(50 + 14 * Math.sqrt(-2 * Math.log(u + 1e-9)) * Math.cos(2 * Math.PI * v));
+    }
+    var trueMean = mean(ys);
+    /* a precomputed "observation propensity score" per point for MAR:
+       depends on a co-observed covariate uncorrelated-ish with Y here we
+       use index parity as the observed covariate so MAR != MNAR visibly */
+    var cov = [];
+    for (i = 0; i < N; i++) cov.push(rnd());   /* observed covariate, independent of ys */
+
+    function missingSet(frac) {
+      /* return boolean array: true = MISSING */
+      var miss = new Array(N), order = [], idx;
+      for (i = 0; i < N; i++) order.push(i);
+      var nMiss = Math.round(frac * N);
+      if (mech === "mcar") {
+        /* deterministic random subset via shuffled-by-hash order */
+        order.sort(function (a, b) {
+          return ((a * 2654435761) % 7919) - ((b * 2654435761) % 7919);
+        });
+      } else if (mech === "mar") {
+        /* missingness driven by the OBSERVED covariate (not Y) */
+        order.sort(function (a, b) { return cov[b] - cov[a]; });
+      } else { /* mnar: largest Y values hide themselves */
+        order.sort(function (a, b) { return ys[b] - ys[a]; });
+      }
+      for (i = 0; i < N; i++) miss[i] = false;
+      for (i = 0; i < nMiss; i++) miss[order[i]] = true;
+      return miss;
+    }
+
+    function render() {
+      var frac = +fracIn.value / 100;
+      fracOut.textContent = (+fracIn.value) + "%";
+      var miss = missingSet(frac), obs = [], j;
+      for (j = 0; j < N; j++) if (!miss[j]) obs.push(ys[j]);
+      var obsMean = obs.length ? mean(obs) : trueMean;
+      var bias = obsMean - trueMean;
+
+      var c = FM.setupCanvas(canvas, 300), ctx = c.ctx, w = c.w, h = c.h;
+      var padL = 44, padR = 14, padT = 16, padB = 24;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      var lo = 0, hi = 100;
+      function px(k) { return x0 + (k + 0.5) / N * (x1 - x0); }
+      function py(val) { return y0 - (val - lo) / (hi - lo) * (y0 - y1); }
+      ctx.clearRect(0, 0, w, h);
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1; ctx.strokeRect(x0, y1, x1 - x0, y0 - y1);
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT; ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      for (j = 0; j <= 4; j++) {
+        var val = lo + (hi - lo) * j / 4, gy = py(val);
+        ctx.strokeStyle = "rgba(47,50,52,.5)"; ctx.beginPath(); ctx.moveTo(x0, gy); ctx.lineTo(x1, gy); ctx.stroke();
+        ctx.fillStyle = C.MUT; ctx.fillText(val.toFixed(0), x0 - 6, gy);
+      }
+      /* points */
+      for (j = 0; j < N; j++) {
+        ctx.beginPath();
+        ctx.arc(px(j), py(ys[j]), 3, 0, 2 * Math.PI);
+        if (miss[j]) { ctx.fillStyle = "rgba(99,99,99,.55)"; }
+        else { ctx.fillStyle = C.MINT; }
+        ctx.fill();
+      }
+      /* true mean (dashed secondary) */
+      ctx.strokeStyle = C.SEC; ctx.lineWidth = 1.5; ctx.setLineDash([5, 4]);
+      ctx.beginPath(); ctx.moveTo(x0, py(trueMean)); ctx.lineTo(x1, py(trueMean)); ctx.stroke();
+      /* observed/fill mean (solid mint) */
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 2; ctx.setLineDash([]);
+      ctx.beginPath(); ctx.moveTo(x0, py(obsMean)); ctx.lineTo(x1, py(obsMean)); ctx.stroke();
+      ctx.fillStyle = C.SEC; ctx.textAlign = "left"; ctx.textBaseline = "bottom";
+      ctx.fillText("TRUE MEAN", x0 + 4, py(trueMean) - 3);
+      ctx.fillStyle = C.MINT; ctx.fillText("FILL MEAN", x0 + 4, py(obsMean) + 13);
+
+      trueEl.textContent = fnum(trueMean, 1);
+      obsEl.textContent = fnum(obsMean, 1);
+      biasEl.textContent = (bias >= 0 ? "+" : "") + fnum(bias, 1);
+      biasEl.style.color = Math.abs(bias) < 1.0 ? C.MINT : (Math.abs(bias) < 4 ? C.SEC : C.RED);
+    }
+
+    root.querySelectorAll("[data-miss-mech]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        mech = btn.getAttribute("data-miss-mech");
+        root.querySelectorAll("[data-miss-mech]").forEach(function (b) { b.classList.remove("on"); });
+        btn.classList.add("on");
+        render();
+      });
+    });
+    fracIn.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT D2.2 — Variance shrinkage under mean-fill
+     ======================================================== */
+  (function () {
+    var canvas = document.getElementById("miss-shrink-canvas");
+    if (!canvas) return;
+    var fracIn = document.getElementById("miss-shrink-frac");
+    var fracOut = document.getElementById("miss-shrink-frac-out");
+    var origEl = document.getElementById("miss-shrink-orig");
+    var afterEl = document.getElementById("miss-shrink-after");
+    var multEl = document.getElementById("miss-shrink-mult");
+
+    /* fixed sample, deterministic */
+    var N = 600, rnd = FM.mulberry32(20240613), sample = [], i, u, v;
+    for (i = 0; i < N; i++) {
+      u = rnd(); v = rnd();
+      sample.push(Math.sqrt(-2 * Math.log(u + 1e-9)) * Math.cos(2 * Math.PI * v));
+    }
+    var mu = mean(sample), origVar = popVar(sample);
+
+    /* histogram of an array into `bins` equal cells over [lo,hi] */
+    function hist(arr, lo, hi, bins) {
+      var h = new Array(bins).fill(0), i, b;
+      for (i = 0; i < arr.length; i++) {
+        b = Math.floor((arr[i] - lo) / (hi - lo) * bins);
+        if (b < 0) b = 0; if (b >= bins) b = bins - 1;
+        h[b]++;
+      }
+      return h;
+    }
+
+    function render() {
+      var frac = +fracIn.value / 100;
+      fracOut.textContent = (+fracIn.value) + "%";
+      var m = Math.round(frac * N);
+      /* filled column: first (N-m) original values + m copies of the mean */
+      var filled = sample.slice(0, N - m);
+      var j; for (j = 0; j < m; j++) filled.push(mu);
+      var afterVar = popVar(filled);
+      var mult = (N - m) / N;
+
+      var c = FM.setupCanvas(canvas, 280), ctx = c.ctx, w = c.w, h = c.h;
+      var padL = 30, padR = 14, padT = 16, padB = 24;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      var lo = -3.6, hi = 3.6, bins = 48;
+      var hOrig = hist(sample, lo, hi, bins);
+      var hFill = hist(filled, lo, hi, bins);
+      var maxC = 1, k;
+      for (k = 0; k < bins; k++) { if (hFill[k] > maxC) maxC = hFill[k]; if (hOrig[k] > maxC) maxC = hOrig[k]; }
+      function px(t) { return x0 + (t - lo) / (hi - lo) * (x1 - x0); }
+      function py(ct) { return y0 - ct / maxC * (y0 - y1); }
+      ctx.clearRect(0, 0, w, h);
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1; ctx.strokeRect(x0, y1, x1 - x0, y0 - y1);
+      /* filled histogram (faint bars; the spike at the mean is visible) */
+      var bw = (x1 - x0) / bins;
+      for (k = 0; k < bins; k++) {
+        var bx = x0 + k * bw;
+        ctx.fillStyle = "rgba(78,138,247,.30)";
+        ctx.fillRect(bx + 0.5, py(hFill[k]), bw - 1, y0 - py(hFill[k]));
+      }
+      /* original distribution outline (mint) */
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 2; ctx.beginPath();
+      for (k = 0; k < bins; k++) {
+        var cx = x0 + (k + 0.5) * bw, cy = py(hOrig[k]);
+        if (k === 0) ctx.moveTo(cx, cy); else ctx.lineTo(cx, cy);
+      }
+      ctx.stroke();
+      /* mean line */
+      ctx.strokeStyle = C.SEC; ctx.lineWidth = 1.5; ctx.setLineDash([4, 4]);
+      ctx.beginPath(); ctx.moveTo(px(mu), y1); ctx.lineTo(px(mu), y0); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.font = C.MONO; ctx.fillStyle = C.MINT; ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText("TRUE DIST.", x0 + 6, y1 + 4);
+      ctx.fillStyle = "rgba(78,138,247,.85)"; ctx.fillText("AFTER MEAN-FILL", x0 + 6, y1 + 18);
+
+      origEl.textContent = fnum(origVar, 3);
+      afterEl.textContent = fnum(afterVar, 3);
+      multEl.textContent = fnum(mult, 2) + "×";
+      afterEl.style.color = mult < 0.8 ? C.RED : C.MINT;
+    }
+    fracIn.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT D2.3 — Imputation comparator (mean/kNN/reg)
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("miss-comp");
+    if (!root) return;
+    var canvas = document.getElementById("miss-comp-canvas");
+    var kIn = document.getElementById("miss-comp-k");
+    var kOut = document.getElementById("miss-comp-k-out");
+    var modeEl = document.getElementById("miss-comp-mode");
+    var rmseEl = document.getElementById("miss-comp-rmse");
+    var corrEl = document.getElementById("miss-comp-corr");
+    var method = "mean";
+
+    /* fixed scatter: y = 1.7 x + noise; hide the top-x third of points */
+    var N = 60, rnd = FM.mulberry32(77777), xs = [], ys = [], i, u, v, g;
+    for (i = 0; i < N; i++) {
+      xs.push(rnd() * 10);                    /* x in [0,10] */
+    }
+    for (i = 0; i < N; i++) {
+      u = rnd(); v = rnd();
+      g = Math.sqrt(-2 * Math.log(u + 1e-9)) * Math.cos(2 * Math.PI * v);
+      ys.push(1.7 * xs[i] + 2 + g * 1.6);
+    }
+    /* MAR-on-x: the largest-x points have y missing */
+    var thresh = 6.5;
+    var miss = []; for (i = 0; i < N; i++) miss.push(xs[i] > thresh);
+
+    function predictions() {
+      var preds = new Array(N), obsX = [], obsY = [], i;
+      for (i = 0; i < N; i++) if (!miss[i]) { obsX.push(xs[i]); obsY.push(ys[i]); }
+      var k = +kIn.value;
+      if (method === "mean") {
+        var ybar = mean(obsY);
+        for (i = 0; i < N; i++) if (miss[i]) preds[i] = ybar;
+      } else if (method === "reg") {
+        var fit = ols(obsX, obsY);
+        for (i = 0; i < N; i++) if (miss[i]) preds[i] = fit.a + fit.b * xs[i];
+      } else { /* knn in x-space over observed donors */
+        for (i = 0; i < N; i++) {
+          if (!miss[i]) continue;
+          var d = [];
+          for (var j = 0; j < obsX.length; j++) d.push({ dist: Math.abs(obsX[j] - xs[i]), y: obsY[j] });
+          d.sort(function (a, b) { return a.dist - b.dist; });
+          var kk = Math.min(k, d.length), s = 0;
+          for (var m = 0; m < kk; m++) s += d[m].y;
+          preds[i] = s / kk;
+        }
+      }
+      return preds;
+    }
+
+    function render() {
+      kOut.textContent = +kIn.value;
+      kIn.disabled = (method !== "knn");
+      var preds = predictions();
+      /* metrics over the hidden points */
+      var se = 0, cnt = 0, px2 = [], py2 = [], i;
+      for (i = 0; i < N; i++) if (miss[i]) {
+        se += (preds[i] - ys[i]) * (preds[i] - ys[i]); cnt++;
+        px2.push(xs[i]); py2.push(preds[i]);
+      }
+      var rmse = cnt ? Math.sqrt(se / cnt) : 0;
+      var rc = px2.length > 1 ? corr(px2, py2) : 0;
+
+      var c = FM.setupCanvas(canvas, 320), ctx = c.ctx, w = c.w, h = c.h;
+      var padL = 36, padR = 14, padT = 16, padB = 26;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      var xlo = 0, xhi = 10, ylo = 0, yhi = 24;
+      function PX(t) { return x0 + (t - xlo) / (xhi - xlo) * (x1 - x0); }
+      function PY(val) { return y0 - (val - ylo) / (yhi - ylo) * (y0 - y1); }
+      ctx.clearRect(0, 0, w, h);
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1; ctx.strokeRect(x0, y1, x1 - x0, y0 - y1);
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      var gx; ctx.textAlign = "center"; ctx.textBaseline = "top";
+      for (gx = 0; gx <= 10; gx += 2) {
+        ctx.strokeStyle = "rgba(47,50,52,.5)"; ctx.beginPath(); ctx.moveTo(PX(gx), y1); ctx.lineTo(PX(gx), y0); ctx.stroke();
+        ctx.fillStyle = C.MUT; ctx.fillText(gx.toString(), PX(gx), y0 + 5);
+      }
+      ctx.textAlign = "left"; ctx.fillText("x", x0 + 2, y0 + 5);
+      /* missing region shading */
+      ctx.fillStyle = "rgba(255,65,54,.06)";
+      ctx.fillRect(PX(thresh), y1, x1 - PX(thresh), y0 - y1);
+      /* observed points (mint filled) and hidden (open circle at truth) */
+      for (i = 0; i < N; i++) {
+        if (!miss[i]) {
+          ctx.beginPath(); ctx.arc(PX(xs[i]), PY(ys[i]), 3, 0, 2 * Math.PI);
+          ctx.fillStyle = C.MINT; ctx.fill();
+        } else {
+          ctx.beginPath(); ctx.arc(PX(xs[i]), PY(ys[i]), 3.5, 0, 2 * Math.PI);
+          ctx.strokeStyle = "rgba(155,155,155,.7)"; ctx.lineWidth = 1; ctx.stroke();
+        }
+      }
+      /* predicted fills (blue crosses) + connector to truth */
+      for (i = 0; i < N; i++) if (miss[i]) {
+        var cx = PX(xs[i]), cyT = PY(ys[i]), cyP = PY(preds[i]);
+        ctx.strokeStyle = "rgba(78,138,247,.35)"; ctx.lineWidth = 1; ctx.setLineDash([2, 3]);
+        ctx.beginPath(); ctx.moveTo(cx, cyT); ctx.lineTo(cx, cyP); ctx.stroke(); ctx.setLineDash([]);
+        ctx.strokeStyle = C.BLUE; ctx.lineWidth = 1.6;
+        ctx.beginPath(); ctx.moveTo(cx - 4, cyP - 4); ctx.lineTo(cx + 4, cyP + 4);
+        ctx.moveTo(cx - 4, cyP + 4); ctx.lineTo(cx + 4, cyP - 4); ctx.stroke();
+      }
+      ctx.fillStyle = C.SEC; ctx.font = C.MONO; ctx.textAlign = "right"; ctx.textBaseline = "top";
+      ctx.fillText("○ hidden truth   ✕ fill", x1 - 6, y1 + 4);
+
+      modeEl.textContent = method === "mean" ? "MEAN" : method === "knn" ? "kNN (k=" + (+kIn.value) + ")" : "REGRESSION";
+      rmseEl.textContent = fnum(rmse, 2);
+      corrEl.textContent = fnum(rc, 2);
+      rmseEl.style.color = rmse > 4 ? C.RED : rmse > 2 ? C.SEC : C.MINT;
+    }
+
+    root.querySelectorAll("[data-miss-comp]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        method = btn.getAttribute("data-miss-comp");
+        root.querySelectorAll("[data-miss-comp]").forEach(function (b) { b.classList.remove("on"); });
+        btn.classList.add("on");
+        render();
+      });
+    });
+    kIn.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

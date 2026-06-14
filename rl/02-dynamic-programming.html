@@ -1,0 +1,772 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Dynamic Programming — Value &amp; Policy Iteration — AI Encyclopedia</title>
+<meta name="description" content="When you know the environment, the Bellman equation turns optimal control into a fixed-point you can iterate: policy evaluation, value iteration, and policy iteration on a gridworld." />
+<link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
+<meta name="theme-color" content="#000000" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+</head>
+<body data-track="rl" data-level="core">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ REINFORCEMENT LEARNING / 02 / DYNAMIC PROGRAMMING</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../rl/03-model-free-value.html">NEXT: MODEL-FREE VALUE →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">REINFORCEMENT LEARNING · CHAPTER 02 / 06</div>
+    <h1>Dynamic Programming — Value &amp; Policy Iteration</h1>
+    <p class="lede">The previous chapter posed the control problem and the value functions that summarize it. This chapter solves it exactly, under one strong assumption: that you hold the environment's dynamics in hand. <strong>When you know the model, the Bellman equation turns optimal control into a fixed point you can iterate to.</strong> Policy evaluation, value iteration, and policy iteration are three ways of running that iteration. Understanding why they converge is the foundation every model-free method later imitates.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 26 MIN</b></span>
+      <span>BUILDS ON<b>RL · CH 01 · MARKOV CHAINS</b></span>
+      <span>INSTRUMENTS<b>VALUE ITERATION · POLICY ITERATION · BELLMAN BACKUP</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">2.1</span>The Bellman equations</a>
+      <a href="#s2"><span class="n">2.2</span>Policy evaluation</a>
+      <a href="#s3"><span class="n">2.3</span>Value iteration</a>
+      <a href="#s4"><span class="n">2.4</span>Policy iteration</a>
+      <a href="#s5"><span class="n">2.5</span>Why DP needs the model</a>
+      <a href="#s6"><span class="n">2.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 2.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">2.1</span><h2>The Bellman equations</h2></div>
+        <p>A value function answers one question: starting here, and acting in some way forever after, how much reward do I expect to collect? The trick that makes that infinite sum tractable is <strong>recursion</strong>. The value of a state is the immediate reward plus the discounted value of wherever you land — the future is just another instance of the same problem, one step smaller. Writing that observation down for a fixed policy \(\pi\) gives the <strong>Bellman expectation equation</strong>.</p>
+
+        <div class="eq"><span class="eq-tag">EQ R2.1 — BELLMAN EXPECTATION EQUATION</span>
+        $$ V^\pi(s) \;=\; \sum_a \pi(a \mid s) \sum_{s', r} p(s', r \mid s, a)\,\Big[\, r + \gamma\, V^\pi(s') \,\Big] $$
+        <div class="eq-note">Read it right-to-left as an average over what could happen: pick an action from the policy \(\pi(a\mid s)\), let the environment roll the transition \(p(s', r \mid s, a)\), collect reward \(r\), and add the discounted value of the next state. Because \(V^\pi\) appears on <b>both sides</b>, this is not a definition you evaluate once — it is a system of \(|\mathcal{S}|\) linear equations whose unique solution <em>is</em> the value function. Everything in this chapter is a way of solving it.</div>
+        </div>
+
+        <p>For control we want the <em>best</em> policy, not a fixed one. Replace the average over the policy with a maximum over actions and you get the <strong>Bellman optimality equation</strong> — the equation this whole chapter exists to solve.</p>
+
+        <div class="eq"><span class="eq-tag">EQ R2.2 — BELLMAN OPTIMALITY EQUATION</span>
+        $$ V^{*}(s) \;=\; \max_a \sum_{s', r} p(s', r \mid s, a)\,\Big[\, r + \gamma\, V^{*}(s') \,\Big] \;=\; \max_a Q^{*}(s, a) $$
+        <div class="eq-note">The optimal value of a state is achieved by the single best action, assuming you continue optimally thereafter. This is no longer linear — the \(\max\) makes it a nonlinear fixed-point equation — but it still has a unique solution \(V^{*}\), and once you have it the optimal policy falls out for free: <b>act greedily</b>, \(\pi^{*}(s) = \arg\max_a Q^{*}(s, a)\). The deterministic-environment special case is the familiar \(V^{*}(s) = \max_a\,[\,r + \gamma\, V^{*}(s')\,]\).</div>
+        </div>
+
+        <p>It is worth being precise about why a solution even exists. Define the <strong>Bellman optimality operator</strong> \(\mathcal{T}\) acting on any value table \(V\):</p>
+
+        <div class="eq"><span class="eq-tag">EQ R2.3 — THE BELLMAN OPTIMALITY OPERATOR</span>
+        $$ (\mathcal{T}V)(s) \;=\; \max_a \sum_{s', r} p(s', r \mid s, a)\,\Big[\, r + \gamma\, V(s') \,\Big] $$
+        <div class="eq-note">\(\mathcal{T}\) takes a guess at the value function and returns a better guess. \(V^{*}\) is exactly its <b>fixed point</b>: \(\mathcal{T}V^{*} = V^{*}\). The decisive fact — proven in §2.3 — is that for \(\gamma &lt; 1\) the operator is a \(\gamma\)-<b>contraction</b> in the max-norm: it shrinks the distance between any two value tables by at least a factor \(\gamma\). The Banach fixed-point theorem then guarantees a unique fixed point that you reach by iterating from <em>anywhere</em>. That single property is why every algorithm below works.</div>
+        </div>
+
+        <div class="exercise" data-answer="true" data-tol="0" data-hint="Is the deterministic Bellman optimality equation V*(s)=max_a[r+γ·V*(s')] correct?">
+          <div class="ex-q">True or false: in a deterministic environment the optimal value satisfies \( V^{*}(s) = \max_a\,[\,r + \gamma\, V^{*}(s')\,] \), where \(s'\) and \(r\) are the state and reward that action \(a\) produces. (Answer <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">This is exactly EQ R2.2 specialized to a deterministic transition, where the sum \(\sum_{s',r} p(s',r\mid s,a)[\cdot]\) collapses to a single term because each action leads to one \((s', r)\) with probability 1. The answer is <b>true</b>.</div>
+        </div>
+
+        <div class="widget" id="dp-backup" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT R2.1 — BELLMAN-BACKUP EXPLORER</span><span class="w-sub">ONE STATE · TWO ACTIONS · EQ R2.2</span></div>
+          <div class="w-body">
+            <p class="note" style="margin:0 0 14px;">A single state with two actions. Each action gives an immediate reward and lands in a successor whose value you already estimate. The backup computes \(Q(a) = r_a + \gamma\,V(s'_a)\) for each action and takes the max — one cell of the table that value iteration sweeps over.</p>
+            <div class="ctl-row">
+              <div class="ctl"><label>DISCOUNT γ <output id="dp-bk-g-out">0.90</output></label><input type="range" id="dp-bk-g" min="0" max="0.99" step="0.01" value="0.9"/></div>
+            </div>
+            <div class="ctl-row">
+              <div class="ctl"><label>ACTION A · reward r <output id="dp-bk-r1-out">5</output></label><input type="range" id="dp-bk-r1" min="-5" max="10" step="1" value="5"/></div>
+              <div class="ctl"><label>ACTION A · next-state value V(s′) <output id="dp-bk-v1-out">10</output></label><input type="range" id="dp-bk-v1" min="0" max="30" step="1" value="10"/></div>
+            </div>
+            <div class="ctl-row">
+              <div class="ctl"><label>ACTION B · reward r <output id="dp-bk-r2-out">1</output></label><input type="range" id="dp-bk-r2" min="-5" max="10" step="1" value="1"/></div>
+              <div class="ctl"><label>ACTION B · next-state value V(s′) <output id="dp-bk-v2-out">20</output></label><input type="range" id="dp-bk-v2" min="0" max="30" step="1" value="20"/></div>
+            </div>
+            <canvas class="w-canvas" id="dp-bk-canvas" height="220"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">Q(A) = r + γ·V(s′)</div><div class="r-value" id="dp-bk-q1">—</div></div>
+              <div class="readout"><div class="r-label">Q(B) = r + γ·V(s′)</div><div class="r-value" id="dp-bk-q2">—</div></div>
+              <div class="readout acc"><div class="r-label">V(s) = max Q · GREEDY ACTION</div><div class="r-value" id="dp-bk-v">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Push γ to 0 and the backup becomes myopic — only the immediate reward matters, so action A (higher r) wins. Push γ toward 1 and the future dominates: action B's richer successor takes over. The crossover is the whole story of discounting. The greedy arrow lights up the winning action; this single cell, evaluated for every state, is one sweep of value iteration.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 2.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">2.2</span><h2>Policy evaluation</h2></div>
+        <p>Before improving a policy you must <em>score</em> it. Given a fixed \(\pi\), policy evaluation computes \(V^\pi\) — the answer to EQ R2.1. You could solve the linear system directly (invert an \(|\mathcal{S}| \times |\mathcal{S}|\) matrix), but for anything beyond toy sizes the iterative method is cheaper and is the template for everything that follows. Turn the Bellman expectation equation into an <strong>update rule</strong>: take your current estimate, plug it into the right-hand side, and read off a new estimate.</p>
+
+        <div class="eq"><span class="eq-tag">EQ R2.4 — ITERATIVE POLICY EVALUATION</span>
+        $$ V_{k+1}(s) \;\leftarrow\; \sum_a \pi(a \mid s) \sum_{s', r} p(s', r \mid s, a)\,\Big[\, r + \gamma\, V_k(s') \,\Big] $$
+        <div class="eq-note">Start from any \(V_0\) (zeros are fine), sweep this backup over every state, repeat. This is the Bellman <em>expectation</em> operator \(\mathcal{T}^\pi\), and it too is a \(\gamma\)-contraction, so \(V_k \to V^\pi\) geometrically. A <b>sweep</b> is one full pass over the state space; convergence is declared when the largest change \(\max_s |V_{k+1}(s) - V_k(s)|\) drops below a tolerance \(\theta\). In place updates — overwriting \(V(s)\) as you go rather than buffering a fresh copy — converge faster and use half the memory; this is <em>Gauss–Seidel</em> style and is what production code does.</div>
+        </div>
+
+        <p>The canonical example is Sutton &amp; Barto's \(4 \times 4\) gridworld: an agent moves up/down/left/right, the two opposite corners are terminal, and every move costs \(-1\) until the agent escapes (\(\gamma = 1\)). Under the <em>equiprobable random policy</em> — each direction chosen with probability \(0.25\) — iterative policy evaluation converges to a value surface that grows more negative the farther a cell sits from a terminal. The corner-adjacent cells settle near \(-14\); the cells deepest in the interior reach \(-20\) to \(-22\). Those numbers are not arbitrary; they are the expected number of steps a random walker takes to stumble out, negated.</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Iterative policy evaluation (EQ R2.4): 4x4 gridworld, random policy
+import numpy as np
+TERM = {0, 15}                      # two terminal corners
+def step(s, a):                     # 0=up 1=down 2=left 3=right; off-edge = stay
+    r, c = divmod(s, 4)
+    if   a == 0: r = max(r - 1, 0)
+    elif a == 1: r = min(r + 1, 3)
+    elif a == 2: c = max(c - 1, 0)
+    else:        c = min(c + 1, 3)
+    return r * 4 + c
+
+V, gamma = np.zeros(16), 1.0
+for sweep in range(1000):
+    delta = 0.0
+    for s in range(16):
+        if s in TERM:               # value of a terminal state is 0
+            continue
+        v = sum(0.25 * (-1 + gamma * V[step(s, a)]) for a in range(4))
+        delta = max(delta, abs(v - V[s]))
+        V[s] = v
+    if delta &lt; 1e-4:
+        break
+
+print(f"converged in {sweep + 1} sweeps")
+print(np.round(V, 1).reshape(4, 4))  # matches Sutton & Barto Fig 4.1</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <p class="note"><strong>What policy evaluation cannot do.</strong> It scores a policy; it does not improve one. By itself it would just confirm that wandering randomly is expensive. The leverage comes from pairing evaluation with a greedy step — the subject of §2.4 — or from folding the two together, which is §2.3.</p>
+      </section>
+
+      <!-- ====================== 2.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">2.3</span><h2>Value iteration</h2></div>
+        <p>Why fully evaluate a policy you are about to throw away? <strong>Value iteration</strong> short-circuits the loop: do a single backup, but use the <em>max</em> over actions instead of the policy average. That is the Bellman optimality operator \(\mathcal{T}\) (EQ R2.3) applied as an update rule, and iterating it drives \(V\) straight to \(V^{*}\) without ever naming an intermediate policy.</p>
+
+        <div class="eq"><span class="eq-tag">EQ R2.5 — VALUE ITERATION</span>
+        $$ V_{k+1}(s) \;\leftarrow\; \max_a \sum_{s', r} p(s', r \mid s, a)\,\Big[\, r + \gamma\, V_k(s') \,\Big] $$
+        <div class="eq-note">One greedy backup per state per sweep; no inner evaluation loop. You can read it as policy evaluation truncated to a <b>single</b> step before re-improving. When the max change across a sweep falls below \(\theta\), stop and read off the greedy policy \(\pi(s) = \arg\max_a Q(s, a)\) <em>once</em>. On the gridworld with \(\gamma = 1\) this converges in just <b>four sweeps</b> to \(V^{*}(s) = -(\text{shortest-path distance to the nearest terminal})\) — information propagates outward from the goals one ring per sweep, exactly like a flood fill.</div>
+        </div>
+
+        <p>The convergence guarantee rests on the contraction property promised in §2.1. For any two value tables \(U, V\), the max-norm distance after a backup shrinks:</p>
+
+        <div class="eq"><span class="eq-tag">EQ R2.6 — \(\mathcal{T}\) IS A γ-CONTRACTION</span>
+        $$ \lVert \mathcal{T}U - \mathcal{T}V \rVert_\infty \;\le\; \gamma\, \lVert U - V \rVert_\infty $$
+        <div class="eq-note">Because the operator differs between \(U\) and \(V\) only through the discounted future term \(\gamma V(s')\), and \(|\max_a f(a) - \max_a g(a)| \le \max_a |f(a) - g(a)|\), every backup multiplies the worst-case error by at most \(\gamma\). So after \(k\) sweeps the error is bounded by \(\gamma^{k}\) times the initial error — <b>geometric convergence</b>, with the rate set entirely by \(\gamma\). At \(\gamma = 0.9\) you lose roughly one digit of error every ~22 sweeps; the closer \(\gamma\) creeps to 1, the slower the crawl, which is why long-horizon problems are genuinely hard. (At \(\gamma = 1\), as in the episodic gridworld, contraction is not strict — convergence instead relies on every state reaching a terminal, i.e. a <em>proper</em> policy.)</div>
+        </div>
+
+        <div class="exercise" data-answer="true" data-tol="0" data-hint="The proof in EQ R2.6 shows ||TU − TV|| ≤ γ||U − V||. Does a contraction force convergence to a unique fixed point?">
+          <div class="ex-q">True or false: value iteration converges because the Bellman optimality operator \(\mathcal{T}\) is a contraction (for \(\gamma &lt; 1\)), so the Banach fixed-point theorem guarantees a unique fixed point reached from any starting \(V_0\). (Answer <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">EQ R2.6 establishes \(\lVert \mathcal{T}U - \mathcal{T}V \rVert_\infty \le \gamma \lVert U - V \rVert_\infty\) with \(\gamma &lt; 1\), which is exactly the definition of a contraction mapping. The Banach fixed-point theorem then guarantees a unique fixed point \(V^{*}\) and convergence to it from any initialization. The answer is <b>true</b>.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Value iteration (EQ R2.5): converged optimal value function
+import numpy as np
+TERM = {0, 15}
+def step(s, a):
+    r, c = divmod(s, 4)
+    if   a == 0: r = max(r - 1, 0)
+    elif a == 1: r = min(r + 1, 3)
+    elif a == 2: c = max(c - 1, 0)
+    else:        c = min(c + 1, 3)
+    return r * 4 + c
+
+V, gamma = np.zeros(16), 1.0
+for sweep in range(1000):
+    delta = 0.0
+    for s in range(16):
+        if s in TERM:
+            continue
+        best = max(-1 + gamma * V[step(s, a)] for a in range(4))
+        delta = max(delta, abs(best - V[s]))
+        V[s] = best                 # in-place (Gauss-Seidel) backup
+    if delta &lt; 1e-9:
+        break
+
+print(f"value iteration converged in {sweep + 1} sweeps")
+print("V*  =  -(steps to nearest terminal):")
+print(V.reshape(4, 4))</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="dp-vi" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT R2.2 — VALUE-ITERATION STEPPER</span><span class="w-sub">4×4 GRIDWORLD · γ=1 · EQ R2.5</span></div>
+          <div class="w-body">
+            <p class="note" style="margin:0 0 12px;">Two terminal corners (mint). Every move costs \(-1\). Step the backup one sweep at a time and watch value flood outward from the goals — exactly one ring per sweep — then settle into \(V^{*}(s) = -(\text{distance to nearest terminal})\).</p>
+            <div class="ctl-row" style="align-items:center;">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>CONTROL</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost" id="dp-vi-step">STEP SWEEP ▶</button>
+                  <button class="w-btn ghost" id="dp-vi-run">RUN TO CONVERGE ⏩</button>
+                  <button class="w-btn ghost" id="dp-vi-reset">RESET ↺</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="dp-vi-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">SWEEP k</div><div class="r-value" id="dp-vi-k">0</div></div>
+              <div class="readout acc"><div class="r-label">MAX CHANGE Δ THIS SWEEP</div><div class="r-value" id="dp-vi-delta">—</div></div>
+              <div class="readout"><div class="r-label">STATUS</div><div class="r-value" id="dp-vi-status">INITIAL</div></div>
+            </div>
+          </div>
+          <div class="w-note">At sweep 0 every non-terminal cell reads 0. After sweep 1, cells one step from a goal know they are worth \(-1\); after sweep 2, the next ring learns \(-2\); the deepest cells lock in by sweep 4 and Δ hits 0 — converged. The arrows show the greedy policy implied by the current values: even mid-iteration they already point roughly toward the exits.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 2.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">2.4</span><h2>Policy iteration</h2></div>
+        <p><strong>Policy iteration</strong> takes the opposite tack to value iteration. Rather than interleaving one tiny backup with one tiny improvement, it alternates two full-strength phases: <em>evaluate the current policy completely</em> (§2.2), then <em>make it greedy</em> with respect to the values you just computed. Repeat until the greedy step changes nothing.</p>
+
+        <div class="eq"><span class="eq-tag">EQ R2.7 — POLICY IMPROVEMENT (GREEDY STEP)</span>
+        $$ \pi'(s) \;=\; \arg\max_a \sum_{s', r} p(s', r \mid s, a)\,\Big[\, r + \gamma\, V^\pi(s') \,\Big] $$
+        <div class="eq-note">Given \(V^\pi\), act greedily one step then follow \(\pi\) — this can only help. The <b>policy improvement theorem</b> guarantees \(V^{\pi'}(s) \ge V^\pi(s)\) for every state, with strict improvement somewhere unless \(\pi\) is already optimal. So the sequence of policies is monotonically non-decreasing in value, and since a finite MDP has only finitely many deterministic policies, the loop must <b>terminate</b> at \(\pi^{*}\) in a finite number of steps — no tolerance, no approximation. On the \(4\times 4\) gridworld it converges in four improvement rounds.</div>
+        </div>
+
+        <p>The two algorithms are endpoints of a spectrum that the generalized view unifies. Policy iteration runs evaluation to convergence before improving; value iteration improves after a single evaluation backup; <strong>modified policy iteration</strong> sits in between, running \(m\) evaluation sweeps per improvement. All three are instances of <em>generalized policy iteration</em> (GPI): evaluation and improvement chasing each other until they agree — and where they agree, the policy is greedy with respect to its own value, which is precisely the Bellman optimality condition.</p>
+
+        <div class="callout">
+          <span class="co-icon">GPI</span>
+          <p><strong>Two processes, one fixed point.</strong> Evaluation makes the value consistent with the policy; improvement makes the policy greedy with respect to the value. Each step undoes a little of the other's work — until the only place they both rest is the optimal pair \((V^{*}, \pi^{*})\). Almost every RL algorithm in the rest of this volume, model-free included, is a flavor of GPI with the exact backup of EQ R2.5 replaced by a <em>sampled</em> estimate.</p>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Policy iteration (EQ R2.4 + EQ R2.7): print the optimal policy
+import numpy as np
+TERM = {0, 15}
+def step(s, a):
+    r, c = divmod(s, 4)
+    if   a == 0: r = max(r - 1, 0)
+    elif a == 1: r = min(r + 1, 3)
+    elif a == 2: c = max(c - 1, 0)
+    else:        c = min(c + 1, 3)
+    return r * 4 + c
+
+gamma = 1.0
+pi = np.zeros(16, dtype=int)                 # start: everyone goes "up"
+def evaluate(pi):                            # iterative policy evaluation
+    V = np.zeros(16)
+    for _ in range(2000):
+        d = 0.0
+        for s in range(16):
+            if s in TERM: continue
+            v = -1 + gamma * V[step(s, pi[s])]
+            d = max(d, abs(v - V[s])); V[s] = v
+        if d &lt; 1e-10: break
+    return V
+
+for rounds in range(50):
+    V = evaluate(pi)
+    stable = True
+    for s in range(16):
+        if s in TERM: continue
+        old = pi[s]
+        pi[s] = int(np.argmax([-1 + gamma * V[step(s, a)] for a in range(4)]))
+        if pi[s] != old: stable = False
+    if stable: break
+
+arrows = np.array(list("^v&lt;>"))           # up down left right
+g = arrows[pi]; g[0] = "*"; g[15] = "*"      # mark terminals
+print(f"policy iteration converged in {rounds + 1} improvement rounds")
+print(g.reshape(4, 4))</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="dp-pi" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT R2.3 — POLICY-ITERATION VISUALIZER</span><span class="w-sub">EVALUATE ⇄ IMPROVE · EQ R2.7</span></div>
+          <div class="w-body">
+            <p class="note" style="margin:0 0 12px;">The same gridworld. Each round runs full policy evaluation, then a greedy improvement. Watch the arrows snap toward the exits and the values lock in. The two phases alternate; convergence is when an improvement step changes no arrow.</p>
+            <div class="ctl-row" style="align-items:center;">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>CONTROL</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost" id="dp-pi-eval">EVALUATE π</button>
+                  <button class="w-btn ghost" id="dp-pi-improve">IMPROVE → π′</button>
+                  <button class="w-btn ghost" id="dp-pi-reset">RESET ↺</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="dp-pi-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">ROUND</div><div class="r-value" id="dp-pi-round">0</div></div>
+              <div class="readout"><div class="r-label">PHASE</div><div class="r-value" id="dp-pi-phase">INIT</div></div>
+              <div class="readout acc"><div class="r-label">ARROWS CHANGED LAST IMPROVE</div><div class="r-value" id="dp-pi-changed">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Start: every cell points up — a deliberately bad policy whose values are deeply negative. Hit EVALUATE to score it, then IMPROVE to make it greedy; alternate. The policy is optimal the first time an improvement changes zero arrows. Notice the values are already exact for the <em>current</em> policy after each EVALUATE — that is what separates this from value iteration's single-backup steps.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 2.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">2.5</span><h2>Why DP needs the model</h2></div>
+        <p>Every backup in this chapter contains the same fingerprint: \(\sum_{s', r} p(s', r \mid s, a)[\cdot]\). That sum is an <strong>expectation over the environment's dynamics</strong>, and to compute it you must <em>know</em> \(p(s', r \mid s, a)\) — the full transition and reward model. This is the defining assumption of dynamic programming, and it is exactly what the next chapter abandons.</p>
+
+        <ul>
+          <li><strong>You rarely have the model.</strong> A robot does not ship with a transition table; a game agent is not handed the opponent's policy; a recommender does not know how a user will react. The whole field of model-free RL exists because \(p\) is usually unavailable, and learning it well enough to plan against can be harder than learning to act directly.</li>
+          <li><strong>Even with the model, the sweep is expensive.</strong> Each sweep touches every state and, per state, every action and every possible successor: \(O(|\mathcal{S}|^2 |\mathcal{A}|)\) per sweep for a dense model. This is the <em>curse of dimensionality</em> — a robot arm with ten joints discretized into a hundred positions each has \(100^{10}\) states. Exact DP is a guarantee that does not scale; its value is conceptual and as a subroutine inside approximate methods.</li>
+          <li><strong>The escape route is sampling.</strong> Replace the exact expectation \(\sum_{s'} p(s'\mid s,a)[\cdot]\) with a <em>sample</em> drawn by actually taking action \(a\) and observing where you land. That single substitution — backup over a sampled transition instead of the known distribution — turns value iteration into Q-learning and policy evaluation into temporal-difference learning. Everything keeps the GPI skeleton of this chapter; only the backup target changes from a model expectation to a sampled estimate.</li>
+        </ul>
+
+        <p class="note">So DP is not a dead end — it is the <strong>ground truth</strong> the rest of RL approximates. When you see TD learning's update \(V(s) \leftarrow V(s) + \alpha[r + \gamma V(s') - V(s)]\) in the next chapter, recognize it as EQ R2.4 with the expectation replaced by one sample and a learning rate \(\alpha\) to smooth the noise. The Bellman equation is the destination; sampling is how you get there without a map.</p>
+
+        <table class="data">
+          <thead><tr><th>Method</th><th>Backup</th><th>Improvement</th><th>Converges in</th><th>Needs model?</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Policy evaluation</strong></td><td class="m">expected, π-average</td><td>none</td><td class="m">→ V<sup>π</sup>, geometric</td><td class="hl">yes</td></tr>
+            <tr><td><strong>Value iteration</strong></td><td class="m">expected, max</td><td>implicit, every sweep</td><td class="m">→ V*, geometric (γ)</td><td class="hl">yes</td></tr>
+            <tr><td><strong>Policy iteration</strong></td><td class="m">expected, max</td><td>full greedy step</td><td class="m">→ π*, finite rounds</td><td class="hl">yes</td></tr>
+            <tr><td><strong>TD / Q-learning</strong></td><td class="m">sampled</td><td>greedy / ε-greedy</td><td class="m">→ approx, asymptotic</td><td class="hl">no</td></tr>
+          </tbody>
+        </table>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>Drop the model, keep the Bellman equation.</strong> Chapter 03 takes the exact expectations you just iterated and replaces them with samples from experience — Monte-Carlo returns and temporal-difference learning, the first algorithms that learn a value function from interaction alone, with no transition table in sight.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 2.R — References ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">2.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://press.princeton.edu/books/paperback/9780691146683/dynamic-programming" target="_blank" rel="noopener">Bellman, R. (1957). <span class="ref-venue">Dynamic Programming</span>.</a> <span class="ref-meta">Princeton University Press — the founding text; the principle of optimality and the recursive value relation behind EQ R2.1–R2.3.</span></li>
+          <li><a href="https://doi.org/10.1512/iumj.1957.6.56038" target="_blank" rel="noopener">Bellman, R. (1957). <span class="ref-venue">A Markovian Decision Process</span>.</a> <span class="ref-meta">Journal of Mathematics and Mechanics 6(5) — the MDP formalization and the optimality equation in its original form.</span></li>
+          <li><a href="https://mitpress.mit.edu/9780262080095/" target="_blank" rel="noopener">Howard, R. A. (1960). <span class="ref-venue">Dynamic Programming and Markov Processes</span>.</a> <span class="ref-meta">MIT Press — introduced policy iteration (EQ R2.7) and the policy improvement theorem.</span></li>
+          <li><a href="http://incompleteideas.net/book/the-book-2nd.html" target="_blank" rel="noopener">Sutton, R. S. &amp; Barto, A. G. (2018). <span class="ref-venue">Reinforcement Learning: An Introduction</span> (2nd ed.).</a> <span class="ref-meta">MIT Press, Ch. 4 — iterative policy evaluation, value iteration, policy iteration, and the 4×4 gridworld (Fig. 4.1) used throughout this chapter.</span></li>
+          <li><a href="https://doi.org/10.1023/A:1022633531479" target="_blank" rel="noopener">Puterman, M. L. &amp; Shin, M. C. (1978). <span class="ref-venue">Modified Policy Iteration Algorithms for Discounted Markov Decision Problems</span>.</a> <span class="ref-meta">Management Science 24(11) — the m-sweep interpolation between value and policy iteration cited in §2.4.</span></li>
+          <li><a href="https://www.athenasc.com/dpbook.html" target="_blank" rel="noopener">Bertsekas, D. P. (2017). <span class="ref-venue">Dynamic Programming and Optimal Control</span> (4th ed.).</a> <span class="ref-meta">Athena Scientific — the contraction-mapping convergence analysis (EQ R2.6) in full rigor.</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../rl/01-the-rl-problem.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">01</span> The Problem</div></a>
+        <a class="next" href="../rl/03-model-free-value.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">03</span> Model-free Value</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — REINFORCEMENT LEARNING · CH 02</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* ============================================================
+   Dynamic Programming — Value & Policy Iteration
+   Chapter instruments. Single IIFE, no globals.
+   setTimeout-only animation. Every widget guarded by element
+   existence; meaningful initial render with zero interaction.
+   ============================================================ */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  function fnum(x, d) { d = d === undefined ? 2 : d; return x.toFixed(d); }
+
+  /* ---- shared 4x4 gridworld dynamics ----
+     states 0..15, terminals 0 and 15, reward -1 per move,
+     gamma = 1, deterministic moves, off-edge stays put.
+     actions: 0=up 1=down 2=left 3=right                       */
+  var TERM = { 0: 1, 15: 1 };
+  var ARROWS = ["↑", "↓", "←", "→"];
+  function gstep(s, a) {
+    var r = (s / 4) | 0, c = s % 4;
+    if (a === 0) r = Math.max(r - 1, 0);
+    else if (a === 1) r = Math.min(r + 1, 3);
+    else if (a === 2) c = Math.max(c - 1, 0);
+    else c = Math.min(c + 1, 3);
+    return r * 4 + c;
+  }
+  function isTerm(s) { return TERM[s] === 1; }
+
+  /* color ramp for a value in [vmin, 0] -> deep-green tint by depth */
+  function valueFill(v, vmin) {
+    if (vmin >= -1e-9) return "rgba(43,89,69,0.10)";
+    var t = Math.max(0, Math.min(1, v / vmin)); // 0 at v=0, 1 at v=vmin (most negative)
+    var a = 0.06 + 0.40 * t;
+    return "rgba(43,89,69," + a.toFixed(3) + ")";
+  }
+
+  /* draw a 4x4 grid of values + greedy arrows onto a canvas.
+     V: float[16]; showArrows: bool; highlight: int|null sweep ring */
+  function drawGrid(canvas, V, showArrows) {
+    var c = FM.setupCanvas(canvas, 320);
+    var ctx = c.ctx, w = c.w, h = c.h;
+    ctx.clearRect(0, 0, w, h);
+    var pad = 14;
+    var size = Math.min(w - 2 * pad, h - 2 * pad);
+    var ox = (w - size) / 2, oy = (h - size) / 2;
+    var cell = size / 4;
+    var vmin = 0;
+    for (var i = 0; i < 16; i++) if (V[i] < vmin) vmin = V[i];
+
+    for (var s = 0; s < 16; s++) {
+      var rr = (s / 4) | 0, cc = s % 4;
+      var x = ox + cc * cell, y = oy + rr * cell;
+      // background
+      if (isTerm(s)) {
+        ctx.fillStyle = "rgba(166,242,204,0.16)";
+      } else {
+        ctx.fillStyle = valueFill(V[s], vmin);
+      }
+      ctx.fillRect(x + 1, y + 1, cell - 2, cell - 2);
+      // border
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(x + 0.5, y + 0.5, cell, cell);
+
+      // greedy arrow (non-terminal, if requested and values are informative)
+      if (showArrows && !isTerm(s)) {
+        var best = -Infinity, bestA = 0;
+        for (var a = 0; a < 4; a++) {
+          var q = -1 + V[gstep(s, a)];
+          if (q > best + 1e-9) { best = q; bestA = a; }
+        }
+        ctx.fillStyle = "rgba(166,242,204,0.85)";
+        ctx.font = "16px ui-monospace, Menlo, monospace";
+        ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText(ARROWS[bestA], x + cell / 2, y + cell * 0.34);
+      }
+
+      // value label (lowered when an arrow shares the cell)
+      ctx.font = C.MONO;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      if (isTerm(s)) {
+        ctx.fillStyle = C.MINT;
+        ctx.fillText("GOAL", x + cell / 2, y + cell / 2);
+      } else {
+        ctx.fillStyle = (V[s] < -1e-9) ? C.BRIGHT : C.SEC;
+        var lbl = (Math.abs(V[s] - Math.round(V[s])) < 1e-6)
+          ? String(Math.round(V[s]))
+          : V[s].toFixed(1);
+        var labelY = showArrows ? y + cell * 0.66 : y + cell / 2;
+        ctx.fillText(lbl, x + cell / 2, labelY);
+      }
+    }
+  }
+
+  /* ========================================================
+     INSTRUMENT R2.1 — Bellman-backup explorer
+     One state, two actions; Q(a)=r+gamma*V(s'), V=max Q.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("dp-backup");
+    if (!root) return;
+    var canvas = document.getElementById("dp-bk-canvas");
+    var gIn = document.getElementById("dp-bk-g");
+    var r1In = document.getElementById("dp-bk-r1");
+    var v1In = document.getElementById("dp-bk-v1");
+    var r2In = document.getElementById("dp-bk-r2");
+    var v2In = document.getElementById("dp-bk-v2");
+    var gOut = document.getElementById("dp-bk-g-out");
+    var r1Out = document.getElementById("dp-bk-r1-out");
+    var v1Out = document.getElementById("dp-bk-v1-out");
+    var r2Out = document.getElementById("dp-bk-r2-out");
+    var v2Out = document.getElementById("dp-bk-v2-out");
+    var q1El = document.getElementById("dp-bk-q1");
+    var q2El = document.getElementById("dp-bk-q2");
+    var vEl = document.getElementById("dp-bk-v");
+
+    function render() {
+      var g = +gIn.value, r1 = +r1In.value, v1 = +v1In.value,
+          r2 = +r2In.value, v2 = +v2In.value;
+      gOut.textContent = fnum(g, 2);
+      r1Out.textContent = String(r1);
+      v1Out.textContent = String(v1);
+      r2Out.textContent = String(r2);
+      v2Out.textContent = String(v2);
+
+      var q1 = r1 + g * v1, q2 = r2 + g * v2;
+      var winA = q1 >= q2;
+      q1El.textContent = fnum(q1, 2);
+      q2El.textContent = fnum(q2, 2);
+      q1El.style.color = winA ? C.MINT : C.BRIGHT;
+      q2El.style.color = winA ? C.BRIGHT : C.MINT;
+      vEl.textContent = fnum(Math.max(q1, q2), 2) + "  ·  " + (winA ? "A" : "B");
+
+      var c = FM.setupCanvas(canvas, 220);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      ctx.clearRect(0, 0, w, h);
+
+      var sx = w * 0.16, sy = h * 0.5;        // current state node
+      var ax = w * 0.74, ay1 = h * 0.27;      // successor A
+      var ay2 = h * 0.73;                      // successor B
+      var rad = 26;
+
+      function edge(x1, y1, x2, y2, color, lw, label) {
+        ctx.strokeStyle = color; ctx.lineWidth = lw;
+        ctx.beginPath();
+        ctx.moveTo(x1 + rad, y1);
+        ctx.lineTo(x2 - rad, y2);
+        ctx.stroke();
+        var ang = Math.atan2(y2 - y1, x2 - x1);
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.moveTo(x2 - rad, y2);
+        ctx.lineTo(x2 - rad - 9 * Math.cos(ang - 0.4), y2 - 9 * Math.sin(ang - 0.4));
+        ctx.lineTo(x2 - rad - 9 * Math.cos(ang + 0.4), y2 - 9 * Math.sin(ang + 0.4));
+        ctx.closePath(); ctx.fill();
+        ctx.font = C.MONO; ctx.fillStyle = color;
+        ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+        ctx.fillText(label, (x1 + x2) / 2, (y1 + y2) / 2 - 6);
+      }
+
+      edge(sx, sy, ax, ay1, winA ? C.MINT : "rgba(155,155,155,.7)", winA ? 2.4 : 1.4,
+           "a=A  r=" + r1);
+      edge(sx, sy, ax, ay2, winA ? "rgba(155,155,155,.7)" : C.MINT, winA ? 1.4 : 2.4,
+           "a=B  r=" + r2);
+
+      function node(x, y, title, sub, accent) {
+        ctx.beginPath(); ctx.arc(x, y, rad, 0, 2 * Math.PI);
+        ctx.fillStyle = "#000";
+        ctx.fill();
+        ctx.lineWidth = accent ? 2.2 : 1.4;
+        ctx.strokeStyle = accent ? C.MINT : C.SEC;
+        ctx.stroke();
+        ctx.fillStyle = accent ? C.MINT : C.BRIGHT;
+        ctx.font = "11px ui-monospace, Menlo, monospace";
+        ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText(title, x, y - 5);
+        ctx.fillStyle = C.SEC; ctx.font = C.MONO;
+        ctx.fillText(sub, x, y + 9);
+      }
+      node(sx, sy, "s", "V=" + fnum(Math.max(q1, q2), 1), true);
+      node(ax, ay1, "s'ₐ", "V=" + v1, winA);
+      node(ax, ay2, "s'ᵇ", "V=" + v2, !winA);
+    }
+
+    [gIn, r1In, v1In, r2In, v2In].forEach(function (el) {
+      el.addEventListener("input", render);
+    });
+    window.addEventListener("resize", render);
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT R2.2 — Value-iteration stepper
+     4x4 gridworld; STEP runs one sweep of EQ R2.5 in place.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("dp-vi");
+    if (!root) return;
+    var canvas = document.getElementById("dp-vi-canvas");
+    var stepBtn = document.getElementById("dp-vi-step");
+    var runBtn = document.getElementById("dp-vi-run");
+    var resetBtn = document.getElementById("dp-vi-reset");
+    var kEl = document.getElementById("dp-vi-k");
+    var dEl = document.getElementById("dp-vi-delta");
+    var sEl = document.getElementById("dp-vi-status");
+
+    var V, k, converged, timer = null;
+
+    function reset() {
+      if (timer) { clearTimeout(timer); timer = null; }
+      V = new Array(16); for (var i = 0; i < 16; i++) V[i] = 0;
+      k = 0; converged = false;
+      kEl.textContent = "0";
+      dEl.textContent = "—";
+      sEl.textContent = "INITIAL";
+      sEl.style.color = C.SEC;
+      drawGrid(canvas, V, false);
+    }
+
+    function sweep() {
+      if (converged) return 0;
+      var delta = 0;
+      for (var s = 0; s < 16; s++) {
+        if (isTerm(s)) continue;
+        var best = -Infinity;
+        for (var a = 0; a < 4; a++) {
+          var q = -1 + V[gstep(s, a)];     // gamma = 1
+          if (q > best) best = q;
+        }
+        var d = Math.abs(best - V[s]);
+        if (d > delta) delta = d;
+        V[s] = best;                          // in-place Gauss-Seidel
+      }
+      k++;
+      kEl.textContent = String(k);
+      dEl.textContent = fnum(delta, 3);
+      if (delta < 1e-9) {
+        converged = true;
+        sEl.textContent = "CONVERGED";
+        sEl.style.color = C.MINT;
+      } else {
+        sEl.textContent = "ITERATING";
+        sEl.style.color = C.BLUE;
+      }
+      drawGrid(canvas, V, true);
+      return delta;
+    }
+
+    function runToConverge() {
+      if (converged) return;
+      sweep();
+      if (!converged) timer = setTimeout(runToConverge, 480);
+    }
+
+    stepBtn.addEventListener("click", function () {
+      if (timer) { clearTimeout(timer); timer = null; }
+      sweep();
+    });
+    runBtn.addEventListener("click", function () {
+      if (timer) { clearTimeout(timer); timer = null; }
+      runToConverge();
+    });
+    resetBtn.addEventListener("click", reset);
+    window.addEventListener("resize", function () { drawGrid(canvas, V, k > 0); });
+    reset();
+  })();
+
+  /* ========================================================
+     INSTRUMENT R2.3 — Policy-iteration visualizer
+     EVALUATE runs full policy evaluation; IMPROVE makes greedy.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("dp-pi");
+    if (!root) return;
+    var canvas = document.getElementById("dp-pi-canvas");
+    var evalBtn = document.getElementById("dp-pi-eval");
+    var impBtn = document.getElementById("dp-pi-improve");
+    var resetBtn = document.getElementById("dp-pi-reset");
+    var roundEl = document.getElementById("dp-pi-round");
+    var phaseEl = document.getElementById("dp-pi-phase");
+    var changedEl = document.getElementById("dp-pi-changed");
+
+    var pi, V, round, optimal;
+
+    /* draw grid using the CURRENT policy's arrows (not greedy-on-V) */
+    function drawPolicy() {
+      var c = FM.setupCanvas(canvas, 320);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      ctx.clearRect(0, 0, w, h);
+      var pad = 14;
+      var size = Math.min(w - 2 * pad, h - 2 * pad);
+      var ox = (w - size) / 2, oy = (h - size) / 2;
+      var cell = size / 4;
+      var vmin = 0; for (var i = 0; i < 16; i++) if (V[i] < vmin) vmin = V[i];
+
+      for (var s = 0; s < 16; s++) {
+        var rr = (s / 4) | 0, cc = s % 4;
+        var x = ox + cc * cell, y = oy + rr * cell;
+        ctx.fillStyle = isTerm(s) ? "rgba(166,242,204,0.16)" : valueFill(V[s], vmin);
+        ctx.fillRect(x + 1, y + 1, cell - 2, cell - 2);
+        ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+        ctx.strokeRect(x + 0.5, y + 0.5, cell, cell);
+
+        if (!isTerm(s)) {
+          ctx.fillStyle = "rgba(166,242,204,0.85)";
+          ctx.font = "16px ui-monospace, Menlo, monospace";
+          ctx.textAlign = "center"; ctx.textBaseline = "middle";
+          ctx.fillText(ARROWS[pi[s]], x + cell / 2, y + cell * 0.34);
+        }
+        ctx.font = C.MONO;
+        ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        if (isTerm(s)) {
+          ctx.fillStyle = C.MINT;
+          ctx.fillText("GOAL", x + cell / 2, y + cell / 2);
+        } else {
+          ctx.fillStyle = (V[s] < -1e-9) ? C.BRIGHT : C.SEC;
+          var lbl = (Math.abs(V[s] - Math.round(V[s])) < 1e-6)
+            ? String(Math.round(V[s])) : V[s].toFixed(1);
+          ctx.fillText(lbl, x + cell / 2, y + cell * 0.66);
+        }
+      }
+    }
+
+    function reset() {
+      pi = new Array(16); V = new Array(16);
+      for (var i = 0; i < 16; i++) { pi[i] = 0; V[i] = 0; } // all "up"
+      round = 0; optimal = false;
+      roundEl.textContent = "0";
+      phaseEl.textContent = "INIT";
+      phaseEl.style.color = C.SEC;
+      changedEl.textContent = "—";
+      drawPolicy();
+    }
+
+    function evaluate() {
+      // iterative policy evaluation to convergence (gamma = 1)
+      for (var iter = 0; iter < 5000; iter++) {
+        var d = 0;
+        for (var s = 0; s < 16; s++) {
+          if (isTerm(s)) continue;
+          var v = -1 + V[gstep(s, pi[s])];
+          var diff = Math.abs(v - V[s]);
+          if (diff > d) d = diff;
+          V[s] = v;
+        }
+        if (d < 1e-9) break;
+      }
+      phaseEl.textContent = "EVALUATED";
+      phaseEl.style.color = C.BLUE;
+      drawPolicy();
+    }
+
+    function improve() {
+      var changed = 0;
+      for (var s = 0; s < 16; s++) {
+        if (isTerm(s)) continue;
+        var best = -Infinity, bestA = pi[s];
+        for (var a = 0; a < 4; a++) {
+          var q = -1 + V[gstep(s, a)];
+          if (q > best + 1e-9) { best = q; bestA = a; }
+        }
+        if (bestA !== pi[s]) { pi[s] = bestA; changed++; }
+      }
+      round++;
+      roundEl.textContent = String(round);
+      changedEl.textContent = String(changed);
+      if (changed === 0) {
+        optimal = true;
+        phaseEl.textContent = "OPTIMAL π*";
+        phaseEl.style.color = C.MINT;
+      } else {
+        phaseEl.textContent = "IMPROVED";
+        phaseEl.style.color = C.BLUE;
+      }
+      drawPolicy();
+    }
+
+    evalBtn.addEventListener("click", evaluate);
+    impBtn.addEventListener("click", improve);
+    resetBtn.addEventListener("click", reset);
+    window.addEventListener("resize", drawPolicy);
+    reset();
+  })();
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

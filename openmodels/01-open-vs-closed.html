@@ -1,0 +1,628 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Open vs Closed Weights — AI Encyclopedia</title>
+<meta name="description" content="Whether you can hold the weights decides everything downstream — privacy, cost, control, and what you are even allowed to do. The open/closed spectrum, the licenses, and how to choose." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+</head>
+<body data-track="openmodels" data-level="intro">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ OPEN MODELS / 01 / OPEN VS CLOSED</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../openmodels/02-running-open-models.html">NEXT: 02 RUNNING OPEN MODELS →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">OPEN MODELS &amp; PRACTICE · CHAPTER 01 / 05</div>
+    <h1>Open vs Closed Weights</h1>
+    <p class="lede"><strong>Whether you can hold the weights sits upstream of almost every other decision about a language model.</strong> If the parameters live on your disk rather than behind someone else's API, that one fact sets your privacy posture, your cost curve, your degree of control, and what you are legally permitted to do. This chapter maps the spectrum from closed frontier APIs to permissively licensed open weights, reads the fine print of the licenses, and gives you a way to choose.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>INTRO</b></span>
+      <span>READING TIME<b>≈ 18 MIN</b></span>
+      <span>BUILDS ON<b>Vol II · DEPLOYMENT</b></span>
+      <span>INSTRUMENTS<b>DECISION TREE · LICENSE MATRIX · TRADE-OFF</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">1.1</span>What "open" means</a>
+      <a href="#s2"><span class="n">1.2</span>The closed frontier</a>
+      <a href="#s3"><span class="n">1.3</span>The open ecosystem</a>
+      <a href="#s4"><span class="n">1.4</span>Licenses &amp; fine print</a>
+      <a href="#s5"><span class="n">1.5</span>Choosing for a use case</a>
+      <a href="#s6"><span class="n">1.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 1.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">1.1</span><h2>What "open" means — weights, data, code, license</h2></div>
+        <p>"Open" is not one thing. A model release is really <em>four</em> separable artifacts, and a given model can be open on some axes and shut on others. Reading a release correctly means asking which of these you actually get:</p>
+        <table class="data">
+          <thead><tr><th>Artifact</th><th>What it is</th><th>What having it buys you</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Weights</strong></td><td class="m">the trained parameters</td><td>Run it yourself, fine-tune it, inspect it, keep it forever — the load-bearing piece.</td></tr>
+            <tr><td><strong>Training data</strong></td><td class="m">the corpus it learned from</td><td>Reproduce training, audit for contamination or bias, understand what it knows. <strong>Almost never released.</strong></td></tr>
+            <tr><td><strong>Training code</strong></td><td class="m">the recipe (data pipeline, hyperparameters)</td><td>Re-train or extend from scratch. Sometimes released, often partially.</td></tr>
+            <tr><td><strong>License</strong></td><td class="m">the legal terms on all of the above</td><td>Decides whether you may use it commercially, redistribute it, or train other models on its outputs.</td></tr>
+          </tbody>
+        </table>
+        <p>The crucial and widely misunderstood point: <strong>"open weights" says nothing about open data.</strong> When Meta, Mistral, or DeepSeek ship a model, you get a file of numbers and a license — not the trillions of tokens they trained on. That is why purists distinguish <em>open-weight</em> (weights downloadable, data secret) from genuinely <em>open-source</em> (weights, data, and code all released under an OSI-style license). The Open Source Initiative's 2024 definition of "open-source AI" requires enough information to recreate the system; by that bar, most "open" LLMs are open-weight, not open-source. Truly data-open models — OLMo, Pythia, the SmolLM family — exist but are the exception.</p>
+
+        <div class="callout">
+          <span class="co-icon">TERMS</span>
+          <p><strong>Open-weight:</strong> the parameters are downloadable; you can run and fine-tune them. <strong>Open-source AI:</strong> weights <em>plus</em> the data and code needed to reproduce them, under a recognized open license. <strong>Closed / proprietary:</strong> reachable only as a hosted API — you rent inference, you never possess the model.</p>
+        </div>
+
+        <p>Where a model sits on this spectrum cascades downstream. With the weights in hand you can run offline, send no data to a third party, fine-tune freely, quantize to fit your hardware, and pin a version that will never change under you. Without them, you trade all of that for someone else's operations team, frontier quality, and a metered bill. Neither is "better" in the abstract — the rest of this chapter is about matching the trade to the job.</p>
+
+        <div class="exercise" data-answer="false" data-tol="0.001" data-hint="Releasing the parameters is a separate decision from releasing the corpus.">
+          <div class="ex-q">True or false: a model being released as <b>"open weights"</b> guarantees that its <b>training data</b> is also public. (Answer <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">Open weights means only the trained parameters are downloadable. The training corpus is a separate artifact and is almost never released — Llama, Mistral, DeepSeek, and Qwen all ship weights without their data. The claim is <b>false</b>.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 1.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">1.2</span><h2>The closed frontier — GPT, Claude, Gemini</h2></div>
+        <p>The three labs that most often define the capability frontier — OpenAI (GPT), Anthropic (Claude), and Google DeepMind (Gemini) — ship their flagship models as <strong>closed, API-only</strong> products. You never see the weights; you send tokens in and get tokens out, billed per token. This is a deliberate posture, motivated by a mix of commercial moat, safety (harder to strip alignment from a model you can't download), and the sheer operational cost of serving models that may exceed a trillion parameters.</p>
+
+        <p>What you get for closing the box is real: the strongest available models on hard reasoning, coding, and multimodal tasks; a managed service with no GPUs to babysit; instant access to the newest version; and features — long context, tool use, structured output, content moderation — maintained by a large team. What you give up is everything that requires possession: your prompts leave your premises, you cannot fine-tune the base weights (only the limited adapters the provider exposes), the model can change or be deprecated underneath you, and at high volume you pay forever on a per-token meter.</p>
+
+        <div class="eq"><span class="eq-tag">EQ OM1.1 — THE COST OF RENTING INFERENCE</span>
+        $$ C_{\text{api}} \;=\; p \times n $$
+        <div class="eq-note">\(C_{\text{api}}\) is your monthly bill, \(p\) is the blended price per token (input and output mixed), and \(n\) is your monthly token volume. The defining feature of the closed model is that this is <b>purely marginal</b>: there is no fixed cost, but every token costs money forever, so the bill scales linearly and without bound as you grow. Prices have fallen by roughly an order of magnitude per year — but the <em>structure</em> stays linear.</div>
+        </div>
+
+        <p class="note"><strong>An honest caveat on "open-ness" at the frontier.</strong> The closed labs do release a great deal of <em>research</em> — model cards, system cards, safety evaluations, and detailed technical reports — even when the weights stay private. And the open/closed line is blurring from both sides: OpenAI returned to open weights in 2025 with the gpt-oss family, and frontier-class open-weight models from DeepSeek and others have repeatedly narrowed the gap to the best closed systems. "Closed" describes the weights, not the secrecy of the whole enterprise.</p>
+      </section>
+
+      <!-- ====================== 1.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">1.3</span><h2>The open ecosystem — Llama, Mistral, DeepSeek, Qwen</h2></div>
+        <p>The open-weight world is no longer a poor cousin of the frontier; for many tasks it is competitive, and for privacy-sensitive or high-volume deployments it is the obvious default. Four families anchor it:</p>
+        <table class="data">
+          <thead><tr><th>Family</th><th>Maker</th><th>Character</th><th>License posture</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Llama</strong></td><td class="m">Meta</td><td>The release that catalyzed the open ecosystem; broad sizes, huge fine-tune community.</td><td>Custom community license (commercial OK; an acceptable-use policy applies; a &gt;700M-MAU clause).</td></tr>
+            <tr><td><strong>Mistral</strong></td><td class="m">Mistral AI</td><td>Efficient dense and mixture-of-experts models; several flagships under a true open license.</td><td>Apache-2.0 for the open releases; some models are licensed-research-only.</td></tr>
+            <tr><td><strong>DeepSeek</strong></td><td class="m">DeepSeek-AI</td><td>Frontier-class MoE and reasoning models trained at a fraction of typical cost.</td><td>Permissive (MIT-style) weights — among the most open of the frontier-adjacent releases.</td></tr>
+            <tr><td><strong>Qwen</strong></td><td class="m">Alibaba</td><td>Very wide size ladder (sub-1B to hundreds of B), strong multilingual and coding variants.</td><td>Mostly Apache-2.0 on recent releases; a few older/largest under custom terms.</td></tr>
+          </tbody>
+        </table>
+        <p>Two structural facts make this ecosystem powerful. First, <strong>weights compound.</strong> Because anyone can download and adapt them, a single base model spawns thousands of community fine-tunes, quantizations, and merges — a base like Llama or Qwen becomes a platform, not a product. Second, <strong>open weights set a price floor.</strong> When a free, near-frontier model exists, no API can charge frontier prices for commodity work; the open releases discipline the entire market's pricing, which is part of why per-token costs keep collapsing.</p>
+
+        <p class="note">"Open" here still means open-weight, not open-data: Llama, Mistral, DeepSeek, and Qwen all ship parameters and a license without the training corpus. DeepSeek's published reports are unusually detailed about <em>method</em> (architecture, training procedure, cost), which is why its releases feel especially transparent — but the data itself remains undisclosed, exactly as §1.1 warns.</p>
+      </section>
+
+      <!-- ====================== 1.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">1.4</span><h2>Licenses &amp; their fine print</h2></div>
+        <p>The license is the part teams skim and later regret. With closed APIs the terms are a service agreement; with open weights the license travels <em>with the file</em> and governs what you may build. Four questions cover most of it:</p>
+        <ul>
+          <li><strong>Commercial use.</strong> May you use it in a paid product at all? Apache-2.0 and MIT: unambiguously yes. "Research-only" / non-commercial (CC-BY-NC, some Mistral and Gemma research releases): no.</li>
+          <li><strong>Redistribution.</strong> May you re-host or re-ship the weights, and under what notices? Permissive licenses allow it with attribution; community licenses add naming and labeling requirements.</li>
+          <li><strong>Acceptable use.</strong> Nearly every modern release — open <em>or</em> closed — attaches an acceptable-use policy banning specific harms. This is a real, enforceable restriction even on "open" weights.</li>
+          <li><strong>Training on outputs / scale clauses.</strong> Some licenses restrict using the model's outputs to train competitors; Meta's community license adds a famous clause requiring a separate agreement if your product exceeds 700 million monthly active users.</li>
+        </ul>
+
+        <p>The headline distinction is between a true <strong>open-source license</strong> (OSI-approved: Apache-2.0, MIT — minimal conditions, no field-of-use limits) and a <strong>community / source-available license</strong> (Llama's terms, many "open" releases — commercially usable but with carve-outs, acceptable-use policies, or scale clauses). Both let a startup ship a product. They differ in the edge cases — the hyperscaler-grade scale clause, the can't-train-a-competitor clause — that only bite a minority of users but bite hard when they do.</p>
+
+        <div class="callout warn">
+          <span class="co-icon">FINE PRINT</span>
+          <p><strong>"Open" is not a synonym for "no rules."</strong> A community-licensed model can forbid certain uses, require you to display the model's name, or demand a special agreement at extreme scale — and a non-commercial license forbids the one thing a business needs most. Always read the actual file's <code>LICENSE</code> and acceptable-use policy before you build; the family name (Llama, Mistral, Qwen) does not by itself tell you the terms, because different models in the same family ship under different licenses.</p>
+        </div>
+
+        <div class="widget" id="ovc-matrix" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT OM1.1 — LICENSE COMPARISON MATRIX</span><span class="w-sub">PERMITTED USES · OPEN VS CLOSED</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>LICENSE</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-ovc-lic="apache">APACHE-2.0 / MIT</button>
+                  <button class="w-btn ghost" data-ovc-lic="community">COMMUNITY (LLAMA)</button>
+                  <button class="w-btn ghost" data-ovc-lic="noncomm">NON-COMMERCIAL</button>
+                  <button class="w-btn ghost" data-ovc-lic="api">CLOSED API</button>
+                </div>
+              </div>
+            </div>
+            <div id="ovc-matrix-grid" style="border:1px solid var(--hairline);border-radius:4px;overflow:hidden;"></div>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">TYPICAL EXAMPLE</div><div class="r-value" id="ovc-matrix-example" style="font-size:13px;line-height:1.5;">—</div></div>
+              <div class="readout acc"><div class="r-label">PERMITS (OF 6)</div><div class="r-value" id="ovc-matrix-count">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Each column is a license posture; each row is a thing you might want to do. Green ✓ = generally permitted, red ✗ = forbidden, amber ~ = permitted with conditions (attribution, naming, a scale clause, or provider policy). Note that even the most permissive open license still carries an acceptable-use expectation, and the closed API forbids the two things that require the file itself: holding the weights and fine-tuning the base. This is a teaching simplification — the real <code>LICENSE</code> file always governs.</div>
+        </div>
+
+        <div class="exercise" data-answer="false" data-tol="0.001" data-hint="Compare an OSI-approved license like Apache-2.0 with a custom community license that has carve-outs.">
+          <div class="ex-q">True or false: every model labeled <b>"open"</b> may be used freely in a commercial product with <b>no restrictions</b>. (Answer <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">Some "open" releases are non-commercial (forbidding paid use entirely), and community licenses attach acceptable-use policies and scale clauses. Only OSI-approved licenses like Apache-2.0 and MIT come close to "no restrictions" — and even they expect lawful use. The blanket claim is <b>false</b>.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 1.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">1.5</span><h2>Choosing for a use case</h2></div>
+        <p>The decision rarely turns on raw benchmark scores. It turns on four forces — <strong>privacy, cost, control, capability</strong> — and which one your specific job cares about most. A quick map of where each side wins:</p>
+        <table class="data">
+          <thead><tr><th>If your job is most about…</th><th>Lean</th><th>Why</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Data privacy / sovereignty</strong></td><td class="hl">OPEN</td><td>Weights run inside your network; no prompt ever leaves. Decisive for regulated, medical, on-prem, or air-gapped settings.</td></tr>
+            <tr><td><strong>Lowest cost at high volume</strong></td><td class="hl">OPEN</td><td>Self-hosting trades a fixed cost for a tiny marginal cost; past a breakeven volume it is cheaper (EQ OM1.2).</td></tr>
+            <tr><td><strong>Maximum capability, fast</strong></td><td class="m">CLOSED</td><td>The frontier APIs still lead on the hardest reasoning and multimodal tasks, with zero ops burden.</td></tr>
+            <tr><td><strong>Version stability / customization</strong></td><td class="hl">OPEN</td><td>Pin a version forever; fine-tune the base; quantize to your hardware. The API can change or deprecate under you.</td></tr>
+            <tr><td><strong>Low volume, fast iteration</strong></td><td class="m">CLOSED</td><td>Below breakeven the per-token bill is trivial and there is nothing to operate — ideal for prototypes and spiky traffic.</td></tr>
+          </tbody>
+        </table>
+
+        <p>The cost axis has the cleanest math, so it is worth making explicit. Renting (EQ OM1.1) is all marginal: price per token times volume. Self-hosting flips the shape — a large <strong>fixed</strong> cost (the GPU you rent or buy, running whether you use it or not) plus a very small <strong>marginal</strong> cost per token (electricity, amortized hardware). The two cost curves cross at a breakeven volume:</p>
+
+        <div class="eq"><span class="eq-tag">EQ OM1.2 — SELF-HOST BREAKEVEN</span>
+        $$ p\,n_{\!*} \;=\; F + m\,n_{\!*} \quad\Longrightarrow\quad n_{\!*} \;=\; \frac{F}{\,p - m\,} $$
+        <div class="eq-note">\(p\) is the API price per token, \(F\) is the fixed monthly self-host cost, \(m\) is the self-host marginal cost per token, and \(n_{\!*}\) is the monthly volume at which the two are equal. Below \(n_{\!*}\), renting is cheaper; above it, self-hosting wins and keeps winning, because the fixed cost is amortized over ever more tokens. <b>Self-hosting is high fixed cost, low marginal cost — the mirror image of the pure-marginal API.</b> The formula needs \(p &gt; m\), which is essentially always true once you are at the volume where this question matters.</div>
+        </div>
+
+        <div class="exercise" data-answer="true" data-tol="0.001" data-hint="Compare the shape of EQ OM1.1 (pure marginal) with EQ OM1.2's F + m·n.">
+          <div class="ex-q">True or false: <b>self-hosting</b> an open model has a <b>high fixed cost</b> but a <b>low marginal cost</b> per token, the opposite of the pure-marginal API bill. (Answer <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">Self-hosting pays for a GPU node up front (\(F\), incurred whether or not you send a single token) and then almost nothing per token (\(m\), just electricity and amortization). The API has no fixed cost but charges \(p\) on every token. So the claim is <b>true</b> — and it is exactly why breakeven volume \(n_{\!*}=F/(p-m)\) exists.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># EQ OM1.2: API (pure marginal) vs self-host (fixed + marginal), find breakeven
+import numpy as np
+
+p = 3.0 / 1e6     # API price: $3 per 1,000,000 tokens
+F = 1500.0        # self-host fixed cost: one GPU node, $/month
+m = 0.20 / 1e6    # self-host marginal: $0.20 per 1,000,000 tokens (power + amort.)
+
+n_star = F / (p - m)                       # breakeven monthly token volume
+print(f"breakeven volume n* = {n_star/1e6:,.1f} M tokens / month")
+
+vols = np.array([100, 300, n_star/1e6, 800, 2000]) * 1e6   # tokens/month
+print("\n volume(M)   API $/mo   self-host $/mo   cheaper")
+for n in vols:
+    api  = p * n
+    self = F + m * n
+    who  = "API" if api < self else ("self-host" if self < api else "TIE")
+    print(f"  {n/1e6:7.1f}  {api:9,.0f}    {self:11,.0f}     {who}")
+
+print(f"\nbelow {n_star/1e6:,.0f}M tok/mo rent; above it, own the weights.")
+plot_xy([v/1e6 for v in vols], [p*v for v in vols])   # API cost curve (linear)</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="ovc-tradeoff" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT OM1.2 — COST / CONTROL / PRIVACY EXPLORER</span><span class="w-sub">EQ OM1.2 · LIVE BREAKEVEN</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>MONTHLY VOLUME <output id="ovc-vol-out">300M tok</output></label><input type="range" id="ovc-vol" min="0" max="6" step="0.05" value="2.477"/></div>
+              <div class="ctl"><label>API PRICE ($/1M tok) <output id="ovc-price-out">$3.00</output></label><input type="range" id="ovc-price" min="0.2" max="15" step="0.1" value="3"/></div>
+              <div class="ctl"><label>SELF-HOST FIXED ($/mo) <output id="ovc-fixed-out">$1,500</output></label><input type="range" id="ovc-fixed" min="300" max="8000" step="100" value="1500"/></div>
+            </div>
+            <canvas class="w-canvas" id="ovc-tradeoff-canvas" height="280"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">API COST / MO</div><div class="r-value" id="ovc-api-cost">—</div></div>
+              <div class="readout"><div class="r-label">SELF-HOST / MO</div><div class="r-value" id="ovc-self-cost">—</div></div>
+              <div class="readout acc"><div class="r-label">BREAKEVEN VOLUME</div><div class="r-value" id="ovc-break">—</div></div>
+              <div class="readout acc"><div class="r-label">CHEAPER HERE</div><div class="r-value" id="ovc-verdict" style="font-size:14px;">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Drag volume across the breakeven line and watch the verdict flip. Cost is only one axis: self-hosting <em>also</em> keeps prompts on-premises (privacy) and pins a version you control (control), which is why teams sometimes self-host below breakeven and accept a higher bill. The dashed line marks \(n_{\!*}=F/(p-m)\); marginal self-host cost is held at \(\$0.20\) per 1M tokens.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Score candidates against a weighted use-case rubric (0-10 per criterion)
+import numpy as np
+
+criteria = ["privacy", "cost@scale", "capability", "control", "ops_ease"]
+weights  = np.array([0.30, 0.25, 0.20, 0.15, 0.10])   # this team prizes privacy
+assert abs(weights.sum() - 1.0) &lt; 1e-9
+
+candidates = {
+    "Closed API (GPT/Claude/Gemini)": [2, 4, 10, 3,  9],
+    "Open self-host (Llama/Qwen)":    [10, 9,  7, 9,  4],
+    "Open via managed endpoint":      [5, 6,  7, 6,  8],
+}
+
+print(f"weights: {dict(zip(criteria, weights))}\n")
+ranked = []
+for name, s in candidates.items():
+    score = float(np.dot(weights, np.array(s, float)))
+    ranked.append((score, name))
+    print(f"  {name:34s}  weighted score = {score:5.2f} / 10")
+
+ranked.sort(reverse=True)
+print(f"\nwinner for a privacy-first team: {ranked[0][1]} ({ranked[0][0]:.2f})")
+print("flip the weights toward 'capability' and the closed API wins instead.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="ovc-tree" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT OM1.3 — OPEN-VS-CLOSED DECISION TREE</span><span class="w-sub">FOUR QUESTIONS · ONE RECOMMENDATION</span></div>
+          <div class="w-body">
+            <div class="ctl-row" style="gap:14px;">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>MUST DATA STAY ON-PREM?</label>
+                <div class="seg-row"><button class="w-btn ghost on" data-ovc-q="privacy" data-v="no">NO</button><button class="w-btn ghost" data-ovc-q="privacy" data-v="yes">YES</button></div>
+              </div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>HIGH, STEADY VOLUME?</label>
+                <div class="seg-row"><button class="w-btn ghost on" data-ovc-q="volume" data-v="no">NO</button><button class="w-btn ghost" data-ovc-q="volume" data-v="yes">YES</button></div>
+              </div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>NEED THE FRONTIER?</label>
+                <div class="seg-row"><button class="w-btn ghost on" data-ovc-q="frontier" data-v="yes">YES</button><button class="w-btn ghost" data-ovc-q="frontier" data-v="no">NO</button></div>
+              </div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>HAVE MLOps CAPACITY?</label>
+                <div class="seg-row"><button class="w-btn ghost on" data-ovc-q="ops" data-v="no">NO</button><button class="w-btn ghost" data-ovc-q="ops" data-v="yes">YES</button></div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="ovc-tree-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">RECOMMENDATION</div><div class="r-value" id="ovc-tree-rec" style="font-size:15px;">—</div></div>
+              <div class="readout"><div class="r-label">DECIDING FACTOR</div><div class="r-value" id="ovc-tree-why" style="font-size:13px;line-height:1.5;">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Flip the four switches and the path lights up. Privacy is the hard override — if data cannot leave, you are self-hosting open weights regardless of everything else. Otherwise high steady volume pushes toward open (cross EQ OM1.2's breakeven), a true frontier requirement pulls toward closed, and thin MLOps capacity nudges you to a managed open endpoint as the middle path.</div>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>You have decided to hold the weights — now you have to run them.</strong> Chapter 02 turns the choice into practice: the runtimes (llama.cpp, vLLM, Ollama), how quantization shrinks a model to fit the hardware you actually have, and the throughput-versus-latency knobs that decide what serving really costs.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 1.R — References ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">1.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://arxiv.org/abs/2307.09288" target="_blank" rel="noopener">Touvron, H., Martin, L., Stone, K. et al. (2023). <span class="ref-venue">Llama 2: Open Foundation and Fine-Tuned Chat Models</span>.</a> <span class="ref-meta">arXiv:2307.09288 — the release (and custom community license) that catalyzed the open-weight ecosystem.</span></li>
+          <li><a href="https://arxiv.org/abs/2310.06825" target="_blank" rel="noopener">Jiang, A. Q., Sablayrolles, A., Mensch, A. et al. (2023). <span class="ref-venue">Mistral 7B</span>.</a> <span class="ref-meta">arXiv:2310.06825 — an Apache-2.0 dense model that set the efficiency bar for small open models.</span></li>
+          <li><a href="https://arxiv.org/abs/2412.19437" target="_blank" rel="noopener">DeepSeek-AI (2024). <span class="ref-venue">DeepSeek-V3 Technical Report</span>.</a> <span class="ref-meta">arXiv:2412.19437 — a frontier-class MoE trained at a fraction of typical cost, with unusually open methodology.</span></li>
+          <li><a href="https://arxiv.org/abs/2407.10671" target="_blank" rel="noopener">Yang, A., Yang, B., Hui, B. et al. (2024). <span class="ref-venue">Qwen2 Technical Report</span>.</a> <span class="ref-meta">arXiv:2407.10671 — the Qwen family's wide size ladder and (mostly) Apache-2.0 licensing.</span></li>
+          <li><a href="https://arxiv.org/abs/2402.00838" target="_blank" rel="noopener">Groeneveld, D., Beltagy, I., Walsh, P. et al. (2024). <span class="ref-venue">OLMo: Accelerating the Science of Language Models</span>.</a> <span class="ref-meta">arXiv:2402.00838 — a genuinely open-source model: weights, data, and training code all released.</span></li>
+          <li><a href="https://opensource.org/ai/open-source-ai-definition" target="_blank" rel="noopener">Open Source Initiative (2024). <span class="ref-venue">The Open Source AI Definition 1.0</span>.</a> <span class="ref-meta">Official text — the bar separating open-source AI from merely open-weight releases.</span></li>
+          <li><a href="https://www.llama.com/llama3/license/" target="_blank" rel="noopener">Meta (2024). <span class="ref-venue">Llama 3 Community License Agreement</span>.</a> <span class="ref-meta">Primary source — the commercial terms, acceptable-use policy, and 700M-MAU scale clause discussed in §1.4.</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../multimodal/06-embodied.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">06</span> Embodied (Multimodal)</div></a>
+        <a class="next" href="../openmodels/02-running-open-models.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">02</span> Running Open Models</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — OPEN MODELS · CH 01</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* chapter instruments — single IIFE, no globals */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  var C = (FM && FM.C) || {
+    MINT: "#a6f2cc", DEEP: "#2b5945", BLUE: "#4e8af7", RED: "#ff4136",
+    HAIR: "#2f3234", MUT: "#636363", SEC: "#9b9b9b", BRIGHT: "#ffffff",
+    MONO: "10px ui-monospace, SF Mono, Menlo, monospace"
+  };
+  var MONO = C.MONO || "10px ui-monospace, SF Mono, Menlo, monospace";
+
+  function fmtMoney(x) {
+    if (x >= 1e6) return "$" + (x / 1e6).toFixed(2) + "M";
+    if (x >= 1e3) return "$" + (x / 1e3).toFixed(1) + "K";
+    return "$" + x.toFixed(0);
+  }
+  function fmtTok(n) {
+    if (n >= 1e9) return (n / 1e9).toFixed(2) + "B tok";
+    if (n >= 1e6) return (n / 1e6).toFixed(0) + "M tok";
+    if (n >= 1e3) return (n / 1e3).toFixed(0) + "K tok";
+    return n.toFixed(0) + " tok";
+  }
+
+  /* ============================================================
+     INSTRUMENT OM1.1 — LICENSE COMPARISON MATRIX
+     ============================================================ */
+  (function licenseMatrix() {
+    var root = document.getElementById("ovc-matrix");
+    if (!root) return;
+    var grid = document.getElementById("ovc-matrix-grid");
+    var exEl = document.getElementById("ovc-matrix-example");
+    var cntEl = document.getElementById("ovc-matrix-count");
+    if (!grid) return;
+
+    var rows = [
+      "Commercial use",
+      "Hold / run the weights yourself",
+      "Fine-tune the base model",
+      "Redistribute the weights",
+      "Train other models on its outputs",
+      "Any-use, no acceptable-use policy"
+    ];
+    // states: 2 = yes(✓), 1 = conditional(~), 0 = no(✗)
+    var LIC = {
+      apache:    { name: "Apache-2.0 / MIT", ex: "Mistral 7B · Qwen2 · DeepSeek weights", s: [2, 2, 2, 2, 2, 1] },
+      community: { name: "Community (Llama)", ex: "Llama 2 / 3 weights",                 s: [2, 2, 2, 1, 1, 0] },
+      noncomm:   { name: "Non-commercial",   ex: "CC-BY-NC / research-only releases",    s: [0, 2, 2, 1, 0, 0] },
+      api:       { name: "Closed API",       ex: "GPT · Claude · Gemini",                s: [2, 0, 0, 0, 0, 0] }
+    };
+    var current = "apache";
+    var btns = root.querySelectorAll("[data-ovc-lic]");
+
+    function cell(state) {
+      var mark = state === 2 ? "✓" : state === 1 ? "~" : "✗";
+      var col = state === 2 ? C.MINT : state === 1 ? "#d9a441" : C.RED;
+      return '<span style="font-family:ui-monospace,Menlo,monospace;font-weight:700;color:' + col + ';">' + mark + "</span>";
+    }
+    function render() {
+      var lic = LIC[current];
+      var html = "";
+      for (var i = 0; i < rows.length; i++) {
+        var bg = i % 2 ? "#000" : "rgba(155,155,155,.04)";
+        html += '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px;background:' + bg +
+          ';border-bottom:' + (i < rows.length - 1 ? "1px solid var(--hairline)" : "none") + ';">' +
+          '<span style="font-size:12.5px;color:var(--text-secondary);">' + rows[i] + "</span>" +
+          cell(lic.s[i]) + "</div>";
+      }
+      grid.innerHTML = html;
+      exEl.textContent = lic.ex;
+      var permits = 0;
+      for (var j = 0; j < lic.s.length; j++) if (lic.s[j] === 2) permits++;
+      cntEl.textContent = permits + " / 6";
+      for (var b = 0; b < btns.length; b++) {
+        btns[b].classList.toggle("on", btns[b].getAttribute("data-ovc-lic") === current);
+      }
+    }
+    for (var k = 0; k < btns.length; k++) {
+      btns[k].addEventListener("click", function () {
+        current = this.getAttribute("data-ovc-lic");
+        render();
+      });
+    }
+    render();
+  })();
+
+  /* ============================================================
+     INSTRUMENT OM1.2 — COST / CONTROL / PRIVACY EXPLORER
+     EQ OM1.2: API = p*n  vs  self-host = F + m*n
+     ============================================================ */
+  (function tradeoff() {
+    var root = document.getElementById("ovc-tradeoff");
+    if (!root) return;
+    var canvas = document.getElementById("ovc-tradeoff-canvas");
+    if (!canvas) return;
+    var volEl = document.getElementById("ovc-vol");
+    var priceEl = document.getElementById("ovc-price");
+    var fixedEl = document.getElementById("ovc-fixed");
+    var volOut = document.getElementById("ovc-vol-out");
+    var priceOut = document.getElementById("ovc-price-out");
+    var fixedOut = document.getElementById("ovc-fixed-out");
+    var apiOut = document.getElementById("ovc-api-cost");
+    var selfOut = document.getElementById("ovc-self-cost");
+    var breakOut = document.getElementById("ovc-break");
+    var verdictOut = document.getElementById("ovc-verdict");
+
+    var M_RATE = 0.20 / 1e6; // self-host marginal: $0.20 / 1M tokens (held fixed)
+
+    function volTokens() { return Math.pow(10, parseFloat(volEl.value)) * 1e6; } // 1e0..1e6 -> 1M..1T
+
+    function render() {
+      var n = volTokens();
+      var p = parseFloat(priceEl.value) / 1e6;   // $/token
+      var F = parseFloat(fixedEl.value);
+      var m = M_RATE;
+      var apiCost = p * n;
+      var selfCost = F + m * n;
+      var nStar = p > m ? F / (p - m) : Infinity;
+
+      volOut.textContent = fmtTok(n);
+      priceOut.textContent = "$" + parseFloat(priceEl.value).toFixed(2);
+      fixedOut.textContent = "$" + F.toLocaleString();
+      apiOut.textContent = fmtMoney(apiCost);
+      selfOut.textContent = fmtMoney(selfCost);
+      breakOut.textContent = isFinite(nStar) ? fmtTok(nStar) : "—";
+      verdictOut.textContent = apiCost < selfCost ? "API (rent)" : (selfCost < apiCost ? "SELF-HOST" : "TIE");
+      verdictOut.style.color = apiCost < selfCost ? C.BLUE : C.MINT;
+
+      var s = FM.setupCanvas(canvas, 280);
+      var ctx = s.ctx, w = s.w, h = s.h;
+      ctx.clearRect(0, 0, w, h);
+
+      var padL = 52, padR = 16, padT = 18, padB = 34;
+      var plotW = w - padL - padR, plotH = h - padT - padB;
+      // x domain: 0 .. xmax tokens; choose xmax so both n and breakeven are visible
+      var xmax = Math.max(n * 1.25, isFinite(nStar) ? nStar * 1.6 : n * 1.25, 50e6);
+      // y domain
+      var ymax = Math.max(p * xmax, F + m * xmax, 1) * 1.05;
+      function X(tok) { return padL + (tok / xmax) * plotW; }
+      function Y(cost) { return padT + plotH - (cost / ymax) * plotH; }
+
+      // axes
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(padL, padT); ctx.lineTo(padL, padT + plotH); ctx.lineTo(padL + plotW, padT + plotH); ctx.stroke();
+      ctx.font = MONO; ctx.fillStyle = C.MUT; ctx.textAlign = "right";
+      for (var gy = 0; gy <= 4; gy++) {
+        var cv = ymax * gy / 4, yy = Y(cv);
+        ctx.strokeStyle = "rgba(47,50,52,.5)"; ctx.beginPath(); ctx.moveTo(padL, yy); ctx.lineTo(padL + plotW, yy); ctx.stroke();
+        ctx.fillStyle = C.MUT; ctx.fillText(fmtMoney(cv), padL - 6, yy + 3);
+      }
+      ctx.textAlign = "center";
+      for (var gx = 0; gx <= 4; gx++) {
+        var tv = xmax * gx / 4;
+        ctx.fillStyle = C.MUT; ctx.fillText(fmtTok(tv), X(tv), padT + plotH + 16);
+      }
+
+      // self-host line: F + m*x  (mint)
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 1.8;
+      ctx.beginPath(); ctx.moveTo(X(0), Y(F)); ctx.lineTo(X(xmax), Y(F + m * xmax)); ctx.stroke();
+      // API line: p*x  (blue)
+      ctx.strokeStyle = C.BLUE; ctx.lineWidth = 1.8;
+      ctx.beginPath(); ctx.moveTo(X(0), Y(0)); ctx.lineTo(X(xmax), Y(p * xmax)); ctx.stroke();
+
+      // breakeven dashed vertical
+      if (isFinite(nStar) && nStar <= xmax) {
+        ctx.strokeStyle = "rgba(229,229,229,.45)"; ctx.setLineDash([4, 4]); ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(X(nStar), padT); ctx.lineTo(X(nStar), padT + plotH); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = C.SEC; ctx.font = MONO; ctx.textAlign = "left";
+        ctx.fillText("breakeven", X(nStar) + 4, padT + 10);
+      }
+
+      // current-volume marker
+      var cx = X(n);
+      ctx.strokeStyle = "rgba(99,99,99,.7)"; ctx.setLineDash([2, 3]);
+      ctx.beginPath(); ctx.moveTo(cx, padT); ctx.lineTo(cx, padT + plotH); ctx.stroke();
+      ctx.setLineDash([]);
+      function dot(yc, col) { ctx.fillStyle = col; ctx.beginPath(); ctx.arc(cx, Y(yc), 4, 0, Math.PI * 2); ctx.fill(); }
+      dot(apiCost, C.BLUE); dot(selfCost, C.MINT);
+
+      // legend
+      ctx.font = MONO; ctx.textAlign = "left";
+      ctx.fillStyle = C.BLUE; ctx.fillRect(padL + 6, padT + 2, 10, 3); ctx.fillText("API (rent)", padL + 20, padT + 6);
+      ctx.fillStyle = C.MINT; ctx.fillRect(padL + 100, padT + 2, 10, 3); ctx.fillText("self-host", padL + 114, padT + 6);
+    }
+
+    [volEl, priceEl, fixedEl].forEach(function (el) { el.addEventListener("input", render); });
+    window.addEventListener("resize", render);
+    render();
+  })();
+
+  /* ============================================================
+     INSTRUMENT OM1.3 — OPEN-VS-CLOSED DECISION TREE
+     ============================================================ */
+  (function decisionTree() {
+    var root = document.getElementById("ovc-tree");
+    if (!root) return;
+    var canvas = document.getElementById("ovc-tree-canvas");
+    if (!canvas) return;
+    var recEl = document.getElementById("ovc-tree-rec");
+    var whyEl = document.getElementById("ovc-tree-why");
+
+    var state = { privacy: "no", volume: "no", frontier: "yes", ops: "no" };
+    var btns = root.querySelectorAll("[data-ovc-q]");
+
+    function decide() {
+      // privacy is the hard override
+      if (state.privacy === "yes")
+        return { rec: "OPEN · SELF-HOST", why: "Data must stay on-prem — the weights have to run inside your network.", path: ["privacy"] };
+      // need the frontier and not forced open -> closed
+      if (state.frontier === "yes" && state.volume === "no")
+        return { rec: "CLOSED · API", why: "Frontier capability with low/spiky volume — rent it, no ops burden.", path: ["frontier", "volume"] };
+      // high steady volume -> open economics, but ops matters
+      if (state.volume === "yes") {
+        if (state.ops === "yes")
+          return { rec: "OPEN · SELF-HOST", why: "High steady volume past breakeven and you have MLOps to run it.", path: ["volume", "ops"] };
+        return { rec: "OPEN · MANAGED ENDPOINT", why: "Volume favors open economics, but thin MLOps — let someone host the open weights.", path: ["volume", "ops"] };
+      }
+      // low volume, no frontier need, no privacy constraint
+      if (state.frontier === "yes")
+        return { rec: "CLOSED · API", why: "Frontier needed and volume is low — the per-token bill stays trivial.", path: ["frontier"] };
+      return { rec: "OPEN · MANAGED ENDPOINT", why: "No frontier or privacy constraint at modest volume — a cheap open model on a managed endpoint.", path: ["frontier"] };
+    }
+
+    function render() {
+      var d = decide();
+      recEl.textContent = d.rec;
+      recEl.style.color = d.rec.indexOf("OPEN") === 0 ? C.MINT : C.BLUE;
+      whyEl.textContent = d.why;
+
+      var s = FM.setupCanvas(canvas, 300);
+      var ctx = s.ctx, w = s.w, h = s.h;
+      ctx.clearRect(0, 0, w, h);
+
+      var qs = [
+        { key: "privacy", label: "DATA ON-PREM?" },
+        { key: "volume", label: "HIGH VOLUME?" },
+        { key: "frontier", label: "NEED FRONTIER?" },
+        { key: "ops", label: "MLOps CAPACITY?" }
+      ];
+      var n = qs.length;
+      var colW = w / (n + 1);
+      var rowY = h * 0.30;
+      var pathSet = {};
+      for (var pi = 0; pi < d.path.length; pi++) pathSet[d.path[pi]] = true;
+
+      // draw connecting baseline
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(colW * 0.5, rowY); ctx.lineTo(colW * (n + 0.5), rowY); ctx.stroke();
+
+      for (var i = 0; i < n; i++) {
+        var x = colW * (i + 1);
+        var active = pathSet[qs[i].key];
+        var val = state[qs[i].key];
+        var r = 15;
+        ctx.fillStyle = active ? "rgba(166,242,204,.16)" : "rgba(155,155,155,.06)";
+        ctx.strokeStyle = active ? C.MINT : C.HAIR;
+        ctx.lineWidth = active ? 1.6 : 1;
+        ctx.beginPath(); ctx.arc(x, rowY, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = active ? C.MINT : C.MUT;
+        ctx.font = "11px ui-monospace, Menlo, monospace"; ctx.textAlign = "center";
+        ctx.fillText(String(i + 1), x, rowY + 4);
+        // label above
+        ctx.fillStyle = active ? C.SEC : C.MUT; ctx.font = MONO;
+        ctx.fillText(qs[i].label, x, rowY - 26);
+        // chosen value below
+        ctx.fillStyle = val === "yes" ? C.MINT : C.SEC;
+        ctx.fillText(val.toUpperCase(), x, rowY + 30);
+      }
+
+      // outcome box
+      var oy = h * 0.74;
+      var open = d.rec.indexOf("OPEN") === 0;
+      var col = open ? C.MINT : C.BLUE;
+      var bw = Math.min(w - 40, 360), bx = (w - bw) / 2;
+      ctx.fillStyle = open ? "rgba(166,242,204,.12)" : "rgba(78,138,247,.12)";
+      ctx.strokeStyle = col; ctx.lineWidth = 1.4;
+      ctx.fillRect(bx, oy - 22, bw, 44); ctx.strokeRect(bx, oy - 22, bw, 44);
+      ctx.fillStyle = col; ctx.font = "13px ui-monospace, Menlo, monospace"; ctx.textAlign = "center";
+      ctx.fillText("→ " + d.rec, w / 2, oy + 5);
+    }
+
+    for (var k = 0; k < btns.length; k++) {
+      btns[k].addEventListener("click", function () {
+        var q = this.getAttribute("data-ovc-q"), v = this.getAttribute("data-v");
+        state[q] = v;
+        var group = root.querySelectorAll('[data-ovc-q="' + q + '"]');
+        for (var g = 0; g < group.length; g++) group[g].classList.toggle("on", group[g] === this);
+        render();
+      });
+    }
+    window.addEventListener("resize", render);
+    render();
+  })();
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

@@ -1,0 +1,71 @@
+{
+  "file": "rl/06-rl-and-llms.html",
+  "glossary": [
+    {
+      "term": "RLHF (Reinforcement Learning from Human Feedback)",
+      "def": "A three-stage alignment recipe: supervised fine-tune a base model, train a reward model on human preference comparisons, then optimize the policy against that reward model with an RL algorithm (usually PPO) under a KL penalty to the starting point. It is the technique behind InstructGPT and the first generation of aligned chat assistants."
+    },
+    {
+      "term": "Bradley-Terry model",
+      "def": "A model of paired comparisons that assigns each item a latent score and predicts the probability one beats another as the sigmoid of their score difference: P(y_w > y_l) = sigma(r(y_w) - r(y_l)). RLHF uses it to turn human 'A is better than B' choices into a trainable scalar reward; only the reward difference matters, so the scale is fixed only up to an additive constant."
+    },
+    {
+      "term": "Reward model",
+      "def": "A network (usually the SFT policy with its token head swapped for a single scalar head) trained by maximum likelihood on preference pairs to predict which completion a human prefers. It stands in for an unwritable 'how good is this answer' function, but is a frozen snapshot of judgment that becomes unreliable on the off-distribution outputs a drifting policy produces."
+    },
+    {
+      "term": "PPO (Proximal Policy Optimization)",
+      "def": "A policy-gradient method that limits how far each update moves the policy via a clipped probability-ratio objective, min(rho*A, clip(rho, 1-eps, 1+eps)*A). In RLHF it optimizes the reward model's score minus a KL penalty to the reference, and its conservatism is what keeps the policy in the region where the reward model is still trustworthy."
+    },
+    {
+      "term": "KL penalty / KL leash",
+      "def": "A term that penalizes the policy for diverging (in KL divergence) from the frozen reference (SFT) model, scaled by a coefficient beta. It keeps generations fluent and on-distribution and slows reward hacking, but only weakens the incentive to game the proxy reward rather than removing it."
+    },
+    {
+      "term": "DPO (Direct Preference Optimization)",
+      "def": "A method that optimizes the same KL-regularized RLHF objective without a reward model or RL loop. Using the closed-form optimum of that objective, the intractable partition function cancels in a preference pair, leaving a supervised loss over log-ratios of the policy to the reference: the policy is its own implicit reward model, r_hat = beta * log(pi_theta / pi_ref)."
+    },
+    {
+      "term": "GRPO (Group Relative Policy Optimization)",
+      "def": "A PPO variant that deletes the value/critic network: for each prompt it samples a group of G responses, scores them, and standardizes the rewards within the group to form the advantage, A_i = (r_i - mean) / std. The group itself supplies the baseline PPO would otherwise spend a whole second model to estimate; introduced with DeepSeekMath and central to reasoning models."
+    },
+    {
+      "term": "RLVR (RL from Verifiable Rewards)",
+      "def": "Training against a deterministic checker rather than a learned reward model: a math answer is graded right or wrong, code passes the unit tests or not. The reward is clean and (mostly) ungameable, and running GRPO on verifiable math and code is what made long-chain reasoning behavior emerge in models like DeepSeek-R1."
+    },
+    {
+      "term": "Reward hacking",
+      "def": "When a policy maximizes the measured reward at the expense of the intended one, exploiting any gap between proxy and goal: a reward model that mildly favors length breeds verbosity; a checker with a loophole gets gamed. It is Goodhart's law in a gradient, and the divergence between proxy reward and true quality grows with optimization pressure."
+    }
+  ],
+  "refs": [
+    {
+      "cite": "Christiano, P. F., Leike, J., Brown, T. B., Martic, M., Legg, S. & Amodei, D. (2017). Deep Reinforcement Learning from Human Preferences. NeurIPS.",
+      "url": "https://arxiv.org/abs/1706.03741"
+    },
+    {
+      "cite": "Ouyang, L. et al. (2022). Training Language Models to Follow Instructions with Human Feedback (InstructGPT). NeurIPS.",
+      "url": "https://arxiv.org/abs/2203.02155"
+    },
+    {
+      "cite": "Schulman, J., Wolski, F., Dhariwal, P., Radford, A. & Klimov, O. (2017). Proximal Policy Optimization Algorithms.",
+      "url": "https://arxiv.org/abs/1707.06347"
+    },
+    {
+      "cite": "Rafailov, R., Sharma, A., Mitchell, E., Ermon, S., Manning, C. D. & Finn, C. (2023). Direct Preference Optimization: Your Language Model is Secretly a Reward Model. NeurIPS.",
+      "url": "https://arxiv.org/abs/2305.18290"
+    },
+    {
+      "cite": "Shao, Z. et al. (2024). DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models.",
+      "url": "https://arxiv.org/abs/2402.03300"
+    },
+    {
+      "cite": "DeepSeek-AI (2025). DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning.",
+      "url": "https://arxiv.org/abs/2501.12948"
+    },
+    {
+      "cite": "Stiennon, N. et al. (2020). Learning to Summarize from Human Feedback. NeurIPS.",
+      "url": "https://arxiv.org/abs/2009.01325"
+    }
+  ]
+}

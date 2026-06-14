@@ -1,0 +1,810 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Gradient Boosting in Practice — XGBoost, LightGBM, CatBoost — AI Encyclopedia</title>
+<meta name="description" content="Three libraries win most tabular competitions — and they are all the same idea, gradient boosting, with different engineering bets. The general algorithm, AdaBoost, and what XGBoost, LightGBM and CatBoost each change." />
+<link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
+<meta name="theme-color" content="#000000" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+</head>
+<body data-track="ml" data-level="core">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ MACHINE LEARNING / 15 / BOOSTING LIBRARIES</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../mlops/01-resampling-cv.html">NEXT: MLOPS · 01 RESAMPLING &amp; CV →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">MACHINE LEARNING · CHAPTER 15 / 15</div>
+    <h1>Gradient Boosting in Practice — XGBoost, LightGBM, CatBoost</h1>
+    <p class="lede">Open any tabular-data leaderboard and the top is usually the same three names. <strong>All three implement one idea, gradient boosting, and differ mainly in their engineering choices.</strong> This chapter builds the algorithm from first principles, traces it back to AdaBoost, then shows what XGBoost, LightGBM, and CatBoost each changed and why it mattered.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 26 MIN</b></span>
+      <span>BUILDS ON<b>ML 04 · ML 14</b></span>
+      <span>INSTRUMENTS<b>STAGEWISE · LR×TREES · LIBRARY MATRIX</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">15.1</span>Gradient boosting</a>
+      <a href="#s2"><span class="n">15.2</span>AdaBoost &amp; exponential loss</a>
+      <a href="#s3"><span class="n">15.3</span>XGBoost</a>
+      <a href="#s4"><span class="n">15.4</span>LightGBM</a>
+      <a href="#s5"><span class="n">15.5</span>CatBoost</a>
+      <a href="#s6"><span class="n">15.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 15.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">15.1</span><h2>Gradient boosting — the general algorithm</h2></div>
+        <p>A single decision tree (Chapter 04) is a weak learner: it carves the input space into boxes and predicts a constant in each. <strong>Boosting</strong> is the idea that a sequence of such weak learners, each trained to fix the mistakes of the running total, can compose into a strong one. Where <em>bagging</em> (Chapter 14) builds many independent trees and averages them to cut variance, boosting builds trees <em>sequentially</em>, and each new tree is added to reduce the bias that remains.</p>
+
+        <p>Friedman's <strong>gradient boosting machine</strong> (2001) gives this a clean, general formulation: treat the additive model \(F(x)\) as a point in function space, and run gradient descent <em>on the loss, with respect to the function itself</em>. We grow the model one stage at a time:</p>
+
+        <div class="eq"><span class="eq-tag">EQ M15.1 — ADDITIVE STAGEWISE MODEL</span>
+        $$ F_0(x) = \arg\min_{c}\sum_{i=1}^{n} L\bigl(y_i, c\bigr), \qquad F_m(x) = F_{m-1}(x) + \nu\, h_m(x) $$
+        <div class="eq-note">\(F_m\) is the ensemble after \(m\) trees; \(F_0\) is a constant (for squared loss, the mean of \(y\); for log-loss, the log-odds). \(h_m\) is the \(m\)-th tree and \(\nu \in (0,1]\) is the <b>learning rate</b> (shrinkage). We never re-touch earlier trees — the model is built <b>stagewise, not stepwise</b>. The whole game is choosing each \(h_m\) so that adding it most reduces the loss.</div>
+        </div>
+
+        <p>How do we pick \(h_m\)? Gradient descent says: move in the direction of steepest descent. In function space, the steepest-descent direction at example \(i\) is the negative gradient of the loss with respect to the current prediction — the <strong>pseudo-residual</strong>:</p>
+
+        <div class="eq"><span class="eq-tag">EQ M15.2 — PSEUDO-RESIDUALS (NEGATIVE GRADIENT)</span>
+        $$ r_{im} \;=\; -\left[\frac{\partial L\bigl(y_i, F(x_i)\bigr)}{\partial F(x_i)}\right]_{F = F_{m-1}} $$
+        <div class="eq-note">Each tree is fit not to the labels \(y\) but to these <b>negative gradients</b> — the direction in which the prediction at each point should move to lower the loss. The tree then approximates that direction with a piecewise-constant function, and EQ M15.1 takes a small step \(\nu\) along it. <b>This is the single defining act of gradient boosting: every new tree regresses on the negative gradient of the loss.</b> Changing \(L\) changes only the residual formula — the machinery is identical for regression, classification, and ranking.</div>
+        </div>
+
+        <p>The payoff is cleanest for the squared-error loss \(L(y,F)=\tfrac12(y-F)^2\). Its gradient is \(\partial L/\partial F = -(y-F)\), so the negative gradient is simply \(r_i = y_i - F(x_i)\): the ordinary residual. For squared loss, "fit the negative gradient" reduces to the intuitive "fit the leftover error" — which is why the from-scratch demo below works with plain residuals.</p>
+
+        <div class="eq"><span class="eq-tag">EQ M15.3 — SQUARED LOSS: GRADIENT IS THE RESIDUAL</span>
+        $$ L(y,F)=\tfrac12\,(y-F)^2 \;\Longrightarrow\; -\frac{\partial L}{\partial F} = y - F = r $$
+        <div class="eq-note">For squared loss the pseudo-residual is exactly the residual. For other losses it is not: log-loss gives \(r = y - p\) (label minus predicted probability), and the absolute-error loss gives \(r = \operatorname{sign}(y-F)\), which is why \(L_1\)-boosting chases the median rather than the mean. The framework is loss-agnostic; only EQ M15.2 changes.</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><div>Three points with targets \(y = (3, 5, 9)\). The optimal constant under squared loss is the mean: \(F_0 = (3+5+9)/3 = 5.667\).</div></div>
+          <div class="x-step"><span class="x-n">02</span><div>Residuals \(r = y - F_0 = (-2.667,\ -0.667,\ 3.333)\). A stump splits them into two leaves; say it isolates the third point, predicting the leaf means \((-1.667)\) for the first two and \((3.333)\) for the last.</div></div>
+          <div class="x-step"><span class="x-n">03</span><div>With learning rate \(\nu = 0.5\): \(F_1 = F_0 + 0.5\,h_1\). Point 3 becomes \(5.667 + 0.5(3.333) = 7.333\) — moved halfway from 5.667 toward its target of 9.</div></div>
+          <div class="x-step"><span class="x-n">04</span><div>New residuals are smaller; the next stump fits those. Repeated, the ensemble inches every prediction toward its label. The squared-error loss \(\sum r_i^2\) falls monotonically — the loss curve the stepper below draws.</div></div>
+          <span class="x-result">RESULT: tree m fits y − F₍ₘ₋₁₎; the step ν shrinks each correction</span>
+        </div></div>
+        </div>
+
+        <div class="exercise" data-answer="true" data-tol="0" data-hint="EQ M15.2 — each tree is fit to the steepest-descent direction of the loss in function space.">
+          <div class="ex-q">True or false: in gradient boosting, each new tree is fit to approximate the <b>negative gradient</b> of the loss with respect to the current model's predictions. (Answer <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">This is the definition of gradient boosting (EQ M15.2). The negative gradient is the steepest-descent direction in function space; the tree regresses on it, and EQ M15.1 takes a shrunk step \(\nu\) along it. For squared loss this gradient equals the plain residual \(y-F\) (EQ M15.3), which is the special case people usually picture. Answer: <b>true</b>.</div>
+        </div>
+
+        <div class="exercise" data-answer="5.667" data-tol="0.01" data-hint="for squared loss the optimal constant F₀ is the mean of the targets.">
+          <div class="ex-q">A gradient-boosting regressor under squared-error loss starts from a constant \(F_0\). For targets \(y = (3, 5, 9)\), what value does it initialize \(F_0\) to? (Give a decimal.)</div>
+          <div class="ex-reveal-src">EQ M15.1 sets \(F_0 = \arg\min_c \sum (y_i - c)^2/2\), which is minimized at the mean: \(F_0 = (3+5+9)/3 = 17/3 = \) <b>5.667</b>. The first tree then fits the residuals \(y - F_0\).</div>
+        </div>
+
+        <div class="exercise" data-answer="0.1" data-tol="0.001" data-hint="the step in EQ M15.1 is F_m = F_{m-1} + ν·h_m, so the per-tree shrinkage factor IS ν.">
+          <div class="ex-q">A gradient-boosting model uses learning rate \(\nu = 0.1\). By EQ M15.1, each new tree's contribution to the ensemble is scaled by what factor (the shrinkage applied per tree)? (Give a decimal.)</div>
+          <div class="ex-reveal-src">The stagewise update is \(F_m = F_{m-1} + \nu\, h_m\), so each tree \(h_m\) enters the model multiplied by exactly \(\nu\). With \(\nu = 0.1\) the per-tree shrinkage is <b>0.1</b> — each tree contributes only a tenth of its raw correction, which is why low \(\nu\) demands more trees but generalizes better (INSTRUMENT M15.2).</div>
+        </div>
+
+        <div class="widget" id="boost-stage" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT M15.1 — STAGEWISE BOOSTING STEPPER</span><span class="w-sub">DEPTH-1 STUMPS · SQUARED LOSS · EQ M15.1–M15.3</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>LEARNING RATE ν <output id="boost-stage-lr-out">0.30</output></label><input type="range" id="boost-stage-lr" min="0.05" max="1" step="0.05" value="0.3"/></div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>TREES</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost" id="boost-stage-add">ADD TREE ▶</button>
+                  <button class="w-btn ghost" id="boost-stage-run">+10 ▶▶</button>
+                  <button class="w-btn ghost" id="boost-stage-reset">RESET</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="boost-stage-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">TREES ADDED</div><div class="r-value" id="boost-stage-m">0</div></div>
+              <div class="readout acc"><div class="r-label">TRAINING MSE</div><div class="r-value" id="boost-stage-mse">—</div></div>
+              <div class="readout"><div class="r-label">SHRINKAGE / TREE</div><div class="r-value" id="boost-stage-shrink">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">A wavy target (mint dots) is fit by depth-1 stumps added one at a time; the white line is the running ensemble \(F_m\), the small inset traces the training MSE. With \(\nu = 1\) the fit lurches and overshoots; drop \(\nu\) to 0.1 and each step is a gentle nudge — smoother, slower, and it generalizes better. Click ADD TREE to watch a single stump attack the current residuals, or +10 to fast-forward. This is EQ M15.1 in motion.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Gradient boosting for regression, from scratch: stumps fit to residuals
+import numpy as np
+rng = np.random.default_rng(0)
+
+x = np.linspace(-3, 3, 120)
+y = np.sin(x) + 0.15 * rng.standard_normal(x.size)   # noisy target
+
+def best_stump(x, r):                 # depth-1 tree: one threshold, two leaf means
+    order = np.argsort(x); xs, rs = x[order], r[order]
+    best = (np.inf, x.mean(), r.mean(), r.mean())
+    for i in range(5, len(xs) - 5):   # candidate split points
+        t = 0.5 * (xs[i - 1] + xs[i])
+        lo, hi = rs[:i].mean(), rs[i:].mean()
+        sse = ((rs[:i] - lo) ** 2).sum() + ((rs[i:] - hi) ** 2).sum()
+        if sse &lt; best[0]: best = (sse, t, lo, hi)
+    return best[1:]                   # threshold, left value, right value
+
+nu, M = 0.3, 40
+F = np.full_like(y, y.mean())         # F0 = mean (EQ M15.1, squared loss)
+loss = []
+for m in range(M):
+    r = y - F                         # negative gradient = residual (EQ M15.3)
+    t, lo, hi = best_stump(x, r)
+    h = np.where(x &lt; t, lo, hi)
+    F = F + nu * h                    # stagewise step (EQ M15.1)
+    loss.append(np.mean((y - F) ** 2))
+
+print(f"start MSE {np.mean((y - y.mean())**2):.4f} -&gt; after {M} trees {loss[-1]:.4f}")
+print("loss is monotonically non-increasing:", all(np.diff(loss) &lt;= 1e-9))
+plot_xy(list(range(1, M + 1)), loss)</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — try nu=1.0 (overshoots) or nu=0.05 (needs more trees)</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 15.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">15.2</span><h2>AdaBoost &amp; exponential loss — where it started</h2></div>
+        <p>Gradient boosting did not arrive first. <strong>AdaBoost</strong> (Freund &amp; Schapire, 1997) predates the gradient view and looks, at a glance, like a different algorithm: it maintains a <em>weight</em> on every training example, up-weights the ones the current ensemble gets wrong, and trains the next weak learner on that re-weighted distribution. Misclassified points shout louder; the next learner is forced to attend to them.</p>
+
+        <p>For binary labels \(y \in \{-1,+1\}\), each round fits a classifier \(h_m\), measures its weighted error \(\varepsilon_m\), and assigns it a vote \(\alpha_m\):</p>
+
+        <div class="eq"><span class="eq-tag">EQ M15.4 — ADABOOST: VOTE WEIGHT &amp; REWEIGHTING</span>
+        $$ \alpha_m = \tfrac12 \ln\!\frac{1-\varepsilon_m}{\varepsilon_m}, \qquad w_i \leftarrow w_i\,\exp\!\bigl(-\alpha_m\, y_i\, h_m(x_i)\bigr),\ \text{then renormalize} $$
+        <div class="eq-note">\(\varepsilon_m\) is the weighted error rate of learner \(m\). A learner barely better than chance (\(\varepsilon \to 0.5\)) gets vote \(\alpha \to 0\); a near-perfect one (\(\varepsilon \to 0\)) gets a large vote. The reweighting term \(\exp(-\alpha y_i h_m)\) is \(<1\) for a correct point (\(y_i h_m = +1\)) and \(>1\) for a wrong one (\(y_i h_m = -1\)), so <b>errors grow heavier and successes fade</b>. The final classifier is the sign of the weighted vote \(\sum_m \alpha_m h_m(x)\).</div>
+        </div>
+
+        <p>The bridge to Friedman is one of the cleaner results in machine learning. Friedman, Hastie and Tibshirani (2000) showed that <strong>AdaBoost is exactly forward stagewise additive modeling under the exponential loss</strong>:</p>
+
+        <div class="eq"><span class="eq-tag">EQ M15.5 — ADABOOST = STAGEWISE MINIMIZATION OF EXPONENTIAL LOSS</span>
+        $$ L\bigl(y, F(x)\bigr) = \exp\!\bigl(-y\,F(x)\bigr), \qquad F(x) = \sum_m \alpha_m h_m(x) $$
+        <div class="eq-note">Minimizing the exponential loss one term at a time <b>reproduces the AdaBoost weight update and the \(\alpha_m\) formula exactly</b> — the example weights \(w_i\) are nothing but \(\exp(-y_i F_{m-1}(x_i))\). So AdaBoost is gradient boosting with a specific loss, and the negative-gradient view of §15.1 subsumes it. The practical consequence: exponential loss punishes confident mistakes ferociously (it grows without bound as \(yF \to -\infty\)), which makes vanilla AdaBoost <b>sensitive to mislabeled data and outliers</b> — a known weakness that log-loss boosting (LogitBoost) softens.</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><div>Round \(m\): the current weak learner has weighted error \(\varepsilon_m = 0.30\). Its vote is \(\alpha_m = \tfrac12 \ln(0.70/0.30) = \tfrac12 \ln(2.333) = \tfrac12 (0.8473) = 0.4236\).</div></div>
+          <div class="x-step"><span class="x-n">02</span><div>A <em>correctly</em> classified point (\(y_i h_m = +1\)) is reweighted by \(\exp(-0.4236) = 0.655\) — its influence shrinks by about a third.</div></div>
+          <div class="x-step"><span class="x-n">03</span><div>A <em>misclassified</em> point (\(y_i h_m = -1\)) is reweighted by \(\exp(+0.4236) = 1.528\) — it grows by half, so the next learner cannot ignore it.</div></div>
+          <div class="x-step"><span class="x-n">04</span><div>The ratio of the two factors is \(1.528 / 0.655 = 2.333 = (1-\varepsilon)/\varepsilon\): exactly the odds the better-than-chance learner beat. After renormalizing, the total weight on errors rises to \(0.5\) — the next round faces a perfectly balanced fight.</div></div>
+          <span class="x-result">RESULT: ε = 0.30 → α = 0.424; errors ×1.53, correct ×0.66</span>
+        </div></div>
+        </div>
+
+        <div class="exercise" data-answer="0.4236" data-tol="0.01" data-hint="α = ½·ln((1−ε)/ε); plug in ε = 0.3.">
+          <div class="ex-q">An AdaBoost weak learner achieves weighted error \(\varepsilon_m = 0.3\). By EQ M15.4, what vote weight \(\alpha_m\) does it receive? (Give a decimal.)</div>
+          <div class="ex-reveal-src">\(\alpha_m = \tfrac12 \ln\!\dfrac{1-\varepsilon_m}{\varepsilon_m} = \tfrac12 \ln\!\dfrac{0.7}{0.3} = \tfrac12 \ln(2.3333) = \tfrac12 (0.84730) = \) <b>0.4236</b>. A learner exactly at chance (\(\varepsilon = 0.5\)) would get \(\alpha = \tfrac12\ln 1 = 0\) — no vote at all.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># AdaBoost weight-update demo on toy 1-D data (decision stumps)
+import numpy as np
+
+x = np.array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10.0])
+y = np.array([1, 1, 1,-1, 1,-1,-1, 1,-1,-1.0])   # not linearly separable by a stump
+w = np.full(y.size, 1.0 / y.size)                # uniform start
+
+def best_stump(x, y, w):                          # weighted-error optimal stump
+    best = (1.0, 0.0, 1)                          # (err, threshold, polarity)
+    for t in (x[:-1] + x[1:]) / 2:
+        for s in (+1, -1):
+            pred = np.where(x &lt; t, s, -s)
+            err = w[pred != y].sum()
+            if err &lt; best[0]: best = (err, t, s)
+    return best
+
+print(" round   eps    alpha   max-weight")
+for m in range(3):
+    eps, t, s = best_stump(x, y, w)
+    eps = min(max(eps, 1e-9), 1 - 1e-9)
+    alpha = 0.5 * np.log((1 - eps) / eps)         # EQ M15.4 vote weight
+    pred = np.where(x &lt; t, s, -s)
+    w = w * np.exp(-alpha * y * pred)             # reweight: errors up, correct down
+    w = w / w.sum()                               # renormalize to a distribution
+    print(f"  {m+1}    {eps:.3f}  {alpha:+.3f}    {w.max():.3f}")
+print("\nweights after 3 rounds:", np.round(w, 3))
+print("hard examples now carry the most weight (largest entries).")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — flip a label in y and watch its weight balloon</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 15.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">15.3</span><h2>XGBoost — regularization &amp; second-order gradients</h2></div>
+        <p><strong>XGBoost</strong> (Chen &amp; Guestrin, 2016) took Friedman's algorithm and made it production-grade. Two ideas matter most. First, it adds an <em>explicit regularization term</em> to the objective, penalizing trees that grow too many leaves or assign too-large leaf values. Second, it uses a <strong>second-order</strong> Taylor expansion of the loss — gradients <em>and</em> Hessians — so each tree solves a closer approximation of the true objective than first-order gradient boosting does.</p>
+
+        <div class="eq"><span class="eq-tag">EQ M15.6 — REGULARIZED SECOND-ORDER OBJECTIVE</span>
+        $$ \mathcal{L}^{(m)} \approx \sum_{i=1}^{n}\Bigl[g_i\,h_m(x_i) + \tfrac12 h_i\,h_m(x_i)^2\Bigr] + \gamma T + \tfrac12\lambda\sum_{j=1}^{T} w_j^2 $$
+        <div class="eq-note">\(g_i = \partial_F L\) and \(h_i = \partial_F^2 L\) are the first and second derivatives of the loss at the current prediction; \(T\) is the number of leaves, \(w_j\) their values. \(\gamma\) charges a fixed cost per leaf (so a split must earn its keep), and \(\lambda\) is an \(L_2\) penalty on leaf values (shrinking them toward zero). The Hessian \(h_i\) lets XGBoost <b>weight each example by how curved the loss is there</b> — confident-but-wrong points get more pull — which is why it converges in fewer trees than plain first-order GBM.</div>
+        </div>
+
+        <p>Because the objective is now a sum of independent per-leaf quadratics, the optimum has a closed form. For a leaf holding instance set \(I_j\) with gradient sum \(G_j=\sum_{i\in I_j} g_i\) and Hessian sum \(H_j=\sum_{i\in I_j} h_i\), the best leaf value and the resulting loss reduction are:</p>
+
+        <div class="eq"><span class="eq-tag">EQ M15.7 — OPTIMAL LEAF WEIGHT &amp; SPLIT GAIN</span>
+        $$ w_j^\star = -\frac{G_j}{H_j + \lambda}, \qquad \text{Gain} = \tfrac12\!\left[\frac{G_L^2}{H_L+\lambda} + \frac{G_R^2}{H_R+\lambda} - \frac{(G_L+G_R)^2}{H_L+H_R+\lambda}\right] - \gamma $$
+        <div class="eq-note">The leaf value is just the negative gradient sum, damped by the Hessian and \(\lambda\). The <b>Gain</b> scores a candidate split: the structure-score of the two children minus that of the parent, less the per-leaf cost \(\gamma\). XGBoost grows trees by greedily taking the highest-Gain split and <b>prunes any split whose Gain is negative</b> — \(\gamma\) is a built-in pre-pruning knob. This single formula is the engine behind every XGBoost split.</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><div>A leaf collects gradient sum \(G = -10\) and Hessian sum \(H = 5\); take regularization \(\lambda = 1\).</div></div>
+          <div class="x-step"><span class="x-n">02</span><div>Optimal leaf value: \(w^\star = -G/(H+\lambda) = -(-10)/(5+1) = 10/6 = 1.667\).</div></div>
+          <div class="x-step"><span class="x-n">03</span><div>Raise \(\lambda\) to 9: \(w^\star = 10/(5+9) = 0.714\). Larger \(\lambda\) pulls the leaf value toward zero — that is the \(L_2\) penalty doing its job.</div></div>
+          <div class="x-step"><span class="x-n">04</span><div>For a split with \(G_L=-6, H_L=3, G_R=-4, H_R=2\) (and \(\lambda=1, \gamma=0\)): Gain \(= \tfrac12[\,36/4 + 16/3 - 100/6\,] = \tfrac12[9 + 5.333 - 16.667] = \tfrac12(-2.333) = -1.167\). Negative — so XGBoost would <em>reject</em> this split.</div></div>
+          <span class="x-result">RESULT: G=−10, H=5, λ=1 → w* = 1.667</span>
+        </div></div>
+        </div>
+
+        <div class="exercise" data-answer="1.667" data-tol="0.01" data-hint="w* = −G/(H+λ); plug in G=−10, H=5, λ=1.">
+          <div class="ex-q">An XGBoost leaf has gradient sum \(G = -10\) and Hessian sum \(H = 5\), with \(L_2\) penalty \(\lambda = 1\). By EQ M15.7, what is its optimal leaf value \(w^\star\)? (Give a decimal.)</div>
+          <div class="ex-reveal-src">\(w^\star = -\dfrac{G}{H+\lambda} = -\dfrac{-10}{5+1} = \dfrac{10}{6} = \) <b>1.667</b>. With no regularization (\(\lambda = 0\)) it would be \(10/5 = 2.0\); the penalty shrinks the leaf toward zero, trading a little fit for stability.</div>
+        </div>
+
+        <p class="note"><strong>Beyond the formula.</strong> XGBoost also ships a sparsity-aware split finder (it learns a <em>default direction</em> for missing values rather than imputing), an approximate histogram-based split mode for large data, column and row subsampling à la random forests, and shrinkage on top — so EQ M15.1's \(\nu\) and EQ M15.6's \(\lambda,\gamma\) all coexist as separate regularizers. It was the algorithm that, for several years, won the majority of Kaggle's tabular competitions, and it remains the field's reference implementation.</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># XGBoost leaf math (EQ M15.7): leaf value and split gain, in pure numpy
+import numpy as np
+
+# per-instance first/second-order grads for a node (toy values)
+g = np.array([-2.0, -3.0, -5.0,  1.0,  2.0,  3.0])
+h = np.array([ 1.0,  1.0,  1.0,  1.0,  1.0,  1.0])
+lam, gamma = 1.0, 0.0
+
+def leaf_value(G, H):  return -G / (H + lam)
+def score(G, H):       return G * G / (H + lam)          # structure score
+
+G, H = g.sum(), h.sum()
+print(f"whole node: G={G:.1f} H={H:.1f}  w*={leaf_value(G,H):.4f}")
+
+best = (-np.inf, None)
+for s in range(1, len(g)):                                # try each ordered split
+    GL, HL = g[:s].sum(), h[:s].sum()
+    GR, HR = g[s:].sum(), h[s:].sum()
+    gain = 0.5 * (score(GL,HL) + score(GR,HR) - score(G,H)) - gamma
+    print(f"split after idx {s}: gain={gain:+.4f}  "
+          f"wL={leaf_value(GL,HL):+.3f} wR={leaf_value(GR,HR):+.3f}")
+    if gain &gt; best[0]: best = (gain, s)
+print(f"\nbest split is after index {best[1]} with gain {best[0]:.4f}")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — raise gamma until the best gain goes negative (no split)</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="boost-lr" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT M15.2 — LEARNING-RATE × N_ESTIMATORS</span><span class="w-sub">TRAIN VS HELD-OUT · THE SHRINKAGE TRADE-OFF</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>LEARNING RATE ν <output id="boost-lr-eta-out">0.10</output></label><input type="range" id="boost-lr-eta" min="0.02" max="1" step="0.02" value="0.1"/></div>
+              <div class="ctl"><label>N_ESTIMATORS <output id="boost-lr-n-out">200</output></label><input type="range" id="boost-lr-n" min="5" max="500" step="5" value="200"/></div>
+            </div>
+            <canvas class="w-canvas" id="boost-lr-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">TRAIN LOSS</div><div class="r-value" id="boost-lr-train">—</div></div>
+              <div class="readout acc"><div class="r-label">HELD-OUT LOSS</div><div class="r-value" id="boost-lr-val">—</div></div>
+              <div class="readout"><div class="r-label">EFFECTIVE WORK ν·M</div><div class="r-value" id="boost-lr-work">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Mint = training loss, blue = held-out loss, the white line marks your current tree budget \(M\). Small \(\nu\) with many trees rides the held-out minimum down and sits there; large \(\nu\) drops training loss fast but the held-out curve turns up — overfitting. The classic recipe falls out visually: <b>lower the learning rate, add trees, and stop early</b> at the held-out minimum. Notice \(\nu\) and \(M\) trade off — halving \(\nu\) needs roughly twice the trees to reach the same fit.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 15.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">15.4</span><h2>LightGBM — histograms &amp; leaf-wise growth</h2></div>
+        <p><strong>LightGBM</strong> (Ke et al., 2017) keeps XGBoost's objective but rebuilds the machinery for speed and memory at scale. Three engineering bets define it.</p>
+
+        <p><strong>Histogram binning.</strong> Finding the best split by scanning every distinct feature value is \(O(n\,d)\) per level and dominated by sorting. LightGBM instead buckets each feature into a fixed number of bins (default 255) once, up front, then builds <em>histograms</em> of gradient and Hessian sums per bin. Split-finding becomes a cheap scan over bins, not rows:</p>
+
+        <div class="eq"><span class="eq-tag">EQ M15.8 — HISTOGRAM SPLIT FINDING</span>
+        $$ \text{cost: } O(n\,d) \;\longrightarrow\; O\bigl(\#\text{bins}\cdot d\bigr), \qquad G_{\text{bin } b} = \!\!\sum_{i:\, x_i \in b}\!\! g_i,\quad H_{\text{bin } b} = \!\!\sum_{i:\, x_i \in b}\!\! h_i $$
+        <div class="eq-note">Per node, accumulate each example's \((g_i,h_i)\) into its bin, then evaluate the EQ M15.7 Gain at the \(\#\text{bins}-1\) candidate cut points. With \(\#\text{bins}=255 \ll n\), this is dramatically faster and uses far less memory, at the cost of a slightly coarser split grid. A further trick — <b>histogram subtraction</b> — computes a child's histogram as parent minus sibling, halving the work again. This binning is what made boosting practical on tens of millions of rows.</div>
+        </div>
+
+        <p><strong>Leaf-wise growth.</strong> XGBoost grows trees <em>level-wise</em> (split every node at a depth before going deeper). LightGBM grows <em>leaf-wise</em>: at each step it splits the single leaf with the largest Gain, anywhere in the tree. For a fixed number of leaves this lowers loss faster — but it produces deep, unbalanced trees that overfit small data, so LightGBM caps growth with <code>num_leaves</code> and <code>max_depth</code> rather than depth alone.</p>
+
+        <div class="eq"><span class="eq-tag">EQ M15.9 — LEAF-WISE VS LEVEL-WISE</span>
+        $$ \text{leaf-wise: split } \arg\max_{\ell \in \text{leaves}} \text{Gain}(\ell), \qquad \text{controlled by } \texttt{num\_leaves}\ (\le 2^{\texttt{max\_depth}}) $$
+        <div class="eq-note">Level-wise keeps trees balanced and shallow; leaf-wise chases the steepest available descent, so it reaches a lower training loss with the same leaf budget but is <b>more prone to overfit</b>. The key tuning rule: set <code>num_leaves</code> meaningfully below \(2^{\texttt{max\_depth}}\). LightGBM also adds GOSS (keep large-gradient rows, subsample small-gradient ones) and EFB (bundle mutually-exclusive sparse features), the two tricks its name — <em>Gradient-based One-Side Sampling</em> + <em>Exclusive Feature Bundling</em> — refers to.</div>
+        </div>
+
+        <div class="exercise" data-answer="255" data-tol="0" data-hint="b bins give b−1 interior cut points; with 256 bins that is 256−1.">
+          <div class="ex-q">LightGBM bins a continuous feature into 256 histogram bins. How many distinct interior split (cut) points does the histogram offer for that feature? (Give an integer.)</div>
+          <div class="ex-reveal-src">A feature divided into \(b\) bins has \(b - 1\) boundaries between adjacent bins, and each boundary is a candidate threshold. With \(b = 256\): \(256 - 1 = \) <b>255</b> candidate cut points — instead of one per distinct value, which is what makes EQ M15.8 cheap.</div>
+        </div>
+
+        <div class="exercise" data-answer="0.0078125" data-tol="0.02" data-hint="leaf-wise overfit risk grows as num_leaves approaches 2^max_depth; compute 8 / 2^10.">
+          <div class="ex-q">A LightGBM model uses <code>num_leaves = 8</code> with <code>max_depth = 10</code>. What fraction of the depth-10 capacity \(2^{\texttt{max\_depth}}\) does it actually use? (Give a decimal.)</div>
+          <div class="ex-reveal-src">Capacity is \(2^{10} = 1024\) leaves; the model uses 8. Fraction \(= 8 / 1024 = \) <b>0.0078125</b>. Keeping <code>num_leaves</code> far below \(2^{\texttt{max\_depth}}\) (EQ M15.9) is the standard guard against leaf-wise overfitting — a deep but narrow tree.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># LightGBM histogram split (EQ M15.8): bin once, then scan bins not rows
+import numpy as np
+rng = np.random.default_rng(2)
+
+n = 20000
+x = rng.uniform(0, 1, n)                       # one feature
+g = (x - 0.6) + 0.1 * rng.standard_normal(n)   # toy gradients (sign flips near 0.6)
+h = np.ones(n)
+lam = 1.0
+
+nbins = 256
+edges = np.linspace(0, 1, nbins + 1)
+b = np.clip(np.digitize(x, edges) - 1, 0, nbins - 1)      # bin index per row
+Gb = np.bincount(b, weights=g, minlength=nbins)           # gradient histogram
+Hb = np.bincount(b, weights=h, minlength=nbins)           # hessian histogram
+
+G, H = Gb.sum(), Hb.sum()
+GL = np.cumsum(Gb)[:-1]; HL = np.cumsum(Hb)[:-1]          # left side at each cut
+GR, HR = G - GL, H - HL
+gain = 0.5 * (GL**2/(HL+lam) + GR**2/(HR+lam) - G**2/(H+lam))
+cut = np.argmax(gain)
+print(f"rows={n}, but only {nbins} bins scanned to find the split")
+print(f"best cut at bin {cut}  ~ x = {edges[cut+1]:.3f}  (true sign flip at 0.600)")
+print(f"best gain = {gain[cut]:.2f}")
+plot_xy(list(range(len(gain))), gain.tolist())</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — drop nbins to 16 and watch the cut get coarser</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 15.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">15.5</span><h2>CatBoost — ordered boosting &amp; native categoricals</h2></div>
+        <p><strong>CatBoost</strong> (Prokhorenkova et al., 2018) targets a subtle bug that the others share: <strong>target leakage</strong>. It shows up in two places — when you encode a categorical feature using the target, and when you compute residuals — and CatBoost's signature move, <em>ordered boosting</em>, is one mechanism that fixes both.</p>
+
+        <p><strong>Ordered target statistics.</strong> A natural way to turn a categorical value (say, a city) into a number is to replace it with the average target for that category — <em>target</em> or <em>mean</em> encoding. Done naïvely, this leaks: the row's own label is in the average used to encode it, so the model peeks at the answer. CatBoost computes the statistic using <em>only the rows that came before</em> in a random permutation:</p>
+
+        <div class="eq"><span class="eq-tag">EQ M15.10 — ORDERED TARGET STATISTIC</span>
+        $$ \hat{x}_i \;=\; \frac{\displaystyle\sum_{j&lt;i}\,\mathbb{1}[x_j = x_i]\,y_j \;+\; a\,p}{\displaystyle\sum_{j&lt;i}\,\mathbb{1}[x_j = x_i] \;+\; a} $$
+        <div class="eq-note">For row \(i\), encode its category using only earlier rows \(j < i\) in a random permutation; \(a>0\) is a smoothing weight and \(p\) a prior (typically the global mean of \(y\)). Because row \(i\)'s own label never enters its own encoding, <b>the target cannot leak</b> — and the \(a\,p\) prior keeps rare categories from a 0/1 estimate off a single example. The early rows are noisy (few priors) but the order is reshuffled across trees, averaging the noise out.</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><div>Category "Paris" appears in earlier rows with labels \(y = (1, 0, 1)\): so \(\sum_{j&lt;i}\mathbb{1}[\cdot]y_j = 2\) and the count is 3.</div></div>
+          <div class="x-step"><span class="x-n">02</span><div>Take prior \(p = 0.5\) (global mean) and smoothing \(a = 1\). The ordered statistic is \(\hat{x}_i = (2 + 1\cdot 0.5)/(3 + 1) = 2.5/4 = 0.625\).</div></div>
+          <div class="x-step"><span class="x-n">03</span><div>The current row's own label is <em>not</em> in that sum — no leakage. A naïve mean-encoder would include it, inflating the estimate toward the row's answer.</div></div>
+          <div class="x-step"><span class="x-n">04</span><div>For the very first "Paris" row (no earlier examples), the count is 0 and \(\hat{x} = (0 + 0.5)/(0+1) = 0.5\) — it falls back entirely on the prior, exactly as it should.</div></div>
+          <span class="x-result">RESULT: earlier y=(1,0,1), p=0.5, a=1 → encoding 0.625</span>
+        </div></div>
+        </div>
+
+        <div class="exercise" data-answer="0.625" data-tol="0.01" data-hint="x̂ = (Σ y_earlier + a·p)/(count + a); use Σy=2, count=3, a=1, p=0.5.">
+          <div class="ex-q">CatBoost encodes a categorical value whose earlier rows had labels summing to \(\sum y = 2\) over a count of 3, with prior \(p = 0.5\) and smoothing \(a = 1\). By EQ M15.10, what is the ordered target statistic \(\hat{x}_i\)? (Give a decimal.)</div>
+          <div class="ex-reveal-src">\(\hat{x}_i = \dfrac{\sum_{j&lt;i} y_j + a\,p}{\text{count} + a} = \dfrac{2 + 1\times 0.5}{3 + 1} = \dfrac{2.5}{4} = \) <b>0.625</b>. The current row's own label is excluded, so the encoding cannot leak the target.</div>
+        </div>
+
+        <p><strong>Ordered boosting.</strong> The same leakage lurks in the residuals themselves: the standard GBM uses a model trained on row \(i\) to compute row \(i\)'s gradient, a mild form of target peeking that biases the residuals and inflates apparent accuracy (a "prediction shift"). CatBoost maintains models trained on prefixes of a permutation, so the gradient for row \(i\) always comes from a model that <em>never saw</em> row \(i\). The result is less overfitting on small and noisy datasets — its main empirical edge.</p>
+
+        <p class="note"><strong>Honest comparison.</strong> No library dominates across the board. Benchmarks (and the contested but useful 2022 Grinsztajn et al. study) agree on the broad strokes: all three beat untuned neural nets on typical tabular data, and <em>tuned</em>, the three are usually within noise of one another. The real differentiators are operational — LightGBM tends to be fastest to train, CatBoost is strongest out-of-the-box on heavily categorical data and needs the least preprocessing, and XGBoost is the most battle-tested with the widest ecosystem. The defensible claim is engineering, not accuracy: <strong>pick by your data shape and constraints, then tune.</strong></p>
+
+        <table class="data">
+          <thead><tr><th>Dimension</th><th>XGBoost</th><th>LightGBM</th><th>CatBoost</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Tree growth</strong></td><td class="m">level-wise (depth-first symmetric)</td><td class="m">leaf-wise (best-first)</td><td class="hl">symmetric / oblivious trees</td></tr>
+            <tr><td><strong>Split finding</strong></td><td class="m">exact + histogram</td><td class="m">histogram (GOSS, EFB)</td><td class="m">histogram</td></tr>
+            <tr><td><strong>Categoricals</strong></td><td class="m">manual encoding (now native too)</td><td class="m">native (Fisher grouping)</td><td class="hl">native ordered TS (EQ M15.10)</td></tr>
+            <tr><td><strong>Leakage guard</strong></td><td class="m">shrinkage + subsampling</td><td class="m">shrinkage + subsampling</td><td class="hl">ordered boosting</td></tr>
+            <tr><td><strong>Usual edge</strong></td><td class="m">ecosystem, maturity</td><td class="m">speed on big data</td><td class="m">categoricals, low tuning</td></tr>
+          </tbody>
+        </table>
+
+        <div class="widget" id="boost-matrix" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT M15.3 — LIBRARY COMPARISON MATRIX</span><span class="w-sub">XGBOOST · LIGHTGBM · CATBOOST · PICK BY CONSTRAINT</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>WHAT MATTERS MOST?</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-boost-pri="speed">SPEED</button>
+                  <button class="w-btn ghost" data-boost-pri="cats">CATEGORICALS</button>
+                  <button class="w-btn ghost" data-boost-pri="small">SMALL DATA</button>
+                  <button class="w-btn ghost" data-boost-pri="eco">ECOSYSTEM</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="boost-matrix-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">BEST FIT</div><div class="r-value" id="boost-matrix-best">—</div></div>
+              <div class="readout"><div class="r-label">WHY</div><div class="r-value" id="boost-matrix-why" style="font-size:11px;letter-spacing:.02em;">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Pick the constraint that dominates your problem and the matrix scores each library on five axes (training speed, native-categorical handling, small-data robustness, raw tuned accuracy, ecosystem maturity), highlighting the recommended pick. The lesson is the section's thesis made tactile: all three are gradient boosting, so you choose on <b>engineering fit</b>, not on a mythical accuracy gap.</div>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>You can now build the model that wins the leaderboard — but a leaderboard score is only as honest as the split that produced it.</strong> The MLOps volume opens with the discipline that decides whether any of this generalizes: resampling and cross-validation — k-fold, stratified, grouped, and time-series splits, and the leakage traps that quietly turn a 0.95 held-out score into fiction. MLOps · Chapter 01: Resampling &amp; Cross-Validation.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 15.R — REFERENCES ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">15.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://doi.org/10.1214/aos/1013203451" target="_blank" rel="noopener">Friedman, J. H. (2001). <span class="ref-venue">Greedy Function Approximation: A Gradient Boosting Machine</span>.</a> <span class="ref-meta">Annals of Statistics 29(5) — the gradient-boosting framework of §15.1 (EQ M15.1–M15.3).</span></li>
+          <li><a href="https://doi.org/10.1006/jcss.1997.1504" target="_blank" rel="noopener">Freund, Y. &amp; Schapire, R. E. (1997). <span class="ref-venue">A Decision-Theoretic Generalization of On-Line Learning and an Application to Boosting</span>.</a> <span class="ref-meta">Journal of Computer and System Sciences 55(1) — the original AdaBoost (EQ M15.4).</span></li>
+          <li><a href="https://doi.org/10.1214/aos/1016218223" target="_blank" rel="noopener">Friedman, J., Hastie, T. &amp; Tibshirani, R. (2000). <span class="ref-venue">Additive Logistic Regression: A Statistical View of Boosting</span>.</a> <span class="ref-meta">Annals of Statistics 28(2) — AdaBoost as stagewise exponential-loss minimization (EQ M15.5).</span></li>
+          <li><a href="https://doi.org/10.1145/2939672.2939785" target="_blank" rel="noopener">Chen, T. &amp; Guestrin, C. (2016). <span class="ref-venue">XGBoost: A Scalable Tree Boosting System</span>.</a> <span class="ref-meta">KDD 2016 — regularized second-order objective and split gain (EQ M15.6–M15.7).</span></li>
+          <li><a href="https://papers.nips.cc/paper/6907-lightgbm-a-highly-efficient-gradient-boosting-decision-tree" target="_blank" rel="noopener">Ke, G., Meng, Q., Finley, T., Wang, T., Chen, W., Ma, W., Ye, Q. &amp; Liu, T.-Y. (2017). <span class="ref-venue">LightGBM: A Highly Efficient Gradient Boosting Decision Tree</span>.</a> <span class="ref-meta">NeurIPS 2017 — histogram binning, leaf-wise growth, GOSS &amp; EFB (EQ M15.8–M15.9).</span></li>
+          <li><a href="https://arxiv.org/abs/1706.09516" target="_blank" rel="noopener">Prokhorenkova, L., Gusev, G., Vorobev, A., Dorogush, A. V. &amp; Gulin, A. (2018). <span class="ref-venue">CatBoost: Unbiased Boosting with Categorical Features</span>.</a> <span class="ref-meta">NeurIPS 2018 — ordered boosting and ordered target statistics (EQ M15.10).</span></li>
+          <li><a href="https://arxiv.org/abs/2207.08815" target="_blank" rel="noopener">Grinsztajn, L., Oyallon, E. &amp; Varoquaux, G. (2022). <span class="ref-venue">Why Do Tree-Based Models Still Outperform Deep Learning on Typical Tabular Data?</span>.</a> <span class="ref-meta">NeurIPS 2022 Datasets &amp; Benchmarks — the contested empirical case behind §15.5's honest comparison.</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../ml/14-ensembles.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">14</span> Ensembles</div></a>
+        <a class="next" href="../mlops/01-resampling-cv.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">01</span> MLOps · Resampling &amp; CV</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — MACHINE LEARNING · CH 15</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* chapter instruments — single IIFE, no globals */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+
+  /* shared: a fixed wavy 1-D target sampled on a grid, with a held-out split */
+  function buildData() {
+    var rng = FM.mulberry32(20240613);
+    function gauss() {
+      var u = Math.max(1 - rng(), 1e-12), v = rng();
+      return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+    }
+    var xs = [], ys = [], i, x;
+    for (i = 0; i < 80; i++) {
+      x = -3 + 6 * i / 79;
+      xs.push(x);
+      ys.push(Math.sin(1.4 * x) + 0.35 * Math.sin(3.1 * x) + 0.18 * gauss());
+    }
+    return { xs: xs, ys: ys };
+  }
+
+  /* depth-1 regression stump fit to residuals r at inputs xs (SSE-optimal cut) */
+  function bestStump(xs, r) {
+    var n = xs.length, i, k, t, loSum, loN, hiSum, hiN;
+    /* xs is already sorted ascending */
+    var best = { sse: Infinity, t: xs[0] - 1, lo: 0, hi: 0 };
+    var total = 0;
+    for (i = 0; i < n; i++) total += r[i];
+    for (i = 4; i < n - 4; i++) {
+      t = 0.5 * (xs[i - 1] + xs[i]);
+      loSum = 0; loN = i; hiSum = 0; hiN = n - i;
+      for (k = 0; k < i; k++) loSum += r[k];
+      for (k = i; k < n; k++) hiSum += r[k];
+      var lo = loSum / loN, hi = hiSum / hiN;
+      var sse = 0;
+      for (k = 0; k < i; k++) sse += (r[k] - lo) * (r[k] - lo);
+      for (k = i; k < n; k++) sse += (r[k] - hi) * (r[k] - hi);
+      if (sse < best.sse) { best.sse = sse; best.t = t; best.lo = lo; best.hi = hi; }
+    }
+    return best;
+  }
+
+  /* ============ INSTRUMENT M15.1 — STAGEWISE BOOSTING STEPPER ============ */
+  (function stagewiseStepper() {
+    var root = document.getElementById("boost-stage");
+    if (!root) return;
+    var canvas = document.getElementById("boost-stage-canvas");
+    var sLr = document.getElementById("boost-stage-lr"), oLr = document.getElementById("boost-stage-lr-out");
+    var mEl = document.getElementById("boost-stage-m");
+    var mseEl = document.getElementById("boost-stage-mse");
+    var shEl = document.getElementById("boost-stage-shrink");
+    var addBtn = document.getElementById("boost-stage-add");
+    var runBtn = document.getElementById("boost-stage-run");
+    var resetBtn = document.getElementById("boost-stage-reset");
+
+    var D = buildData(), N = D.xs.length;
+    var F = [], lossHist = [], M = 0, timer = null;
+
+    function meanY() { var s = 0, i; for (i = 0; i < N; i++) s += D.ys[i]; return s / N; }
+    function mse() { var s = 0, i; for (i = 0; i < N; i++) s += (D.ys[i] - F[i]) * (D.ys[i] - F[i]); return s / N; }
+
+    function reset() {
+      var m0 = meanY(), i;
+      F = []; for (i = 0; i < N; i++) F.push(m0);
+      M = 0; lossHist = [mse()];
+      render();
+    }
+
+    function addTree() {
+      var nu = +sLr.value, i;
+      var r = []; for (i = 0; i < N; i++) r.push(D.ys[i] - F[i]);
+      var st = bestStump(D.xs, r);
+      for (i = 0; i < N; i++) F[i] += nu * (D.xs[i] < st.t ? st.lo : st.hi);
+      M += 1; lossHist.push(mse());
+      render();
+    }
+
+    function render() {
+      var nu = +sLr.value;
+      oLr.textContent = nu.toFixed(2);
+      mEl.textContent = String(M);
+      mseEl.textContent = mse().toFixed(4);
+      shEl.textContent = "×" + nu.toFixed(2);
+
+      var sc = FM.setupCanvas(canvas, 300), ctx = sc.ctx, W = sc.w, H = 300;
+      ctx.clearRect(0, 0, W, H);
+      var padL = 34, padR = 14, padT = 14, padB = 24;
+      var pw = W - padL - padR, ph = H - padT - padB;
+      var XMIN = -3.2, XMAX = 3.2, YMIN = -1.8, YMAX = 1.8;
+      function PX(x) { return padL + (x - XMIN) / (XMAX - XMIN) * pw; }
+      function PY(y) { return padT + (1 - (y - YMIN) / (YMAX - YMIN)) * ph; }
+
+      ctx.strokeStyle = FM.C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(padL, padT, pw, ph);
+      ctx.beginPath(); ctx.moveTo(padL, PY(0)); ctx.lineTo(padL + pw, PY(0)); ctx.stroke();
+
+      /* target points (mint) */
+      ctx.fillStyle = "rgba(166,242,204,.85)";
+      var i;
+      for (i = 0; i < N; i++) { ctx.beginPath(); ctx.arc(PX(D.xs[i]), PY(D.ys[i]), 2.3, 0, Math.PI * 2); ctx.fill(); }
+
+      /* ensemble fit (white step line) */
+      ctx.strokeStyle = FM.C.BRIGHT; ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      for (i = 0; i < N; i++) { if (i === 0) ctx.moveTo(PX(D.xs[i]), PY(F[i])); else ctx.lineTo(PX(D.xs[i]), PY(F[i])); }
+      ctx.stroke();
+
+      /* inset: loss curve */
+      var iw = 92, ih = 54, ix = padL + pw - iw - 8, iy = padT + 8;
+      ctx.fillStyle = "rgba(0,0,0,.55)"; ctx.fillRect(ix, iy, iw, ih);
+      ctx.strokeStyle = FM.C.HAIR; ctx.strokeRect(ix + 0.5, iy + 0.5, iw - 1, ih - 1);
+      var lmax = lossHist[0] || 1, j, n2 = lossHist.length;
+      ctx.strokeStyle = FM.C.BLUE; ctx.lineWidth = 1.4; ctx.beginPath();
+      for (j = 0; j < n2; j++) {
+        var lx = ix + (n2 > 1 ? (j / (n2 - 1)) * (iw - 6) : 0) + 3;
+        var ly = iy + ih - 4 - (lossHist[j] / lmax) * (ih - 8);
+        if (j === 0) ctx.moveTo(lx, ly); else ctx.lineTo(lx, ly);
+      }
+      ctx.stroke();
+      ctx.font = FM.C.MONO; ctx.fillStyle = FM.C.MUT; ctx.textAlign = "left";
+      ctx.fillText("TRAIN MSE", ix + 4, iy + 11);
+
+      ctx.font = FM.C.MONO; ctx.textAlign = "left";
+      ctx.fillStyle = FM.C.MINT; ctx.fillText("● TARGET", padL + 6, padT + ph - 8);
+      ctx.fillStyle = FM.C.BRIGHT; ctx.fillText("— Fₘ", padL + 64, padT + ph - 8);
+    }
+
+    addBtn.addEventListener("click", addTree);
+    resetBtn.addEventListener("click", function () { if (timer) { clearInterval(timer); timer = null; } reset(); });
+    runBtn.addEventListener("click", function () {
+      if (timer) { clearInterval(timer); timer = null; return; }
+      var steps = 0;
+      timer = setInterval(function () {
+        addTree(); steps += 1;
+        if (steps >= 10) { clearInterval(timer); timer = null; }
+      }, 90);
+    });
+    sLr.addEventListener("input", function () { oLr.textContent = (+sLr.value).toFixed(2); shEl.textContent = "×" + (+sLr.value).toFixed(2); });
+    window.addEventListener("resize", render);
+    reset();
+  })();
+
+  /* ============ INSTRUMENT M15.2 — LEARNING-RATE × N_ESTIMATORS ============ */
+  (function lrTradeoff() {
+    var root = document.getElementById("boost-lr");
+    if (!root) return;
+    var canvas = document.getElementById("boost-lr-canvas");
+    var sEta = document.getElementById("boost-lr-eta"), oEta = document.getElementById("boost-lr-eta-out");
+    var sN = document.getElementById("boost-lr-n"), oN = document.getElementById("boost-lr-n-out");
+    var trEl = document.getElementById("boost-lr-train");
+    var vaEl = document.getElementById("boost-lr-val");
+    var wkEl = document.getElementById("boost-lr-work");
+
+    var D = buildData(), N = D.xs.length;
+    /* deterministic train/val split: even idx = train, odd idx = held-out */
+    var trIdx = [], vaIdx = [], i;
+    for (i = 0; i < N; i++) (i % 2 === 0 ? trIdx : vaIdx).push(i);
+
+    var MAXM = 500;
+    /* precompute, for a given eta, the train & val loss curves over m=0..MAXM.
+       Cache keyed by eta so dragging n_estimators is instant. */
+    var cache = {};
+
+    function curvesFor(eta) {
+      var key = eta.toFixed(2);
+      if (cache[key]) return cache[key];
+      var F = [], j, k;
+      var mY = 0; for (k = 0; k < trIdx.length; k++) mY += D.ys[trIdx[k]];
+      mY /= trIdx.length;
+      for (j = 0; j < N; j++) F.push(mY);
+      function lossOn(idx) { var s = 0, q; for (q = 0; q < idx.length; q++) { var d = D.ys[idx[q]] - F[idx[q]]; s += d * d; } return s / idx.length; }
+      var tr = [lossOn(trIdx)], va = [lossOn(vaIdx)];
+      /* fit stumps on TRAIN residuals only */
+      var trX = []; for (k = 0; k < trIdx.length; k++) trX.push(D.xs[trIdx[k]]);
+      var m;
+      for (m = 0; m < MAXM; m++) {
+        var r = []; for (k = 0; k < trIdx.length; k++) r.push(D.ys[trIdx[k]] - F[trIdx[k]]);
+        var st = bestStump(trX, r);
+        for (j = 0; j < N; j++) F[j] += eta * (D.xs[j] < st.t ? st.lo : st.hi);
+        tr.push(lossOn(trIdx)); va.push(lossOn(vaIdx));
+      }
+      cache[key] = { tr: tr, va: va };
+      return cache[key];
+    }
+
+    function render() {
+      var eta = +sEta.value, M = +sN.value;
+      oEta.textContent = eta.toFixed(2);
+      oN.textContent = String(M);
+      var c = curvesFor(eta);
+      trEl.textContent = c.tr[M].toFixed(4);
+      vaEl.textContent = c.va[M].toFixed(4);
+      wkEl.textContent = (eta * M).toFixed(1);
+
+      var sc = FM.setupCanvas(canvas, 300), ctx = sc.ctx, W = sc.w, H = 300;
+      ctx.clearRect(0, 0, W, H);
+      var padL = 38, padR = 14, padT = 14, padB = 26;
+      var pw = W - padL - padR, ph = H - padT - padB;
+      /* y-range from data */
+      var ymax = 0, j;
+      for (j = 0; j <= MAXM; j++) { if (c.tr[j] > ymax) ymax = c.tr[j]; if (c.va[j] > ymax) ymax = c.va[j]; }
+      ymax = ymax * 1.05 || 1;
+      function X(m) { return padL + (m / MAXM) * pw; }
+      function Y(l) { return padT + (1 - l / ymax) * ph; }
+
+      ctx.strokeStyle = FM.C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(padL, padT, pw, ph);
+      ctx.font = FM.C.MONO; ctx.fillStyle = FM.C.MUT;
+      ctx.textAlign = "center";
+      var g;
+      for (g = 0; g <= MAXM; g += 100) ctx.fillText(String(g), X(g), padT + ph + 16);
+      ctx.fillText("n_estimators", padL + pw / 2, padT + ph + 24);
+      ctx.textAlign = "right";
+      ctx.fillText(ymax.toFixed(2), padL - 5, padT + 8);
+      ctx.fillText("0", padL - 5, padT + ph);
+
+      function curve(arr, color) {
+        ctx.strokeStyle = color; ctx.lineWidth = 1.8; ctx.beginPath();
+        for (j = 0; j <= MAXM; j++) { if (j === 0) ctx.moveTo(X(j), Y(arr[j])); else ctx.lineTo(X(j), Y(arr[j])); }
+        ctx.stroke();
+      }
+      curve(c.tr, FM.C.MINT);
+      curve(c.va, FM.C.BLUE);
+
+      /* held-out minimum marker */
+      var bestM = 0, bestV = Infinity;
+      for (j = 0; j <= MAXM; j++) if (c.va[j] < bestV) { bestV = c.va[j]; bestM = j; }
+      ctx.setLineDash([3, 3]); ctx.strokeStyle = "rgba(78,138,247,.5)"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(X(bestM), padT); ctx.lineTo(X(bestM), padT + ph); ctx.stroke();
+      ctx.setLineDash([]);
+
+      /* current budget M (solid white) */
+      ctx.strokeStyle = FM.C.BRIGHT; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(X(M), padT); ctx.lineTo(X(M), padT + ph); ctx.stroke();
+
+      ctx.font = FM.C.MONO; ctx.textAlign = "left";
+      ctx.fillStyle = FM.C.MINT; ctx.fillText("TRAIN", padL + 6, padT + 14);
+      ctx.fillStyle = FM.C.BLUE; ctx.fillText("HELD-OUT (min @ " + bestM + ")", padL + 6, padT + 27);
+    }
+
+    sEta.addEventListener("input", render);
+    sN.addEventListener("input", render);
+    window.addEventListener("resize", render);
+    render();
+  })();
+
+  /* ============ INSTRUMENT M15.3 — LIBRARY COMPARISON MATRIX ============ */
+  (function libraryMatrix() {
+    var root = document.getElementById("boost-matrix");
+    if (!root) return;
+    var canvas = document.getElementById("boost-matrix-canvas");
+    var bestEl = document.getElementById("boost-matrix-best");
+    var whyEl = document.getElementById("boost-matrix-why");
+    var btns = root.querySelectorAll("[data-boost-pri]");
+    var pri = "speed";
+
+    /* axes and per-library scores (0..1), grounded in the section's prose */
+    var AXES = ["TRAIN SPEED", "CATEGORICALS", "SMALL DATA", "TUNED ACCURACY", "ECOSYSTEM"];
+    var LIB = {
+      XGBoost:  { color: FM.C.BLUE, s: [0.70, 0.65, 0.80, 0.92, 0.98] },
+      LightGBM: { color: FM.C.MINT, s: [0.98, 0.78, 0.62, 0.92, 0.85] },
+      CatBoost: { color: FM.C.RED,  s: [0.74, 0.98, 0.90, 0.92, 0.70] }
+    };
+    var ORDER = ["XGBoost", "LightGBM", "CatBoost"];
+    /* which axis each priority emphasizes, plus the recommended pick + reason */
+    var PRI = {
+      speed: { axis: 0, best: "LightGBM", why: "histogram + GOSS/EFB → fastest on big data" },
+      cats:  { axis: 1, best: "CatBoost", why: "native ordered target statistics, no manual encoding" },
+      small: { axis: 2, best: "CatBoost", why: "ordered boosting curbs overfit on small/noisy data" },
+      eco:   { axis: 4, best: "XGBoost",  why: "most mature, widest tooling and deployment support" }
+    };
+
+    function render() {
+      var conf = PRI[pri];
+      bestEl.textContent = conf.best;
+      whyEl.textContent = conf.why;
+
+      var sc = FM.setupCanvas(canvas, 300), ctx = sc.ctx, W = sc.w, H = 300;
+      ctx.clearRect(0, 0, W, H);
+      var padL = 120, padR = 18, padT = 22, padB = 18;
+      var pw = W - padL - padR;
+      var rows = AXES.length, rh = (H - padT - padB) / rows;
+      var barH = 8, gap = 4;
+
+      ctx.font = FM.C.MONO;
+      var a, li, lib;
+      for (a = 0; a < rows; a++) {
+        var y0 = padT + a * rh;
+        /* axis label */
+        ctx.textAlign = "right"; ctx.fillStyle = (a === conf.axis) ? FM.C.BRIGHT : FM.C.SEC;
+        ctx.fillText(AXES[a], padL - 10, y0 + rh / 2 + 3);
+        /* highlight the active axis band */
+        if (a === conf.axis) {
+          ctx.fillStyle = "rgba(166,242,204,.06)";
+          ctx.fillRect(padL - 6, y0 + 2, pw + 6, rh - 4);
+        }
+        /* three bars */
+        for (li = 0; li < ORDER.length; li++) {
+          lib = LIB[ORDER[li]];
+          var by = y0 + (rh - (barH * 3 + gap * 2)) / 2 + li * (barH + gap);
+          var val = lib.s[a];
+          ctx.fillStyle = "rgba(47,50,52,.5)";
+          ctx.fillRect(padL, by, pw, barH);
+          ctx.globalAlpha = (ORDER[li] === conf.best) ? 1 : 0.45;
+          ctx.fillStyle = lib.color;
+          ctx.fillRect(padL, by, pw * val, barH);
+          ctx.globalAlpha = 1;
+        }
+      }
+
+      /* legend */
+      ctx.textAlign = "left"; ctx.font = FM.C.MONO;
+      var lx = padL, i;
+      for (i = 0; i < ORDER.length; i++) {
+        lib = LIB[ORDER[i]];
+        ctx.fillStyle = lib.color;
+        ctx.fillText("■", lx, padT - 8);
+        ctx.fillStyle = (ORDER[i] === conf.best) ? FM.C.BRIGHT : FM.C.SEC;
+        ctx.fillText(ORDER[i], lx + 12, padT - 8);
+        lx += 12 + ctx.measureText(ORDER[i]).width + 22;
+      }
+    }
+
+    btns.forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        btns.forEach(function (b2) { b2.classList.remove("on"); });
+        btn.classList.add("on");
+        pri = btn.getAttribute("data-boost-pri");
+        render();
+      });
+    });
+    window.addEventListener("resize", render);
+    render();
+  })();
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

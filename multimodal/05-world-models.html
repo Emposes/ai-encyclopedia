@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>World Models — JEPA, Genie &amp; Dreamer — AI Encyclopedia</title>
+<meta name="description" content="Predict the world instead of the next token. World models learn the latent dynamics that let an agent imagine, plan, and dream — Dreamer's latent rollouts, LeCun's JEPA, and Genie's learned interactive simulators." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+</head>
+<body data-track="multimodal" data-level="advanced">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ MULTIMODAL / 05 / WORLD MODELS</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../multimodal/06-embodied.html">NEXT: EMBODIED AI →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">MULTIMODAL &amp; WORLD MODELS · CHAPTER 05 / 06</div>
+    <h1>World Models — JEPA, Genie &amp; Dreamer</h1>
+    <p class="lede">A language model predicts the next token; an agent acting in the world needs to predict the next <em>state</em>. <strong>World models learn the latent dynamics of an environment, which an agent can then use to plan and to roll out imagined futures.</strong> This chapter develops the latent-dynamics idea from its arithmetic, contrasts pixel-space against embedding-space prediction (the JEPA bet), covers Dreamer's imagined rollouts and Genie's learned interactive simulators, and closes on how this feeds planning and reinforcement learning.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>ADVANCED</b></span>
+      <span>READING TIME<b>≈ 28 MIN</b></span>
+      <span>BUILDS ON<b>MULTIMODAL 01–04 · RL 05</b></span>
+      <span>INSTRUMENTS<b>LATENT ROLLOUT · PIXEL vs EMBED · IMAGINED PLANNER</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">5.1</span>What a world model is</a>
+      <a href="#s2"><span class="n">5.2</span>Latent dynamics — Dreamer</a>
+      <a href="#s3"><span class="n">5.3</span>JEPA</a>
+      <a href="#s4"><span class="n">5.4</span>Genie &amp; learned simulators</a>
+      <a href="#s5"><span class="n">5.5</span>Planning &amp; RL</a>
+      <a href="#s6"><span class="n">5.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 5.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">5.1</span><h2>What a world model is</h2></div>
+        <p>A generative language model is, at heart, a one-line program: given everything seen so far, put a distribution over the next symbol. That is enough to write essays — but it is a strange foundation for an <em>agent</em>. An agent does not want to predict the next word a human would type; it wants to know what will <strong>happen next in the environment if it acts</strong>. A <strong>world model</strong> is the component that answers exactly that question: a learned simulator of the environment's dynamics that, given a compact summary of the present and a proposed action, predicts the future.</p>
+
+        <p>The decisive design choice is <em>where</em> the prediction lives. Predicting the next raw observation — every pixel of the next video frame — is the naïve target, and it is mostly the wrong one: it forces the model to spend capacity on photo-realistic but behaviorally irrelevant detail (the exact texture of grass, the flicker of a shadow) while the bits that matter for control are a handful. Modern world models instead carry a <strong>latent state</strong> \(z_t\): a low-dimensional code, produced by an encoder, that compresses an observation down to what is needed to predict the future. Dynamics are then learned <em>in that latent space</em>, and only decoded back to pixels when a human needs to look.</p>
+
+        <div class="eq"><span class="eq-tag">EQ MM5.1 — THE WORLD-MODEL CONTRACT</span>
+        $$ z_t = \mathrm{enc}(o_t), \qquad \hat{z}_{t+1} = f_\theta(z_t,\, a_t), \qquad \hat{r}_{t+1} = g_\theta(z_t,\, a_t) $$
+        <div class="eq-note">An encoder maps the raw observation \(o_t\) to a latent state \(z_t\); a learned <b>transition</b> \(f_\theta\) predicts the next latent given the current latent and an action \(a_t\); an optional <b>reward head</b> \(g_\theta\) predicts the scalar payoff. Train these and you can <b>roll the model forward in imagination</b> — feed \(\hat z_{t+1}\) back into \(f_\theta\) — generating a trajectory of futures without ever touching the real environment. That closed loop, latent in and latent out, is the whole idea; everything in this chapter is a different choice of encoder, transition, and training objective.</div>
+        </div>
+
+        <p>It helps to separate three jobs a world model can do, because different systems emphasise different ones. <strong>Prediction</strong>: given a state and action, what is the next state? <strong>Generation</strong>: sample whole plausible futures, or even whole playable environments, from the learned dynamics. <strong>Planning</strong>: search over action sequences by imagining their consequences and picking the one whose imagined return is highest (§5.5). Ha &amp; Schmidhuber's 2018 "World Models" paper made the point vividly — an agent could be trained <em>entirely inside its own dream</em> of a racing game and then transferred to the real game — and that demonstration set the agenda for everything that followed.</p>
+
+        <div class="exercise" data-answer="true" data-tol="0" data-hint="A world model predicts next states from actions, so it can chain those predictions into a multi-step rollout.">
+          <div class="ex-q">True or false: a world model lets an agent plan by imagining rollouts — chaining its learned transition \( \hat z_{t+1} = f_\theta(z_t, a_t) \) forward over a candidate action sequence and scoring the imagined return, all without acting in the real environment. (Answer <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">A world model's transition function predicts the next latent state from the current state and a proposed action. Feeding each predicted state back in produces an entire imagined trajectory for any candidate plan, and the reward head scores it — so the agent can compare plans purely in imagination and act only on the winner. That imagine-then-act loop <em>is</em> planning with a world model. The statement is <b>true</b>.</div>
+        </div>
+
+        <div class="widget" id="world-rollout" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT MM5.1 — LATENT-ROLLOUT VISUALIZER</span><span class="w-sub">2-D LATENT · z₊₁ = A z + B a · EQ MM5.1</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>DYNAMICS DECAY (spectral) <output id="world-rollout-decay-out">0.92</output></label><input type="range" id="world-rollout-decay" min="0.70" max="1.05" step="0.01" value="0.92"/></div>
+              <div class="ctl"><label>ROTATION (per step, °) <output id="world-rollout-rot-out">22</output></label><input type="range" id="world-rollout-rot" min="0" max="60" step="1" value="22"/></div>
+              <div class="ctl"><label>ACTION PUSH <output id="world-rollout-act-out">0.30</output></label><input type="range" id="world-rollout-act" min="0" max="1" step="0.05" value="0.30"/></div>
+            </div>
+            <canvas class="w-canvas" id="world-rollout-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">HORIZON STEPS</div><div class="r-value" id="world-rollout-h">16</div></div>
+              <div class="readout acc"><div class="r-label">FINAL ‖z‖</div><div class="r-value" id="world-rollout-norm">—</div></div>
+              <div class="readout acc"><div class="r-label">REGIME</div><div class="r-value" id="world-rollout-regime">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The dot is the latent state \(z_t\); each step applies \(z_{t+1} = A z_t + B a_t\), where \(A\) is a rotation scaled by the decay you set and \(B a_t\) is a constant action push. Decay &lt; 1 spirals the imagined trajectory inward to a fixed point (a stable, controllable model); decay = 1 holds a circle; decay &gt; 1 spirals outward — the signature of an <b>unstable, compounding-error</b> rollout, the central failure mode of long-horizon imagination. This is the dynamics half of EQ MM5.1 made visible, with no pixels in sight.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># EQ MM5.1: learn a tiny LINEAR latent-dynamics model, then roll it forward
+import numpy as np
+rng = np.random.default_rng(0)
+
+d = 3
+A_true = np.array([[0.96, 0.04, 0.00],     # the environment's hidden dynamics
+                   [0.00, 0.91, 0.09],     # z_{t+1} = A_true @ z_t  (+ noise)
+                   [0.05, 0.00, 0.93]])
+T = 60
+z = np.zeros((T, d)); z[0] = [1.0, 0.0, 0.0]
+for t in range(T - 1):
+    z[t+1] = A_true @ z[t] + rng.normal(0, 0.01, d)   # observed noisy rollout
+
+A_hat = np.linalg.lstsq(z[:-1], z[1:], rcond=None)[0].T   # fit z_{t+1} ~ A z_t
+
+zhat = np.zeros_like(z); zhat[0] = z[0]
+for t in range(T - 1):
+    zhat[t+1] = A_hat @ zhat[t]            # IMAGINE forward: open loop, no peeking
+
+one_step = np.sqrt((((A_hat @ z[:-1].T).T - z[1:]) ** 2).mean())
+rollout  = np.sqrt(((zhat - z) ** 2).mean())
+print("learned A diagonal :", A_hat.diagonal().round(3), "(truth: 0.96 0.91 0.93)")
+print("one-step RMSE      :", round(float(one_step), 4))
+print("free-rollout RMSE  :", round(float(rollout),  4), "<- errors compound over the horizon")
+plot_xy(range(T), np.sqrt(((zhat - z) ** 2).sum(1)))</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 5.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">5.2</span><h2>Latent dynamics — Dreamer</h2></div>
+        <p>The <strong>Dreamer</strong> line (DreamerV1 → V3, Hafner et al.) is the most complete worked example of latent-dynamics control. Its world model is a <strong>Recurrent State-Space Model (RSSM)</strong>, which splits the latent into two parts: a <em>deterministic</em> recurrent hidden state \(h_t\) that carries history, and a <em>stochastic</em> state \(z_t\) sampled from a learned distribution. Keeping a stochastic component is what lets the model represent genuine uncertainty about the future rather than a single brittle guess.</p>
+
+        <p>The model is trained the way a variational autoencoder is (see Vol II / DEEP LEARNING 05): an encoder proposes a <em>posterior</em> \(z_t\) from the actual observation, a transition proposes a <em>prior</em> \(\hat z_t\) from the recurrent state alone, and the loss pulls them together while a decoder reconstructs the observation. The complete objective sums a reconstruction term, the reward and termination predictions, and a KL term that is the heart of the world model:</p>
+
+        <div class="eq"><span class="eq-tag">EQ MM5.2 — RSSM PRIOR / POSTERIOR KL</span>
+        $$ h_t = \mathrm{GRU}(h_{t-1},\, z_{t-1},\, a_{t-1}), \qquad \mathcal{L}_{\text{dyn}} = \mathrm{KL}\!\big(\, q(z_t \mid h_t, o_t)\ \big\Vert\ p(z_t \mid h_t)\, \big) $$
+        <div class="eq-note">The <b>posterior</b> \(q\) sees the real observation \(o_t\); the <b>prior</b> \(p\) — the transition that runs at imagination time — sees only the recurrent state \(h_t\). Minimising their KL trains the prior to predict what the posterior knows, i.e. it teaches the transition to anticipate the next latent <em>before</em> the observation arrives. DreamerV3 uses a symmetric "KL balancing" split and free-bits floor so neither side collapses. <b>At planning time the observation is gone and only the prior runs</b> — which is exactly why this term, not the pixel reconstruction, is what makes the dream coherent.</div>
+        </div>
+
+        <p>Once the world model is trained, Dreamer never plans in the real environment. It rolls the RSSM forward in latent space for a short horizon (typically \(H = 15\) steps), and trains an <strong>actor</strong> and a <strong>critic</strong> purely on these imagined trajectories — the policy-gradient and value-learning machinery of RL (RL 04–05) applied to dreamed data. Because a single forward pass of the latent transition is orders of magnitude cheaper than stepping a real simulator or robot, the agent can practise millions of imagined steps per real step, which is why Dreamer is so dramatically sample-efficient.</p>
+
+        <p>DreamerV3's 2023 headline is worth stating precisely, because it is a genuine landmark and also frequently overstated. With a <em>single fixed set of hyperparameters</em>, it set state-of-the-art across a remarkable spread of domains — Atari, continuous control, DMLab — and was the first method to <strong>collect diamonds in Minecraft from scratch</strong> without human data or curricula, a long-standing open challenge. The honest caveats: the symlog/two-hot tricks that make one configuration work everywhere are engineering, not magic; imagined rollouts still suffer compounding model error past their horizon; and "world model" here means a compact game/control simulator, not a general model of physical reality.</p>
+
+        <div class="exercise" data-answer="2.3" data-tol="0.02" data-unit="" data-hint="One step of the linear transition: z_next = a·z + b·u with the learned a, b.">
+          <div class="ex-q">A learned scalar latent transition is \( z_{t+1} = a\,z_t + b\,u_t \) with \( a = 0.9 \) and \( b = 0.5 \). The agent is in latent state \( z_t = 2.0 \) and imagines taking the constant action \( u_t = 1 \). What single next latent state \( z_{t+1} \) does the world model predict?</div>
+          <div class="ex-reveal-src">Apply the transition once: \( z_{t+1} = 0.9 \times 2.0 + 0.5 \times 1 = 1.8 + 0.5 = \) <b>2.3</b>. Chaining this same rule \(H\) times — feeding each prediction back in — is one imagined Dreamer rollout; with \(a &lt; 1\) the free response decays and the controllable push \(b\,u\) is what the actor learns to steer.</div>
+        </div>
+
+        <p class="note"><strong>Why not just predict pixels?</strong> Early latent models <em>did</em> include a heavy pixel-reconstruction loss, and it works — but it ties the latent's capacity to visual fidelity. DreamerV3 keeps a decoder for grounding, yet the behaviorally important signal flows through the reward and KL terms. The next section takes the argument to its logical end: drop pixel reconstruction altogether.</p>
+      </section>
+
+      <!-- ====================== 5.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">5.3</span><h2>JEPA — joint-embedding predictive architectures</h2></div>
+        <p>Yann LeCun's 2022 position paper, <em>A Path Towards Autonomous Machine Intelligence</em>, makes one architectural commitment the organising principle of the whole programme: <strong>do not predict in observation space — predict in representation space</strong>. A <strong>Joint-Embedding Predictive Architecture (JEPA)</strong> encodes both an input \(x\) and a target \(y\) (a masked region, or a future) into embeddings \(s_x, s_y\), and trains a predictor to map the input embedding to the <em>target embedding</em>, never back to pixels.</p>
+
+        <div class="eq"><span class="eq-tag">EQ MM5.3 — JEPA: PREDICT THE EMBEDDING, NOT THE PIXELS</span>
+        $$ s_x = \mathrm{enc}_\theta(x), \quad s_y = \mathrm{enc}_{\bar\theta}(y), \qquad \mathcal{L}_{\text{JEPA}} = \big\Vert\, \mathrm{pred}_\phi(s_x,\, c)\ -\ \mathrm{sg}(s_y)\, \big\Vert^2 $$
+        <div class="eq-note">A predictor maps the context embedding \(s_x\) (plus optional latent variable \(c\) for the parts it cannot know) to the <b>target embedding</b> \(s_y\). The target encoder \(\mathrm{enc}_{\bar\theta}\) is an EMA (exponential moving average) of the online encoder, and \(\mathrm{sg}\) is stop-gradient — together they prevent the trivial <b>representation collapse</b> where the encoder maps everything to a constant and the loss hits zero. By predicting an embedding, JEPA is free to <b>discard unpredictable detail</b> (exact textures, leaf positions): the encoder learns to keep what is predictable and throw away what is noise. That is the structural advantage a pixel-reconstruction loss can never have — it is forced to reproduce the noise too.</div>
+        </div>
+
+        <p>The argument has teeth beyond philosophy. I-JEPA (images, 2023) and V-JEPA / V-JEPA&nbsp;2 (video, 2024–2025) showed that embedding-prediction self-supervision learns features competitive with or better than reconstruction-based pretraining (masked autoencoders) and contrastive methods, while training faster and without the heavy augmentation pipelines contrastive learning needs. The <em>predictive</em> framing also connects directly to world models: predict a <em>future</em> embedding instead of a masked one and the same architecture becomes a latent dynamics model — V-JEPA&nbsp;2 is explicitly pitched as a world model for planning, exactly the §5.5 use.</p>
+
+        <p>Two honest caveats keep this from being a clean victory. First, collapse is a real and finicky failure mode; the EMA target, stop-gradient, and variance/covariance regularisers (the VICReg family) are load-bearing, not optional. Second, because there is no decoder, you <em>cannot directly visualise</em> what a JEPA has predicted — you only have an embedding — which makes debugging and human inspection harder than in a Dreamer-style model that can render its dream. JEPA trades interpretability for representational efficiency, and whether that trade is the right path to general intelligence is, as of 2026, an active and genuinely contested research bet rather than settled fact.</p>
+
+        <div class="exercise" data-answer="true" data-tol="0" data-hint="The JEPA loss in EQ MM5.3 is a distance between predicted and target embeddings, not pixels.">
+          <div class="ex-q">True or false: a JEPA predicts in embedding (representation) space rather than pixel space — its loss \( \big\Vert \mathrm{pred}_\phi(s_x, c) - \mathrm{sg}(s_y) \big\Vert^2 \) compares a predicted embedding against a target <em>embedding</em>, with no pixel-reconstruction term. (Answer <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">EQ MM5.3 is a squared distance between the predictor's output and the target encoder's embedding \(s_y\) — both vectors in representation space. There is no decoder and no pixel target anywhere in the objective; that is the defining JEPA choice and the reason it can ignore unpredictable visual detail. The statement is <b>true</b>.</div>
+        </div>
+
+        <div class="widget" id="world-jepa" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT MM5.2 — PIXEL vs EMBEDDING PREDICTION</span><span class="w-sub">SAME SCENE · TWO LOSSES · EQ MM5.3</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>UNPREDICTABLE DETAIL (texture noise) <output id="world-jepa-noise-out">0.45</output></label><input type="range" id="world-jepa-noise" min="0" max="1" step="0.05" value="0.45"/></div>
+              <div class="ctl"><label>PREDICTABLE SIGNAL (object position) <output id="world-jepa-sig-out">0.70</output></label><input type="range" id="world-jepa-sig" min="0" max="1" step="0.05" value="0.70"/></div>
+            </div>
+            <canvas class="w-canvas" id="world-jepa-canvas" height="240"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">PIXEL-RECON LOSS</div><div class="r-value" id="world-jepa-pix">—</div></div>
+              <div class="readout acc"><div class="r-label">EMBEDDING LOSS</div><div class="r-value" id="world-jepa-emb">—</div></div>
+              <div class="readout acc"><div class="r-label">WASTED ON NOISE</div><div class="r-value" id="world-jepa-waste">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Two predictors face the same scene: the left bar is a pixel-reconstruction loss, the right is a JEPA embedding loss. The embedding encoder keeps only the <b>predictable signal</b> (where the object is) and drops the <b>unpredictable detail</b> (texture noise) before measuring error — so its loss tracks the signal slider and barely moves with the noise slider. The pixel loss must reproduce <em>everything</em>, so it climbs with noise the model can never predict. Crank the noise: the "wasted on noise" readout is the fraction of the pixel objective spent on bits that carry no behavioral information — capacity a JEPA reclaims.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># EQ MM5.3: embedding-prediction loss vs pixel-reconstruction loss on a toy
+import numpy as np
+rng = np.random.default_rng(1)
+
+D = 64                                   # pixels per "frame"
+N = 400                                  # samples
+pos = rng.uniform(-1, 1, N)             # the one PREDICTABLE factor (object position)
+grid = np.linspace(-1, 1, D)
+
+signal = np.exp(-((grid[None, :] - pos[:, None]) ** 2) / 0.05)   # a blob at `pos`
+noise  = rng.normal(0, 1.0, (N, D))     # UNPREDICTABLE per-pixel texture
+frames = signal + 0.8 * noise           # what a pixel decoder must reproduce
+
+# encoder: project to a 1-D embedding that recovers position (the predictable part)
+w = grid / (grid @ grid)                 # least-squares readout of the blob center
+emb = frames @ w                         # s_y : embedding of each frame
+
+# a predictor that knows position perfectly (best case) vs the two losses it implies
+pixel_loss = ((frames - signal) ** 2).mean()       # decoder can't predict the noise
+embed_loss = ((emb - pos) ** 2).mean()             # embedding strips the noise away
+print(f"pixel-reconstruction loss : {pixel_loss:.3f}  (dominated by texture noise)")
+print(f"embedding-prediction loss : {embed_loss:.3f}  (keeps only the position)")
+print(f"ratio pixel/embedding     : {pixel_loss / max(embed_loss, 1e-9):.1f}x")
+print("JEPA predicts the embedding -> it never pays for noise it cannot predict.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 5.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">5.4</span><h2>Genie &amp; learned interactive simulators</h2></div>
+        <p>Dreamer and JEPA learn dynamics to <em>control</em>. <strong>Genie</strong> (Bruce et al., DeepMind, 2024) pushes the world model in a different and striking direction: learn dynamics to <em>generate playable worlds</em>. Trained on 200,000+ hours of internet 2D-platformer gameplay videos — <strong>with no action labels at all</strong> — Genie produces, from a single image or text prompt, an environment you can then <em>step through</em> frame by frame with a controller, even though nobody ever told it what the buttons do.</p>
+
+        <p>The trick that makes label-free training possible is a <strong>latent action model</strong>. Genie has three learned pieces: a video tokenizer (compress frames to discrete tokens), an autoregressive <strong>dynamics</strong> model (predict the next frame's tokens), and — the key idea — a latent-action module trained to infer, for each pair of consecutive frames, a <em>discrete latent action</em> \(a_t\) drawn from a small codebook that best explains the transition.</p>
+
+        <div class="eq"><span class="eq-tag">EQ MM5.4 — GENIE'S LATENT ACTION (INFERRED, NOT LABELLED)</span>
+        $$ a_t = \arg\min_{a \in \mathcal{A}}\ \big\Vert\, x_{t+1} - \mathrm{dyn}_\theta(x_{\le t},\, a)\, \big\Vert, \qquad |\mathcal{A}| = 8 $$
+        <div class="eq-note">For each transition, the model picks the latent action — from a tiny codebook of just <b>8</b> learned actions — that lets the dynamics model best reconstruct the next frame. Because the codebook is small, it is forced to capture <b>controllable, recurring</b> changes (jump, move left, move right) rather than memorise pixels. At <em>training</em> time \(a_t\) is inferred from the real next frame; at <em>play</em> time a human supplies \(a_t\) and the dynamics model generates the next frame from it. <b>This is how a controllable simulator is learned from passive video with zero action annotations</b> — the single most important idea in the paper.</div>
+        </div>
+
+        <p>Why this matters: the binding constraint on training agents has always been the cost of interactive, action-labelled data. Genie loosens it dramatically — passive video is essentially unlimited. The follow-up, <strong>Genie&nbsp;2</strong> (late 2024), extended the recipe to action-controllable, 3D, minutes-long consistent worlds generated from a single image, positioning learned simulators as potential <em>training grounds</em> for embodied agents (the bridge to the next chapter). Related lines — Google's GameNGen reproducing DOOM as a neural simulator, and the broad family of video-diffusion-as-world-model systems — point at the same convergence: a sufficiently good video predictor <em>is</em> an interactive environment.</p>
+
+        <p class="note">The caveats are real and current. These simulators hallucinate and drift over long horizons; physical consistency (object permanence, conservation) is approximate, not guaranteed; frame rates and resolutions remain well below real-time photorealism for long rollouts; and inferred latent actions are not guaranteed to align with any human control scheme. "Learned interactive simulator" in 2026 means an impressive, improving research artifact — not a drop-in replacement for a physics engine.</p>
+      </section>
+
+      <!-- ====================== 5.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">5.5</span><h2>World models for planning &amp; RL</h2></div>
+        <p>The payoff of all this machinery is that a world model turns reinforcement learning from a problem of <em>acting</em> into a problem of <em>imagining</em>. There are two dominant ways to spend a learned model.</p>
+
+        <p><strong>Background planning (Dreamer-style).</strong> Use imagined rollouts to <em>train</em> a fast reactive policy, then act with the policy alone. This is the actor–critic-in-imagination loop of §5.2: cheap to run at deployment because the world model is only used during training. <strong>Decision-time planning (MuZero / MPC-style).</strong> Use the model <em>at the moment of acting</em> to search over action sequences and execute the first action of the best plan. The canonical objective is to choose the action sequence whose imagined return is greatest:</p>
+
+        <div class="eq"><span class="eq-tag">EQ MM5.5 — PLANNING AS IMAGINED-RETURN MAXIMISATION</span>
+        $$ a_{t:t+H}^{\star} = \arg\max_{a_{t:t+H}}\ \mathbb{E}\!\left[\, \sum_{k=0}^{H-1} \gamma^{k}\, \hat r_{t+k} \;+\; \gamma^{H} \hat V(\hat z_{t+H}) \,\right], \qquad \hat z_{t+k+1} = f_\theta(\hat z_{t+k}, a_{t+k}) $$
+        <div class="eq-note">Roll the learned transition \(f_\theta\) forward over a horizon \(H\), sum the imagined rewards \(\hat r\) discounted by \(\gamma\), and add a learned value \(\hat V\) at the horizon to account for everything past it (the same bootstrapping idea as RL 03). The agent picks the plan with the highest imagined return and executes only its first action, then re-plans — <b>model-predictive control</b>. <b>MuZero</b> is the celebrated instance: it learns \(f_\theta, \hat r, \hat V\) and runs Monte-Carlo Tree Search over them, mastering Go, chess, shogi and Atari <em>without being given the rules</em>. The deep caveat: this is only as good as the model — search amplifies model error, so a plan can confidently exploit dynamics the world does not actually have.</div>
+        </div>
+
+        <p>The recurring tension across §5.1–5.5 is the same one the latent-rollout instrument showed: <strong>compounding error</strong>. A one-step prediction can be excellent and an \(H\)-step rollout still useless, because each small error feeds the next step's input. This is why horizons are short (Dreamer's \(H \approx 15\)), why uncertainty-aware models that <em>know when to distrust themselves</em> matter, and why background planning (which only needs the model to be locally right) is often more robust than long decision-time search (which needs it globally right). The frontier question for 2026 — pursued by V-JEPA&nbsp;2, Genie&nbsp;2 and the broader video-world-model crowd — is whether a single large pretrained world model can be accurate enough, over long enough horizons, to plan real-world behavior. It is genuinely open.</p>
+
+        <div class="widget" id="world-planner" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT MM5.3 — IMAGINED-TRAJECTORY PLANNER</span><span class="w-sub">REACH THE GOAL · SAMPLE PLANS IN IMAGINATION · EQ MM5.5</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>CANDIDATE PLANS SAMPLED <output id="world-planner-k-out">24</output></label><input type="range" id="world-planner-k" min="2" max="80" step="1" value="24"/></div>
+              <div class="ctl"><label>HORIZON H <output id="world-planner-h-out">10</output></label><input type="range" id="world-planner-h" min="3" max="20" step="1" value="10"/></div>
+              <div class="ctl"><label>MODEL ERROR (drift / step) <output id="world-planner-err-out">0.04</output></label><input type="range" id="world-planner-err" min="0" max="0.30" step="0.01" value="0.04"/></div>
+            </div>
+            <div class="ctl-row" style="margin-top:2px;">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;"><label>&nbsp;</label><button class="w-btn" id="world-planner-replan">RE-IMAGINE ▶</button></div>
+            </div>
+            <canvas class="w-canvas" id="world-planner-canvas" height="280"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">BEST IMAGINED RETURN</div><div class="r-value" id="world-planner-best">—</div></div>
+              <div class="readout acc"><div class="r-label">CHOSEN PLAN'S MISS</div><div class="r-value" id="world-planner-miss">—</div></div>
+              <div class="readout acc"><div class="r-label">PLANS EVALUATED</div><div class="r-value" id="world-planner-count">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The agent (mint dot) wants to reach the goal (blue ring). It samples many candidate action sequences, <b>imagines</b> each one forward with its world model (faint grey trajectories), scores them by imagined return — closeness to the goal, EQ MM5.5 — and executes the winner (bright mint). Raise "plans sampled" and the chosen path improves: this is the random-shooting flavour of model-predictive control. Now raise <b>model error</b> and watch the winner's <em>real</em> miss grow even as its <em>imagined</em> return still looks great — search amplifies model error, the core danger of planning in a flawed dream. Hit RE-IMAGINE to resample.</div>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>A world model that can imagine and plan is only half an agent — the other half has a body.</strong> Chapter 06 turns to embodied AI: vision-language-action models, sim-to-real transfer, and how the latent dynamics of this chapter become the inner loop of robots that act in the physical world.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 5.R ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">5.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://arxiv.org/abs/1803.10122" target="_blank" rel="noopener">Ha, D. &amp; Schmidhuber, J. (2018). <span class="ref-venue">World Models</span>.</a> <span class="ref-meta">NeurIPS 2018 — the foundational demonstration: train an agent inside its own learned dream and transfer to the real environment.</span></li>
+          <li><a href="https://openreview.net/forum?id=BZ5a1r-kVsf" target="_blank" rel="noopener">LeCun, Y. (2022). <span class="ref-venue">A Path Towards Autonomous Machine Intelligence</span>.</a> <span class="ref-meta">OpenReview — the JEPA position paper; predict in representation space, not pixel space (EQ MM5.3).</span></li>
+          <li><a href="https://arxiv.org/abs/2301.04104" target="_blank" rel="noopener">Hafner, D., Pasukonis, J., Ba, J. &amp; Lillicrap, T. (2023). <span class="ref-venue">Mastering Diverse Domains through World Models (DreamerV3)</span>.</a> <span class="ref-meta">arXiv — one fixed hyperparameter set across 150+ tasks; first to mine diamonds in Minecraft from scratch (EQ MM5.2).</span></li>
+          <li><a href="https://arxiv.org/abs/2402.15391" target="_blank" rel="noopener">Bruce, J. et al. (2024). <span class="ref-venue">Genie: Generative Interactive Environments</span>.</a> <span class="ref-meta">ICML 2024 — latent-action world model learned from unlabelled gameplay video; playable worlds from one prompt (EQ MM5.4).</span></li>
+          <li><a href="https://arxiv.org/abs/2301.04104v2" target="_blank" rel="noopener">Hafner, D. et al. (2025). <span class="ref-venue">V-JEPA 2: Self-Supervised Video World Models</span> — see also Assran et al., I-JEPA (arXiv:2301.08243)</span>.</a> <span class="ref-meta">embedding-prediction self-supervision scaled to video as a world model for planning.</span></li>
+          <li><a href="https://arxiv.org/abs/1911.08265" target="_blank" rel="noopener">Schrittwieser, J. et al. (2020). <span class="ref-venue">Mastering Atari, Go, Chess and Shogi by Planning with a Learned Model (MuZero)</span>.</a> <span class="ref-meta">Nature 2020 — decision-time planning with a learned latent model and MCTS, without being given the rules (EQ MM5.5).</span></li>
+          <li><a href="https://arxiv.org/abs/2408.14837" target="_blank" rel="noopener">Valevski, D. et al. (2024). <span class="ref-venue">Diffusion Models Are Real-Time Game Engines (GameNGen)</span>.</a> <span class="ref-meta">arXiv — a neural network simulating DOOM interactively; a video predictor used as a playable environment.</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../multimodal/04-speech-audio.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">04</span> Speech &amp; Audio</div></a>
+        <a class="next" href="../multimodal/06-embodied.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">06</span> Embodied AI</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — MULTIMODAL · CH 05</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* chapter instruments — single IIFE, no globals */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  /* ============================================================
+     INSTRUMENT MM5.1 — LATENT-ROLLOUT VISUALIZER
+     2-D latent z; z_{t+1} = A z_t + B a_t, A = decay * rotation.
+     Shows imagined trajectory + stability regime. EQ MM5.1.
+     ============================================================ */
+  (function () {
+    var root = document.getElementById("world-rollout");
+    if (!root) return;
+    var canvas = document.getElementById("world-rollout-canvas");
+    var decIn = document.getElementById("world-rollout-decay");
+    var rotIn = document.getElementById("world-rollout-rot");
+    var actIn = document.getElementById("world-rollout-act");
+    var decOut = document.getElementById("world-rollout-decay-out");
+    var rotOut = document.getElementById("world-rollout-rot-out");
+    var actOut = document.getElementById("world-rollout-act-out");
+    var hOut = document.getElementById("world-rollout-h");
+    var normOut = document.getElementById("world-rollout-norm");
+    var regimeOut = document.getElementById("world-rollout-regime");
+    var H = 16;
+
+    function rollout(decay, rotDeg, push) {
+      var th = rotDeg * Math.PI / 180;
+      var a11 = decay * Math.cos(th), a12 = -decay * Math.sin(th);
+      var a21 = decay * Math.sin(th), a22 = decay * Math.cos(th);
+      var z = [1.2, 0.0];                 // meaningful initial latent
+      var bx = push, by = 0;              // constant action push along x
+      var pts = [[z[0], z[1]]], i;
+      for (i = 0; i < H; i++) {
+        var nx = a11 * z[0] + a12 * z[1] + bx;
+        var ny = a21 * z[0] + a22 * z[1] + by;
+        z = [nx, ny];
+        pts.push([nx, ny]);
+      }
+      return pts;
+    }
+
+    function render() {
+      var decay = parseFloat(decIn.value);
+      var rotDeg = parseFloat(rotIn.value);
+      var push = parseFloat(actIn.value);
+      decOut.textContent = decay.toFixed(2);
+      rotOut.textContent = rotDeg.toFixed(0);
+      actOut.textContent = push.toFixed(2);
+      hOut.textContent = H;
+
+      var pts = rollout(decay, rotDeg, push);
+      var s = FM.setupCanvas(canvas, 300);
+      var ctx = s.ctx, W = s.w, Ht = s.h;
+      ctx.clearRect(0, 0, W, Ht);
+
+      var cx = W / 2, cy = Ht / 2;
+      var maxR = 0, i;
+      for (i = 0; i < pts.length; i++) {
+        var r = Math.hypot(pts[i][0], pts[i][1]);
+        if (r > maxR) maxR = r;
+      }
+      var scale = (Math.min(W, Ht) / 2 - 28) / (maxR || 1);
+
+      /* axes */
+      ctx.strokeStyle = "rgba(47,50,52,.7)"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(20, cy); ctx.lineTo(W - 20, cy); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx, 14); ctx.lineTo(cx, Ht - 14); ctx.stroke();
+
+      /* unit ring (stability boundary visual aid) */
+      ctx.strokeStyle = "rgba(78,138,247,.35)"; ctx.setLineDash([3, 3]);
+      ctx.beginPath(); ctx.arc(cx, cy, scale * 1.0, 0, 2 * Math.PI); ctx.stroke();
+      ctx.setLineDash([]);
+
+      /* trajectory line */
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      for (i = 0; i < pts.length; i++) {
+        var X = cx + pts[i][0] * scale, Y = cy - pts[i][1] * scale;
+        if (i === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y);
+      }
+      ctx.stroke();
+
+      /* points, fading by step */
+      for (i = 0; i < pts.length; i++) {
+        var X2 = cx + pts[i][0] * scale, Y2 = cy - pts[i][1] * scale;
+        var t = i / (pts.length - 1);
+        ctx.fillStyle = i === 0 ? C.BRIGHT
+          : "rgba(166,242,204," + (0.25 + 0.7 * (1 - t)).toFixed(3) + ")";
+        ctx.beginPath(); ctx.arc(X2, Y2, i === 0 ? 4 : 2.6, 0, 2 * Math.PI); ctx.fill();
+      }
+
+      ctx.font = C.MONO; ctx.fillStyle = C.SEC; ctx.textAlign = "left";
+      ctx.textBaseline = "top";
+      ctx.fillText("z₀ (start)", cx + 6, cy - 16);
+      ctx.fillStyle = "rgba(78,138,247,.7)";
+      ctx.fillText("‖z‖ = 1", W - 70, cy + 4);
+
+      var fn = Math.hypot(pts[pts.length - 1][0], pts[pts.length - 1][1]);
+      normOut.textContent = fn.toFixed(2);
+      var regime, col;
+      if (decay < 0.99) { regime = "STABLE ↺"; col = C.MINT; }
+      else if (decay <= 1.01) { regime = "MARGINAL"; col = C.SEC; }
+      else { regime = "UNSTABLE ↗"; col = C.RED; }
+      regimeOut.textContent = regime;
+      regimeOut.style.color = col;
+    }
+
+    decIn.addEventListener("input", render);
+    rotIn.addEventListener("input", render);
+    actIn.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ============================================================
+     INSTRUMENT MM5.2 — PIXEL vs EMBEDDING PREDICTION
+     Same scene; pixel loss must reproduce noise, embedding loss
+     keeps only predictable signal. EQ MM5.3.
+     ============================================================ */
+  (function () {
+    var root = document.getElementById("world-jepa");
+    if (!root) return;
+    var canvas = document.getElementById("world-jepa-canvas");
+    var noiseIn = document.getElementById("world-jepa-noise");
+    var sigIn = document.getElementById("world-jepa-sig");
+    var noiseOut = document.getElementById("world-jepa-noise-out");
+    var sigOut = document.getElementById("world-jepa-sig-out");
+    var pixOut = document.getElementById("world-jepa-pix");
+    var embOut = document.getElementById("world-jepa-emb");
+    var wasteOut = document.getElementById("world-jepa-waste");
+
+    function render() {
+      var noise = parseFloat(noiseIn.value);
+      var sig = parseFloat(sigIn.value);
+      noiseOut.textContent = noise.toFixed(2);
+      sigOut.textContent = sig.toFixed(2);
+
+      /* model error decomposition (toy, deterministic):
+         pixel loss = unpredictable noise residual + small signal residual
+         embedding loss = signal residual only (noise stripped by encoder) */
+      var signalResidual = 0.25 * (1 - sig);     // both losses pay this
+      var noiseResidual = noise;                  // ONLY pixel loss pays this
+      var pixelLoss = noiseResidual + signalResidual;
+      var embedLoss = signalResidual;
+      var wasted = pixelLoss > 0 ? noiseResidual / pixelLoss : 0;
+
+      var s = FM.setupCanvas(canvas, 240);
+      var ctx = s.ctx, W = s.w, H = s.h;
+      ctx.clearRect(0, 0, W, H);
+
+      var padT = 26, padB = 30;
+      var baseY = H - padB, topY = padT;
+      var maxLoss = 1.25;
+      var barW = Math.min(70, W * 0.16);
+      var x1 = W * 0.30, x2 = W * 0.66;
+
+      function bar(x, total, signalPart, label, accent) {
+        var fullH = (total / maxLoss) * (baseY - topY);
+        var sigH = (signalPart / maxLoss) * (baseY - topY);
+        var noiseH = fullH - sigH;
+        /* signal portion (solid) */
+        ctx.fillStyle = accent ? "rgba(166,242,204,.85)" : "rgba(155,155,155,.75)";
+        ctx.fillRect(x - barW / 2, baseY - sigH, barW, sigH);
+        /* noise portion (hatched red-ish) only present for pixel bar */
+        if (noiseH > 0.5) {
+          ctx.fillStyle = "rgba(255,65,54,.45)";
+          ctx.fillRect(x - barW / 2, baseY - fullH, barW, noiseH);
+        }
+        ctx.strokeStyle = accent ? C.MINT : C.SEC; ctx.lineWidth = 1.2;
+        ctx.strokeRect(x - barW / 2, baseY - fullH, barW, fullH);
+        ctx.font = C.MONO; ctx.textAlign = "center";
+        ctx.fillStyle = accent ? C.MINT : C.SEC; ctx.textBaseline = "top";
+        ctx.fillText(label, x, baseY + 8);
+        ctx.fillStyle = C.BRIGHT; ctx.textBaseline = "bottom";
+        ctx.fillText(total.toFixed(2), x, baseY - fullH - 4);
+      }
+
+      bar(x1, pixelLoss, signalResidual, "PIXEL RECON", false);
+      bar(x2, embedLoss, signalResidual, "EMBEDDING", true);
+
+      /* legend */
+      ctx.font = C.MONO; ctx.textAlign = "left"; ctx.textBaseline = "middle";
+      ctx.fillStyle = "rgba(255,65,54,.7)";
+      ctx.fillRect(14, topY + 2, 9, 9);
+      ctx.fillStyle = C.SEC; ctx.fillText("unpredictable noise", 28, topY + 7);
+      ctx.fillStyle = "rgba(166,242,204,.85)";
+      ctx.fillRect(14, topY + 18, 9, 9);
+      ctx.fillStyle = C.SEC; ctx.fillText("predictable signal", 28, topY + 23);
+
+      pixOut.textContent = pixelLoss.toFixed(2);
+      embOut.textContent = embedLoss.toFixed(2);
+      wasteOut.textContent = (wasted * 100).toFixed(0) + "%";
+    }
+
+    noiseIn.addEventListener("input", render);
+    sigIn.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ============================================================
+     INSTRUMENT MM5.3 — IMAGINED-TRAJECTORY PLANNER
+     Random-shooting MPC: sample K plans, imagine each forward with
+     a noisy model, score by goal closeness, execute the best. EQ MM5.5.
+     ============================================================ */
+  (function () {
+    var root = document.getElementById("world-planner");
+    if (!root) return;
+    var canvas = document.getElementById("world-planner-canvas");
+    var kIn = document.getElementById("world-planner-k");
+    var hIn = document.getElementById("world-planner-h");
+    var errIn = document.getElementById("world-planner-err");
+    var kOut = document.getElementById("world-planner-k-out");
+    var hOut = document.getElementById("world-planner-h-out");
+    var errOut = document.getElementById("world-planner-err-out");
+    var bestOut = document.getElementById("world-planner-best");
+    var missOut = document.getElementById("world-planner-miss");
+    var countOut = document.getElementById("world-planner-count");
+    var replanBtn = document.getElementById("world-planner-replan");
+
+    var seed = 7;
+    var START = [0.12, 0.5];   // normalized coords
+    var GOAL = [0.86, 0.4];
+
+    function plan() {
+      var K = parseInt(kIn.value, 10);
+      var Hh = parseInt(hIn.value, 10);
+      var err = parseFloat(errIn.value);
+      kOut.textContent = K;
+      hOut.textContent = Hh;
+      errOut.textContent = err.toFixed(2);
+
+      var rnd = FM.mulberry32(seed);
+      var step = 1 / Hh;                 // per-step max progress toward goal
+      var dirX = GOAL[0] - START[0], dirY = GOAL[1] - START[1];
+
+      var all = [], best = null, p;
+      for (p = 0; p < K; p++) {
+        /* a candidate plan = a sequence of small action deltas */
+        var imagined = [START.slice()];
+        var realPos = START.slice();
+        var z = START.slice();
+        var k;
+        /* bias actions toward the goal with random exploration */
+        for (k = 0; k < Hh; k++) {
+          var ax = (dirX * step) + (rnd() - 0.5) * 0.10;
+          var ay = (dirY * step) + (rnd() - 0.5) * 0.18;
+          /* imagined transition (what the model believes) */
+          z = [z[0] + ax, z[1] + ay];
+          imagined.push([z[0], z[1]]);
+          /* real transition diverges by model error each step */
+          realPos = [
+            realPos[0] + ax + (rnd() - 0.5) * err,
+            realPos[1] + ay + (rnd() - 0.5) * err
+          ];
+        }
+        var imag = imagined[imagined.length - 1];
+        var imaginedMiss = Math.hypot(imag[0] - GOAL[0], imag[1] - GOAL[1]);
+        var realMiss = Math.hypot(realPos[0] - GOAL[0], realPos[1] - GOAL[1]);
+        var ret = 1 / (1 + imaginedMiss);     // imagined return: closer = higher
+        var cand = { traj: imagined, ret: ret, imaginedMiss: imaginedMiss, realMiss: realMiss };
+        all.push(cand);
+        if (!best || ret > best.ret) best = cand;
+      }
+      return { all: all, best: best, K: K };
+    }
+
+    function render() {
+      var res = plan();
+      var s = FM.setupCanvas(canvas, 280);
+      var ctx = s.ctx, W = s.w, H = s.h;
+      ctx.clearRect(0, 0, W, H);
+      var pad = 22;
+      function X(u) { return pad + u * (W - 2 * pad); }
+      function Y(v) { return pad + v * (H - 2 * pad); }
+
+      /* frame */
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(pad, pad, W - 2 * pad, H - 2 * pad);
+
+      /* faint imagined candidate trajectories */
+      var i, j;
+      for (i = 0; i < res.all.length; i++) {
+        if (res.all[i] === res.best) continue;
+        var tr = res.all[i].traj;
+        ctx.strokeStyle = "rgba(155,155,155,.18)"; ctx.lineWidth = 1;
+        ctx.beginPath();
+        for (j = 0; j < tr.length; j++) {
+          var xx = X(tr[j][0]), yy = Y(tr[j][1]);
+          if (j === 0) ctx.moveTo(xx, yy); else ctx.lineTo(xx, yy);
+        }
+        ctx.stroke();
+      }
+
+      /* goal ring */
+      ctx.strokeStyle = C.BLUE; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(X(GOAL[0]), Y(GOAL[1]), 11, 0, 2 * Math.PI); ctx.stroke();
+      ctx.fillStyle = "rgba(78,138,247,.18)";
+      ctx.beginPath(); ctx.arc(X(GOAL[0]), Y(GOAL[1]), 11, 0, 2 * Math.PI); ctx.fill();
+
+      /* chosen plan (bright) */
+      var bt = res.best.traj;
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      for (j = 0; j < bt.length; j++) {
+        var bx = X(bt[j][0]), by = Y(bt[j][1]);
+        if (j === 0) ctx.moveTo(bx, by); else ctx.lineTo(bx, by);
+      }
+      ctx.stroke();
+      for (j = 0; j < bt.length; j++) {
+        ctx.fillStyle = "rgba(166,242,204,.85)";
+        ctx.beginPath(); ctx.arc(X(bt[j][0]), Y(bt[j][1]), 2.2, 0, 2 * Math.PI); ctx.fill();
+      }
+
+      /* start dot */
+      ctx.fillStyle = C.BRIGHT;
+      ctx.beginPath(); ctx.arc(X(START[0]), Y(START[1]), 5, 0, 2 * Math.PI); ctx.fill();
+
+      /* labels */
+      ctx.font = C.MONO; ctx.fillStyle = C.SEC;
+      ctx.textAlign = "left"; ctx.textBaseline = "bottom";
+      ctx.fillText("agent z₀", X(START[0]) + 8, Y(START[1]) - 6);
+      ctx.fillStyle = C.BLUE; ctx.textAlign = "right";
+      ctx.fillText("goal", X(GOAL[0]) - 14, Y(GOAL[1]) - 6);
+
+      bestOut.textContent = res.best.ret.toFixed(3);
+      missOut.textContent = res.best.realMiss.toFixed(3);
+      countOut.textContent = res.K;
+    }
+
+    kIn.addEventListener("input", render);
+    hIn.addEventListener("input", render);
+    errIn.addEventListener("input", render);
+    if (replanBtn) replanBtn.addEventListener("click", function () {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      render();
+    });
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

@@ -1,0 +1,822 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Statistical Inference &amp; Hypothesis Testing — AI Encyclopedia</title>
+<meta name="description" content="Inference turns a sample into a statement about the world — with an honest accounting of how often that statement is wrong: estimators, confidence intervals, p-values, power, t-tests, ANOVA, and the replication crisis." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+</head>
+<body data-track="stats" data-level="core">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ STATISTICS / 04 / INFERENCE</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../stats/05-bayesian.html">NEXT: BAYESIAN INFERENCE →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">MATHEMATICS &amp; STATISTICS · CHAPTER 04 / 08</div>
+    <h1>Statistical Inference &amp; Hypothesis Testing</h1>
+    <p class="lede">You never observe the population, only a sample. Inference draws conclusions about the whole from the part, and it attaches a measure of its own reliability. <strong>Every inference turns a sample into a statement about the world together with an explicit accounting of how often that statement is wrong.</strong></p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 28 MIN</b></span>
+      <span>BUILDS ON<b>STATS 01–03</b></span>
+      <span>INSTRUMENTS<b>p-VALUE · CI COVERAGE · ANOVA F</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">4.1</span>Estimators</a>
+      <a href="#s2"><span class="n">4.2</span>Sampling distributions &amp; CIs</a>
+      <a href="#s3"><span class="n">4.3</span>Hypothesis testing</a>
+      <a href="#s4"><span class="n">4.4</span>t-tests</a>
+      <a href="#s5"><span class="n">4.5</span>ANOVA</a>
+      <a href="#s6"><span class="n">4.6</span>Multiple comparisons</a>
+      <a href="#s7"><span class="n">4.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 4.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">4.1</span><h2>Estimators: bias, variance, consistency, MLE</h2></div>
+        <p>An <strong>estimator</strong> is a recipe that turns data into a guess about a parameter — the sample mean \(\bar{X}\) estimating the population mean \(\mu\), the sample variance \(S^2\) estimating \(\sigma^2\). Because the data are random, the estimator is random too: it has its own distribution (§4.2). Two numbers summarize how good it is. <strong>Bias</strong> is how far its average lands from the truth; <strong>variance</strong> is how much it bounces from sample to sample.</p>
+
+        <div class="eq"><span class="eq-tag">EQ S4.1 — BIAS, VARIANCE, AND MSE</span>
+        $$ \operatorname{Bias}(\hat{\theta}) = \mathbb{E}[\hat{\theta}] - \theta, \qquad \operatorname{MSE}(\hat{\theta}) = \mathbb{E}\big[(\hat{\theta} - \theta)^2\big] = \operatorname{Var}(\hat{\theta}) + \operatorname{Bias}(\hat{\theta})^2 $$
+        <div class="eq-note">The expected squared error of any estimator splits cleanly into <b>variance plus bias-squared</b> — the same decomposition that governs model generalization (ML · CH 06). An estimator can be unbiased yet useless if its variance is huge, or slightly biased yet excellent if that buys a large drop in variance. "Unbiased" is a property worth wanting but never worth worshipping.</div>
+        </div>
+
+        <p>Why does the sample variance divide by \(n-1\) instead of \(n\)? Because the deviations are measured from \(\bar{X}\), which was itself fit to the data and therefore sits <em>closer</em> to the points than the true \(\mu\) does. Dividing by \(n\) would systematically underestimate \(\sigma^2\); the correction \(n-1\) — one degree of freedom spent estimating the mean — makes \(S^2\) exactly unbiased. <strong>Bessel's correction</strong> is the cleanest example of a bias fix you can see in arithmetic.</p>
+
+        <div class="eq"><span class="eq-tag">EQ S4.2 — UNBIASED SAMPLE VARIANCE</span>
+        $$ S^2 = \frac{1}{n-1}\sum_{i=1}^{n}(X_i - \bar{X})^2, \qquad \mathbb{E}[S^2] = \sigma^2 $$
+        <div class="eq-note">The \(n-1\) is the first <b>degree of freedom</b> you will meet — a count of independent pieces of information left after estimating the mean. Degrees of freedom reappear in every test in this chapter: the \(t\) distribution's shape, the \(\chi^2\), and the two \(df\) of an \(F\)-ratio (§4.5) are all bookkeeping of how many free deviations remain.</div>
+        </div>
+
+        <p>A third virtue is asymptotic. An estimator is <strong>consistent</strong> if it converges in probability to the truth as the sample grows: \(\hat{\theta}_n \xrightarrow{p} \theta\). The sample mean is consistent because its variance \(\sigma^2/n\) shrinks to zero — the weak law of large numbers in one line. Consistency is a floor, not a ceiling: it promises you get there eventually, but says nothing about the rate.</p>
+
+        <h3>Maximum likelihood</h3>
+        <p>The dominant general recipe for building estimators is <strong>maximum likelihood</strong>: choose the parameter value that makes the observed data most probable. Treating the joint density as a function of \(\theta\) (the data now fixed) gives the likelihood; maximizing its logarithm — a sum, far friendlier than a product — gives the MLE.</p>
+
+        <div class="eq"><span class="eq-tag">EQ S4.3 — MAXIMUM LIKELIHOOD</span>
+        $$ \hat{\theta}_{\text{MLE}} = \arg\max_{\theta}\; \ell(\theta), \qquad \ell(\theta) = \sum_{i=1}^{n} \log p(x_i \mid \theta) $$
+        <div class="eq-note">For an i.i.d. Gaussian sample, solving \(\partial\ell/\partial\theta = 0\) hands back the sample mean for \(\mu\) and the \(\tfrac{1}{n}\) (<em>not</em> \(\tfrac{1}{n-1}\)) variance — so the Gaussian MLE of \(\sigma^2\) is slightly biased downward, the cleanest case where ML trades a little bias for the method's generality. <b>MLEs are consistent, asymptotically unbiased, and asymptotically normal with the smallest possible variance</b> (the Cramér–Rao bound), which is why they sit under logistic regression, GLMs, and most of deep learning's loss functions.</div>
+        </div>
+
+        <p class="note">Cross-reference: minimizing cross-entropy loss (ML · CH 03) <em>is</em> maximizing a likelihood, and the squared-error loss of linear regression (ML · CH 02) is the Gaussian MLE. The optimizers of machine learning are likelihood maximizers wearing different clothes.</p>
+
+        <div class="exercise" data-answer="2.5" data-tol="0.01" data-unit="" data-hint="An unbiased estimator's MSE equals its variance; Var of the sample mean is sigma^2 / n.">
+          <div class="ex-q">A population has variance \( \sigma^2 = 25 \). You draw \( n = 10 \) observations and average them. Since \(\bar{X}\) is unbiased, its <b>MSE equals its variance</b> (EQ S4.1). What is that MSE, \( \sigma^2/n \)?</div>
+          <div class="ex-reveal-src">For an unbiased estimator the bias term vanishes, so \( \operatorname{MSE}(\bar{X}) = \operatorname{Var}(\bar{X}) = \sigma^2/n = 25/10 = \) <b>2.5</b>. Averaging ten draws cuts the error variance by a factor of ten — the variance side of EQ S4.1 doing all the work.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 4.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">4.2</span><h2>Sampling distributions &amp; confidence intervals</h2></div>
+        <p>The single most important object in inference is invisible in any one dataset: the <strong>sampling distribution</strong> — the distribution of an estimator across the many samples you could have drawn but didn't. Its spread is the <strong>standard error</strong>, and it is what converts a point estimate into an honest range.</p>
+
+        <div class="eq"><span class="eq-tag">EQ S4.4 — STANDARD ERROR OF THE MEAN</span>
+        $$ \operatorname{Var}(\bar{X}) = \frac{\sigma^2}{n} \quad\Longrightarrow\quad \operatorname{SE}(\bar{X}) = \frac{\sigma}{\sqrt{n}} $$
+        <div class="eq-note">The estimate gets sharper as \(1/\sqrt{n}\) — the iron law of statistics. <b>To halve your error you must quadruple your data</b>, which is why the marginal value of more samples falls off and why "big enough" arrives sooner than intuition expects. The \(\sqrt{n}\) is the lever every power calculation (§4.3) pulls.</div>
+        </div>
+
+        <p>Why is the sampling distribution of a mean so often bell-shaped, whatever the data look like? The <strong>Central Limit Theorem</strong>: the standardized sum of i.i.d. variables with finite variance converges to a standard normal, regardless of the parent shape.</p>
+
+        <div class="eq"><span class="eq-tag">EQ S4.5 — CENTRAL LIMIT THEOREM</span>
+        $$ \frac{\bar{X} - \mu}{\sigma/\sqrt{n}} \;\xrightarrow{d}\; \mathcal{N}(0, 1) \quad \text{as } n \to \infty $$
+        <div class="eq-note">The CLT is why the normal distribution is the lingua franca of inference even for skewed or discrete data: averages forget their parent. The caveats experts insist on: it needs finite variance (it fails for heavy-tailed laws like the Cauchy), the approximation is poor in the <em>tails</em> at small \(n\), and strongly skewed parents need larger \(n\) before the bell sets in — the folk rule "\(n \ge 30\)" is a rough heuristic, not a theorem.</div>
+        </div>
+
+        <h3>Confidence intervals</h3>
+        <p>A <strong>confidence interval</strong> wraps the standard error around the estimate. For a mean with known \(\sigma\), the 95% interval is the estimate plus or minus \(1.96\) standard errors:</p>
+
+        <div class="eq"><span class="eq-tag">EQ S4.6 — CONFIDENCE INTERVAL FOR A MEAN</span>
+        $$ \bar{X} \pm z_{1-\alpha/2}\,\frac{\sigma}{\sqrt{n}}, \qquad z_{0.975} = 1.96 \quad (\text{use } t_{n-1} \text{ when } \sigma \text{ is estimated}) $$
+        <div class="eq-note">The interpretation is subtle and routinely mangled: <b>the 95% refers to the procedure, not to any single interval</b>. If you repeated the whole experiment forever, 95% of the intervals you build this way would contain the true \(\mu\). A given interval either covers the truth or it doesn't — there is no "95% probability" attached to it under the frequentist reading. The instrument below makes this concrete: watch the intervals dance and roughly one in twenty miss.</div>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">A COMMON ERROR</span>
+          <p><strong>"There is a 95% chance the true mean lies in [a, b]."</strong> This sentence is false under the frequentist definition: \(\mu\) is a fixed number, and the interval is the random thing. The correct statement is about the long-run coverage of the <em>method</em>. The probability-about-this-interval reading is exactly what Bayesian credible intervals deliver instead (STATS · CH 05) — which is one reason the two schools talk past each other.</p>
+        </div>
+
+        <div class="widget" id="inf-ci-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT S4.1 — CONFIDENCE-INTERVAL COVERAGE</span><span class="w-sub">REPEAT THE EXPERIMENT · ~95% COVER THE TRUTH · EQ S4.6</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>CONFIDENCE LEVEL <output id="inf-ci-conf-out">95%</output></label><input type="range" id="inf-ci-conf" min="80" max="99" step="1" value="95"/></div>
+              <div class="ctl"><label>SAMPLE SIZE n <output id="inf-ci-n-out">25</output></label><input type="range" id="inf-ci-n" min="5" max="100" step="5" value="25"/></div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>&nbsp;</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" id="inf-ci-draw">DRAW 40 ▶</button>
+                  <button class="w-btn ghost" id="inf-ci-reset">RESET</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="inf-ci-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">INTERVALS DRAWN</div><div class="r-value" id="inf-ci-total">—</div></div>
+              <div class="readout"><div class="r-label">COVERED THE TRUTH</div><div class="r-value" id="inf-ci-hit">—</div></div>
+              <div class="readout"><div class="r-label">EMPIRICAL COVERAGE</div><div class="r-value" id="inf-ci-rate">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Each horizontal bar is one experiment's 95% interval; the dashed line is the true mean \(\mu = 0\). <span style="color:var(--accent);">Mint</span> intervals caught it, <span style="color:var(--danger);">red</span> ones missed. Keep pressing DRAW: the empirical coverage hovers near the nominal level. Lower the confidence to 80% and watch the red bars multiply — narrower intervals miss more often. The coverage is a property of the recipe, exactly as EQ S4.6's note warns.</div>
+        </div>
+
+        <div class="exercise" data-answer="1.0" data-tol="0.01" data-unit="" data-hint="SEM = sigma / sqrt(n); sigma = 10, n = 100.">
+          <div class="ex-q">A measurement has population standard deviation \( \sigma = 10 \). You average \( n = 100 \) independent measurements. What is the <b>standard error of the mean</b>, \( \sigma/\sqrt{n} \)?</div>
+          <div class="ex-reveal-src">\( \operatorname{SEM} = \dfrac{\sigma}{\sqrt{n}} = \dfrac{10}{\sqrt{100}} = \dfrac{10}{10} = \) <b>1.0</b>. A hundredfold averaging shrinks a spread of 10 down to a standard error of 1 — the \(1/\sqrt{n}\) law in a single step.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 4.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">4.3</span><h2>Hypothesis testing: null, p-value, errors, power</h2></div>
+        <p>A hypothesis test is a formal courtroom for a claim. You state a <strong>null hypothesis</strong> \(H_0\) — the boring default, "no effect" — and ask: if \(H_0\) were true, how surprising is data at least this extreme? That surprise, measured in probability, is the <strong>p-value</strong>.</p>
+
+        <div class="eq"><span class="eq-tag">EQ S4.7 — THE p-VALUE</span>
+        $$ p = \mathbb{P}\big(\,|T| \ge |t_{\text{obs}}| \;\big|\; H_0\,\big) $$
+        <div class="eq-note">The p-value is the probability, <em>computed under the null</em>, of a test statistic as or more extreme than the one you observed. It is <b>not</b> the probability that \(H_0\) is true, nor the probability your result was a fluke, nor one minus the probability the alternative is true. It answers only: "is my data weird, assuming nothing is going on?" A small p means the data sit far in the tail of the null distribution.</div>
+        </div>
+
+        <p>The deepest fact about the p-value is also the least intuitive: <strong>when \(H_0\) is exactly true, the p-value is uniformly distributed on \([0,1]\).</strong> Every value is equally likely. That flatness is not an accident — it is the definition of a calibrated test, and it is why a threshold \(\alpha = 0.05\) yields a 5% false-positive rate. The second Python cell below demonstrates this directly by simulating ten thousand null experiments.</p>
+
+        <div class="eq"><span class="eq-tag">EQ S4.8 — THE TWO ERRORS, AND POWER</span>
+        $$ \alpha = \mathbb{P}(\text{reject } H_0 \mid H_0 \text{ true}), \qquad \beta = \mathbb{P}(\text{fail to reject } H_0 \mid H_0 \text{ false}), \qquad \text{power} = 1 - \beta $$
+        <div class="eq-note"><b>Type I error</b> (\(\alpha\)) is a false alarm — convicting an innocent null. <b>Type II error</b> (\(\beta\)) is a miss — letting a real effect walk free. <b>Power</b> is the probability of detecting an effect that is genuinely there. The four levers are locked together: power rises with the true effect size, with the sample size \(n\) (through the \(\sqrt{n}\) of EQ S4.4), and with a more lenient \(\alpha\) — and falls with noisier data. An underpowered study is one designed to miss; §4.6 is the story of what happens when a whole field runs them.</div>
+        </div>
+
+        <table class="data">
+          <thead><tr><th>&nbsp;</th><th>\(H_0\) true (no effect)</th><th>\(H_0\) false (real effect)</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Reject \(H_0\)</strong></td><td class="m">Type I error · prob \(\alpha\)</td><td class="hl">correct detection · prob \(1-\beta\) (power)</td></tr>
+            <tr><td><strong>Fail to reject</strong></td><td class="hl">correct · prob \(1-\alpha\)</td><td class="m">Type II error · prob \(\beta\)</td></tr>
+          </tbody>
+        </table>
+
+        <p class="note">A test does not tell you whether the effect is <em>real</em>; it controls the rate at which you cry wolf. Statistical significance is not practical importance: with a large enough \(n\), a trivially small, useless effect becomes "significant," because significance measures only whether the effect is distinguishable from zero, not whether it is big enough to care about. Always report the effect size and a confidence interval alongside the p-value.</p>
+
+        <div class="widget" id="inf-pval-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT S4.2 — p-VALUE &amp; POWER SIMULATOR</span><span class="w-sub">TWO-SAMPLE z-TEST · NULL → ALTERNATIVE · EQ S4.7–S4.8</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>TRUE EFFECT SIZE d <output id="inf-pv-d-out">0.00</output></label><input type="range" id="inf-pv-d" min="0" max="1.2" step="0.05" value="0"/></div>
+              <div class="ctl"><label>SAMPLE SIZE / GROUP n <output id="inf-pv-n-out">30</output></label><input type="range" id="inf-pv-n" min="5" max="120" step="5" value="30"/></div>
+              <div class="ctl"><label>SIGNIFICANCE α <output id="inf-pv-a-out">0.05</output></label><input type="range" id="inf-pv-a" min="0.01" max="0.20" step="0.01" value="0.05"/></div>
+            </div>
+            <canvas class="w-canvas" id="inf-pv-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">REGIME</div><div class="r-value" id="inf-pv-regime" style="font-size:13px;">—</div></div>
+              <div class="readout acc"><div class="r-label">POWER (1 − β)</div><div class="r-value" id="inf-pv-power">—</div></div>
+              <div class="readout"><div class="r-label">P(p &lt; α)</div><div class="r-value" id="inf-pv-rej">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The histogram is the distribution of the p-value across hypothetical repetitions of the experiment. Start at effect <b>d = 0</b>: the bars are <em>flat</em> — the uniform null, with exactly an α-sized slice falling left of the threshold (Type I errors). Now crank d up: the distribution piles toward zero and the shaded region left of α swells — that growing slice <em>is</em> the power. Raise n to watch a small effect become detectable; the \(\sqrt{n}\) of EQ S4.4 is the engine.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># 10,000 experiments under H0 (no real effect): the p-value is UNIFORM
+import numpy as np
+rng = np.random.default_rng(0)
+
+def norm_cdf(x):                          # standard normal CDF, pure numpy (A&S 7.1.26)
+    x = np.asarray(x, float); s = np.sign(x); z = np.abs(x) / np.sqrt(2.0)
+    t = 1.0 / (1.0 + 0.3275911 * z)
+    y = 1.0 - (((((1.061405429*t - 1.453152027)*t) + 1.421413741)*t
+                - 0.284496736)*t + 0.254829592)*t * np.exp(-z*z)
+    return 0.5 * (1.0 + s * y)
+
+M, n = 10000, 40
+A = rng.normal(0, 1, (M, n))             # both groups drawn from the SAME world
+B = rng.normal(0, 1, (M, n))             # H0 is TRUE by construction
+se = np.sqrt(A.var(1, ddof=1)/n + B.var(1, ddof=1)/n)
+t  = (A.mean(1) - B.mean(1)) / se
+p  = 2.0 * (1.0 - norm_cdf(np.abs(t)))    # 10,000 two-sided p-values
+
+edges = np.linspace(0, 1, 11)
+counts, _ = np.histogram(p, bins=edges)
+print("p-value histogram (10 equal bins, ~1000 expected each):")
+for i in range(10):
+    print(f"  [{edges[i]:.1f},{edges[i+1]:.1f})  {counts[i]:5d}  " + "#"*int(counts[i]/25))
+print(f"\nfalse positives (p < 0.05): {int((p < 0.05).sum())}   (expect ~{int(0.05*M)})")
+print("Under H0 the p-value is uniform -- that flat shape IS a calibrated test,")
+print("and is exactly why alpha = 0.05 buys a 5% false-positive rate.")
+plot_xy((edges[:-1] + edges[1:]) / 2, counts)</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="exercise" data-answer="0.8" data-tol="0.001" data-unit="" data-hint="power = 1 - beta; beta is the Type II error rate.">
+          <div class="ex-q">A trial is designed with a Type II error rate of \( \beta = 0.20 \). What is its <b>statistical power</b>, \( 1 - \beta \)?</div>
+          <div class="ex-reveal-src">\( \text{power} = 1 - \beta = 1 - 0.20 = \) <b>0.8</b>. 80% power is the conventional design target — a one-in-five chance of missing a real effect of the size you planned for.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 4.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">4.4</span><h2>t-tests: comparing means when σ is unknown</h2></div>
+        <p>In practice you almost never know the population \(\sigma\) — you estimate it with \(S\), and that estimate is itself noisy, especially at small \(n\). William Gosset, brewing statistics at Guinness under the pen name "Student," worked out the exact distribution of the resulting ratio. The fix is to use a heavier-tailed reference curve, the <strong>\(t\) distribution</strong>, in place of the normal.</p>
+
+        <div class="eq"><span class="eq-tag">EQ S4.9 — THE ONE-SAMPLE t STATISTIC</span>
+        $$ t = \frac{\bar{X} - \mu_0}{S/\sqrt{n}} \;\sim\; t_{n-1} \quad\text{under } H_0:\, \mu = \mu_0 $$
+        <div class="eq-note">Same shape as a z-score, but \(\sigma\) is replaced by the sample \(S\) — so the denominator wobbles, fattening the tails. The \(t_{n-1}\) distribution has <b>\(n-1\) degrees of freedom</b>: at small \(df\) its tails are heavy (more extreme values are plausible, so critical values are larger than 1.96), and as \(df \to \infty\) it converges to the normal. The extra tail weight is the price of not knowing \(\sigma\) — and forgetting to pay it is why naive z-tests over-reject on small samples.</div>
+        </div>
+
+        <p>Three flavors cover most uses. The <strong>one-sample</strong> test (EQ S4.9) compares a mean to a fixed value. The <strong>paired</strong> test applies the one-sample test to within-subject differences — before/after, left/right — and is far more powerful when it applies, because it cancels per-subject variation. The <strong>two-sample</strong> test compares two independent groups:</p>
+
+        <div class="eq"><span class="eq-tag">EQ S4.10 — WELCH'S TWO-SAMPLE t</span>
+        $$ t = \frac{\bar{X}_1 - \bar{X}_2}{\sqrt{\dfrac{S_1^2}{n_1} + \dfrac{S_2^2}{n_2}}} $$
+        <div class="eq-note">The denominator is the standard error of the <em>difference</em> of two means. <b>Welch's version does not assume equal variances</b> and is the modern default — Student's original pooled-variance test is a special case that fails, sometimes badly, when the groups have unequal spread or unequal size. Welch costs you only a (non-integer) degrees-of-freedom adjustment and is strictly safer; reach for it unless you have a strong reason not to.</div>
+        </div>
+
+        <p class="note">Assumptions, honestly stated: the \(t\)-test wants roughly normal data (or large \(n\), via the CLT) and independent observations. It is <em>robust</em> to mild non-normality but not to dependence or to extreme outliers, which inflate \(S\) and quietly kill power. For badly skewed or ordinal data, a rank-based test (Mann–Whitney, Wilcoxon) trades a little power for not caring about the distribution's shape.</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Two-sample Welch t-test from scratch: t statistic + normal-approx p
+import numpy as np
+rng = np.random.default_rng(2)
+a = rng.normal(100, 15, 30)              # control:   true mean 100
+b = rng.normal(106, 15, 30)             # treatment: true mean 106 (effect = 6)
+
+def norm_cdf(x):                          # standard normal CDF, pure numpy (A&S 7.1.26)
+    x = np.asarray(x, float); s = np.sign(x); z = np.abs(x) / np.sqrt(2.0)
+    t = 1.0 / (1.0 + 0.3275911 * z)
+    y = 1.0 - (((((1.061405429*t - 1.453152027)*t) + 1.421413741)*t
+                - 0.284496736)*t + 0.254829592)*t * np.exp(-z*z)
+    return 0.5 * (1.0 + s * y)
+
+nx, ny = len(a), len(b)
+se = np.sqrt(a.var(ddof=1)/nx + b.var(ddof=1)/ny)   # Welch SE of the difference
+t  = (a.mean() - b.mean()) / se
+p  = 2.0 * (1.0 - norm_cdf(abs(t)))                  # two-sided, normal approximation
+
+print(f"mean control   = {a.mean():6.2f}     mean treatment = {b.mean():6.2f}")
+print(f"difference     = {a.mean()-b.mean():+.2f}        standard error = {se:.2f}")
+print(f"t statistic    = {t:.3f}")
+print(f"two-sided p     = {float(p):.4f}   (normal approx; df > ~30 makes it tight)")
+print("reject H0 at alpha = 0.05?", bool(p < 0.05))
+print("\nThe true effect was 6. Re-run with effect = 0 (set b mean to 100)")
+print("and the p-value scatters uniformly -- exactly the null demo above.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="exercise" data-answer="2.5" data-tol="0.01" data-unit="" data-hint="t = (xbar - mu0) / (S / sqrt(n)); plug in 52, 50, 8, 100.">
+          <div class="ex-q">A one-sample t-test has \( \bar{X} = 52 \), \( \mu_0 = 50 \), sample SD \( S = 8 \), and \( n = 100 \). What is the t statistic \( \dfrac{\bar{X}-\mu_0}{S/\sqrt{n}} \)?</div>
+          <div class="ex-reveal-src">Standard error \( = S/\sqrt{n} = 8/\sqrt{100} = 8/10 = 0.8 \). Then \( t = (52 - 50)/0.8 = 2/0.8 = \) <b>2.5</b> — comfortably past the \(\approx 1.98\) two-sided critical value at \(df = 99\), so reject \(H_0\) at the 5% level.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 4.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">4.5</span><h2>ANOVA: partitioning variance across groups</h2></div>
+        <p>To compare three or more group means, running a \(t\)-test on every pair is a trap — it multiplies the false-positive rate (the very problem of §4.6). The <strong>Analysis of Variance</strong> sidesteps it with one omnibus test built from a beautiful identity: total variation decomposes exactly into variation <em>between</em> groups and variation <em>within</em> them.</p>
+
+        <div class="eq"><span class="eq-tag">EQ S4.11 — THE SUM-OF-SQUARES DECOMPOSITION</span>
+        $$ \underbrace{\sum_{j}\sum_{i}(x_{ij} - \bar{x})^2}_{SS_{\text{total}}} \;=\; \underbrace{\sum_{j} n_j (\bar{x}_j - \bar{x})^2}_{SS_{\text{between}}} \;+\; \underbrace{\sum_{j}\sum_{i}(x_{ij} - \bar{x}_j)^2}_{SS_{\text{within}}} $$
+        <div class="eq-note">Every observation's distance from the grand mean splits, with no remainder, into "how far its group's mean is from the grand mean" plus "how far it is from its own group's mean." \(SS_{\text{between}}\) is <b>signal</b> (do the groups differ?); \(SS_{\text{within}}\) is <b>noise</b> (how much do individuals scatter inside a group?). This is the same orthogonal decomposition that underlies \(R^2\) in regression (STATS · CH 03).</div>
+        </div>
+
+        <p>Sums of squares are not directly comparable — \(SS_{\text{between}}\) is built from \(k\) group means, \(SS_{\text{within}}\) from \(N\) observations. Dividing each by its degrees of freedom gives <strong>mean squares</strong>, and their ratio is the test statistic. Under \(H_0\) (all group means equal), both mean squares estimate the same noise variance, so their ratio sits near 1; a real difference inflates the numerator.</p>
+
+        <div class="eq"><span class="eq-tag">EQ S4.12 — THE F-RATIO</span>
+        $$ F = \frac{MS_{\text{between}}}{MS_{\text{within}}} = \frac{SS_{\text{between}} / (k-1)}{SS_{\text{within}} / (N-k)} \;\sim\; F_{k-1,\,N-k} \quad\text{under } H_0 $$
+        <div class="eq-note">\(k\) groups, \(N\) total observations. The numerator has \(k-1\) degrees of freedom, the denominator \(N-k\). <b>\(F\) is a signal-to-noise ratio</b>: large \(F\) means the spread <em>between</em> groups dwarfs the spread <em>within</em> them, which is hard to explain if the means are truly equal. For exactly two groups, \(F = t^2\) — ANOVA and the two-sample \(t\)-test agree. A significant \(F\) says "some means differ" but not which; post-hoc tests (Tukey's HSD) localize it while controlling the family-wise error of §4.6.</div>
+        </div>
+
+        <div class="widget" id="inf-anova-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT S4.3 — ANOVA F EXPLORER</span><span class="w-sub">3 GROUPS · BETWEEN vs WITHIN VARIANCE · EQ S4.11–S4.12</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>SPREAD OF GROUP MEANS <output id="inf-an-spread-out">1.5</output></label><input type="range" id="inf-an-spread" min="0" max="6" step="0.25" value="1.5"/></div>
+              <div class="ctl"><label>WITHIN-GROUP SD σ <output id="inf-an-sd-out">2.0</output></label><input type="range" id="inf-an-sd" min="0.5" max="6" step="0.25" value="2.0"/></div>
+              <div class="ctl"><label>GROUP SIZE n <output id="inf-an-n-out">12</output></label><input type="range" id="inf-an-n" min="4" max="40" step="2" value="12"/></div>
+            </div>
+            <canvas class="w-canvas" id="inf-an-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">MS BETWEEN</div><div class="r-value" id="inf-an-msb">—</div></div>
+              <div class="readout"><div class="r-label">MS WITHIN</div><div class="r-value" id="inf-an-msw">—</div></div>
+              <div class="readout acc"><div class="r-label">F = MSB / MSW</div><div class="r-value" id="inf-an-f">—</div></div>
+              <div class="readout"><div class="r-label">VERDICT (α = 0.05)</div><div class="r-value" id="inf-an-sig" style="font-size:13px;">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Three groups of dots, one per column; the <span style="color:var(--accent);">mint</span> diamonds are group means, the dashed line is the grand mean. <b>Pull the group means apart</b> (raise the spread) and watch \(MS_{\text{between}}\) and \(F\) climb. <b>Raise the within-group SD</b> and the dots smear vertically: the same separation now drowns in noise and \(F\) collapses. Shrinking the spread to zero leaves \(F \approx 1\) — pure noise over noise, the null. \(F\) is the ratio of the two, and the verdict flips when it crosses the critical value.</div>
+        </div>
+
+        <div class="exercise" data-answer="5.4" data-tol="0.02" data-unit="" data-hint="F = (SSB/df_B) / (SSW/df_W); divide each SS by its df first.">
+          <div class="ex-q">An ANOVA gives \( SS_{\text{between}} = 120 \) with \( df = 2 \), and \( SS_{\text{within}} = 300 \) with \( df = 27 \). Compute the <b>F-ratio</b>, \( \dfrac{SS_B/df_B}{SS_W/df_W} \).</div>
+          <div class="ex-reveal-src">\( MS_{\text{between}} = 120/2 = 60 \) and \( MS_{\text{within}} = 300/27 = 11.11 \). Then \( F = 60 / 11.11 = \) <b>5.4</b>. Against \( F_{2,27} \) the 5% critical value is \(\approx 3.35\), so \(5.4\) clears it — at least one group mean differs.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 4.6 ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">4.6</span><h2>Multiple comparisons &amp; the replication crisis</h2></div>
+        <p>Here is the dark side of the p-value, and the reason this chapter ends in a cautionary tale. A 5% false-positive rate <em>per test</em> compounds ruthlessly across many tests. Run twenty independent null tests and the probability that <em>at least one</em> hits "significance" by chance is not 5% — it is \(1 - 0.95^{20} \approx 64\%\).</p>
+
+        <div class="eq"><span class="eq-tag">EQ S4.13 — FAMILY-WISE ERROR INFLATION</span>
+        $$ \text{FWER} = \mathbb{P}(\text{at least one false positive}) = 1 - (1 - \alpha)^{m} \approx m\alpha \;\;(\text{small } \alpha) $$
+        <div class="eq-note">Across \(m\) independent tests at level \(\alpha\), the chance of <em>some</em> spurious hit grows toward 1. <b>The Bonferroni correction</b> restores control by testing each hypothesis at \(\alpha/m\) — simple, conservative, and at the cost of power. For large \(m\) (genomics, neuroimaging), controlling the <em>false discovery rate</em> instead (Benjamini–Hochberg) — the expected fraction of your "discoveries" that are false — keeps far more power. Either way, the unit of error control is the <em>family</em> of tests, not the single test.</div>
+        </div>
+
+        <div class="callout warn">
+          <span class="co-icon">p-HACKING</span>
+          <p><strong>The same arithmetic, weaponized by flexibility.</strong> If you try many outcome variables, many subgroups, many covariate combinations, or peek at the data and stop when \(p &lt; 0.05\), you are running dozens of hidden tests and reporting only the winner. This is <strong>p-hacking</strong>, and it manufactures significance from pure noise. The "garden of forking paths" makes it possible without any conscious cheating — every undocumented analytic choice is a degree of freedom that inflates the real \(\alpha\).</p>
+        </div>
+
+        <p>This is not academic hygiene; it broke a field's confidence in itself. Beginning in the 2010s, large replication efforts found that a substantial share of published findings — in psychology, parts of biomedicine, and beyond — failed to reproduce. The diagnosis pointed straight at the machinery of this chapter: chronic <strong>underpowering</strong> (§4.3), undisclosed multiple comparisons (above), publication bias toward "significant" results, and the cult of the \(p &lt; 0.05\) threshold. John Ioannidis's 2005 argument — that <em>most published research findings are false</em> — followed from a few lines of conditional probability: when power is low, priors are low, and bias and multiplicity are high, a "significant" result is more likely false than true.</p>
+
+        <div class="callout">
+          <span class="co-icon">CONTESTED</span>
+          <p><strong>The reforms are real but not settled.</strong> Pre-registration, larger samples, reporting effect sizes with intervals, and sharing data are now mainstream and demonstrably help. Beyond that, consensus frays: some argue for lowering the threshold to \(p &lt; 0.005\), some for abandoning fixed thresholds entirely, some for replacing significance testing with Bayesian model comparison (STATS · CH 05) or estimation-with-intervals. The honest summary in 2026: the p-value is a useful, badly abused tool, and "statistical significance" should be read as the start of an argument, never the end of one.</p>
+        </div>
+
+        <div class="exercise" data-answer="0.0125" data-tol="0.001" data-unit="" data-hint="Bonferroni: divide the family alpha by the number of tests.">
+          <div class="ex-q">You run \( m = 4 \) hypothesis tests and want a family-wise error rate of \( \alpha = 0.05 \). What per-test threshold does the <b>Bonferroni correction</b> use, \( \alpha/m \)?</div>
+          <div class="ex-reveal-src">Bonferroni tests each hypothesis at \( \alpha/m = 0.05/4 = \) <b>0.0125</b>. Only p-values below 0.0125 count as significant — the tighter bar that keeps the chance of <i>any</i> false positive at or below 5%.</div>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>Frequentist inference controls error rates but cannot say "how probable is my hypothesis?" — only a Bayesian can.</strong> STATS · CH 05 turns the question around: instead of asking how surprising the data are under a fixed null, it puts a probability distribution on the parameter itself, updates it with Bayes' rule, and reads off credible intervals that mean exactly what the misread confidence interval of §4.2 was supposed to.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 4.R — References ====================== -->
+      <section class="section" id="s7">
+        <div class="sec-head"><span class="sec-num">4.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://doi.org/10.2307/2331554" target="_blank" rel="noopener">Student [Gosset, W. S.] (1908). <span class="ref-venue">The Probable Error of a Mean</span>.</a> <span class="ref-meta">Biometrika 6(1) — the t distribution, derived for small Guinness brewing samples (EQ S4.9).</span></li>
+          <li><a href="https://doi.org/10.1098/rsta.1933.0009" target="_blank" rel="noopener">Neyman, J. &amp; Pearson, E. S. (1933). <span class="ref-venue">On the Problem of the Most Efficient Tests of Statistical Hypotheses</span>.</a> <span class="ref-meta">Phil. Trans. R. Soc. A 231 — Type I/II error, power, and the framework of EQ S4.8.</span></li>
+          <li><a href="https://doi.org/10.1371/journal.pmed.0020124" target="_blank" rel="noopener">Ioannidis, J. P. A. (2005). <span class="ref-venue">Why Most Published Research Findings Are False</span>.</a> <span class="ref-meta">PLoS Medicine 2(8) — the conditional-probability argument behind §4.6.</span></li>
+          <li><a href="https://doi.org/10.1126/science.aac4716" target="_blank" rel="noopener">Open Science Collaboration (2015). <span class="ref-venue">Estimating the Reproducibility of Psychological Science</span>.</a> <span class="ref-meta">Science 349(6251) — the large-scale replication study that crystallized the crisis.</span></li>
+          <li><a href="https://doi.org/10.1111/j.2517-6161.1995.tb02031.x" target="_blank" rel="noopener">Benjamini, Y. &amp; Hochberg, Y. (1995). <span class="ref-venue">Controlling the False Discovery Rate</span>.</a> <span class="ref-meta">J. R. Stat. Soc. B 57(1) — FDR control for the many-tests regime of EQ S4.13.</span></li>
+          <li><a href="https://doi.org/10.1080/00031305.2016.1154108" target="_blank" rel="noopener">Wasserstein, R. L. &amp; Lazar, N. A. (2016). <span class="ref-venue">The ASA Statement on p-Values: Context, Process, and Purpose</span>.</a> <span class="ref-meta">The American Statistician 70(2) — the profession's own caution on what a p-value is not.</span></li>
+          <li><a href="https://doi.org/10.1080/01621459.1947.10501941" target="_blank" rel="noopener">Welch, B. L. (1947). <span class="ref-venue">The Generalization of Student's Problem When Several Different Population Variances Are Involved</span>.</a> <span class="ref-meta">Biometrika 34 — the unequal-variance two-sample test of EQ S4.10.</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../stats/03-descriptive-correlation.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">03</span> Correlation</div></a>
+        <a class="next" href="../stats/05-bayesian.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">05</span> Bayesian Inference</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — STATISTICS · CH 04</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* ============================================================
+   Statistical Inference & Hypothesis Testing — instruments
+   Single IIFE, no globals. A shared standard-normal CDF (erf,
+   Abramowitz & Stegun 7.1.26) keeps every widget and the
+   Python cells in agreement to ~1e-7.
+   ============================================================ */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  /* --- standard normal CDF / PDF / inverse (shared by all three) --- */
+  function erf(x) {
+    var s = x < 0 ? -1 : 1;
+    x = Math.abs(x);
+    var t = 1 / (1 + 0.3275911 * x);
+    var y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t
+                  - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x);
+    return s * y;
+  }
+  function ncdf(x) { return 0.5 * (1 + erf(x / Math.SQRT2)); }
+  function npdf(x) { return Math.exp(-0.5 * x * x) / Math.sqrt(2 * Math.PI); }
+  /* inverse normal CDF — Acklam's rational approximation, |err| < 1.2e-9 */
+  function ninv(p) {
+    if (p <= 0) return -Infinity;
+    if (p >= 1) return Infinity;
+    var a = [-3.969683028665376e+01, 2.209460984245205e+02, -2.759285104469687e+02,
+             1.383577518672690e+02, -3.066479806614716e+01, 2.506628277459239e+00];
+    var b = [-5.447609879822406e+01, 1.615858368580409e+02, -1.556989798598866e+02,
+             6.680131188771972e+01, -1.328068155288572e+01];
+    var c = [-7.784894002430293e-03, -3.223964580411365e-01, -2.400758277161838e+00,
+             -2.549732539343734e+00, 4.374664141464968e+00, 2.938163982698783e+00];
+    var d = [7.784695709041462e-03, 3.224671290700398e-01, 2.445134137142996e+00,
+             3.754408661907416e+00];
+    var plow = 0.02425, phigh = 1 - plow, q, r;
+    if (p < plow) {
+      q = Math.sqrt(-2 * Math.log(p));
+      return (((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5]) /
+             ((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1);
+    }
+    if (p > phigh) {
+      q = Math.sqrt(-2 * Math.log(1 - p));
+      return -(((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5]) /
+              ((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1);
+    }
+    q = p - 0.5; r = q * q;
+    return (((((a[0]*r+a[1])*r+a[2])*r+a[3])*r+a[4])*r+a[5]) * q /
+           (((((b[0]*r+b[1])*r+b[2])*r+b[3])*r+b[4])*r+1);
+  }
+  function fnum(x, d) { d = d === undefined ? 2 : d; return x.toFixed(d); }
+
+  /* ========================================================
+     INSTRUMENT S4.1 — Confidence-interval coverage
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("inf-ci-demo");
+    if (!root) return;
+    var canvas = document.getElementById("inf-ci-canvas");
+    var confEl = document.getElementById("inf-ci-conf");
+    var nEl = document.getElementById("inf-ci-n");
+    var confOut = document.getElementById("inf-ci-conf-out");
+    var nOut = document.getElementById("inf-ci-n-out");
+    var drawBtn = document.getElementById("inf-ci-draw");
+    var resetBtn = document.getElementById("inf-ci-reset");
+    var totalEl = document.getElementById("inf-ci-total");
+    var hitEl = document.getElementById("inf-ci-hit");
+    var rateEl = document.getElementById("inf-ci-rate");
+
+    var MU = 0, SIGMA = 1, MAXROWS = 40;
+    var rng = FM.mulberry32(20240611);
+    var rows = [];     /* {lo, hi, center, hit} */
+    var total = 0, hits = 0;
+
+    function gauss() {            /* Box–Muller standard normal */
+      var u1 = rng(), u2 = rng();
+      if (u1 < 1e-12) u1 = 1e-12;
+      return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+    }
+    function oneExperiment(n, z) {
+      var sum = 0, i, x;
+      for (i = 0; i < n; i++) { x = MU + SIGMA * gauss(); sum += x; }
+      var mean = sum / n;
+      var half = z * SIGMA / Math.sqrt(n);     /* known-sigma CI (EQ S4.6) */
+      var lo = mean - half, hi = mean + half;
+      return { lo: lo, hi: hi, center: mean, hit: lo <= MU && MU <= hi };
+    }
+    function draw40() {
+      var n = +nEl.value;
+      var conf = +confEl.value / 100;
+      var z = ninv(1 - (1 - conf) / 2);
+      var i;
+      for (i = 0; i < MAXROWS; i++) {
+        var e = oneExperiment(n, z);
+        rows.push(e);
+        if (rows.length > MAXROWS) rows.shift();
+        total++; if (e.hit) hits++;
+      }
+      render();
+    }
+    function reset() { rows = []; total = 0; hits = 0; render(); }
+
+    function render() {
+      confOut.textContent = confEl.value + "%";
+      nOut.textContent = nEl.value;
+      var c = FM.setupCanvas(canvas, 320);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      var padL = 16, padR = 16, padT = 18, padB = 24;
+      var x0 = padL, x1 = w - padR, y0 = padT, y1 = h - padB;
+      ctx.clearRect(0, 0, w, h);
+      /* horizontal scale: fixed window around mu so misses are visible */
+      var span = 1.6;        /* +/- in raw units */
+      function px(v) { return x0 + (v - (MU - span)) / (2 * span) * (x1 - x0); }
+      /* frame */
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(x0, y0, x1 - x0, y1 - y0);
+      /* true-mean line */
+      ctx.strokeStyle = C.SEC; ctx.setLineDash([4, 4]); ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(px(MU), y0); ctx.lineTo(px(MU), y1); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = C.SEC; ctx.font = C.MONO;
+      ctx.textAlign = "center"; ctx.textBaseline = "top";
+      ctx.fillText("μ = 0 (TRUTH)", px(MU), y1 + 6);
+      /* interval rows */
+      var n = rows.length;
+      if (n === 0) {
+        ctx.fillStyle = C.MUT; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText("PRESS DRAW 40 — EACH BAR IS ONE EXPERIMENT'S 95% CI", (x0 + x1) / 2, (y0 + y1) / 2);
+      } else {
+        var rowH = (y1 - y0) / MAXROWS;
+        for (var i = 0; i < n; i++) {
+          var r = rows[i];
+          var yy = y0 + (i + 0.5) * rowH;
+          ctx.strokeStyle = r.hit ? C.MINT : C.RED;
+          ctx.lineWidth = 1.6;
+          ctx.beginPath();
+          ctx.moveTo(Math.max(px(r.lo), x0), yy);
+          ctx.lineTo(Math.min(px(r.hi), x1), yy);
+          ctx.stroke();
+          /* center dot */
+          ctx.fillStyle = r.hit ? C.MINT : C.RED;
+          var cx = px(r.center);
+          if (cx >= x0 && cx <= x1) { ctx.beginPath(); ctx.arc(cx, yy, 1.6, 0, 2 * Math.PI); ctx.fill(); }
+        }
+      }
+      /* readouts */
+      totalEl.textContent = total;
+      hitEl.textContent = hits;
+      rateEl.textContent = total ? (100 * hits / total).toFixed(1) + "%" : "—";
+    }
+
+    confEl.addEventListener("input", render);
+    nEl.addEventListener("input", render);
+    drawBtn.addEventListener("click", draw40);
+    resetBtn.addEventListener("click", reset);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    draw40();   /* meaningful initial state: 40 intervals already drawn */
+  })();
+
+  /* ========================================================
+     INSTRUMENT S4.2 — p-value & power simulator
+     Analytic sampling distribution of the two-sample z statistic:
+     under the alternative, t ~ Normal(lambda, 1) with
+     lambda = d * sqrt(n/2). The histogram is the implied
+     distribution of the two-sided p-value.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("inf-pval-demo");
+    if (!root) return;
+    var canvas = document.getElementById("inf-pv-canvas");
+    var dEl = document.getElementById("inf-pv-d");
+    var nEl = document.getElementById("inf-pv-n");
+    var aEl = document.getElementById("inf-pv-a");
+    var dOut = document.getElementById("inf-pv-d-out");
+    var nOut = document.getElementById("inf-pv-n-out");
+    var aOut = document.getElementById("inf-pv-a-out");
+    var regimeEl = document.getElementById("inf-pv-regime");
+    var powerEl = document.getElementById("inf-pv-power");
+    var rejEl = document.getElementById("inf-pv-rej");
+    var NBIN = 25;
+
+    /* CDF of the two-sided p-value at threshold p, when the standardized
+       statistic t ~ N(lambda, 1):  P(p-value <= p) = P(|t| >= zc), with
+       zc = Phi^{-1}(1 - p/2). A bin's MASS = pCDF(hi) - pCDF(lo) is finite
+       and the masses sum to 1 — exactly what a Monte-Carlo p-histogram
+       converges to. (The density itself is unbounded at p -> 0, so plotting
+       mass per bin, not density, gives the right shape.) */
+    function pCDF(p, lam) {
+      if (p <= 0) return 0;
+      if (p >= 1) return 1;
+      var zc = ninv(1 - p / 2);
+      return (1 - ncdf(zc - lam)) + ncdf(-zc - lam);
+    }
+    function power(lam, alpha) {     /* P(reject) = P(p < alpha) */
+      var za = ninv(1 - alpha / 2);
+      return (1 - ncdf(za - lam)) + ncdf(-za - lam);
+    }
+
+    function render() {
+      var d = +dEl.value, n = +nEl.value, alpha = +aEl.value;
+      var lam = d * Math.sqrt(n / 2);
+      dOut.textContent = fnum(d, 2);
+      nOut.textContent = n;
+      aOut.textContent = fnum(alpha, 2);
+
+      var c = FM.setupCanvas(canvas, 300);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      var padL = 44, padR = 16, padT = 18, padB = 30;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      ctx.clearRect(0, 0, w, h);
+
+      /* bin probability MASS -> heights (each = P[p in bin], summing to 1) */
+      var heights = [], i, maxh = 0;
+      for (i = 0; i < NBIN; i++) {
+        var lo = i / NBIN, hi = (i + 1) / NBIN;
+        var mass = pCDF(hi, lam) - pCDF(lo, lam);
+        if (!isFinite(mass) || mass < 0) mass = 0;
+        heights.push(mass);
+        if (mass > maxh) maxh = mass;
+      }
+      if (maxh < 1e-9) maxh = 1;
+      maxh *= 1.12;
+      function px(p) { return x0 + p * (x1 - x0); }
+      function py(v) { return y0 - (v / maxh) * (y0 - y1); }
+
+      /* frame + y grid */
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(x0, y1, x1 - x0, y0 - y1);
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      for (i = 0; i <= 4; i++) {
+        var gv = maxh * i / 4, gy = py(gv);
+        ctx.strokeStyle = "rgba(47,50,52,.55)";
+        ctx.beginPath(); ctx.moveTo(x0, gy); ctx.lineTo(x1, gy); ctx.stroke();
+        ctx.fillStyle = C.MUT; ctx.fillText(gv < 0.1 ? gv.toFixed(3) : gv.toFixed(2), x0 - 6, gy);
+      }
+      /* alpha threshold shading */
+      var ax = px(alpha);
+      ctx.fillStyle = "rgba(78,138,247,.16)";
+      ctx.fillRect(x0, y1, ax - x0, y0 - y1);
+      /* bars */
+      var bw = (x1 - x0) / NBIN;
+      for (i = 0; i < NBIN; i++) {
+        var bx = px(i / NBIN), by = py(heights[i]);
+        var inRej = (i + 1) / NBIN <= alpha + 1e-9;
+        ctx.fillStyle = inRej ? C.BLUE : "rgba(166,242,204,.55)";
+        ctx.fillRect(bx + 0.5, by, bw - 1, y0 - by);
+      }
+      /* alpha line + label */
+      ctx.strokeStyle = C.BLUE; ctx.setLineDash([4, 3]); ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(ax, y1); ctx.lineTo(ax, y0); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = C.BLUE; ctx.textAlign = "center"; ctx.textBaseline = "top";
+      ctx.fillText("α=" + fnum(alpha, 2), ax, y1 + 2);
+      /* x labels */
+      ctx.fillStyle = C.MUT; ctx.textAlign = "left";
+      ctx.fillText("p = 0", x0, y0 + 6);
+      ctx.textAlign = "right"; ctx.fillText("p = 1", x1, y0 + 6);
+      ctx.textAlign = "center"; ctx.fillText("p-VALUE", (x0 + x1) / 2, y0 + 6);
+      /* title */
+      ctx.fillStyle = C.SEC; ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText("p-VALUE DISTRIBUTION · MASS PER BIN", x0 + 6, y1 + 4);
+
+      /* readouts */
+      var pw = power(lam, alpha);
+      regimeEl.textContent = d < 1e-6 ? "NULL (H₀ true)" : "ALTERNATIVE";
+      regimeEl.style.color = d < 1e-6 ? C.SEC : C.MINT;
+      powerEl.textContent = (100 * pw).toFixed(1) + "%";
+      rejEl.textContent = (100 * pw).toFixed(1) + "%";
+    }
+
+    dEl.addEventListener("input", render);
+    nEl.addEventListener("input", render);
+    aEl.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();   /* initial state: the flat null distribution (d = 0) */
+  })();
+
+  /* ========================================================
+     INSTRUMENT S4.3 — ANOVA F explorer
+     Three groups, fixed deterministic noise pattern so the
+     view is stable; F = MS_between / MS_within (EQ S4.12).
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("inf-anova-demo");
+    if (!root) return;
+    var canvas = document.getElementById("inf-an-canvas");
+    var spreadEl = document.getElementById("inf-an-spread");
+    var sdEl = document.getElementById("inf-an-sd");
+    var nEl = document.getElementById("inf-an-n");
+    var spreadOut = document.getElementById("inf-an-spread-out");
+    var sdOut = document.getElementById("inf-an-sd-out");
+    var nOut = document.getElementById("inf-an-n-out");
+    var msbEl = document.getElementById("inf-an-msb");
+    var mswEl = document.getElementById("inf-an-msw");
+    var fEl = document.getElementById("inf-an-f");
+    var sigEl = document.getElementById("inf-an-sig");
+    var K = 3, BASE = 10;
+
+    /* fixed standard-normal "z-scores" per slot so spreading the means
+       and scaling the SD is smooth and reproducible (no per-frame RNG) */
+    var Z = [];
+    (function () {
+      var rng = FM.mulberry32(424242), g, j, i, u1, u2;
+      for (j = 0; j < K; j++) {
+        g = [];
+        for (i = 0; i < 60; i++) {
+          u1 = rng(); u2 = rng(); if (u1 < 1e-12) u1 = 1e-12;
+          g.push(Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2));
+        }
+        /* center each group's z-pattern so within-SD is purely the slider */
+        var m = 0; for (i = 0; i < g.length; i++) m += g[i]; m /= g.length;
+        for (i = 0; i < g.length; i++) g[i] -= m;
+        Z.push(g);
+      }
+    })();
+
+    /* F-distribution critical value F_{2, N-3} at alpha=0.05, small table + interp */
+    function fcrit(df2) {
+      var tbl = [[3, 9.55], [6, 5.14], [9, 4.26], [12, 3.89], [18, 3.55],
+                 [27, 3.35], [40, 3.23], [60, 3.15], [120, 3.07], [100000, 3.00]];
+      if (df2 <= tbl[0][0]) return tbl[0][1];
+      for (var i = 1; i < tbl.length; i++) {
+        if (df2 <= tbl[i][0]) {
+          var x0 = tbl[i-1][0], x1 = tbl[i][0], y0 = tbl[i-1][1], y1 = tbl[i][1];
+          return y0 + (y1 - y0) * (df2 - x0) / (x1 - x0);
+        }
+      }
+      return 3.00;
+    }
+
+    function render() {
+      var spread = +spreadEl.value, sd = +sdEl.value, n = +nEl.value;
+      spreadOut.textContent = fnum(spread, 2);
+      sdOut.textContent = fnum(sd, 2);
+      nOut.textContent = n;
+
+      /* group means symmetric around BASE: -spread, 0, +spread */
+      var means = [BASE - spread, BASE, BASE + spread];
+      /* build the data + sums of squares */
+      var grand = 0, total = 0, j, i, val, groupVals = [];
+      for (j = 0; j < K; j++) {
+        var gv = [];
+        for (i = 0; i < n; i++) { val = means[j] + sd * Z[j][i]; gv.push(val); grand += val; total++; }
+        groupVals.push(gv);
+      }
+      grand /= total;
+      var ssb = 0, ssw = 0;
+      for (j = 0; j < K; j++) {
+        var gm = 0; for (i = 0; i < n; i++) gm += groupVals[j][i]; gm /= n;
+        ssb += n * (gm - grand) * (gm - grand);
+        for (i = 0; i < n; i++) ssw += (groupVals[j][i] - gm) * (groupVals[j][i] - gm);
+        means[j] = gm;   /* store realized mean for plotting */
+      }
+      var dfB = K - 1, dfW = total - K;
+      var msb = ssb / dfB, msw = ssw / dfW;
+      var F = msw > 1e-9 ? msb / msw : 0;
+      var crit = fcrit(dfW);
+
+      /* ---- draw ---- */
+      var c = FM.setupCanvas(canvas, 300);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      var padL = 40, padR = 16, padT = 18, padB = 28;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      ctx.clearRect(0, 0, w, h);
+      /* vertical range across all data */
+      var lo = Infinity, hi = -Infinity;
+      for (j = 0; j < K; j++) for (i = 0; i < n; i++) {
+        val = groupVals[j][i]; if (val < lo) lo = val; if (val > hi) hi = val;
+      }
+      var padv = (hi - lo) * 0.12 + 0.5; lo -= padv; hi += padv;
+      function py(v) { return y0 - (v - lo) / (hi - lo) * (y0 - y1); }
+      /* frame */
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(x0, y1, x1 - x0, y0 - y1);
+      /* grand mean line */
+      var gy = py(grand);
+      ctx.strokeStyle = C.SEC; ctx.setLineDash([4, 4]); ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x0, gy); ctx.lineTo(x1, gy); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = C.SEC; ctx.font = C.MONO;
+      ctx.textAlign = "left"; ctx.textBaseline = "bottom";
+      ctx.fillText("GRAND MEAN", x0 + 4, gy - 2);
+      /* columns of dots + group-mean diamond */
+      var colW = (x1 - x0) / K;
+      var rng = FM.mulberry32(7);   /* tiny horizontal jitter only, deterministic */
+      for (j = 0; j < K; j++) {
+        var cx = x0 + (j + 0.5) * colW;
+        ctx.fillStyle = "rgba(155,155,155,.55)";
+        for (i = 0; i < n; i++) {
+          var jit = (rng() - 0.5) * colW * 0.5;
+          ctx.beginPath(); ctx.arc(cx + jit, py(groupVals[j][i]), 2.2, 0, 2 * Math.PI); ctx.fill();
+        }
+        /* group mean diamond (mint) */
+        var my = py(means[j]);
+        ctx.fillStyle = C.MINT;
+        ctx.beginPath();
+        ctx.moveTo(cx, my - 5); ctx.lineTo(cx + 5, my);
+        ctx.lineTo(cx, my + 5); ctx.lineTo(cx - 5, my); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = C.MUT; ctx.textAlign = "center"; ctx.textBaseline = "top";
+        ctx.fillText("GROUP " + (j + 1), cx, y0 + 6);
+      }
+      /* between-vs-within mini legend */
+      ctx.font = C.MONO; ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillStyle = C.MINT; ctx.fillText("◆ GROUP MEAN", x1 - 110, y1 + 4);
+
+      /* readouts */
+      msbEl.textContent = fnum(msb, 2);
+      mswEl.textContent = fnum(msw, 2);
+      fEl.textContent = fnum(F, 2);
+      var sig = F >= crit;
+      sigEl.textContent = sig ? "REJECT H₀" : "NO DIFFERENCE";
+      sigEl.style.color = sig ? C.MINT : C.MUT;
+    }
+
+    spreadEl.addEventListener("input", render);
+    sdEl.addEventListener("input", render);
+    nEl.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();   /* initial state: a moderate, marginally-significant configuration */
+  })();
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

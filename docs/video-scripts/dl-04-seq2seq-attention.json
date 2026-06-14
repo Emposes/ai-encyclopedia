@@ -1,0 +1,165 @@
+{
+  "concepts": [
+    {
+      "id": "dl-04-seq2seq-attention-s1",
+      "chapter": "dl/04-seq2seq-attention",
+      "section": "s1",
+      "title": "The encoder-decoder framework",
+      "eyebrow": "DEEP LEARNING",
+      "beats": [
+        {
+          "text": "Translation pairs sequences of different lengths and languages with no word-by-word alignment, which a plain recurrent net cannot handle.",
+          "visual": { "type": "title", "text": "The encoder-decoder framework", "sub": "Sutskever, Vinyals & Le, 2014" }
+        },
+        {
+          "text": "Sequence-to-sequence uses two recurrent nets: one encoder reads the source, one decoder writes the translation.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "The encoder consumes source tokens one at a time and its final hidden state becomes a single context vector summarizing the sentence.",
+          "visual": { "type": "equation", "tex": "c = h_{T_x}", "note": "final encoder state as the whole-sentence summary" }
+        },
+        {
+          "text": "The decoder factorizes the output autoregressively, conditioning each token on all prior outputs and on the same frozen context vector.",
+          "visual": { "type": "equation", "tex": "p(y_1,\\ldots,y_{T_y}\\mid x) = \\prod_{i=1}^{T_y} p(y_i \\mid y_{<i}, c)", "note": "every output token sees the same c" }
+        },
+        {
+          "text": "Two LSTMs trained end-to-end on millions of pairs reached competitive WMT 14 English to French BLEU, rivaling phrase-based systems.",
+          "visual": { "type": "bars", "values": [3, 9, 27], "labels": ["3w", "9w", "27w"], "highlight": 2 }
+        },
+        {
+          "text": "The same framework generalizes to summarization, dialogue, code generation, speech-to-text, and image captioning with different encoders.",
+          "visual": { "type": "stat", "value": 4, "label": "encoder layers in the original deep LSTM", "unit": "layers" }
+        }
+      ]
+    },
+    {
+      "id": "dl-04-seq2seq-attention-s2",
+      "chapter": "dl/04-seq2seq-attention",
+      "section": "s2",
+      "title": "The fixed-vector bottleneck",
+      "eyebrow": "DEEP LEARNING",
+      "beats": [
+        {
+          "text": "Every clause, entity, and nuance of a long source sentence must be squeezed into one fixed-dimensional vector and held unchanged.",
+          "visual": { "type": "title", "text": "The fixed-vector bottleneck", "sub": "one vector for the whole sentence" }
+        },
+        {
+          "text": "The encoder's last state is a lossy, length-blind summary, so it must remember a forty-word sentence in a constant number of bits.",
+          "visual": { "type": "equation", "tex": "c \\in \\mathbb{R}^d \\;\\text{fixed, regardless of } T_x", "note": "width never grows with input length" }
+        },
+        {
+          "text": "BLEU is fine on short sentences but falls off a cliff as length grows, a decay Cho and colleagues documented directly in 2014.",
+          "visual": { "type": "plot", "ys": [92, 90, 82, 60, 32, 14], "dot": 4, "xlabel": "source length", "ylabel": "quality", "mark": "fixed c" }
+        },
+        {
+          "text": "This is an information-theoretic ceiling, not a tuning problem; you cannot store an arbitrarily long sentence without loss.",
+          "visual": { "type": "stat", "value": 50, "label": "words where fixed-vector quality has collapsed", "unit": "w" }
+        },
+        {
+          "text": "The intuition is writing a translation from memory without looking back at the page; attention lets the decoder glance back.",
+          "visual": { "type": "bars", "values": [88, 18], "labels": ["@10w", "@50w"], "highlight": 1 }
+        }
+      ]
+    },
+    {
+      "id": "dl-04-seq2seq-attention-s3",
+      "chapter": "dl/04-seq2seq-attention",
+      "section": "s3",
+      "title": "Bahdanau (additive) attention",
+      "eyebrow": "DEEP LEARNING",
+      "beats": [
+        {
+          "text": "Bahdanau, Cho and Bengio kept all encoder hidden states, one annotation per source word, instead of collapsing to one vector.",
+          "visual": { "type": "title", "text": "Bahdanau (additive) attention", "sub": "keep one annotation per source word" }
+        },
+        {
+          "text": "An alignment model, a tiny feedforward net inside a tanh, scores how well the decoder state matches each source annotation.",
+          "visual": { "type": "equation", "tex": "e_{ij} = v_a^{\\top}\\tanh(W_a s_{i-1} + U_a h_j)", "note": "additive score, learned jointly with the translator" }
+        },
+        {
+          "text": "Softmax over source positions turns raw scores into attention weights, and the context vector is their weighted sum of annotations.",
+          "visual": { "type": "equation", "tex": "\\alpha_{ij} = \\frac{\\exp(e_{ij})}{\\sum_{k} \\exp(e_{ik})}, \\quad c_i = \\sum_{j} \\alpha_{ij} h_j", "note": "a soft, differentiable lookup into the encoder" }
+        },
+        {
+          "text": "Worked over four words with scores one, zero, half, negative half, the softmax gives weights that sum to exactly one.",
+          "visual": { "type": "bars", "values": [0.455, 0.167, 0.276, 0.102], "labels": ["w1", "w2", "w3", "w4"], "highlight": 0 }
+        },
+        {
+          "text": "The context now varies per output step; translating the verb pulls weight onto the source verb, and the frozen vector is gone.",
+          "visual": { "type": "plot", "ys": [0.45, 0.17, 0.28, 0.10], "dot": 0, "xlabel": "source position", "ylabel": "weight" }
+        },
+        {
+          "text": "This is the original attention mechanism, three years before Attention Is All You Need, with alignment never supervised.",
+          "visual": { "type": "stat", "value": 1, "label": "attention weights always sum to one", "decimals": 0 }
+        }
+      ]
+    },
+    {
+      "id": "dl-04-seq2seq-attention-s4",
+      "chapter": "dl/04-seq2seq-attention",
+      "section": "s4",
+      "title": "Luong (multiplicative) attention",
+      "eyebrow": "DEEP LEARNING",
+      "beats": [
+        {
+          "text": "Luong, Pham and Manning simplified the idea: if query and key share a space, a plain dot product already measures alignment.",
+          "visual": { "type": "title", "text": "Luong (multiplicative) attention", "sub": "a dot product instead of an MLP" }
+        },
+        {
+          "text": "They defined three scoring functions of increasing flexibility: dot, general with one learned matrix, and concat which recovers Bahdanau.",
+          "visual": { "type": "equation", "tex": "\\mathrm{score}(s_i,h_j) = \\begin{cases} s_i^{\\top} h_j & \\text{dot} \\\\ s_i^{\\top} W_a h_j & \\text{general} \\\\ v_a^{\\top}\\tanh(W_a[s_i;h_j]) & \\text{concat} \\end{cases}", "note": "dot adds zero new parameters" }
+        },
+        {
+          "text": "A dot product is a single GPU-friendly matrix multiply, faster and more memory-efficient than the additive small network.",
+          "visual": { "type": "bars", "values": [3, 1], "labels": ["additive MLP", "dot matmul"], "highlight": 1 }
+        },
+        {
+          "text": "At large dimension the dot product needs the famous one-over-square-root-of-d-k rescaling to keep softmax out of saturation.",
+          "visual": { "type": "equation", "tex": "\\frac{s_i^{\\top} h_j}{\\sqrt{d_k}}", "note": "the variance fix the Transformer would adopt" }
+        },
+        {
+          "text": "Luong used the current decoder state rather than the previous one, and split attention into global versus local windows.",
+          "visual": { "type": "plot", "ys": [0.1, 0.6, 0.9, 0.6, 0.1], "dot": 2, "xlabel": "source position", "ylabel": "local weight" }
+        },
+        {
+          "text": "Luong's general form, with projections renamed W-Q and W-K, is exactly scaled dot-product attention, the Transformer's descendant.",
+          "visual": { "type": "stat", "value": 0, "label": "extra parameters for dot-product scoring", "unit": "params" }
+        }
+      ]
+    },
+    {
+      "id": "dl-04-seq2seq-attention-s5",
+      "chapter": "dl/04-seq2seq-attention",
+      "section": "s5",
+      "title": "The bridge to the Transformer",
+      "eyebrow": "DEEP LEARNING",
+      "beats": [
+        {
+          "text": "By 2016 attention rode on top of recurrence, and that sequentiality capped GPU parallelism and gradient reach across long sentences.",
+          "visual": { "type": "title", "text": "The bridge to the Transformer", "sub": "Vaswani et al., 2017" }
+        },
+        {
+          "text": "Self-attention points the same mechanism at a sequence's own positions, replacing recurrence so every token mixes in one parallel step.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "Scaled dot-product becomes the core operation, and running several heads in parallel subspaces gives multi-head attention.",
+          "visual": { "type": "bars", "values": [1, 4, 8, 16], "labels": ["1h", "4h", "8h", "16h"], "highlight": 2 }
+        },
+        {
+          "text": "Dropping recurrence loses all sense of order, so position is injected directly into the embeddings as positional encodings.",
+          "visual": { "type": "plot", "ys": [0, 0.84, 0.91, 0.14, -0.76], "dot": 1, "xlabel": "position", "ylabel": "encoding" }
+        },
+        {
+          "text": "The same skeleton survives: score every key, softmax, weighted sum of values, with the MLP scorer swapped for a cheap dot product.",
+          "visual": { "type": "equation", "tex": "e_{ij} = v_a^{\\top}\\tanh(W_a s_i + U_a h_j) \\;\\longrightarrow\\; e_{ij} = \\frac{(W_Q s_i)^{\\top}(W_K h_j)}{\\sqrt{d_k}}", "note": "Bahdanau 2014 to Transformer 2017" }
+        },
+        {
+          "text": "The 2014 bottleneck and the 2017 Transformer are two ends of one short straight line, and everything since is this idea scaled up.",
+          "visual": { "type": "stat", "value": 2017, "label": "year recurrence was dropped for pure attention", "decimals": 0 }
+        }
+      ]
+    }
+  ]
+}

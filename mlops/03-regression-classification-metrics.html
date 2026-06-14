@@ -1,0 +1,820 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Metrics — Regression &amp; Classification — AI Encyclopedia</title>
+<meta name="description" content="The metric you optimize is the behavior you get — MSE, RMSE, MAE, MAPE and R² for regression; the confusion matrix, precision, recall, F1 and accuracy for classification; and log loss for honest probabilities, with the failure modes of each." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+</head>
+<body data-track="mlops" data-level="intro">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ MODEL RISK / 03 / METRICS</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../mlops/04-ranking-calibration.html">NEXT: 04 RANKING &amp; CALIBRATION →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">MODEL VALIDATION &amp; RISK · CHAPTER 03 / 07</div>
+    <h1>Metrics — Regression &amp; Classification</h1>
+    <p class="lede">A metric is not just a final report; it is the objective the pipeline optimizes toward, and it determines which errors the model is willing to make. <strong>The metric you optimize is the behavior you get, and accuracy is the one most often misread on imbalanced data.</strong> This chapter covers the working vocabulary: regression error measures, the confusion matrix and the rates derived from it, and probabilistic scores that grade the predicted confidence as well as the answer.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>INTRO</b></span>
+      <span>READING TIME<b>≈ 24 MIN</b></span>
+      <span>BUILDS ON<b>MLOPS 01 · STATS 04</b></span>
+      <span>INSTRUMENTS<b>CONFUSION · MAE vs RMSE · MAPE TRAP</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">3.1</span>Regression metrics</a>
+      <a href="#s2"><span class="n">3.2</span>When each one misleads</a>
+      <a href="#s3"><span class="n">3.3</span>The confusion matrix</a>
+      <a href="#s4"><span class="n">3.4</span>Precision, recall, F1, accuracy</a>
+      <a href="#s5"><span class="n">3.5</span>Log loss &amp; probabilistic scoring</a>
+      <a href="#s6"><span class="n">3.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 3.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">3.1</span><h2>Regression metrics: MSE, RMSE, MAE, MAPE, R²</h2></div>
+        <p>A regression model predicts a number \(\hat{y}_i\) for each row whose truth is \(y_i\). The single object every regression metric chews on is the vector of <strong>residuals</strong> \(e_i = y_i - \hat{y}_i\). The metrics differ only in how they punish a residual — and that choice of punishment is the choice of what the model will try hardest to avoid.</p>
+
+        <div class="eq"><span class="eq-tag">EQ V3.1 — MEAN SQUARED ERROR &amp; ITS ROOT</span>
+        $$ \mathrm{MSE} = \frac{1}{n}\sum_{i=1}^{n} (y_i - \hat{y}_i)^2, \qquad \mathrm{RMSE} = \sqrt{\mathrm{MSE}} $$
+        <div class="eq-note">Squaring makes large residuals dominate: a single error of 10 contributes as much as one hundred errors of 1. So MSE/RMSE is the metric of choice when <b>big misses are disproportionately bad</b> (a forecast that is occasionally catastrophic). RMSE takes the square root to return to the original units — predict dollars, read dollars — and is the value almost always reported. The estimator that minimizes MSE is the conditional <em>mean</em> \(\mathbb{E}[y\mid x]\).</div>
+        </div>
+
+        <div class="eq"><span class="eq-tag">EQ V3.2 — MEAN ABSOLUTE ERROR</span>
+        $$ \mathrm{MAE} = \frac{1}{n}\sum_{i=1}^{n} \lvert\, y_i - \hat{y}_i \,\rvert $$
+        <div class="eq-note">MAE punishes every dollar of error equally, with no squaring. It is in the original units already and is far more <b>robust to outliers</b> than RMSE — one wild residual moves it linearly, not quadratically. The estimator that minimizes MAE is the conditional <em>median</em>, which is why MAE-trained models lean toward the typical case and ignore rare extremes. The gap between RMSE and MAE is itself a diagnostic: RMSE \(\ge\) MAE always, and a large ratio signals a heavy tail of big errors.</div>
+        </div>
+
+        <div class="eq"><span class="eq-tag">EQ V3.3 — MEAN ABSOLUTE PERCENTAGE ERROR</span>
+        $$ \mathrm{MAPE} = \frac{100\%}{n}\sum_{i=1}^{n} \left\lvert \frac{y_i - \hat{y}_i}{y_i} \right\rvert $$
+        <div class="eq-note">MAPE rescales every residual by the truth, giving a unit-free percentage that lets you compare error across series of wildly different magnitude. That convenience hides two traps it is famous for: it <b>explodes when any \(y_i\) is near zero</b> (the demo in §3.2), and it is <em>asymmetric</em> — it penalizes over-prediction more harshly than under-prediction, quietly biasing a MAPE-tuned forecast low. Use it for reporting across scales; never as your sole training objective.</div>
+        </div>
+
+        <div class="eq"><span class="eq-tag">EQ V3.4 — COEFFICIENT OF DETERMINATION (R²)</span>
+        $$ R^2 = 1 - \frac{\sum_i (y_i - \hat{y}_i)^2}{\sum_i (y_i - \bar{y})^2} = 1 - \frac{\mathrm{SS}_{\text{res}}}{\mathrm{SS}_{\text{tot}}} $$
+        <div class="eq-note">\(R^2\) is the fraction of the target's variance the model explains, measured <em>against the dumbest honest baseline</em>: always predicting the mean \(\bar{y}\). \(R^2 = 1\) is perfect; \(R^2 = 0\) means you matched the mean and learned nothing; <b>\(R^2\) can go negative</b> when the model is worse than that constant — a fact that surprises people who assume it lives in \([0,1]\). Because it is normalized by the data's own spread, \(R^2\) is the one regression metric that is comparable across datasets.</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><div>Four rows, truth \(y = (10, 12, 14, 16)\), predictions \(\hat{y} = (11, 11, 15, 15)\). Residuals \(e = (-1, 1, -1, 1)\).</div></div>
+          <div class="x-step"><span class="x-n">02</span><div>MSE \(= \frac{1}{4}(1+1+1+1) = 1\); RMSE \(= \sqrt{1} = 1\); MAE \(= \frac{1}{4}(1+1+1+1) = 1\). Here RMSE = MAE because every error has the same size.</div></div>
+          <div class="x-step"><span class="x-n">03</span><div>\(\mathrm{SS}_{\text{res}} = 4\). Mean \(\bar{y} = 13\), deviations \((-3,-1,1,3)\), \(\mathrm{SS}_{\text{tot}} = 9+1+1+9 = 20\).</div></div>
+          <div class="x-step"><span class="x-n">04</span><div>\(R^2 = 1 - 4/20 = 1 - 0.2 = 0.80\) — the model explains 80% of the variance the mean leaves on the table.</div></div>
+          <span class="x-result">RESULT: RMSE = MAE = 1 · R² = 0.80</span>
+        </div></div>
+        </div>
+
+        <div class="exercise" data-answer="3.54" data-tol="0.02" data-unit="" data-hint="RMSE = sqrt(mean of the squared errors); square each error, average, take the root.">
+          <div class="ex-q">A model makes two predictions with errors \( e = (3,\ 4) \). Using EQ V3.1, what is the <b>RMSE</b> of these errors, \( \sqrt{\tfrac{1}{2}(3^2 + 4^2)} \)?</div>
+          <div class="ex-reveal-src">Square the errors: \( 3^2 = 9 \) and \( 4^2 = 16 \). The mean squared error is \( (9 + 16)/2 = 25/2 = 12.5 \). Taking the root: \( \sqrt{12.5} = \) <b>3.54</b>. (Note the MAE of the same errors is \( (3+4)/2 = 3.5 \) — RMSE sits above it because squaring inflates the larger residual.)</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Every regression metric from scratch on a toy fit (EQ V3.1-V3.4).
+import numpy as np
+rng = np.random.default_rng(0)
+
+n = 60
+x = np.linspace(0, 10, n)
+y = 3.0 * x + 5.0 + rng.normal(0, 2.0, n)     # truth: a noisy line
+# Fit y = a*x + b by least squares (this is what MSE training would find).
+A = np.vstack([x, np.ones_like(x)]).T
+a, b = np.linalg.lstsq(A, y, rcond=None)[0]
+yhat = a * x + b
+
+e = y - yhat                                   # residuals: the raw material
+mse  = np.mean(e**2)
+rmse = np.sqrt(mse)
+mae  = np.mean(np.abs(e))
+mape = 100 * np.mean(np.abs(e / y))            # y is safely far from 0 here
+r2   = 1 - np.sum(e**2) / np.sum((y - y.mean())**2)
+
+print(f"fitted line : y = {a:.2f}*x + {b:.2f}")
+print(f"MSE  = {mse:.3f}")
+print(f"RMSE = {rmse:.3f}   (same units as y)")
+print(f"MAE  = {mae:.3f}    (<= RMSE, always)")
+print(f"MAPE = {mape:.2f} %")
+print(f"R2   = {r2:.3f}     (1 = perfect, 0 = no better than the mean)")
+plot_scatter(x, y)                              # the data the line was fit to</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 3.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">3.2</span><h2>When each regression metric misleads</h2></div>
+        <p>None of these numbers is neutral. Each encodes an opinion about which errors matter, and each has a regime where it quietly tells you the wrong thing. The professional habit is to report at least two — usually RMSE and MAE — and to read the gap between them.</p>
+
+        <table class="data">
+          <thead><tr><th>Metric</th><th>What it rewards</th><th>Where it misleads</th></tr></thead>
+          <tbody>
+            <tr><td><strong>RMSE / MSE</strong></td><td>getting the big cases right</td><td>one outlier can dominate the score; over-sensitive to a single bad row</td></tr>
+            <tr><td><strong>MAE</strong></td><td>getting the typical case right</td><td>indifferent to whether a miss is huge or merely large; ignores the tail</td></tr>
+            <tr><td><strong>MAPE</strong></td><td>comparable error across scales</td><td><span class="hl">undefined / explodes near \(y = 0\)</span>; asymmetric, biases forecasts low</td></tr>
+            <tr><td><strong>R²</strong></td><td>beating the mean baseline</td><td>inflates with more features; can go negative; meaningless on tiny test sets</td></tr>
+          </tbody>
+        </table>
+
+        <p>The cleanest demonstration is the <strong>outlier sensitivity</strong> of RMSE versus MAE. Take ten residuals of size 1. MAE = 1 and RMSE = 1. Now turn one of those into a residual of 10 — a single bad day. MAE crawls up to \((9\cdot 1 + 10)/10 = 1.9\). RMSE leaps to \(\sqrt{(9\cdot 1 + 100)/10} = \sqrt{10.9} = 3.30\). The same data; one metric shrugged, the other tripled. Which reaction you <em>want</em> is a domain decision — but you must know the metric is making it for you.</p>
+
+        <div class="callout warn">
+          <span class="co-icon">THE MAPE TRAP</span>
+          <p><strong>MAPE divides by the truth, so a single true value near zero detonates it.</strong> If one row has \(y_i = 0.01\) and you predict \(0.5\), that term alone is \(|{-0.49}/0.01| = 49 = 4900\%\) — and the average is now hostage to one near-zero label, regardless of how good the other thousand predictions are. The standard escapes are sMAPE (symmetric MAPE), WAPE / weighted MAPE (divide by the <em>sum</em> of actuals, not row by row), or simply MAE when the targets can be small. Never compute MAPE on data with zeros in it.</p>
+        </div>
+
+        <div class="exercise" data-answer="0.80" data-tol="0.02" data-unit="" data-hint="R² = 1 − SS_res / SS_tot; here SS_res = 4 and SS_tot = 20.">
+          <div class="ex-q">A model has residual sum of squares \( \mathrm{SS}_{\text{res}} = 4 \) against a total sum of squares \( \mathrm{SS}_{\text{tot}} = 20 \). Using EQ V3.4, what is \( R^2 = 1 - \mathrm{SS}_{\text{res}}/\mathrm{SS}_{\text{tot}} \)?</div>
+          <div class="ex-reveal-src">\( \mathrm{SS}_{\text{res}}/\mathrm{SS}_{\text{tot}} = 4/20 = 0.20 \), so \( R^2 = 1 - 0.20 = \) <b>0.80</b>. The model explains 80% of the variance that always-predict-the-mean would leave unexplained.</div>
+        </div>
+
+        <div class="widget" id="metrics-mae-rmse-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT V3.1 — MAE vs RMSE DIVERGENCE</span><span class="w-sub">ADD AN OUTLIER · EQ V3.1 / V3.2</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>TYPICAL ERRORS (count of size 1) <output id="metrics-mr-base-out">9</output></label><input type="range" id="metrics-mr-base" min="3" max="20" step="1" value="9"/></div>
+              <div class="ctl"><label>OUTLIER RESIDUAL SIZE <output id="metrics-mr-out-out">10</output></label><input type="range" id="metrics-mr-outlier" min="1" max="40" step="1" value="10"/></div>
+            </div>
+            <canvas class="w-canvas" id="metrics-mr-canvas" height="280"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">MAE</div><div class="r-value" id="metrics-mr-mae">—</div></div>
+              <div class="readout acc"><div class="r-label">RMSE</div><div class="r-value" id="metrics-mr-rmse">—</div></div>
+              <div class="readout acc"><div class="r-label">RMSE / MAE RATIO</div><div class="r-value" id="metrics-mr-ratio">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Each bar is one residual: <span style="color:var(--secondary);">grey</span> are the typical errors of size 1, the <span style="color:var(--danger);">red</span> bar is the single outlier you control. Drag <b>OUTLIER RESIDUAL SIZE</b> up and watch MAE rise gently while RMSE — and the RMSE/MAE ratio — climbs far faster, because squaring lets one bad row dominate. With no outlier (size 1) the two metrics agree exactly; the ratio is the tell-tale of a heavy error tail.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># One outlier: MAE shrugs, RMSE leaps. And MAPE near zero detonates.
+import numpy as np
+
+e = np.ones(10)                                # ten residuals of size 1
+print("clean residuals:", e.astype(int))
+print(f"  MAE  = {np.mean(np.abs(e)):.3f}   RMSE = {np.sqrt(np.mean(e**2)):.3f}")
+
+e_out = e.copy(); e_out[0] = 10                # turn ONE into a size-10 miss
+print("\nwith one size-10 outlier:")
+print(f"  MAE  = {np.mean(np.abs(e_out)):.3f}   RMSE = {np.sqrt(np.mean(e_out**2)):.3f}")
+print(f"  RMSE rose {np.sqrt(np.mean(e_out**2))/np.sqrt(np.mean(e**2)):.2f}x; "
+      f"MAE rose only {np.mean(np.abs(e_out))/np.mean(np.abs(e)):.2f}x")
+
+# The MAPE trap: identical absolute errors, but one true value sits near zero.
+y     = np.array([100., 100., 100.,   0.01])
+yhat  = np.array([101., 101., 101.,   0.50])
+print("\nMAPE per row (%):", np.round(100*np.abs((y-yhat)/y), 1))
+print(f"overall MAPE = {100*np.mean(np.abs((y-yhat)/y)):.0f} %  "
+      "<- one near-zero label hijacks the whole average")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="metrics-mape-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT V3.2 — THE MAPE NEAR-ZERO PITFALL</span><span class="w-sub">ONE SMALL TRUTH BREAKS THE AVERAGE · EQ V3.3</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>ONE TRUE VALUE y₄ <output id="metrics-mp-y-out">0.50</output></label><input type="range" id="metrics-mp-y" min="-2" max="2" step="0.05" value="-0.30"/></div>
+              <div class="ctl"><label>ITS PREDICTION ŷ₄ <output id="metrics-mp-yhat-out">1.00</output></label><input type="range" id="metrics-mp-yhat" min="0" max="3" step="0.1" value="1.0"/></div>
+            </div>
+            <canvas class="w-canvas" id="metrics-mp-canvas" height="240"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">MAE (units, stable)</div><div class="r-value" id="metrics-mp-mae">—</div></div>
+              <div class="readout acc"><div class="r-label">MAPE (%, fragile)</div><div class="r-value" id="metrics-mp-mape">—</div></div>
+              <div class="readout"><div class="r-label">y₄'s SHARE OF MAPE</div><div class="r-value" id="metrics-mp-share">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Three well-behaved rows sit near \(y = 100\) with tiny errors; a fourth row's truth \(y_4\) is the slider, plotted on a log-distance scale. As you drag \(y_4\) toward zero, MAE barely twitches — the absolute error is unchanged — but MAPE blows up and that one row's <em>share</em> of the total MAPE races toward 100%. Slide \(y_4\) past zero and the percentage error becomes nonsense entirely: this is why MAPE is banned on data containing zeros.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 3.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">3.3</span><h2>The confusion matrix</h2></div>
+        <p>Classification swaps a continuous truth for a discrete one, and the entire grammar of classification metrics is built from a single 2×2 table. A binary classifier converts a score into a label by comparing it to a <strong>threshold</strong>; every prediction then lands in one of four cells:</p>
+
+        <div class="eq"><span class="eq-tag">EQ V3.5 — THE CONFUSION MATRIX</span>
+        $$ \begin{array}{c|cc} & \hat{y}=1 & \hat{y}=0 \\ \hline y=1 & \mathrm{TP} & \mathrm{FN} \\ y=0 & \mathrm{FP} & \mathrm{TN} \end{array} $$
+        <div class="eq-note"><b>TP</b> (true positive): predicted positive, was positive. <b>FP</b> (false positive, "false alarm"): predicted positive, was negative. <b>FN</b> (false negative, "miss"): predicted negative, was positive. <b>TN</b> (true negative). Every classification metric in §3.4 is just a ratio of these four counts. The deep point: <b>FP and FN have different costs</b> — a missed tumor is not the same as a false alarm — so no single number can serve every problem, and the threshold that balances them is a business decision, not a statistical one.</div>
+        </div>
+
+        <p>The threshold is the dial that moves counts between cells. Lower it and you call more things positive: TP and FP both rise, FN falls. Raise it and you become conservative: FP and TP both fall, FN rises. <strong>You cannot lower false alarms and misses at the same time by moving the threshold</strong> — you can only trade one for the other. That trade-off is the single most important intuition in classification, and Instrument V3.3 below exists to make you feel it in your hands.</p>
+
+        <div class="exercise" data-answer="0.6" data-tol="0.02" data-unit="" data-hint="Accuracy = (TP + TN) / total; here TP+TN = 60+60 and the four cells sum to 200.">
+          <div class="ex-q">A confusion matrix has \( \mathrm{TP}=60 \), \( \mathrm{FP}=40 \), \( \mathrm{FN}=40 \), \( \mathrm{TN}=60 \). What is the <b>accuracy</b>, \( (\mathrm{TP}+\mathrm{TN}) / (\mathrm{TP}+\mathrm{FP}+\mathrm{FN}+\mathrm{TN}) \)?</div>
+          <div class="ex-reveal-src">Correct predictions are \( \mathrm{TP}+\mathrm{TN} = 60 + 60 = 120 \); the total is \( 60+40+40+60 = 200 \). Accuracy \( = 120/200 = \) <b>0.6</b>. Note that this "balanced-looking" matrix still gets two in five wrong — and on an imbalanced set the same accuracy could come from a model that never finds a single positive.</div>
+        </div>
+
+        <div class="widget" id="metrics-confusion-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT V3.3 — CONFUSION-MATRIX EXPLORER</span><span class="w-sub">MOVE THE THRESHOLD · PRECISION ↔ RECALL · EQ V3.5</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>DECISION THRESHOLD <output id="metrics-cm-thr-out">0.50</output></label><input type="range" id="metrics-cm-thr" min="0.05" max="0.95" step="0.01" value="0.50"/></div>
+              <div class="ctl"><label>CLASS SEPARATION <output id="metrics-cm-sep-out">2.0</output></label><input type="range" id="metrics-cm-sep" min="0.4" max="4" step="0.1" value="2.0"/></div>
+            </div>
+            <canvas class="w-canvas" id="metrics-cm-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">PRECISION</div><div class="r-value" id="metrics-cm-prec">—</div></div>
+              <div class="readout acc"><div class="r-label">RECALL</div><div class="r-value" id="metrics-cm-rec">—</div></div>
+              <div class="readout"><div class="r-label">F1</div><div class="r-value" id="metrics-cm-f1">—</div></div>
+              <div class="readout"><div class="r-label">ACCURACY</div><div class="r-value" id="metrics-cm-acc">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Two overlapping bell curves are the score distributions of the <span style="color:var(--secondary);">negative</span> and <span style="color:var(--accent);">positive</span> classes; the vertical line is your threshold. Everything to its right is called positive. Slide the threshold <b>left</b> and recall climbs while precision falls (you catch more positives but raise false alarms); slide it <b>right</b> and the trade reverses. The four counts and all four metrics update live. Then drag <b>CLASS SEPARATION</b> up: a genuinely better model is the only thing that improves precision and recall <em>together</em>.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Confusion matrix -> precision, recall, F1, accuracy, all from scratch.
+import numpy as np
+rng = np.random.default_rng(2)
+
+n = 1000
+y = rng.integers(0, 2, n)                          # true labels
+# scores: positives score higher on average, but the classes overlap
+score = rng.normal(0, 1, n) + 1.3 * y
+thr = 0.5
+pred = (score > thr).astype(int)
+
+TP = int(np.sum((pred == 1) &amp; (y == 1)))
+FP = int(np.sum((pred == 1) &amp; (y == 0)))
+FN = int(np.sum((pred == 0) &amp; (y == 1)))
+TN = int(np.sum((pred == 0) &amp; (y == 0)))
+print(f"confusion: TP={TP}  FP={FP}  FN={FN}  TN={TN}")
+
+precision = TP / (TP + FP)                         # of predicted positives, how many real
+recall    = TP / (TP + FN)                         # of real positives, how many caught
+f1        = 2 * precision * recall / (precision + recall)
+accuracy  = (TP + TN) / n
+print(f"precision = {precision:.3f}")
+print(f"recall    = {recall:.3f}")
+print(f"F1        = {f1:.3f}   (harmonic mean of the two)")
+print(f"accuracy  = {accuracy:.3f}")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 3.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">3.4</span><h2>Precision, recall, F1, accuracy</h2></div>
+        <p>Four ratios of the four counts. They look interchangeable; they are not, and choosing the wrong one is the most common way a model ships looking great and fails in production.</p>
+
+        <div class="eq"><span class="eq-tag">EQ V3.6 — PRECISION &amp; RECALL</span>
+        $$ \mathrm{Precision} = \frac{\mathrm{TP}}{\mathrm{TP}+\mathrm{FP}}, \qquad \mathrm{Recall} = \frac{\mathrm{TP}}{\mathrm{TP}+\mathrm{FN}} $$
+        <div class="eq-note"><b>Precision</b> answers: <em>of everything I flagged positive, what fraction really was?</em> It is the metric you care about when a false alarm is expensive — a spam filter that quarantines a real invoice, a fraud system that freezes an honest card. <b>Recall</b> (sensitivity, true-positive rate) answers: <em>of everything that really was positive, what fraction did I catch?</em> It is what you care about when a miss is expensive — a cancer screen, a security threat. The two pull in opposite directions along the threshold (§3.3): <b>you buy recall with precision and vice versa.</b></div>
+        </div>
+
+        <div class="eq"><span class="eq-tag">EQ V3.7 — F1: THE HARMONIC MEAN</span>
+        $$ F_1 = \frac{2\,\mathrm{Precision}\cdot\mathrm{Recall}}{\mathrm{Precision}+\mathrm{Recall}}, \qquad F_\beta = (1+\beta^2)\frac{\mathrm{Precision}\cdot\mathrm{Recall}}{\beta^2\,\mathrm{Precision}+\mathrm{Recall}} $$
+        <div class="eq-note">\(F_1\) is the <em>harmonic</em> mean of precision and recall, not the arithmetic one — and the choice is deliberate. The harmonic mean is dragged toward the <b>smaller</b> of the two, so \(F_1\) is high only when precision and recall are <em>both</em> high; a model with precision 1.0 and recall 0.0 scores \(F_1 = 0\), not 0.5. \(F_\beta\) generalizes it: \(\beta &gt; 1\) weights recall more (use when misses hurt), \(\beta &lt; 1\) weights precision more. \(F_1\) is the right summary on imbalanced data where accuracy is useless.</div>
+        </div>
+
+        <div class="eq"><span class="eq-tag">EQ V3.8 — ACCURACY (AND WHY IT LIES)</span>
+        $$ \mathrm{Accuracy} = \frac{\mathrm{TP}+\mathrm{TN}}{\mathrm{TP}+\mathrm{FP}+\mathrm{FN}+\mathrm{TN}} $$
+        <div class="eq-note">Accuracy is the fraction of predictions that are correct — intuitive, and the default everyone reaches for first. It is also <b>the metric that lies most often</b>, because it collapses the confusion matrix into one number and so is blind to class imbalance. On a dataset that is 99% negative, the model that predicts "negative" for everything scores <b>99% accuracy</b> while catching exactly zero positives — useless, yet by accuracy alone it looks excellent. This is the <em>accuracy paradox</em>, and it is why the lede of this chapter singles accuracy out. Under imbalance, report precision, recall, F1, or balanced accuracy instead.</div>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">A COMMON ERROR</span>
+          <p><strong>"The model is 97% accurate, ship it."</strong> Always ask the base rate first. If 97% of the rows are negative, a constant "no" predictor already scores 97% — your model may have learned nothing. The diagnostic reflex: compute the accuracy of the majority-class baseline, and never report accuracy on imbalanced data without precision and recall beside it. Accuracy is a fine metric only when the classes are roughly balanced <em>and</em> false positives and false negatives cost about the same.</p>
+        </div>
+
+        <div class="exercise" data-answer="0.8" data-tol="0.001" data-unit="" data-hint="Precision = TP / (TP + FP); plug in TP = 40, FP = 10.">
+          <div class="ex-q">A classifier produces \( \mathrm{TP} = 40 \) true positives and \( \mathrm{FP} = 10 \) false positives. Using EQ V3.6, what is its <b>precision</b>, \( \mathrm{TP}/(\mathrm{TP}+\mathrm{FP}) \)?</div>
+          <div class="ex-reveal-src">Precision \( = \dfrac{\mathrm{TP}}{\mathrm{TP}+\mathrm{FP}} = \dfrac{40}{40+10} = \dfrac{40}{50} = \) <b>0.8</b>. Four out of every five items the model flagged as positive truly were — but precision alone says nothing about how many positives it <em>missed</em>; that is recall's job.</div>
+        </div>
+
+        <div class="exercise" data-answer="0.667" data-tol="0.02" data-unit="" data-hint="Recall = TP / (TP + FN), with TP = 40 and FN = 20.">
+          <div class="ex-q">That same classifier also has \( \mathrm{FN} = 20 \) false negatives (positives it missed). Using EQ V3.6, what is its <b>recall</b>, \( \mathrm{TP}/(\mathrm{TP}+\mathrm{FN}) \)?</div>
+          <div class="ex-reveal-src">Recall \( = \dfrac{\mathrm{TP}}{\mathrm{TP}+\mathrm{FN}} = \dfrac{40}{40+20} = \dfrac{40}{60} = \) <b>0.667</b>. So the model is precise (0.8) but leaky on recall (0.67): its \( F_1 = \frac{2\cdot 0.8\cdot 0.667}{0.8+0.667} = 0.727 \), pulled below the average toward the weaker of the two.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># The accuracy paradox: 99% accurate and completely useless.
+import numpy as np
+rng = np.random.default_rng(5)
+
+n = 10000
+y = (rng.random(n) < 0.01).astype(int)            # 1% positive (rare disease)
+print(f"true positives in data: {y.sum()} / {n}  ({100*y.mean():.1f}%)\n")
+
+# "Model" A: predict the majority class (negative) for everyone.
+predA = np.zeros(n, dtype=int)
+accA = (predA == y).mean()
+TP_A = int(np.sum((predA==1)&amp;(y==1)))
+print(f"ALWAYS-NEGATIVE:  accuracy = {accA:.3f}  but caught {TP_A} of {y.sum()} positives")
+print("  precision/recall/F1 are 0/0 -> the metric that 'works' is a mirage.\n")
+
+# "Model" B: a real but imperfect detector.
+score = rng.normal(0, 1, n) + 2.5 * y
+predB = (score > 1.5).astype(int)
+TP=int(np.sum((predB==1)&amp;(y==1))); FP=int(np.sum((predB==1)&amp;(y==0)))
+FN=int(np.sum((predB==0)&amp;(y==1))); TN=int(np.sum((predB==0)&amp;(y==0)))
+prec = TP/(TP+FP) if TP+FP else 0
+rec  = TP/(TP+FN) if TP+FN else 0
+f1   = 2*prec*rec/(prec+rec) if prec+rec else 0
+print(f"REAL DETECTOR:    accuracy = {(TP+TN)/n:.3f}")
+print(f"  precision = {prec:.3f}  recall = {rec:.3f}  F1 = {f1:.3f}")
+print("Same-ish accuracy, but only F1/precision/recall reveal which model works.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 3.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">3.5</span><h2>Log loss &amp; probabilistic scoring</h2></div>
+        <p>Everything so far grades a <em>decision</em> — the label after thresholding. But most classifiers output a <strong>probability</strong>, and throwing it away to compute accuracy discards information: a model that says "90% sure" and is right is better than one that says "51% sure" and is right. <strong>Log loss</strong> (binary cross-entropy) grades the probability itself, rewarding confidence only when it is earned.</p>
+
+        <div class="eq"><span class="eq-tag">EQ V3.9 — BINARY CROSS-ENTROPY (LOG LOSS)</span>
+        $$ \mathrm{LogLoss} = -\frac{1}{n}\sum_{i=1}^{n}\Big[\, y_i\ln \hat{p}_i + (1-y_i)\ln(1-\hat{p}_i) \,\Big] $$
+        <div class="eq-note">For each row, only one term survives: if \(y_i = 1\) the penalty is \(-\ln\hat{p}_i\), if \(y_i = 0\) it is \(-\ln(1-\hat{p}_i)\). Predict the truth with probability 1 and the penalty is \(-\ln 1 = 0\); predict it with probability \(0.5\) and you pay \(\ln 2 \approx 0.693\) — the cost of a coin flip, and the score a model that has learned nothing converges to. <b>The penalty is unbounded:</b> a confident wrong answer (\(\hat{p}\to 0\) when \(y=1\)) costs \(-\ln(0)\to\infty\). Log loss is the loss most classifiers are actually trained on, and it is the <em>proper</em> scoring rule that calibration (Chapter 04) exists to keep honest.</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><div>True label \(y = 1\). A confident-correct model says \(\hat{p} = 0.9\): penalty \(= -\ln 0.9 = 0.105\). Cheap.</div></div>
+          <div class="x-step"><span class="x-n">02</span><div>A hedging model says \(\hat{p} = 0.5\): penalty \(= -\ln 0.5 = 0.693\). The price of saying "I don't know."</div></div>
+          <div class="x-step"><span class="x-n">03</span><div>A confident-wrong model says \(\hat{p} = 0.1\): penalty \(= -\ln 0.1 = 2.303\). More than 20× the confident-correct cost.</div></div>
+          <div class="x-step"><span class="x-n">04</span><div>Push it to \(\hat{p} = 0.01\): penalty \(= -\ln 0.01 = 4.605\). As \(\hat{p}\to 0\) the loss \(\to\infty\) — log loss punishes arrogance without mercy.</div></div>
+          <span class="x-result">RESULT: 0.9 → 0.105 · 0.5 → 0.693 · 0.1 → 2.303</span>
+        </div></div>
+        </div>
+
+        <p>Two sibling scores are worth knowing. The <strong>Brier score</strong> is the mean squared error of the probabilities, \(\frac{1}{n}\sum(\hat{p}_i - y_i)^2\) — also a proper scoring rule, but bounded (a confident wrong answer maxes out at 1 rather than infinity), so it is gentler on outliers and easier to read. And cross-entropy generalizes immediately to \(K\) classes as \(-\frac{1}{n}\sum_i\sum_{c} y_{ic}\ln\hat{p}_{ic}\), the multiclass loss behind virtually every neural classifier. The honest caveat: log loss assumes the probabilities are <em>calibrated</em>; a model can have great ranking (AUC) yet terrible log loss if its probabilities are systematically over- or under-confident — exactly the gap the next chapter closes.</p>
+
+        <div class="exercise" data-answer="0.105" data-tol="0.02" data-unit="" data-hint="For y = 1 the log loss term is −ln(p̂); use p̂ = 0.9 and ln(0.9) ≈ −0.105.">
+          <div class="ex-q">A model predicts probability \( \hat{p} = 0.9 \) for a row whose true label is \( y = 1 \). Using EQ V3.9, what is the log-loss penalty for this single row, \( -\ln(\hat{p}) \)? (Use \( \ln 0.9 = -0.105 \).)</div>
+          <div class="ex-reveal-src">With \( y = 1 \) only the first term survives: penalty \( = -\ln(\hat{p}) = -\ln(0.9) = -(-0.105) = \) <b>0.105</b>. Compare a hedge at \( \hat{p}=0.5 \) (cost \(0.693\)) and a confident error at \( \hat{p}=0.1 \) (cost \(2.303\)): log loss rewards confidence only when it is right.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Log loss vs Brier: confidence is rewarded only when it's right (EQ V3.9).
+import numpy as np
+
+def log_loss(y, p):
+    p = np.clip(p, 1e-12, 1 - 1e-12)              # guard ln(0) = -inf
+    return -np.mean(y*np.log(p) + (1-y)*np.log(1-p))
+
+def brier(y, p):
+    return np.mean((p - y)**2)
+
+y = np.array([1, 1, 0, 0])                        # two positives, two negatives
+confident_right = np.array([0.95, 0.90, 0.05, 0.10])
+hedging         = np.array([0.55, 0.55, 0.45, 0.45])
+confident_wrong = np.array([0.05, 0.10, 0.95, 0.90])
+
+for name, p in [("confident &amp; right", confident_right),
+                ("hedging (~0.5)   ", hedging),
+                ("confident &amp; WRONG", confident_wrong)]:
+    print(f"{name}:  log loss = {log_loss(y,p):.3f}   Brier = {brier(y,p):.3f}")
+
+print("\nlog loss of a single confident-correct 0.9  :", round(-np.log(0.9), 3))
+print("log loss of a single coin-flip      0.5     :", round(-np.log(0.5), 3))
+print("log loss explodes for confident errors; Brier stays bounded by 1.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>Every metric here graded a fixed threshold or assumed the probabilities were trustworthy — two assumptions the next chapter refuses to make.</strong> Chapter 04 sweeps the threshold to draw the ROC and precision–recall curves (and the AUC that summarizes them), then asks the harder question log loss only hinted at: <em>when the model says 70%, does it happen 70% of the time?</em> — calibration, reliability diagrams, and the fixes that make probabilities mean what they say.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 3.R — References ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">3.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://arxiv.org/abs/2010.16061" target="_blank" rel="noopener">Powers, D. M. W. (2011). <span class="ref-venue">Evaluation: From Precision, Recall and F-Measure to ROC, Informedness, Markedness &amp; Correlation</span>.</a> <span class="ref-meta">J. Machine Learning Technologies 2(1) — the definitive survey of confusion-matrix metrics, their biases, and what each one really measures (§3.3–3.4).</span></li>
+          <li><a href="https://hastie.su.domains/ElemStatLearn/" target="_blank" rel="noopener">Hastie, T., Tibshirani, R. &amp; Friedman, J. (2009). <span class="ref-venue">The Elements of Statistical Learning</span> (2nd ed.).</a> <span class="ref-meta">Springer — the standard reference for loss functions, R², and the bias/variance view of regression error (§3.1–3.2).</span></li>
+          <li><a href="https://doi.org/10.1175/1520-0493(1950)078%3C0001:VOFEIT%3E2.0.CO;2" target="_blank" rel="noopener">Brier, G. W. (1950). <span class="ref-venue">Verification of Forecasts Expressed in Terms of Probability</span>.</a> <span class="ref-meta">Monthly Weather Review 78(1) — the original proper scoring rule for probabilistic forecasts (§3.5).</span></li>
+          <li><a href="https://doi.org/10.1198/016214506000001437" target="_blank" rel="noopener">Gneiting, T. &amp; Raftery, A. E. (2007). <span class="ref-venue">Strictly Proper Scoring Rules, Prediction, and Estimation</span>.</a> <span class="ref-meta">J. American Statistical Association 102(477) — the theory of why log loss and Brier reward honest probabilities (§3.5).</span></li>
+          <li><a href="https://doi.org/10.1016/j.ijforecast.2006.03.001" target="_blank" rel="noopener">Hyndman, R. J. &amp; Koehler, A. B. (2006). <span class="ref-venue">Another Look at Measures of Forecast Accuracy</span>.</a> <span class="ref-meta">International J. Forecasting 22(4) — the canonical critique of MAPE and the case for scaled error measures (§3.2).</span></li>
+          <li><a href="https://doi.org/10.1186/s12864-019-6413-7" target="_blank" rel="noopener">Chicco, D. &amp; Jurman, G. (2020). <span class="ref-venue">The advantages of the Matthews correlation coefficient (MCC) over F1 score and accuracy in binary classification evaluation</span>.</a> <span class="ref-meta">BMC Genomics 21:6 — a modern argument for why accuracy and F1 mislead on imbalanced data (§3.4).</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../mlops/02-hyperparameter-tuning.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">02</span> Tuning</div></a>
+        <a class="next" href="../mlops/04-ranking-calibration.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">04</span> Ranking &amp; Calibration</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — MODEL VALIDATION &amp; RISK · CH 03</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* ============================================================
+   Metrics — Regression & Classification — chapter instruments
+   Single IIFE, no globals. Deterministic math only; setTimeout
+   (never rAF) for resize re-renders so background tabs stay quiet.
+   Every widget is guarded by element existence and renders a
+   meaningful state with zero interaction.
+   ============================================================ */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
+  /* standard normal pdf, for drawing the class-score bell curves */
+  function npdf(x, mu, sd) {
+    var z = (x - mu) / sd;
+    return Math.exp(-0.5 * z * z) / (sd * Math.sqrt(2 * Math.PI));
+  }
+  /* standard normal CDF via the Abramowitz-Stegun erf approximation */
+  function ncdf(x, mu, sd) {
+    var z = (x - mu) / (sd * Math.SQRT2);
+    var t = 1 / (1 + 0.3275911 * Math.abs(z));
+    var y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t
+              - 0.284496736) * t + 0.254829592) * t * Math.exp(-z * z);
+    var erf = z >= 0 ? y : -y;
+    return 0.5 * (1 + erf);
+  }
+
+  /* ========================================================
+     INSTRUMENT V3.1 — MAE vs RMSE divergence
+     A bar of "typical" residuals of size 1 plus one outlier
+     whose size the user controls. MAE rises linearly, RMSE
+     (and the RMSE/MAE ratio) rise far faster: squaring lets
+     one bad row dominate the score.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("metrics-mae-rmse-demo");
+    if (!root) return;
+    var canvas = document.getElementById("metrics-mr-canvas");
+    var baseEl = document.getElementById("metrics-mr-base");
+    var outEl = document.getElementById("metrics-mr-outlier");
+    var baseOut = document.getElementById("metrics-mr-base-out");
+    var outOut = document.getElementById("metrics-mr-out-out");
+    var maeEl = document.getElementById("metrics-mr-mae");
+    var rmseEl = document.getElementById("metrics-mr-rmse");
+    var ratioEl = document.getElementById("metrics-mr-ratio");
+
+    function render() {
+      var nBase = +baseEl.value;        /* count of size-1 residuals */
+      var outlier = +outEl.value;       /* the single outlier residual size */
+      baseOut.textContent = nBase;
+      outOut.textContent = outlier;
+
+      /* residual vector: nBase ones, then the outlier */
+      var res = [], i;
+      for (i = 0; i < nBase; i++) res.push(1);
+      res.push(outlier);
+      var n = res.length;
+
+      var sumAbs = 0, sumSq = 0;
+      for (i = 0; i < n; i++) { sumAbs += Math.abs(res[i]); sumSq += res[i] * res[i]; }
+      var mae = sumAbs / n;
+      var rmse = Math.sqrt(sumSq / n);
+      var ratio = rmse / mae;
+
+      var c = FM.setupCanvas(canvas, 280);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      ctx.clearRect(0, 0, w, h);
+
+      var padL = 40, padR = 16, padT = 18, padB = 28;
+      var plotW = w - padL - padR, plotH = h - padT - padB;
+      var maxVal = Math.max(outlier, 1) * 1.08;
+      var barGap = 2;
+      var barW = (plotW - barGap * (n - 1)) / n;
+      var baseY = padT + plotH;
+
+      ctx.font = C.MONO; ctx.textBaseline = "middle";
+
+      /* gridlines for MAE and RMSE levels */
+      function levelY(v) { return baseY - (v / maxVal) * plotH; }
+      function gridline(v, col, label) {
+        var y = levelY(v);
+        ctx.strokeStyle = col; ctx.setLineDash([4, 4]); ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(w - padR, y); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = col; ctx.textAlign = "left";
+        ctx.fillText(label, padL + 4, y - 7);
+      }
+
+      /* bars */
+      for (i = 0; i < n; i++) {
+        var x = padL + i * (barW + barGap);
+        var isOut = i === n - 1;
+        var bh = (res[i] / maxVal) * plotH;
+        ctx.fillStyle = isOut ? "rgba(255,65,54,.85)" : "rgba(155,155,155,.45)";
+        ctx.fillRect(x, baseY - bh, Math.max(barW, 1), bh);
+        if (isOut) {
+          ctx.strokeStyle = C.RED; ctx.lineWidth = 1;
+          ctx.strokeRect(x + 0.5, baseY - bh + 0.5, Math.max(barW, 1) - 1, bh - 1);
+        }
+      }
+
+      gridline(mae, C.SEC, "MAE " + mae.toFixed(2));
+      gridline(rmse, C.MINT, "RMSE " + rmse.toFixed(2));
+
+      /* axis baseline */
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(padL, baseY); ctx.lineTo(w - padR, baseY); ctx.stroke();
+      ctx.fillStyle = C.MUT; ctx.textAlign = "left";
+      ctx.fillText("RESIDUALS  (grey = size 1, red = outlier)", padL, h - 10);
+
+      maeEl.textContent = mae.toFixed(3);
+      rmseEl.textContent = rmse.toFixed(3);
+      ratioEl.textContent = ratio.toFixed(2) + "×";
+      ratioEl.style.color = ratio > 1.8 ? C.RED : ratio > 1.2 ? C.MINT : C.SEC;
+    }
+
+    baseEl.addEventListener("input", render);
+    outEl.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();   /* meaningful initial state with zero interaction */
+  })();
+
+  /* ========================================================
+     INSTRUMENT V3.2 — MAPE near-zero pitfall
+     Three healthy rows near y=100 with tiny errors; a fourth
+     row whose truth the user drags toward (and past) zero.
+     MAE stays put; MAPE and y4's share of MAPE blow up.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("metrics-mape-demo");
+    if (!root) return;
+    var canvas = document.getElementById("metrics-mp-canvas");
+    var yEl = document.getElementById("metrics-mp-y");
+    var yhatEl = document.getElementById("metrics-mp-yhat");
+    var yOut = document.getElementById("metrics-mp-y-out");
+    var yhatOut = document.getElementById("metrics-mp-yhat-out");
+    var maeEl = document.getElementById("metrics-mp-mae");
+    var mapeEl = document.getElementById("metrics-mp-mape");
+    var shareEl = document.getElementById("metrics-mp-share");
+
+    /* three fixed, well-behaved rows: truth ~100, error 1 */
+    var baseY = [100, 100, 100];
+    var baseYhat = [101, 99, 100.5];
+
+    function render() {
+      var y4 = +yEl.value;
+      var yhat4 = +yhatEl.value;
+      yOut.textContent = y4.toFixed(2);
+      yhatOut.textContent = yhat4.toFixed(2);
+
+      var ys = baseY.concat([y4]);
+      var yhats = baseYhat.concat([yhat4]);
+      var n = ys.length;
+
+      /* MAE over all 4 rows */
+      var sumAbs = 0, i;
+      for (i = 0; i < n; i++) sumAbs += Math.abs(ys[i] - yhats[i]);
+      var mae = sumAbs / n;
+
+      /* per-row MAPE term (%), guarding y=0 as infinite */
+      var terms = [], total = 0, undefinedRow = false;
+      for (i = 0; i < n; i++) {
+        var t;
+        if (Math.abs(ys[i]) < 1e-9) { t = Infinity; undefinedRow = true; }
+        else t = 100 * Math.abs((ys[i] - yhats[i]) / ys[i]);
+        terms.push(t);
+        if (isFinite(t)) total += t;
+      }
+      var mape = undefinedRow ? Infinity : total / n;
+      var share = (undefinedRow || total === 0) ? (undefinedRow ? 100 : 0)
+                 : 100 * terms[3] / total;
+
+      var c = FM.setupCanvas(canvas, 240);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      ctx.clearRect(0, 0, w, h);
+
+      var padL = 16, padR = 16, padT = 22, padB = 30;
+      var plotW = w - padL - padR, plotH = h - padT - padB;
+      var midY = padT + plotH / 2;
+
+      ctx.font = C.MONO; ctx.textBaseline = "middle";
+
+      /* a number line from -2 to 3 for the y4 slider, log-ish emphasis on 0 */
+      var lo = -2, hi = 3;
+      function xOf(v) { return padL + ((v - lo) / (hi - lo)) * plotW; }
+
+      /* zero line — the danger */
+      var zx = xOf(0);
+      ctx.strokeStyle = C.RED; ctx.setLineDash([3, 3]); ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(zx, padT - 4); ctx.lineTo(zx, padT + plotH + 4); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = C.RED; ctx.textAlign = "center";
+      ctx.fillText("y = 0  (MAPE → ∞)", zx, padT - 10);
+
+      /* number-line axis */
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(padL, midY); ctx.lineTo(w - padR, midY); ctx.stroke();
+      var ticks = [-2, -1, 0, 1, 2, 3], ti;
+      ctx.fillStyle = C.MUT; ctx.textAlign = "center";
+      for (ti = 0; ti < ticks.length; ti++) {
+        var tx = xOf(ticks[ti]);
+        ctx.beginPath(); ctx.moveTo(tx, midY - 4); ctx.lineTo(tx, midY + 4); ctx.stroke();
+        ctx.fillText(ticks[ti].toString(), tx, midY + 16);
+      }
+
+      /* y4 marker (truth) and prediction marker */
+      var pyx = xOf(clamp(y4, lo, hi));
+      ctx.fillStyle = C.MINT;
+      ctx.beginPath(); ctx.arc(pyx, midY - 26, 6, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = C.SEC; ctx.textAlign = "center";
+      ctx.fillText("y₄", pyx, midY - 42);
+
+      var phx = xOf(clamp(yhat4, lo, hi));
+      ctx.strokeStyle = C.BLUE; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(phx, midY + 26, 6, 0, Math.PI * 2); ctx.stroke();
+      ctx.fillStyle = C.BLUE;
+      ctx.fillText("ŷ₄", phx, midY + 44);
+
+      /* error connector */
+      ctx.strokeStyle = "rgba(255,65,54,.55)"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(pyx, midY - 26); ctx.lineTo(phx, midY + 26); ctx.stroke();
+
+      /* readouts */
+      maeEl.textContent = mae.toFixed(2);
+      if (!isFinite(mape)) {
+        mapeEl.textContent = "∞ (undef.)";
+        mapeEl.style.color = C.RED;
+        shareEl.textContent = "100%";
+        shareEl.style.color = C.RED;
+      } else {
+        mapeEl.textContent = (mape >= 1000 ? Math.round(mape) : mape.toFixed(1)) + "%";
+        mapeEl.style.color = mape > 100 ? C.RED : mape > 25 ? C.MINT : C.SEC;
+        shareEl.textContent = share.toFixed(0) + "%";
+        shareEl.style.color = share > 75 ? C.RED : share > 40 ? C.MINT : C.SEC;
+      }
+    }
+
+    yEl.addEventListener("input", render);
+    yhatEl.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();   /* meaningful initial state with zero interaction */
+  })();
+
+  /* ========================================================
+     INSTRUMENT V3.3 — Confusion-matrix explorer
+     Two Gaussian score distributions (negative @ 0, positive @
+     sep). A threshold line splits predictions. Precision/recall/
+     F1/accuracy are computed analytically from the Gaussian
+     tail masses, so there is no randomness and the trade-off is
+     perfectly smooth as the threshold moves.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("metrics-confusion-demo");
+    if (!root) return;
+    var canvas = document.getElementById("metrics-cm-canvas");
+    var thrEl = document.getElementById("metrics-cm-thr");
+    var sepEl = document.getElementById("metrics-cm-sep");
+    var thrOut = document.getElementById("metrics-cm-thr-out");
+    var sepOut = document.getElementById("metrics-cm-sep-out");
+    var precEl = document.getElementById("metrics-cm-prec");
+    var recEl = document.getElementById("metrics-cm-rec");
+    var f1El = document.getElementById("metrics-cm-f1");
+    var accEl = document.getElementById("metrics-cm-acc");
+
+    var N = 1000;                 /* total rows; balanced 50/50 for the picture */
+    var POS = 0.5;                /* positive prevalence */
+
+    function render() {
+      /* slider threshold is 0..1; map it onto the score axis below */
+      var thr01 = +thrEl.value;
+      var sep = +sepEl.value;     /* distance between the two class means, in sd */
+      thrOut.textContent = thr01.toFixed(2);
+      sepOut.textContent = sep.toFixed(1);
+
+      var sd = 1;
+      var muNeg = 0, muPos = sep;
+      /* score axis spans a little beyond both clouds */
+      var lo = muNeg - 3.2 * sd, hi = muPos + 3.2 * sd;
+      var thr = lo + thr01 * (hi - lo);   /* threshold position on score axis */
+
+      /* analytic counts from Gaussian masses (predict positive if score > thr) */
+      var nPos = N * POS, nNeg = N * (1 - POS);
+      var TP = nPos * (1 - ncdf(thr, muPos, sd));   /* positives scoring above thr */
+      var FN = nPos * ncdf(thr, muPos, sd);
+      var FP = nNeg * (1 - ncdf(thr, muNeg, sd));
+      var TN = nNeg * ncdf(thr, muNeg, sd);
+
+      var precision = (TP + FP) > 0 ? TP / (TP + FP) : 0;
+      var recall = (TP + FN) > 0 ? TP / (TP + FN) : 0;
+      var f1 = (precision + recall) > 0 ? 2 * precision * recall / (precision + recall) : 0;
+      var accuracy = (TP + TN) / N;
+
+      var c = FM.setupCanvas(canvas, 320);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      ctx.clearRect(0, 0, w, h);
+
+      var padL = 16, padR = 16, padT = 18, padB = 64;
+      var plotW = w - padL - padR, plotH = h - padT - padB;
+      var baseY = padT + plotH;
+
+      function xOf(v) { return padL + ((v - lo) / (hi - lo)) * plotW; }
+      /* peak density for scaling the curves */
+      var peak = npdf(0, 0, sd);
+
+      ctx.font = C.MONO; ctx.textBaseline = "middle";
+
+      /* fill the curve areas, split at the threshold so TP/FP regions read */
+      function drawCurve(mu, color, fillRight, fillLeft) {
+        var steps = 160, i, px, py, v;
+        /* fill */
+        ctx.beginPath();
+        ctx.moveTo(xOf(lo), baseY);
+        for (i = 0; i <= steps; i++) {
+          v = lo + (i / steps) * (hi - lo);
+          px = xOf(v);
+          py = baseY - (npdf(v, mu, sd) / peak) * plotH * 0.92;
+          ctx.lineTo(px, py);
+        }
+        ctx.lineTo(xOf(hi), baseY);
+        ctx.closePath();
+        ctx.fillStyle = color;
+        ctx.fill();
+        /* outline */
+        ctx.beginPath();
+        for (i = 0; i <= steps; i++) {
+          v = lo + (i / steps) * (hi - lo);
+          px = xOf(v);
+          py = baseY - (npdf(v, mu, sd) / peak) * plotH * 0.92;
+          if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+        }
+        ctx.strokeStyle = "rgba(229,229,229,.35)"; ctx.lineWidth = 1; ctx.stroke();
+      }
+
+      drawCurve(muNeg, "rgba(155,155,155,.30)");
+      drawCurve(muPos, "rgba(166,242,204,.28)");
+
+      /* threshold line */
+      var tx = xOf(thr);
+      ctx.strokeStyle = C.BRIGHT; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(tx, padT - 2); ctx.lineTo(tx, baseY); ctx.stroke();
+      ctx.fillStyle = C.BRIGHT; ctx.textAlign = "center";
+      ctx.fillText("THRESHOLD", tx, padT - 8);
+
+      /* "called positive →" hint */
+      ctx.fillStyle = C.MUT; ctx.textAlign = "left";
+      ctx.fillText("← called negative", padL, baseY + 14);
+      ctx.textAlign = "right";
+      ctx.fillText("called positive →", w - padR, baseY + 14);
+
+      /* legend */
+      ctx.textAlign = "left";
+      ctx.fillStyle = "rgba(155,155,155,.55)"; ctx.fillRect(padL, baseY + 28, 9, 9);
+      ctx.fillStyle = C.SEC; ctx.fillText("NEGATIVE CLASS", padL + 14, baseY + 33);
+      ctx.fillStyle = "rgba(166,242,204,.55)"; ctx.fillRect(padL + 150, baseY + 28, 9, 9);
+      ctx.fillStyle = C.SEC; ctx.fillText("POSITIVE CLASS", padL + 164, baseY + 33);
+
+      /* the four counts, compactly */
+      ctx.fillStyle = C.MUT; ctx.textAlign = "right";
+      ctx.fillText("TP " + Math.round(TP) + "  FP " + Math.round(FP) +
+                   "  FN " + Math.round(FN) + "  TN " + Math.round(TN),
+                   w - padR, baseY + 48);
+
+      /* readouts */
+      precEl.textContent = precision.toFixed(3);
+      recEl.textContent = recall.toFixed(3);
+      f1El.textContent = f1.toFixed(3);
+      accEl.textContent = accuracy.toFixed(3);
+    }
+
+    thrEl.addEventListener("input", render);
+    sepEl.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();   /* meaningful initial state with zero interaction */
+  })();
+
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

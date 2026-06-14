@@ -1,0 +1,699 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Convolutional Neural Networks — AI Encyclopedia</title>
+<meta name="description" content="Share a small filter across an image and you bake in translation invariance — the inductive bias that made computer vision work. Convolution, pooling, channels, the LeNet-to-ResNet lineage, and transfer learning." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+</head>
+<body data-track="dl" data-level="core">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ DEEP LEARNING / 02 / CNNs</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../dl/03-sequence-models.html">NEXT: SEQUENCE MODELS →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">DEEP LEARNING · CHAPTER 02 / 07</div>
+    <h1>Convolutional Neural Networks</h1>
+    <p class="lede">A photograph carries structure that a dense layer discards: nearby pixels belong together, and an object keeps its identity wherever it sits in the frame. <strong>Sharing a small filter across an image bakes in translation invariance</strong>, the inductive bias that made computer vision practical. This chapter builds the convolution from its arithmetic, then traces the lineage from LeNet to ResNet and the transfer-learning recipe that now ships most production vision.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 26 MIN</b></span>
+      <span>BUILDS ON<b>DEEP LEARNING 01</b></span>
+      <span>INSTRUMENTS<b>KERNEL EXPLORER · FEATURE MAPS · RECEPTIVE FIELD</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">2.1</span>The convolution operation</a>
+      <a href="#s2"><span class="n">2.2</span>Pooling &amp; invariance</a>
+      <a href="#s3"><span class="n">2.3</span>Channels, stride &amp; padding</a>
+      <a href="#s4"><span class="n">2.4</span>LeNet to ResNet</a>
+      <a href="#s5"><span class="n">2.5</span>Transfer learning</a>
+      <a href="#s6"><span class="n">2.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 2.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">2.1</span><h2>The convolution operation</h2></div>
+        <p>A fully-connected layer treats an image as a flat vector: a \(224\times 224\) RGB picture becomes \(150{,}528\) inputs, and a single hidden unit reading all of them owns that many weights. That is wasteful on two counts. It ignores <strong>locality</strong> — the pixels that matter for detecting an edge are right next to each other, not scattered across the frame — and it ignores <strong>repetition</strong> — an edge in the top-left corner is the same visual pattern as an edge in the bottom-right, yet a dense layer must relearn it for every position. A convolutional layer fixes both by sliding one <em>small</em> set of weights, a <strong>kernel</strong> (or filter), across every location and reusing it everywhere.</p>
+
+        <p>The arithmetic is a sum of element-wise products between the kernel and the patch of input it currently overlaps. (Deep-learning libraries implement <em>cross-correlation</em> — no kernel flip — and call it convolution; since the kernel is learned, the flip is irrelevant.) For a 2D input \(I\) and a \(k\times k\) kernel \(W\), the output at position \((i,j)\) is:</p>
+
+        <div class="eq"><span class="eq-tag">EQ N2.1 — DISCRETE 2D CONVOLUTION (CROSS-CORRELATION)</span>
+        $$ S(i,j) \;=\; (I * W)(i,j) \;=\; \sum_{m=0}^{k-1}\sum_{n=0}^{k-1} I(i+m,\, j+n)\, W(m,n) \;+\; b $$
+        <div class="eq-note">The kernel \(W\) is a tiny learnable stencil — \(3\times 3\) is the modern default — and \(b\) a scalar bias. Sliding it across the whole image produces a <b>feature map</b>: a 2D record of where the kernel's pattern occurs. The two structural commitments are <b>local connectivity</b> (each output sees only a \(k\times k\) window, not the whole image) and <b>weight sharing</b> (the same \(k^2{+}1\) parameters are reused at every position). Weight sharing is what gives convolution its defining property — <b>translation equivariance</b>: shift the input and the feature map shifts identically.</div>
+        </div>
+
+        <p>The parameter savings are dramatic. A dense layer mapping a \(32\times 32\) single-channel image to a same-sized output needs \(1024 \times 1024 \approx 10^6\) weights; a \(3\times 3\) convolution producing the same map needs <em>nine</em> (plus a bias), regardless of image size. That economy is not just cheaper — it is a prior. By forcing every location to share weights, convolution declares in advance that visual patterns are <em>position-independent</em>, and that prior is close enough to true that CNNs generalize from far less data than an unconstrained network would need.</p>
+
+        <p>The boundary deserves a word. With no padding, a \(k\times k\) kernel cannot center on the outermost pixels, so the feature map shrinks: an \(N\times N\) input yields an \((N-k+1)\times(N-k+1)\) output. Section 2.3 makes this precise and shows how padding and stride control it.</p>
+
+        <div class="exercise" data-answer="28" data-tol="0.001" data-hint="Output side = floor((W - K + 2P) / S) + 1, with P = 0 and S = 1.">
+          <div class="ex-q">A \(32\times 32\) image is convolved with a \(5\times 5\) kernel using stride \(1\) and no padding. What is the side length of the output feature map?</div>
+          <div class="ex-reveal-src">The output side is \(\left\lfloor \dfrac{W - K + 2P}{S}\right\rfloor + 1 = \dfrac{32 - 5 + 0}{1} + 1 = 27 + 1 = \) <b>28</b>. Each \(5\times 5\) window must fit entirely inside the image, so the kernel's top-left corner can sit in only \(28\) positions per axis — giving a \(28\times 28\) map.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># EQ N2.1: 2D convolution (cross-correlation) from scratch in numpy
+import numpy as np
+
+# a tiny 6x6 "image": a bright vertical bar down the middle
+img = np.zeros((6, 6))
+img[:, 2:4] = 1.0
+
+# a vertical-edge detector (Sobel-x): fires where left/right brightness differ
+K = np.array([[-1, 0, 1],
+              [-2, 0, 2],
+              [-1, 0, 1]], dtype=float)
+
+kh, kw = K.shape
+H, W = img.shape
+out = np.zeros((H - kh + 1, W - kw + 1))          # valid padding -> shrinks
+for i in range(out.shape[0]):
+    for j in range(out.shape[1]):
+        patch = img[i:i+kh, j:j+kw]               # the window under the kernel
+        out[i, j] = np.sum(patch * K)             # element-wise product, summed
+
+np.set_printoptions(precision=1, suppress=True)
+print("input image (the bar):\n", img)
+print("\nfeature map (vertical edges):\n", out)
+print("\nleft edge of bar -> +, right edge -> -. flat regions stay 0.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="cnn-kernel" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT N2.1 — CONVOLUTION KERNEL EXPLORER</span><span class="w-sub">9×9 INPUT · 3×3 KERNEL · VALID PADDING · EQ N2.1</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>KERNEL</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-cnn-k="edge">EDGE</button>
+                  <button class="w-btn ghost" data-cnn-k="sharpen">SHARPEN</button>
+                  <button class="w-btn ghost" data-cnn-k="blur">BLUR</button>
+                  <button class="w-btn ghost" data-cnn-k="identity">IDENTITY</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="cnn-kernel-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">KERNEL (3×3)</div><div class="r-value" id="cnn-kernel-mat" style="font-size:11px;line-height:1.5;">—</div></div>
+              <div class="readout acc"><div class="r-label">OUTPUT SIZE</div><div class="r-value" id="cnn-kernel-size">7 × 7</div></div>
+              <div class="readout acc"><div class="r-label">PARAMS REUSED</div><div class="r-value" id="cnn-kernel-params">49×</div></div>
+            </div>
+          </div>
+          <div class="w-note">Left grid is the input (a hand-drawn "7"); right grid is the feature map after applying the chosen kernel everywhere. EDGE highlights boundaries, BLUR averages neighbors, SHARPEN exaggerates contrast, IDENTITY copies the center pixel. The same nine weights produce every output cell — that single fact is weight sharing, and the source of the 49× reuse count.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 2.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">2.2</span><h2>Pooling &amp; translation invariance</h2></div>
+        <p>Convolution is <em>equivariant</em>: move the cat one pixel right and its feature map moves one pixel right too. For classification we usually want something stronger — <strong>invariance</strong>: the answer "cat" should not change at all when the cat shifts. <strong>Pooling</strong> is the classic mechanism that converts a little equivariance into a little invariance. It slides a window over the feature map and summarizes each window with a single number — usually the maximum (max-pooling) or the average:</p>
+
+        <div class="eq"><span class="eq-tag">EQ N2.2 — MAX-POOLING</span>
+        $$ P(i,j) \;=\; \max_{\substack{0\le m&lt;p \\ 0\le n&lt;p}} \; S\big(i\cdot s + m,\; j\cdot s + n\big) $$
+        <div class="eq-note">A \(p\times p\) window with stride \(s\) (almost always \(p=s=2\)) collapses each region to its strongest activation. The effect is twofold. <b>Downsampling</b>: a stride-2 pool halves each spatial dimension, cutting the feature map to a quarter of its area and so cheapening every layer above it. <b>Local invariance</b>: because the max ignores <em>where</em> in the window the peak occurred, a small shift of the input that keeps the peak inside the same window leaves the pooled output unchanged. Stack a few pool layers and small translations become invisible to the classifier.</div>
+        </div>
+
+        <p>Pooling buys robustness at a price, and it is worth being honest about it: by discarding precise position it can hurt tasks that <em>need</em> position — segmentation, keypoint localization, anything that must answer "where," not just "what." It is also not the only way to downsample. Since the mid-2010s many architectures drop pooling entirely and use <strong>strided convolutions</strong> (a conv that itself moves in steps of 2) to shrink the map while keeping the operation learnable. Pooling survives mostly as a cheap, parameter-free downsampler and, in the form of <strong>global average pooling</strong>, as the standard bridge from the final feature map to a classifier — averaging each channel to one number and feeding that vector to a linear head, which removes the giant dense layers that dominated early CNNs.</p>
+
+        <div class="exercise" data-answer="true" data-tol="0" data-hint="Max-pooling keeps the strongest activation regardless of where in the window it occurs.">
+          <div class="ex-q">True or false: max-pooling adds a measure of translation invariance, because a small shift of the input that keeps the peak activation inside the same pooling window leaves the pooled output unchanged. (Answer <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">Max-pooling reports only the largest activation in each window and discards <em>where</em> in the window it occurred. Shift the input by a pixel or two and, as long as the peak stays inside the same window, the maximum — and therefore the pooled value — does not move. That insensitivity to small positional change is exactly local translation invariance. The statement is <b>true</b>.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># EQ N2.2: 2x2 max-pooling, and how it absorbs a 1-pixel shift
+import numpy as np
+
+def maxpool2x2(x):                                 # stride 2, no overlap
+    H, W = x.shape
+    out = np.zeros((H // 2, W // 2))
+    for i in range(out.shape[0]):
+        for j in range(out.shape[1]):
+            out[i, j] = x[2*i:2*i+2, 2*j:2*j+2].max()
+    return out
+
+fmap = np.array([[0, 1, 0, 0],                     # a feature map with one peak
+                 [2, 9, 1, 0],
+                 [0, 0, 3, 1],
+                 [0, 0, 1, 0]], dtype=float)
+shifted = np.roll(fmap, 1, axis=1)                 # shift everything right by 1px
+
+print("original feature map:\n", fmap)
+print("2x2 max-pooled       :\n", maxpool2x2(fmap))
+print("\nshifted-by-1 pooled  :\n", maxpool2x2(shifted))
+print("\nthe 9 stays the top-left pooled value in BOTH -> shift absorbed.")
+print("output went from 4x4 to 2x2: a quarter of the area, for free.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 2.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">2.3</span><h2>Channels, stride &amp; padding</h2></div>
+        <p>Real images are not flat grids — a color photo is \(H\times W\times 3\), three <strong>channels</strong> (red, green, blue) stacked in depth. Convolution generalizes by giving each kernel the same depth as its input: a kernel applied to a 3-channel image is itself \(k\times k\times 3\), it dots over <em>all</em> input channels at once, and it produces a <em>single</em> output map. To get a richer representation you simply run \(C_{\text{out}}\) such kernels in parallel — one per output channel — so a conv layer is parameterized by a 4D weight tensor:</p>
+
+        <div class="eq"><span class="eq-tag">EQ N2.3 — A CONV LAYER'S PARAMETERS &amp; OUTPUT GEOMETRY</span>
+        $$ \#\text{params} = (k \cdot k \cdot C_{\text{in}} + 1)\, C_{\text{out}}, \qquad H_{\text{out}} = \left\lfloor \frac{H_{\text{in}} - k + 2P}{S} \right\rfloor + 1 $$
+        <div class="eq-note">The weight tensor has shape \(C_{\text{out}}\times C_{\text{in}}\times k\times k\), plus one bias per output channel. <b>Padding</b> \(P\) adds a border of zeros so the kernel can center on edge pixels; "same" padding (\(P=\lfloor k/2\rfloor\) for odd \(k\), stride 1) keeps the spatial size unchanged. <b>Stride</b> \(S\) is how far the kernel hops between applications; \(S=2\) downsamples like a pool but with learned weights. The width formula applies independently to height. <b>The depth dimension is where representational capacity lives:</b> early layers carry tens of channels of low-level features (edges, blobs), deep layers carry hundreds or thousands of channels of abstract parts (eyes, wheels, text).</div>
+        </div>
+
+        <p>Notice what the layer trades away: a conv with \(C_{\text{in}}=C_{\text{out}}=256\) and a \(3\times 3\) kernel has \((9\cdot 256 + 1)\cdot 256 \approx 590{,}000\) parameters — independent of image size, because the same kernels run at every location. The familiar CNN rhythm follows directly: as pooling and strided convs shrink the spatial grid, channel counts rise to compensate, trading "where" for "what" as you go deeper. A typical backbone might run \(224^2\times 3 \to 56^2\times 64 \to 28^2\times 128 \to 14^2\times 256 \to 7^2\times 512\): the map gets small and deep until a global pool and a linear layer read off the answer.</p>
+
+        <p class="note">A practical refinement worth naming: the \(1\times 1\) convolution. With \(k=1\) it does no spatial mixing at all — it is a per-pixel linear layer across channels, used to cheaply change channel depth (a "bottleneck") before an expensive \(3\times 3\). Depthwise-separable convolutions (each channel convolved on its own, then \(1\times 1\) mixed) push the same idea to mobile-scale efficiency, and are the engine of the MobileNet/EfficientNet family.</p>
+
+        <div class="widget" id="cnn-fmap" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT N2.2 — FEATURE-MAP VISUALIZER</span><span class="w-sub">SPATIAL SIZE ↓ · CHANNELS ↑ · EQ N2.3</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>INPUT SIZE <output id="cnn-fmap-in-out">224</output></label><input type="range" id="cnn-fmap-in" min="32" max="256" step="32" value="224"/></div>
+              <div class="ctl"><label>STAGES (conv+pool) <output id="cnn-fmap-stages-out">4</output></label><input type="range" id="cnn-fmap-stages" min="1" max="5" step="1" value="4"/></div>
+              <div class="ctl"><label>BASE CHANNELS <output id="cnn-fmap-ch-out">64</output></label><input type="range" id="cnn-fmap-ch" min="16" max="128" step="16" value="64"/></div>
+            </div>
+            <canvas class="w-canvas" id="cnn-fmap-canvas" height="280"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">FINAL MAP</div><div class="r-value" id="cnn-fmap-final">14 × 14</div></div>
+              <div class="readout acc"><div class="r-label">FINAL CHANNELS</div><div class="r-value" id="cnn-fmap-finalch">512</div></div>
+              <div class="readout acc"><div class="r-label">ACTIVATIONS / STAGE</div><div class="r-value" id="cnn-fmap-acts" style="font-size:11px;line-height:1.5;">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Each stage is one "same" conv (size-preserving) followed by a stride-2 pool (size-halving) that also doubles the channel count. Watch the volumes flip from wide-and-shallow to small-and-deep — the canonical CNN shape. The activation count per stage (height × width × channels) shows that early layers, despite few channels, hold the most numbers; this is why feature-map memory, not parameters, often dominates training.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 2.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">2.4</span><h2>Classic architectures — LeNet to ResNet</h2></div>
+        <p>The CNN's history is a tight sequence of ideas, each fixing the previous generation's ceiling. Reading it in order is the fastest way to understand what every modern backbone is made of.</p>
+
+        <table class="data">
+          <thead><tr><th>Architecture</th><th>Year</th><th>Depth</th><th>The idea it introduced</th></tr></thead>
+          <tbody>
+            <tr><td><strong>LeNet-5</strong></td><td class="m">1998</td><td class="m">7</td><td>The template itself: conv → pool → conv → pool → dense, trained by backprop to read handwritten digits (MNIST/checks).</td></tr>
+            <tr><td><strong>AlexNet</strong></td><td class="m">2012</td><td class="m">8</td><td>The same idea at GPU scale on ImageNet: ReLU, dropout, data augmentation. Halved the error and started the deep-learning era.</td></tr>
+            <tr><td><strong>VGG</strong></td><td class="m">2014</td><td class="m">16–19</td><td>Depth from uniformity: stacks of small \(3\times 3\) convs only. Two \(3\times 3\)s see a \(5\times 5\) region with fewer params and more nonlinearity.</td></tr>
+            <tr><td><strong>GoogLeNet / Inception</strong></td><td class="m">2014</td><td class="m">22</td><td>Multi-scale "Inception" blocks (\(1\times 1\), \(3\times 3\), \(5\times 5\) in parallel) and \(1\times 1\) bottlenecks to stay cheap.</td></tr>
+            <tr><td><strong>ResNet</strong></td><td class="m">2015</td><td class="m hl">50–152</td><td>The residual / skip connection — the breakthrough that let networks go past ~20 layers without degrading.</td></tr>
+          </tbody>
+        </table>
+
+        <p>The decisive jump is ResNet. Through 2014 the field believed deeper was better, yet past about twenty layers accuracy got <em>worse</em> — not from overfitting (training error rose too) but from an <strong>optimization</strong> failure: gradients had to thread through too many transformations to reach early layers, and very deep plain stacks could not even learn the identity function reliably. He et al. solved it with a one-line change to the building block — add the input back to the output:</p>
+
+        <div class="eq"><span class="eq-tag">EQ N2.4 — THE RESIDUAL BLOCK</span>
+        $$ \mathbf{y} \;=\; \mathcal{F}(\mathbf{x}; \{W_i\}) \;+\; \mathbf{x} $$
+        <div class="eq-note">Instead of asking a block to learn the desired mapping \(H(\mathbf{x})\) outright, ask it to learn only the <b>residual</b> \(\mathcal{F}(\mathbf{x}) = H(\mathbf{x}) - \mathbf{x}\); the original input is carried forward by the <b>skip connection</b> and added at the end. Two consequences follow. If a layer is unneeded, driving \(\mathcal{F}\to 0\) recovers the identity for free — so extra depth can never hurt. And the additive shortcut gives the gradient a <b>direct path</b> back to early layers (the \(+\mathbf{x}\) contributes a clean \(+1\) to the derivative), defeating the vanishing-gradient barrier. This single trick enabled 152-layer networks, won ImageNet 2015, and the residual stream it created is now the backbone of essentially every deep architecture — Transformers included (Vol II · EQ 2.x).</div>
+        </div>
+
+        <p>It is worth noting where this story stands in 2026, honestly. CNNs no longer hold the absolute accuracy crown on large-scale benchmarks — Vision Transformers (ViT) match or exceed them given enough data, by replacing the convolutional prior with attention over image patches. But the contest is closer than headlines suggest: convnets modernized with the same training recipes (the "ConvNeXt" line) remain competitive, and CNNs still dominate where data is limited or latency and edge deployment matter, precisely because their built-in inductive bias substitutes for data the way a ViT cannot. Convolution did not lose; it became one well-understood tool among several.</p>
+
+        <div class="callout">
+          <span class="co-icon">WHY 3×3</span>
+          <p><strong>VGG's quiet lesson:</strong> two stacked \(3\times 3\) convolutions have the same \(5\times 5\) receptive field as one \(5\times 5\) conv, but use \(2\cdot(3^2)=18\) weights per channel instead of \(25\), and insert an extra nonlinearity between them. Three \(3\times 3\)s match a \(7\times 7\) (27 vs 49 weights). Deeper-but-thinner won, and \(3\times 3\) became the field's default kernel — the receptive-field calculator below shows exactly how that field grows with depth.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 2.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">2.5</span><h2>Transfer learning</h2></div>
+        <p>The single most practically important fact about CNNs is that <strong>the features they learn transfer</strong>. A network trained on ImageNet's 1.2 million labelled photos learns, in its early layers, a near-universal visual vocabulary: oriented edges, color contrasts, textures, then corners, then object parts. Those low-level detectors are not specific to "is this a Labrador" — they are what <em>any</em> natural-image task needs. So rather than train a CNN from random weights on your few thousand images (which would overfit badly), you start from a pre-trained backbone and adapt it. Two regimes:</p>
+
+        <ul>
+          <li><strong>Feature extraction (frozen backbone).</strong> Freeze all convolutional weights, discard the original 1000-class head, and train only a fresh classifier on top of the final feature vector. The CNN becomes a fixed feature function; you are fitting a small linear model on excellent features. This is the right move when your dataset is small and/or similar to ImageNet — it cannot overfit the backbone because the backbone does not move.</li>
+          <li><strong>Fine-tuning.</strong> Unfreeze some or all of the backbone and continue training on your data at a <em>small</em> learning rate (often 10–100× lower than from-scratch), so the pre-trained weights are nudged, not erased. Best when you have more data or a domain that drifts from natural photos (medical scans, satellite imagery). A common recipe trains the new head first, then unfreezes the top blocks; the lowest layers — those universal edge detectors — are usually left frozen or barely touched.</li>
+        </ul>
+
+        <p>The empirical pattern that justifies the whole approach: feature <em>transferability decreases with depth</em>. Early layers transfer almost perfectly across tasks; the last layers are the most task-specific and benefit most from adaptation. That is why "freeze the bottom, retrain the top" is the default, and why transfer learning routinely reaches strong accuracy with hundreds of examples instead of millions — the expensive representation learning was already paid for, once, by whoever trained the backbone.</p>
+
+        <div class="widget" id="cnn-rf" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT N2.3 — RECEPTIVE-FIELD CALCULATOR</span><span class="w-sub">3×3 CONVS + 2×2 POOLS · CUMULATIVE RF</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>3×3 CONV LAYERS <output id="cnn-rf-conv-out">3</output></label><input type="range" id="cnn-rf-conv" min="1" max="12" step="1" value="3"/></div>
+              <div class="ctl"><label>2×2 POOLS (after every Nth conv) <output id="cnn-rf-pool-out">2</output></label><input type="range" id="cnn-rf-pool" min="0" max="4" step="1" value="2"/></div>
+            </div>
+            <canvas class="w-canvas" id="cnn-rf-canvas" height="220"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">RECEPTIVE FIELD</div><div class="r-value" id="cnn-rf-rf">18 px</div></div>
+              <div class="readout"><div class="r-label">FEATURE STRIDE (jump)</div><div class="r-value" id="cnn-rf-jump">4</div></div>
+              <div class="readout"><div class="r-label">TOTAL LAYERS</div><div class="r-value" id="cnn-rf-layers">5</div></div>
+            </div>
+          </div>
+          <div class="w-note">Each unit in a deep feature map "sees" a window of the original image — its receptive field. With only \(3\times 3\) convs the field grows by 2 px per layer (linearly); insert a stride-2 pool and the <em>jump</em> doubles, so every later conv now reaches twice as far — the field grows much faster. Slide the pool count up and watch a stack of tiny \(3\times 3\) kernels come to cover the whole image. The RF recursion: \(r_\ell = r_{\ell-1} + (k-1)\,j_{\ell-1}\), with jump \(j_\ell = j_{\ell-1}\cdot s\).</div>
+        </div>
+
+        <p class="note">A subtle gotcha transfer learning shares with the receptive field: a backbone's <em>effective</em> receptive field is often smaller than its theoretical one (activations near the window's center dominate), and the input statistics it expects — resolution, normalization, channel order — must match what it was trained on. Feed a medical grayscale scan to an RGB-ImageNet backbone without reconciling these and the transfer quietly underperforms. Match the preprocessing first; it is the most common silent failure.</p>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>Convolution shares weights across space; the next idea shares them across time.</strong> Chapter 03 turns to sequence models — RNNs, LSTMs, and the gating that lets a network carry information across hundreds of steps — the line of work that the Transformer would eventually overtake.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 2.R ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">2.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://doi.org/10.1109/5.726791" target="_blank" rel="noopener">LeCun, Y., Bottou, L., Bengio, Y. &amp; Haffner, P. (1998). <span class="ref-venue">Gradient-Based Learning Applied to Document Recognition</span>.</a> <span class="ref-meta">Proceedings of the IEEE 86(11) — LeNet-5; the conv → pool → dense template trained end-to-end by backprop.</span></li>
+          <li><a href="https://papers.nips.cc/paper/4824-imagenet-classification-with-deep-convolutional-neural-networks" target="_blank" rel="noopener">Krizhevsky, A., Sutskever, I. &amp; Hinton, G. E. (2012). <span class="ref-venue">ImageNet Classification with Deep Convolutional Neural Networks</span>.</a> <span class="ref-meta">NeurIPS 25 — AlexNet; ReLU, dropout, and GPU training that ignited the deep-learning era.</span></li>
+          <li><a href="https://arxiv.org/abs/1409.1556" target="_blank" rel="noopener">Simonyan, K. &amp; Zisserman, A. (2015). <span class="ref-venue">Very Deep Convolutional Networks for Large-Scale Image Recognition</span>.</a> <span class="ref-meta">ICLR 2015 — VGG; depth via stacks of \(3\times 3\) convolutions.</span></li>
+          <li><a href="https://arxiv.org/abs/1409.4842" target="_blank" rel="noopener">Szegedy, C. et al. (2015). <span class="ref-venue">Going Deeper with Convolutions</span>.</a> <span class="ref-meta">CVPR 2015 — GoogLeNet / Inception; multi-scale blocks and \(1\times 1\) bottlenecks.</span></li>
+          <li><a href="https://arxiv.org/abs/1512.03385" target="_blank" rel="noopener">He, K., Zhang, X., Ren, S. &amp; Sun, J. (2016). <span class="ref-venue">Deep Residual Learning for Image Recognition</span>.</a> <span class="ref-meta">CVPR 2016 — ResNet (EQ N2.4); the skip connection that unlocked very deep networks.</span></li>
+          <li><a href="https://arxiv.org/abs/1411.1792" target="_blank" rel="noopener">Yosinski, J., Clune, J., Bengio, Y. &amp; Lipson, H. (2014). <span class="ref-venue">How Transferable Are Features in Deep Neural Networks?</span>.</a> <span class="ref-meta">NeurIPS 27 — the empirical basis for transfer learning; transferability falls with depth.</span></li>
+          <li><a href="https://arxiv.org/abs/2010.11929" target="_blank" rel="noopener">Dosovitskiy, A. et al. (2021). <span class="ref-venue">An Image Is Worth 16×16 Words: Transformers for Image Recognition at Scale</span>.</a> <span class="ref-meta">ICLR 2021 — the Vision Transformer, the chief modern challenger to the convolutional prior.</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../dl/01-foundations.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">01</span> Foundations</div></a>
+        <a class="next" href="../dl/03-sequence-models.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">03</span> Sequence Models</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — DEEP LEARNING · CH 02</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* chapter instruments — single IIFE, no globals */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  /* ============================================================
+     INSTRUMENT N2.1 — CONVOLUTION KERNEL EXPLORER
+     Apply a 3x3 kernel to a 9x9 hand-drawn "7"; show feature map.
+     ============================================================ */
+  (function () {
+    var root = document.getElementById("cnn-kernel");
+    if (!root) return;
+    var canvas = document.getElementById("cnn-kernel-canvas");
+    var matOut = document.getElementById("cnn-kernel-mat");
+    var sizeOut = document.getElementById("cnn-kernel-size");
+    var paramsOut = document.getElementById("cnn-kernel-params");
+    var btns = root.querySelectorAll("[data-cnn-k]");
+
+    /* 9x9 input: a stylized "7" (1 = ink, 0 = paper) */
+    var IMG = [
+      [0,0,0,0,0,0,0,0,0],
+      [0,1,1,1,1,1,1,1,0],
+      [0,1,1,1,1,1,1,1,0],
+      [0,0,0,0,0,0,1,1,0],
+      [0,0,0,0,0,1,1,0,0],
+      [0,0,0,0,1,1,0,0,0],
+      [0,0,0,1,1,0,0,0,0],
+      [0,0,1,1,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0]
+    ];
+    var N = 9;
+
+    var KERNELS = {
+      edge:     [[-1,-1,-1],[-1,8,-1],[-1,-1,-1]],
+      sharpen:  [[0,-1,0],[-1,5,-1],[0,-1,0]],
+      blur:     [[1/9,1/9,1/9],[1/9,1/9,1/9],[1/9,1/9,1/9]],
+      identity: [[0,0,0],[0,1,0],[0,0,0]]
+    };
+    var current = "edge";
+
+    function convolve(K) {
+      var out = [], oN = N - 2, i, j, m, n, s;
+      for (i = 0; i < oN; i++) {
+        out[i] = [];
+        for (j = 0; j < oN; j++) {
+          s = 0;
+          for (m = 0; m < 3; m++)
+            for (n = 0; n < 3; n++)
+              s += IMG[i + m][j + n] * K[m][n];
+          out[i][j] = s;
+        }
+      }
+      return out;
+    }
+
+    function fmtMat(K) {
+      var html = "", i, j;
+      for (i = 0; i < 3; i++) {
+        for (j = 0; j < 3; j++) {
+          var v = K[i][j];
+          var t = Math.abs(v) < 0.001 ? "0" : (Math.abs(v - Math.round(v)) < 0.001 ? String(Math.round(v)) : v.toFixed(2));
+          html += "<span style='display:inline-block;width:34px;text-align:right;font-family:ui-monospace,Menlo,monospace;'>" + t + "</span>";
+        }
+        html += "<br/>";
+      }
+      return html;
+    }
+
+    function render() {
+      var s = FM.setupCanvas(canvas, 300);
+      var ctx = s.ctx, W = s.w, H = s.h;
+      ctx.clearRect(0, 0, W, H);
+
+      var K = KERNELS[current];
+      var out = convolve(K);
+      var oN = out.length;
+
+      /* normalize feature map to [0,1] for display */
+      var lo = Infinity, hi = -Infinity, i, j;
+      for (i = 0; i < oN; i++) for (j = 0; j < oN; j++) {
+        if (out[i][j] < lo) lo = out[i][j];
+        if (out[i][j] > hi) hi = out[i][j];
+      }
+      var span = (hi - lo) || 1;
+
+      /* layout: two grids side by side, labels above */
+      var gap = 40;
+      var avail = (W - gap) / 2;
+      var inCell = Math.min(avail / N, 26);
+      var outCell = Math.min(avail / N, 26);
+      var inSide = inCell * N, outSide = outCell * oN;
+      var topPad = 26;
+      var inX = (avail - inSide) / 2;
+      var outX = avail + gap + (avail - outSide) / 2;
+      var midY = topPad + Math.max(inSide, outSide) / 2;
+      var inY = midY - inSide / 2, outY = midY - outSide / 2;
+
+      ctx.font = C.MONO; ctx.textBaseline = "alphabetic";
+      ctx.fillStyle = C.SEC; ctx.textAlign = "center";
+      ctx.fillText("INPUT  9×9", inX + inSide / 2, topPad - 10);
+      ctx.fillStyle = C.MINT;
+      ctx.fillText("FEATURE MAP  " + oN + "×" + oN, outX + outSide / 2, topPad - 10);
+
+      /* input grid (grayscale ink) */
+      for (i = 0; i < N; i++) for (j = 0; j < N; j++) {
+        var v = IMG[i][j];
+        var g = Math.round(v * 210);
+        ctx.fillStyle = "rgb(" + g + "," + g + "," + g + ")";
+        ctx.fillRect(inX + j * inCell, inY + i * inCell, inCell - 1, inCell - 1);
+      }
+
+      /* feature map (mint = high, dark = low) */
+      for (i = 0; i < oN; i++) for (j = 0; j < oN; j++) {
+        var t = (out[i][j] - lo) / span;       // 0..1
+        ctx.fillStyle = "rgba(166,242,204," + (0.08 + 0.92 * t).toFixed(3) + ")";
+        ctx.fillRect(outX + j * outCell, outY + i * outCell, outCell - 1, outCell - 1);
+      }
+
+      /* arrow between */
+      ctx.strokeStyle = C.MUT; ctx.lineWidth = 1.5;
+      var ax = avail + 8, ay = midY;
+      ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(ax + gap - 16, ay); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(ax + gap - 16, ay); ctx.lineTo(ax + gap - 22, ay - 4);
+      ctx.lineTo(ax + gap - 22, ay + 4); ctx.closePath();
+      ctx.fillStyle = C.MUT; ctx.fill();
+      ctx.fillStyle = C.MUT; ctx.textAlign = "center";
+      ctx.fillText("∗ " + current, avail + gap / 2, ay - 10);
+
+      matOut.innerHTML = fmtMat(K);
+      sizeOut.textContent = oN + " × " + oN;
+      paramsOut.textContent = (oN * oN) + "×";
+    }
+
+    btns.forEach(function (b) {
+      b.addEventListener("click", function () {
+        current = b.getAttribute("data-cnn-k");
+        btns.forEach(function (x) { x.classList.remove("on"); });
+        b.classList.add("on");
+        render();
+      });
+    });
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ============================================================
+     INSTRUMENT N2.2 — FEATURE-MAP VISUALIZER
+     Volumes shrinking spatially while channels grow.
+     ============================================================ */
+  (function () {
+    var root = document.getElementById("cnn-fmap");
+    if (!root) return;
+    var canvas = document.getElementById("cnn-fmap-canvas");
+    var inIn = document.getElementById("cnn-fmap-in");
+    var stIn = document.getElementById("cnn-fmap-stages");
+    var chIn = document.getElementById("cnn-fmap-ch");
+    var inOut = document.getElementById("cnn-fmap-in-out");
+    var stOut = document.getElementById("cnn-fmap-stages-out");
+    var chOut = document.getElementById("cnn-fmap-ch-out");
+    var finalOut = document.getElementById("cnn-fmap-final");
+    var finalChOut = document.getElementById("cnn-fmap-finalch");
+    var actsOut = document.getElementById("cnn-fmap-acts");
+
+    function buildStages() {
+      var sz = parseInt(inIn.value, 10);
+      var nStages = parseInt(stIn.value, 10);
+      var ch = parseInt(chIn.value, 10);
+      var stages = [{ size: sz, ch: 3, label: "input" }];
+      var s;
+      for (s = 0; s < nStages; s++) {
+        sz = Math.max(1, Math.floor(sz / 2));    // stride-2 pool halves
+        stages.push({ size: sz, ch: ch, label: "stage " + (s + 1) });
+        ch *= 2;                                  // channels double
+      }
+      return stages;
+    }
+
+    function render() {
+      inOut.textContent = inIn.value;
+      stOut.textContent = stIn.value;
+      chOut.textContent = chIn.value;
+
+      var stages = buildStages();
+      var s = FM.setupCanvas(canvas, 280);
+      var ctx = s.ctx, W = s.w, H = s.h;
+      ctx.clearRect(0, 0, W, H);
+
+      var n = stages.length;
+      var slot = W / n;
+      var maxSpatial = stages[0].size;
+      var maxBoxPx = Math.min(slot * 0.62, 120);
+      var baseY = H - 46;
+      var i;
+
+      /* depth scale: log of channels -> bar height for the depth indicator */
+      var maxCh = stages[stages.length - 1].ch;
+
+      for (i = 0; i < n; i++) {
+        var st = stages[i];
+        var cx = slot * i + slot / 2;
+        /* face size scales with spatial extent (sqrt for visibility) */
+        var face = maxBoxPx * Math.sqrt(st.size / maxSpatial);
+        face = Math.max(face, 12);
+        var depth = 6 + 30 * (Math.log(st.ch) / Math.log(maxCh));  // px, channel proxy
+        var x = cx - face / 2;
+        var y = baseY - face;
+
+        /* drawn as a 3D-ish prism: front face + top + side */
+        var col = i === 0 ? C.SEC : C.MINT;
+        var fillFront = i === 0 ? "rgba(155,155,155,.14)" : "rgba(166,242,204,.14)";
+        /* top */
+        ctx.fillStyle = i === 0 ? "rgba(155,155,155,.26)" : "rgba(166,242,204,.30)";
+        ctx.beginPath();
+        ctx.moveTo(x, y); ctx.lineTo(x + depth, y - depth);
+        ctx.lineTo(x + face + depth, y - depth); ctx.lineTo(x + face, y);
+        ctx.closePath(); ctx.fill();
+        /* side */
+        ctx.fillStyle = i === 0 ? "rgba(155,155,155,.20)" : "rgba(166,242,204,.22)";
+        ctx.beginPath();
+        ctx.moveTo(x + face, y); ctx.lineTo(x + face + depth, y - depth);
+        ctx.lineTo(x + face + depth, y - depth + face); ctx.lineTo(x + face, y + face);
+        ctx.closePath(); ctx.fill();
+        /* front */
+        ctx.fillStyle = fillFront;
+        ctx.fillRect(x, y, face, face);
+        ctx.strokeStyle = col; ctx.lineWidth = 1.2;
+        ctx.strokeRect(x, y, face, face);
+
+        /* labels */
+        ctx.font = C.MONO; ctx.textAlign = "center";
+        ctx.fillStyle = C.SEC; ctx.textBaseline = "top";
+        ctx.fillText(st.size + "×" + st.size, cx, baseY + 6);
+        ctx.fillStyle = col;
+        ctx.fillText(st.ch + " ch", cx, baseY + 20);
+      }
+
+      var last = stages[stages.length - 1];
+      finalOut.textContent = last.size + " × " + last.size;
+      finalChOut.textContent = last.ch;
+
+      /* activations per stage = H*W*C, formatted */
+      var html = "";
+      for (i = 0; i < n; i++) {
+        var st2 = stages[i];
+        var acts = st2.size * st2.size * st2.ch;
+        html += "<span style='color:" + (i === 0 ? C.SEC : C.MINT) + "'>" +
+                st2.label + ": " + FM.siFormat(acts, 1) + "</span>" + (i < n - 1 ? "<br/>" : "");
+      }
+      actsOut.innerHTML = html;
+    }
+
+    inIn.addEventListener("input", render);
+    stIn.addEventListener("input", render);
+    chIn.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ============================================================
+     INSTRUMENT N2.3 — RECEPTIVE-FIELD CALCULATOR
+     RF recursion across 3x3 convs and 2x2 stride-2 pools.
+     ============================================================ */
+  (function () {
+    var root = document.getElementById("cnn-rf");
+    if (!root) return;
+    var canvas = document.getElementById("cnn-rf-canvas");
+    var convIn = document.getElementById("cnn-rf-conv");
+    var poolIn = document.getElementById("cnn-rf-pool");
+    var convOut = document.getElementById("cnn-rf-conv-out");
+    var poolOut = document.getElementById("cnn-rf-pool-out");
+    var rfOut = document.getElementById("cnn-rf-rf");
+    var jumpOut = document.getElementById("cnn-rf-jump");
+    var layersOut = document.getElementById("cnn-rf-layers");
+
+    /* Build a layer schedule: nConv 3x3 convs, with a 2x2 stride-2 pool
+       inserted after every (nConv / (nPool+1)) convs, roughly evenly. */
+    function schedule() {
+      var nConv = parseInt(convIn.value, 10);
+      var nPool = parseInt(poolIn.value, 10);
+      var layers = [];
+      var poolPositions = {};
+      if (nPool > 0) {
+        var step = nConv / (nPool + 1);
+        for (var p = 1; p <= nPool; p++) {
+          poolPositions[Math.min(nConv, Math.round(step * p))] = true;
+        }
+      }
+      for (var c = 1; c <= nConv; c++) {
+        layers.push({ k: 3, s: 1, type: "conv" });
+        if (poolPositions[c]) layers.push({ k: 2, s: 2, type: "pool" });
+      }
+      return layers;
+    }
+
+    function compute(layers) {
+      /* r0 = 1, j0 = 1; r_l = r_{l-1} + (k-1)*j_{l-1}; j_l = j_{l-1}*s */
+      var r = 1, j = 1, trace = [{ r: 1, j: 1, type: "input" }], i;
+      for (i = 0; i < layers.length; i++) {
+        var L = layers[i];
+        r = r + (L.k - 1) * j;
+        j = j * L.s;
+        trace.push({ r: r, j: j, type: L.type });
+      }
+      return { r: r, j: j, trace: trace };
+    }
+
+    function render() {
+      convOut.textContent = convIn.value;
+      poolOut.textContent = poolIn.value;
+
+      var layers = schedule();
+      var res = compute(layers);
+      var trace = res.trace;
+
+      rfOut.textContent = res.r + " px";
+      jumpOut.textContent = res.j;
+      layersOut.textContent = layers.length;
+
+      var s = FM.setupCanvas(canvas, 220);
+      var ctx = s.ctx, W = s.w, H = s.h;
+      ctx.clearRect(0, 0, W, H);
+
+      var padL = 38, padR = 14, padT = 22, padB = 34;
+      var x0 = padL, x1 = W - padR, y0 = H - padB, y1 = padT;
+      var n = trace.length;
+      var maxR = trace[n - 1].r;
+
+      /* axes */
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(x0, y1, x1 - x0, y0 - y1);
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      var g;
+      for (g = 0; g <= 4; g++) {
+        var gv = maxR * g / 4;
+        var gy = y0 - (gv / maxR) * (y0 - y1);
+        ctx.strokeStyle = "rgba(47,50,52,.5)";
+        ctx.beginPath(); ctx.moveTo(x0, gy); ctx.lineTo(x1, gy); ctx.stroke();
+        ctx.fillStyle = C.MUT;
+        ctx.fillText(Math.round(gv) + "px", x0 - 6, gy);
+      }
+
+      function px(idx) { return n <= 1 ? x0 : x0 + idx / (n - 1) * (x1 - x0); }
+      function py(rv) { return y0 - (rv / maxR) * (y0 - y1); }
+
+      /* RF growth line */
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 2;
+      ctx.beginPath();
+      var i;
+      for (i = 0; i < n; i++) {
+        var X = px(i), Y = py(trace[i].r);
+        if (i === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y);
+      }
+      ctx.stroke();
+
+      /* points: mint dot for conv, blue square for pool (jump increases) */
+      for (i = 0; i < n; i++) {
+        var X2 = px(i), Y2 = py(trace[i].r);
+        if (trace[i].type === "pool") {
+          ctx.fillStyle = C.BLUE;
+          ctx.fillRect(X2 - 3, Y2 - 3, 6, 6);
+        } else {
+          ctx.fillStyle = C.MINT;
+          ctx.beginPath(); ctx.arc(X2, Y2, 2.6, 0, 2 * Math.PI); ctx.fill();
+        }
+      }
+
+      /* axis labels */
+      ctx.fillStyle = C.SEC; ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText("RF (px) vs DEPTH", x0 + 4, y1 + 3);
+      ctx.fillStyle = C.MUT; ctx.textAlign = "center"; ctx.textBaseline = "top";
+      ctx.fillText("layer →", (x0 + x1) / 2, y0 + 8);
+      /* legend */
+      ctx.textAlign = "right";
+      ctx.fillStyle = C.MINT; ctx.fillText("● conv", x1 - 56, y1 + 3);
+      ctx.fillStyle = C.BLUE; ctx.fillText("■ pool", x1 - 6, y1 + 3);
+    }
+
+    convIn.addEventListener("input", render);
+    poolIn.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

@@ -1,0 +1,800 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Policy Gradients &amp; Actor-Critic — AI Encyclopedia</title>
+<meta name="description" content="Instead of valuing actions and then acting greedily, optimize the policy itself by gradient ascent on expected reward. The policy gradient theorem, REINFORCE, baselines and variance reduction, actor-critic methods, and A2C/A3C." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+</head>
+<body data-track="rl" data-level="core">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ REINFORCEMENT LEARNING / 04 / POLICY GRADIENTS</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../rl/05-deep-rl.html">NEXT: DEEP RL →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">REINFORCEMENT LEARNING · CHAPTER 04 / 06</div>
+    <h1>Policy Gradients &amp; Actor-Critic</h1>
+    <p class="lede">Every method so far has been indirect: estimate how good each action is, then act greedily with respect to those estimates. Policy-gradient methods skip that step. <strong>Instead of valuing actions and then acting greedily, optimize the policy itself by gradient ascent on expected reward.</strong> Parameterize the policy, differentiate the quantity you care about, expected return, and push the parameters uphill. The result is a family that handles continuous actions, learns genuinely stochastic behavior, and forms the backbone of modern deep RL and RLHF.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 26 MIN</b></span>
+      <span>BUILDS ON<b>CH 01 · 03 · STATS</b></span>
+      <span>INSTRUMENTS<b>BANDIT ASCENT · BASELINE · ACTOR-CRITIC</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">4.1</span>Optimizing the policy directly</a>
+      <a href="#s2"><span class="n">4.2</span>The policy gradient theorem</a>
+      <a href="#s3"><span class="n">4.3</span>REINFORCE &amp; the baseline</a>
+      <a href="#s4"><span class="n">4.4</span>Actor-critic methods</a>
+      <a href="#s5"><span class="n">4.5</span>A2C / A3C</a>
+      <a href="#s6"><span class="n">4.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 4.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">4.1</span><h2>Optimizing the policy directly</h2></div>
+        <p>The value-based methods of the previous chapters — Q-learning, SARSA — all share a shape: learn a value function, then read a policy off it by taking \(\arg\max_a Q(s,a)\). The value function is the object you fit; the policy is a side effect. <strong>Policy-gradient methods invert this.</strong> They treat the policy as the primary object, give it its own parameters \(\theta\), and optimize those parameters to maximize expected return directly. There is no \(\arg\max\) at the end — the policy <em>is</em> the answer.</p>
+
+        <p>Write the policy as a differentiable function \(\pi_\theta(a \mid s)\): a neural network whose output is a probability distribution over actions, with parameters \(\theta\) you can move. The quantity we want to maximize is the expected return under that policy — the same return from Chapter 01 (EQ R1.3), now viewed as a function of \(\theta\):</p>
+
+        <div class="eq"><span class="eq-tag">EQ R4.1 — THE OBJECTIVE</span>
+        $$ J(\theta) \;=\; \mathbb{E}_{\tau \sim \pi_\theta}\!\big[\, R(\tau) \,\big] \;=\; \mathbb{E}_{\tau \sim \pi_\theta}\!\left[\, \sum_{t=0}^{T} \gamma^{t}\, r_{t+1} \,\right] $$
+        <div class="eq-note">\(\tau = (s_0, a_0, s_1, a_1, \ldots)\) is a <b>trajectory</b> the policy rolls out; \(R(\tau)\) is its total discounted return. The expectation is over every source of randomness — the policy's action choices and the environment's transitions. <b>We are no longer fitting a value; we are doing gradient ascent on the thing we actually care about.</b> The only obstacle is that the distribution we average over, \(\pi_\theta\), is itself what we are differentiating — and that is exactly what the next section resolves.</div>
+        </div>
+
+        <p>Why bother, when value methods already work? Three reasons make policy gradients indispensable, not merely an alternative.</p>
+        <ul>
+          <li><strong>Continuous and high-dimensional action spaces.</strong> Taking \(\arg\max_a Q(s,a)\) over a continuous \(a\) — a torque, a steering angle, a 50-joint robot pose — is itself an optimization problem at every step. A policy network simply outputs the action (or its distribution), no inner search required. This is why robotics and control are policy-gradient territory.</li>
+          <li><strong>Stochastic optimal policies.</strong> The greedy policy of a value method is deterministic. But in partially-observed environments and in every game with a bluff, the optimal policy is irreducibly random — rock-paper-scissors has no good deterministic strategy. Policy gradients can represent and learn such policies natively.</li>
+          <li><strong>Smooth improvement.</strong> A small change to \(\theta\) is a small change to the policy. Value methods can flip the entire greedy policy from one \(\arg\max\) to another over an infinitesimal change in \(Q\), which makes their learning brittle. Gradient ascent on \(\pi_\theta\) moves the behavior continuously.</li>
+        </ul>
+
+        <p class="note">The cost of this directness is the dominant theme of the chapter: policy-gradient estimates are <em>unbiased but high-variance</em>. You are estimating a gradient from noisy rollouts of a stochastic policy in a stochastic world. Taming that variance — first with baselines (§4.3), then with a learned critic (§4.4) — is most of what separates a toy from a working algorithm.</p>
+      </section>
+
+      <!-- ====================== 4.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">4.2</span><h2>The policy gradient theorem</h2></div>
+        <p>To ascend \(J(\theta)\) we need its gradient. The difficulty is that \(\theta\) appears <em>inside</em> the distribution we are taking the expectation over, so we cannot just differentiate the integrand. The fix is the <strong>log-derivative trick</strong> (also called the score-function or likelihood-ratio estimator), an identity that turns the gradient of an expectation into an expectation of a gradient:</p>
+
+        <div class="eq"><span class="eq-tag">EQ R4.2 — THE LOG-DERIVATIVE TRICK</span>
+        $$ \nabla_\theta\, \mathbb{E}_{x \sim p_\theta}[\,f(x)\,] \;=\; \mathbb{E}_{x \sim p_\theta}\!\big[\, f(x)\, \nabla_\theta \log p_\theta(x) \,\big] $$
+        <div class="eq-note">The single identity behind every policy gradient. It follows from \(\nabla_\theta p_\theta = p_\theta\, \nabla_\theta \log p_\theta\) (because \(\nabla \log p = \nabla p / p\)). <b>Its magic is that the right-hand side is itself an expectation under \(p_\theta\)</b> — so it can be estimated by sampling, with no knowledge of how the distribution was generated. The environment's transition probabilities \(P\) drop out entirely, because they do not depend on \(\theta\): we never need a model of the world.</div>
+        </div>
+
+        <p>Apply this to the objective. A trajectory's probability factorizes into the environment's transitions (which do not depend on \(\theta\)) and the policy's action choices (which do). When we take \(\nabla_\theta \log p_\theta(\tau)\), every transition term differentiates to zero and only the policy terms survive. The result is the <strong>policy gradient theorem</strong>:</p>
+
+        <div class="eq"><span class="eq-tag">EQ R4.3 — THE POLICY GRADIENT THEOREM</span>
+        $$ \nabla_\theta J(\theta) \;=\; \mathbb{E}_{\tau \sim \pi_\theta}\!\left[\, \sum_{t=0}^{T} \nabla_\theta \log \pi_\theta(a_t \mid s_t)\; \Psi_t \,\right] $$
+        <div class="eq-note">\(\nabla_\theta \log \pi_\theta(a_t \mid s_t)\) is the <b>score</b> — the direction in parameter space that makes the action just taken more likely. \(\Psi_t\) is a scalar weight that says <em>how much</em> we should reinforce that action. The whole zoo of policy-gradient algorithms is one choice: <b>what to plug in for \(\Psi_t\)</b>. The full return \(R(\tau)\), the return-to-go \(G_t\), the advantage \(A^\pi(s_t,a_t)\), the TD error — each is a valid \(\Psi_t\), and they trade bias against variance differently (§4.3–4.4).</div>
+        </div>
+
+        <p>The intuition is worth stating in plain language, because it is the entire algorithm. Each gradient step nudges the parameters to <strong>increase the log-probability of actions that led to high reward, and decrease it for actions that led to low reward</strong>, weighted by how good the outcome was. The policy is not told the right action — it is only told whether what it did was, on balance, worth doing more often. That is trial-and-error learning written as calculus.</p>
+
+        <div class="exercise" data-answer="0.4" data-tol="0.02" data-hint="For a softmax policy, the score for the sampled action a is 1 − π(a | s).">
+          <div class="ex-q">A softmax policy over two actions currently assigns \(\pi_\theta(a \mid s) = 0.6\) to the action the agent actually sampled. For a softmax parameterization the score with respect to that action's logit is \(1 - \pi_\theta(a \mid s)\). What is the score \(\nabla_{\theta_a} \log \pi_\theta(a \mid s)\)?</div>
+          <div class="ex-reveal-src">For a softmax (the standard discrete policy), \(\nabla_{\theta_i} \log \pi_\theta(a \mid s) = \mathbb{1}[i = a] - \pi_\theta(i \mid s)\). For the sampled action itself \((i = a)\) the indicator is \(1\), so the score is \(1 - \pi_\theta(a \mid s) = 1 - 0.6 = \) <b>0.4</b>. It is positive because raising this action's logit raises its (sub-one) probability — the update will push exactly that way if the reward weight \(\Psi_t\) is positive.</div>
+        </div>
+
+        <p>Two technical notes experts will insist on. First, the theorem is <em>exact</em> for the discounted objective only with a subtle discounting of the state distribution that practical implementations almost universally ignore; the resulting estimator is a slightly biased but well-behaved approximation that everyone uses. Second, the score-function estimator is <em>unbiased</em> but, as warned, high-variance — the same trajectory return \(R(\tau)\) multiplies every action's score, so a single lucky or unlucky rollout swings the whole gradient. Fixing that is §4.3.</p>
+      </section>
+
+      <!-- ====================== 4.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">4.3</span><h2>REINFORCE &amp; the baseline</h2></div>
+        <p>The oldest and simplest realization of EQ R4.3 is <strong>REINFORCE</strong> (Williams, 1992): a pure Monte-Carlo policy gradient. Run an episode to completion, compute the return-to-go \(G_t\) from each step, and take one gradient step with \(\Psi_t = G_t\). No value function, no bootstrapping — just rollouts and the log-derivative trick.</p>
+
+        <div class="eq"><span class="eq-tag">EQ R4.4 — REINFORCE UPDATE</span>
+        $$ \theta \;\leftarrow\; \theta \;+\; \alpha \sum_{t=0}^{T} \nabla_\theta \log \pi_\theta(a_t \mid s_t)\; G_t, \qquad G_t = \sum_{k=t}^{T} \gamma^{\,k-t}\, r_{k+1} $$
+        <div class="eq-note">\(\alpha\) is the learning rate, \(G_t\) the return-to-go from step \(t\). Note that only rewards <em>after</em> \(a_t\) appear in \(G_t\) — an action cannot be credited for reward that preceded it, the <b>causality</b> refinement that already cuts variance versus weighting by the whole-episode return. REINFORCE is unbiased and dead simple, but it learns slowly: it must wait for an entire episode, and the raw magnitude of \(G_t\) makes its gradient estimates extremely noisy.</div>
+        </div>
+
+        <p>That noise has a specific and fixable cause. Suppose every reward in your environment is large and positive — say returns hover around \(+100\). Then every action gets reinforced (its log-probability pushed <em>up</em>), just by different amounts. The gradient is dominated by the shared offset of \(100\) rather than by the differences that actually distinguish good actions from bad. The estimator is still unbiased, but its variance is enormous and learning crawls.</p>
+
+        <p>The cure is a <strong>baseline</strong>: subtract a reference value \(b(s)\) from the return before weighting the score. The remarkable fact — the one that makes baselines free — is that <em>any</em> baseline that does not depend on the action leaves the gradient unbiased, because the expected score is zero:</p>
+
+        <div class="eq"><span class="eq-tag">EQ R4.5 — BASELINE LEAVES THE GRADIENT UNBIASED</span>
+        $$ \mathbb{E}_{a \sim \pi_\theta}\!\big[\, \nabla_\theta \log \pi_\theta(a \mid s)\; b(s) \,\big] \;=\; b(s)\, \nabla_\theta \!\sum_{a} \pi_\theta(a \mid s) \;=\; b(s)\, \nabla_\theta\, 1 \;=\; 0 $$
+        <div class="eq-note">Because probabilities sum to one, \(\sum_a \pi_\theta(a\mid s) = 1\) is constant, so its gradient is exactly zero. Subtracting \(b(s)\) therefore adds <b>zero in expectation</b> — the gradient stays pointed the same way — while it can <b>dramatically reduce variance</b> by re-centering the returns around their typical value. The near-optimal choice for \(b(s)\) is the state-value \(V^\pi(s)\): then the weight becomes the <b>advantage</b> \(G_t - V^\pi(s_t) \approx A^\pi(s_t, a_t)\), which asks the only question that matters — <em>did this action beat the policy's own average from here?</em></div>
+        </div>
+
+        <p>So REINFORCE-with-baseline weights each score by \(G_t - b(s_t)\). With \(b(s) = V^\pi(s)\), an action that did better than expected gets reinforced and one that did worse gets suppressed — even if both produced positive raw return. This is the conceptual hinge of the chapter, and it points straight at actor-critic: <em>if a learned \(V^\pi(s)\) is the best baseline, learn one.</em></p>
+
+        <div class="exercise" data-answer="true" data-tol="0" data-hint="Use EQ R4.5 — the expected score times any state-only baseline is zero.">
+          <div class="ex-q">True or false: subtracting a baseline \(b(s)\) that depends only on the state (not the action) reduces the variance of the policy-gradient estimate <em>without</em> introducing any bias. (Answer <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">By EQ R4.5, \(\mathbb{E}_{a\sim\pi_\theta}[\nabla_\theta \log \pi_\theta(a\mid s)\, b(s)] = b(s)\,\nabla_\theta \sum_a \pi_\theta(a\mid s) = b(s)\,\nabla_\theta 1 = 0\). The subtracted term contributes nothing in expectation, so the gradient is unchanged (no bias), while re-centering the returns can sharply cut variance. The statement is <b>true</b> — this is the single most important variance-reduction tool in policy-gradient RL.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># REINFORCE on a 2-armed bandit: a softmax policy ascends toward the better arm
+import numpy as np
+rng = np.random.default_rng(0)
+
+true_mean = np.array([1.0, 2.0])          # arm 1 is genuinely better
+theta = np.zeros(2)                        # policy logits (one state, no transitions)
+alpha = 0.1
+
+for t in range(400):
+    p = np.exp(theta - theta.max()); p /= p.sum()   # softmax policy pi(a)
+    a = rng.choice(2, p=p)                           # sample an action
+    reward = true_mean[a] + rng.normal(0, 1)         # noisy reward
+    score = -p.copy(); score[a] += 1.0               # d log pi / d theta = 1[i=a] - p
+    theta += alpha * reward * score                  # EQ R4.4, one-step bandit
+    if t in (0, 50, 200, 399):
+        print(f"step {t:3d}:  pi = [{p[0]:.3f}, {p[1]:.3f}]")
+
+p = np.exp(theta - theta.max()); p /= p.sum()
+print(f"\nconverged policy pi(better arm) = {p[1]:.3f}  (started at 0.500)")
+print("the policy climbed -- no value function, no argmax, just gradient ascent.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="pg-bandit" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT R4.1 — POLICY-GRADIENT ON A BANDIT</span><span class="w-sub">SOFTMAX POLICY · ONLINE ASCENT · EQ R4.4</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>LEARNING RATE α <output id="pg-bandit-lr-out">0.10</output></label><input type="range" id="pg-bandit-lr" min="0.01" max="0.4" step="0.01" value="0.1"/></div>
+              <div class="ctl"><label>REWARD GAP (ARM B − ARM A) <output id="pg-bandit-gap-out">1.0</output></label><input type="range" id="pg-bandit-gap" min="0" max="3" step="0.1" value="1"/></div>
+            </div>
+            <canvas class="w-canvas" id="pg-bandit-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">π(BETTER ARM)</div><div class="r-value" id="pg-bandit-pbest">—</div></div>
+              <div class="readout"><div class="r-label">STEPS RUN</div><div class="r-value" id="pg-bandit-steps">—</div></div>
+              <div class="readout"><div class="r-label">AVG REWARD</div><div class="r-value" id="pg-bandit-avg">—</div></div>
+            </div>
+            <div class="ctl-row" style="margin-top:8px;">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <div class="seg-row">
+                  <button class="w-btn" id="pg-bandit-step">STEP ×20</button>
+                  <button class="w-btn ghost" id="pg-bandit-reset">RESET</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="w-note">Two arms; the green one pays more on average. The mint curve is the policy's probability of pulling the better arm — it starts at exactly 0.5 (no preference) and climbs as ascent reinforces the actions that earned reward. Press <b>STEP ×20</b> to advance 20 rollouts at a time. Raise the learning rate and it climbs faster but jitters more; shrink the reward gap to zero and the two arms become indistinguishable, so the policy has nothing to learn and the curve wanders near 0.5. This is EQ R4.4 with one state — policy gradients stripped to their skeleton.</div>
+        </div>
+
+        <p>The instrument above also exposes the variance problem viscerally: with a small reward gap the curve thrashes, because the gradient signal is buried in noise. The next demonstration isolates exactly that effect — and the baseline's cure.</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Baseline = variance reduction. A large constant reward offset wrecks the
+# naive gradient; subtracting a running baseline restores it. (EQ R4.5)
+import numpy as np
+
+def train(use_baseline, seed=1, steps=300, offset=10.0):
+    r = np.random.default_rng(seed)
+    theta = np.zeros(2); b = 0.0; sq = []
+    mean = np.array([0.0, 1.0]) + offset          # arm 1 better, but huge offset
+    for t in range(steps):
+        p = np.exp(theta - theta.max()); p /= p.sum()
+        a = r.choice(2, p=p)
+        reward = mean[a] + r.normal(0, 1)
+        adv = reward - (b if use_baseline else 0.0)   # baseline-subtracted weight
+        score = -p.copy(); score[a] += 1.0
+        g = adv * score
+        sq.append(g[1] ** 2)                           # squared gradient (one coord)
+        theta += 0.1 * g
+        b += 0.1 * (reward - b)                        # running estimate of E[return]
+    p = np.exp(theta - theta.max()); p /= p.sum()
+    return p[1], float(np.mean(sq))
+
+p_no,  v_no  = train(False)
+p_yes, v_yes = train(True)
+print(f"no baseline : pi(best) = {p_no:.3f}   mean grad^2 = {v_no:.3f}")
+print(f"w/ baseline : pi(best) = {p_yes:.3f}   mean grad^2 = {v_yes:.3f}")
+print(f"\nbaseline cut gradient variance ~{v_no/v_yes:.1f}x --")
+print("and only the baselined run actually found the better arm.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="pg-baseline" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT R4.2 — BASELINE VARIANCE REDUCTION</span><span class="w-sub">SAME GRADIENT, RE-CENTERED RETURNS · EQ R4.5</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>REWARD OFFSET (CONSTANT ADDED TO ALL ARMS) <output id="pg-baseline-off-out">10</output></label><input type="range" id="pg-baseline-off" min="0" max="20" step="1" value="10"/></div>
+            </div>
+            <div style="font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.16em;color:#636363;margin:2px 0 6px;">DISTRIBUTION OF GRADIENT-WEIGHT (Ψ) ACROSS ROLLOUTS</div>
+            <canvas class="w-canvas" id="pg-baseline-canvas" height="260"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">E[Ψ²] NO BASELINE</div><div class="r-value" id="pg-baseline-v0">—</div></div>
+              <div class="readout acc"><div class="r-label">E[Ψ²] WITH V(s) BASELINE</div><div class="r-value" id="pg-baseline-v1">—</div></div>
+              <div class="readout acc"><div class="r-label">SECOND-MOMENT REDUCTION</div><div class="r-value" id="pg-baseline-red">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The histogram shows the scalar weight \(\Psi\) that multiplies the score, over many sampled returns. <span style="color:var(--secondary);">Grey</span> is the raw return \(G\); <span style="color:var(--accent);">mint</span> is the advantage \(G - V(s)\) after subtracting the baseline. The two clouds have the <em>same spread</em> — but the mint one is re-centered on zero. Since the score has zero mean, the gradient estimator's variance is governed by \(\mathbb{E}[\Psi^2]\), the <b>second moment</b> shown in the readouts, and re-centering \(\Psi\) on zero collapses it. Crank the reward offset up: the grey weights march off to the right (every action looks "good"), inflating \(\mathbb{E}[\Psi^2]\), while the baselined weights stay parked around zero. Both give the <b>same expected gradient</b> — EQ R4.5 — but the mint one is far easier to estimate from a handful of samples.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 4.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">4.4</span><h2>Actor-critic methods</h2></div>
+        <p>REINFORCE-with-baseline still has a Monte-Carlo heart: it waits for a full episode and uses the actual return \(G_t\). That keeps it unbiased but slow and noisy. <strong>Actor-critic</strong> methods take the natural next step suggested by §4.3 — learn the baseline as its own function — and then go further, using that learned value function to <em>bootstrap</em>, replacing the full return with a one-step estimate. Two networks, two jobs:</p>
+        <ul>
+          <li>The <strong>actor</strong> is the policy \(\pi_\theta(a \mid s)\). It chooses actions and is updated by the policy gradient — pushed toward actions the critic judges better than average.</li>
+          <li>The <strong>critic</strong> is a value function \(V_w(s)\) (or \(Q_w(s,a)\)) with its own parameters \(w\). <strong>The critic estimates the value function</strong> — it learns how much return to expect from a state, and supplies that estimate as both the baseline and the bootstrap target for the actor.</li>
+        </ul>
+
+        <div class="figure" id="pg-ac-fig">
+          <svg viewBox="0 0 640 240" role="img" aria-label="The actor-critic architecture">
+            <defs>
+              <marker id="pg-arrow" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
+                <path d="M0,0 L7,3 L0,6 Z" fill="#9b9b9b"></path>
+              </marker>
+              <marker id="pg-arrow-mint" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
+                <path d="M0,0 L7,3 L0,6 Z" fill="#a6f2cc"></path>
+              </marker>
+            </defs>
+            <g class="dg-box-accent" data-pop>
+              <rect x="48" y="40" width="160" height="58" rx="6" fill="rgba(166,242,204,0.05)" stroke="#2b5945" stroke-width="1.2"></rect>
+              <text x="128" y="64" text-anchor="middle" fill="#e5e5e5" font-family="ui-monospace,Menlo,monospace" font-size="12">ACTOR</text>
+              <text x="128" y="82" text-anchor="middle" fill="#636363" font-family="ui-monospace,Menlo,monospace" font-size="9">policy π_θ(a | s)</text>
+            </g>
+            <g class="dg-box" data-pop>
+              <rect x="48" y="142" width="160" height="58" rx="6" fill="#1e2124" stroke="#565656" stroke-width="1.2"></rect>
+              <text x="128" y="166" text-anchor="middle" fill="#e5e5e5" font-family="ui-monospace,Menlo,monospace" font-size="12">CRITIC</text>
+              <text x="128" y="184" text-anchor="middle" fill="#636363" font-family="ui-monospace,Menlo,monospace" font-size="9">value V_w(s)</text>
+            </g>
+            <g class="dg-box" data-pop>
+              <rect x="432" y="91" width="160" height="58" rx="6" fill="#1e2124" stroke="#565656" stroke-width="1.2"></rect>
+              <text x="512" y="115" text-anchor="middle" fill="#e5e5e5" font-family="ui-monospace,Menlo,monospace" font-size="12">ENVIRONMENT</text>
+              <text x="512" y="133" text-anchor="middle" fill="#636363" font-family="ui-monospace,Menlo,monospace" font-size="9">P(s′, r | s, a)</text>
+            </g>
+            <path data-draw d="M208,62 C320,62 360,108 432,112" fill="none" stroke="#a6f2cc" stroke-width="1.4" marker-end="url(#pg-arrow-mint)"></path>
+            <text x="316" y="74" text-anchor="middle" fill="#a6f2cc" font-family="ui-monospace,Menlo,monospace" font-size="9.5">action a</text>
+            <path data-draw d="M432,128 C360,150 300,176 208,176" fill="none" stroke="#9b9b9b" stroke-width="1.4" marker-end="url(#pg-arrow)"></path>
+            <text x="320" y="190" text-anchor="middle" fill="#4e8af7" font-family="ui-monospace,Menlo,monospace" font-size="9.5">reward r , state s′</text>
+            <path data-draw d="M128,142 L128,98" fill="none" stroke="#a6f2cc" stroke-width="1.4" marker-end="url(#pg-arrow-mint)"></path>
+            <text x="196" y="124" text-anchor="middle" fill="#a6f2cc" font-family="ui-monospace,Menlo,monospace" font-size="9.5">advantage δ</text>
+          </svg>
+          <div class="dg-cap">The actor acts; the environment returns reward and the next state; the critic scores how that step compared to its own prediction and feeds the <span style="color:var(--accent);">advantage</span> back to the actor. The actor learns <em>what to do</em>; the critic learns <em>how good it is</em>. They co-evolve.</div>
+        </div>
+
+        <p>The glue between them is the <strong>TD error</strong> \(\delta\), the one-step temporal-difference signal (Chapter 03). It is the difference between a slightly-better-informed estimate of value — this step's reward plus the discounted value of where we landed — and the critic's current prediction:</p>
+
+        <div class="eq"><span class="eq-tag">EQ R4.6 — THE TD ERROR AS ADVANTAGE ESTIMATE</span>
+        $$ \delta_t \;=\; r_{t+1} + \gamma\, V_w(s_{t+1}) - V_w(s_t) \;\approx\; A^\pi(s_t, a_t) $$
+        <div class="eq-note">\(\delta_t\) is a low-variance, one-sample estimate of the advantage: if the step turned out better than the critic expected, \(\delta_t &gt; 0\) and the actor reinforces the action; if worse, \(\delta_t &lt; 0\) and it suppresses it. <b>Bootstrapping from \(V_w(s_{t+1})\) trades a little bias for a large variance cut</b> — the actor no longer waits for the full return, and the noisy \(G_t\) is replaced by reward plus one value lookup. This is the bias–variance dial at the heart of actor-critic.</div>
+        </div>
+
+        <p>The two updates, applied every step (online, no episode boundary required), are:</p>
+
+        <div class="eq"><span class="eq-tag">EQ R4.7 — ACTOR AND CRITIC UPDATES</span>
+        $$ \underbrace{\theta \leftarrow \theta + \alpha_\theta\, \delta_t\, \nabla_\theta \log \pi_\theta(a_t \mid s_t)}_{\textbf{actor: policy gradient, weighted by }\delta_t} \qquad \underbrace{w \leftarrow w + \alpha_w\, \delta_t\, \nabla_w V_w(s_t)}_{\textbf{critic: TD(0) regression}} $$
+        <div class="eq-note">The same \(\delta_t\) drives both: it tells the actor which way to push the policy and tells the critic how wrong its value estimate was. The critic update is ordinary semi-gradient TD(0) — fit \(V_w\) toward \(r_{t+1} + \gamma V_w(s_{t+1})\). <b>The danger is that the two are learning simultaneously from each other: a biased critic biases the actor, which shifts the data the critic sees.</b> Stability tricks — slower critic learning, target networks, careful step sizes — exist precisely to keep this coupled system from spiraling.</div>
+        </div>
+
+        <p>Where this sits on the spectrum is the clean way to remember it. REINFORCE uses the full Monte-Carlo return \(G_t\): zero bias, maximum variance, must wait for the episode to end. One-step actor-critic uses \(\delta_t\): some bias from bootstrapping, much lower variance, learns online. In between sits a continuum — \(n\)-step returns and, most commonly today, <strong>Generalized Advantage Estimation (GAE)</strong>, which exponentially blends advantage estimates across all horizons with a single knob \(\lambda\) to tune the bias–variance trade-off explicitly.</p>
+
+        <div class="exercise" data-answer="true" data-tol="0" data-hint="The actor is the policy; the critic is the other network — what does it learn?">
+          <div class="ex-q">True or false: in an actor-critic method, the <em>critic</em> is the component that estimates the value function (such as \(V_w(s)\)), while the actor is the policy that selects actions. (Answer <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">Yes. The actor is the parameterized policy \(\pi_\theta(a\mid s)\) that chooses actions; the critic is the value estimator \(V_w(s)\) (or \(Q_w(s,a)\)) that judges them. The critic's value estimate supplies the baseline and the bootstrap target — via the TD error \(\delta_t\) of EQ R4.6 — that the actor's policy gradient is weighted by. The statement is <b>true</b>.</div>
+        </div>
+
+        <div class="exercise" data-answer="0.9" data-tol="0.02" data-hint="Use EQ R4.6: delta = r + gamma·V(s') − V(s).">
+          <div class="ex-q">A critic estimates \(V_w(s) = 5.0\) for the current state and \(V_w(s') = 6.0\) for the next. The agent takes an action, receives reward \(r = 0.5\), and \(\gamma = 0.9\). What is the TD error \(\delta = r + \gamma V_w(s') - V_w(s)\) that drives both updates?</div>
+          <div class="ex-reveal-src">\(\delta = 0.5 + 0.9 \times 6.0 - 5.0 = 0.5 + 5.4 - 5.0 = \) <b>0.9</b>. Because \(\delta &gt; 0\), the step beat the critic's expectation: the actor will make this action more likely and the critic will revise \(V_w(s)\) upward.</div>
+        </div>
+
+        <div class="widget" id="pg-actorcritic" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT R4.3 — ACTOR-CRITIC ARCHITECTURE</span><span class="w-sub">TD ERROR FLOWS TO BOTH HEADS · EQ R4.6–R4.7</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>REWARD r <output id="pg-ac-r-out">0.50</output></label><input type="range" id="pg-ac-r" min="-2" max="2" step="0.1" value="0.5"/></div>
+              <div class="ctl"><label>V(s) <output id="pg-ac-vs-out">5.0</output></label><input type="range" id="pg-ac-vs" min="0" max="10" step="0.5" value="5"/></div>
+              <div class="ctl"><label>V(s′) <output id="pg-ac-vsp-out">6.0</output></label><input type="range" id="pg-ac-vsp" min="0" max="10" step="0.5" value="6"/></div>
+              <div class="ctl"><label>DISCOUNT γ <output id="pg-ac-g-out">0.90</output></label><input type="range" id="pg-ac-g" min="0" max="0.99" step="0.01" value="0.9"/></div>
+            </div>
+            <canvas class="w-canvas" id="pg-ac-canvas" height="280"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">TD ERROR δ = r + γV(s′) − V(s)</div><div class="r-value" id="pg-ac-delta">—</div></div>
+              <div class="readout"><div class="r-label">ACTOR SIGNAL</div><div class="r-value" id="pg-ac-actor" style="font-size:12px;">—</div></div>
+              <div class="readout"><div class="r-label">CRITIC SIGNAL</div><div class="r-value" id="pg-ac-critic" style="font-size:12px;">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The single scalar \(\delta\) (EQ R4.6) is computed from one transition and routed to both heads (EQ R4.7). Set \(V(s')\) above \(V(s)\) and add reward and \(\delta\) goes <span style="color:var(--accent);">positive</span> — the bootstrap target \(r + \gamma V(s')\) exceeds the critic's current guess, so the actor <em>reinforces</em> the action and the critic <em>raises</em> \(V(s)\). Drag the reward negative and \(\delta\) flips: the action is <span style="color:var(--danger);">suppressed</span> and \(V(s)\) is pulled down. Watch \(\gamma\) scale how much the next state's value counts — at \(\gamma = 0\) the critic is purely myopic and \(\delta\) reduces to \(r - V(s)\). One number, two learners.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 4.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">4.5</span><h2>A2C / A3C</h2></div>
+        <p>Naive online actor-critic has a quiet flaw inherited from all on-policy gradient methods: <strong>consecutive samples from a single rollout are highly correlated</strong>, and that correlation inflates gradient variance and destabilizes training. Value-based deep RL (DQN) broke the correlation with a replay buffer, but a policy gradient must be estimated <em>on-policy</em> — from data the current policy generated — so a buffer of stale experience is off-limits. The answer DeepMind shipped in 2016 was to break correlation a different way: run many actors in parallel.</p>
+
+        <p><strong>A3C — Asynchronous Advantage Actor-Critic</strong> (Mnih et al., 2016) — launches many actor-learners, each with its own copy of the policy, exploring different parts of the environment simultaneously and asynchronously pushing gradients to a shared parameter server. Because the workers are in different states at any instant, the gradients they contribute are <em>decorrelated</em> — the parallelism itself plays the role the replay buffer played for DQN, and it does so while keeping the updates strictly on-policy.</p>
+
+        <div class="eq"><span class="eq-tag">EQ R4.8 — THE ADVANTAGE ACTOR-CRITIC OBJECTIVE</span>
+        $$ \nabla_\theta J \;=\; \mathbb{E}\!\big[\, \nabla_\theta \log \pi_\theta(a_t \mid s_t)\; \hat{A}_t \,\big] \;+\; \beta\, \nabla_\theta\, \mathcal{H}\!\big[\pi_\theta(\cdot \mid s_t)\big], \qquad \hat{A}_t = \sum_{i=0}^{n-1}\gamma^{\,i} r_{t+i+1} + \gamma^{\,n} V_w(s_{t+n}) - V_w(s_t) $$
+        <div class="eq-note">\(\hat{A}_t\) is the <b>\(n\)-step advantage</b> — the bias–variance compromise between REINFORCE \((n = \infty)\) and one-step actor-critic \((n = 1)\). The second term is an <b>entropy bonus</b>: \(\mathcal{H}[\pi]\) rewards the policy for staying uncertain, which discourages premature collapse onto a single action and keeps the agent exploring. \(\beta\) tunes its strength. <b>This objective — \(n\)-step advantage plus entropy regularization — is the template virtually every modern policy-gradient algorithm (A2C, PPO, IMPALA) builds on.</b></div>
+        </div>
+
+        <p><strong>A2C — Advantage Actor-Critic</strong> — is the synchronous sibling and, in practice, the one most people reach for. A2C found that the <em>asynchrony</em> in A3C was not the source of the benefit; the <em>parallelism</em> was. So A2C runs the same many environments in lockstep, batches their transitions into one large synchronized update, and gets equal or better results with simpler, more GPU-friendly code. The lesson stuck: gather diverse on-policy experience in parallel, batch it, update once.</p>
+
+        <table class="data">
+          <thead><tr><th>Algorithm</th><th>Ψ weight</th><th>Bias / variance</th><th>Data collection</th></tr></thead>
+          <tbody>
+            <tr><td><strong>REINFORCE</strong></td><td class="m">G_t (full return)</td><td>unbiased · high variance</td><td>one episode at a time</td></tr>
+            <tr><td><strong>REINFORCE + baseline</strong></td><td class="m">G_t − V(s)</td><td>unbiased · lower variance</td><td>one episode at a time</td></tr>
+            <tr><td><strong>One-step actor-critic</strong></td><td class="m">δ_t (TD error)</td><td class="hl">biased · low variance</td><td>fully online</td></tr>
+            <tr><td><strong>A3C</strong></td><td class="m">n-step Â + entropy</td><td>tunable via n</td><td>parallel · asynchronous</td></tr>
+            <tr><td><strong>A2C</strong></td><td class="m">n-step Â + entropy</td><td>tunable via n</td><td class="hl">parallel · synchronous</td></tr>
+          </tbody>
+        </table>
+
+        <p class="note"><strong>An honest caveat.</strong> Vanilla policy gradients — even with advantages and entropy — are notoriously step-size sensitive: too large a step can collapse the policy in a way it cannot recover from, because the update changes the very distribution the next batch is drawn from. The line of work that fixed this — trust regions (TRPO) and the clipped surrogate objective of <strong>PPO</strong> — is what made policy gradients robust enough to dominate, and is the natural sequel to this chapter. PPO is also, not coincidentally, the workhorse of RLHF: aligning a language model is a policy-gradient problem in disguise, with the reward model as the environment.</p>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>We have the policy-gradient skeleton; now scale it with deep networks and make it stable.</strong> Chapter 05 takes these ideas into deep reinforcement learning proper — function approximation with neural networks, the deadly triad of bootstrapping, off-policy learning and approximation, DQN on the value side, and the trust-region and clipped objectives (TRPO, PPO) that turned the brittle gradient ascent of this chapter into the reliable engine behind game-playing agents, robotics, and RLHF.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 4.R — References ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">4.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://doi.org/10.1007/BF00992696" target="_blank" rel="noopener">Williams, R. J. (1992). <span class="ref-venue">Simple statistical gradient-following algorithms for connectionist reinforcement learning</span>.</a> <span class="ref-meta">Machine Learning 8 — the original REINFORCE estimator (EQ R4.4) and the log-derivative / score-function trick behind every policy gradient.</span></li>
+          <li><a href="https://papers.nips.cc/paper/1713-policy-gradient-methods-for-reinforcement-learning-with-function-approximation" target="_blank" rel="noopener">Sutton, R. S., McAllester, D., Singh, S. &amp; Mansour, Y. (2000). <span class="ref-venue">Policy gradient methods for reinforcement learning with function approximation</span>.</a> <span class="ref-meta">NeurIPS 1999 — the policy gradient theorem (EQ R4.3) and its compatibility with a learned value function, the formal basis of actor-critic.</span></li>
+          <li><a href="https://arxiv.org/abs/1602.01783" target="_blank" rel="noopener">Mnih, V. et al. (2016). <span class="ref-venue">Asynchronous methods for deep reinforcement learning</span>.</a> <span class="ref-meta">ICML 2016 — A3C: parallel actor-learners, the n-step advantage and entropy bonus of EQ R4.8 (and the synchronous A2C that followed).</span></li>
+          <li><a href="http://incompleteideas.net/book/the-book-2nd.html" target="_blank" rel="noopener">Sutton, R. S. &amp; Barto, A. G. (2018). <span class="ref-venue">Reinforcement Learning: An Introduction</span> (2nd ed.).</a> <span class="ref-meta">MIT Press — Chapter 13 develops policy-gradient methods, REINFORCE with baselines, and actor-critic exactly as framed here.</span></li>
+          <li><a href="https://arxiv.org/abs/1506.02438" target="_blank" rel="noopener">Schulman, J., Moritz, P., Levine, S., Jordan, M. &amp; Abbeel, P. (2016). <span class="ref-venue">High-dimensional continuous control using generalized advantage estimation</span>.</a> <span class="ref-meta">ICLR 2016 — GAE, the λ-blended advantage estimator that sets the bias–variance dial between TD and Monte-Carlo (§4.4).</span></li>
+          <li><a href="https://arxiv.org/abs/1707.06347" target="_blank" rel="noopener">Schulman, J., Wolski, F., Dhariwal, P., Radford, A. &amp; Klimov, O. (2017). <span class="ref-venue">Proximal policy optimization algorithms</span>.</a> <span class="ref-meta">arXiv — PPO's clipped surrogate objective, the step-size fix that made policy gradients robust and the workhorse of RLHF (the §4.5 sequel).</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../rl/03-model-free-value.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">03</span> Model-Free Value Methods</div></a>
+        <a class="next" href="../rl/05-deep-rl.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">05</span> Deep Reinforcement Learning</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — REINFORCEMENT LEARNING · CH 04</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* ============================================================
+   Policy Gradients & Actor-Critic — chapter instruments
+   Single IIFE, no globals. setTimeout-only animation.
+   Every widget guarded by element existence; meaningful
+   initial render with zero interaction.
+   ============================================================ */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  function fnum(x, d) { d = d === undefined ? 2 : d; return x.toFixed(d); }
+
+  /* ========================================================
+     INSTRUMENT R4.1 — Policy-gradient on a 2-armed bandit
+     Softmax policy over 2 arms; online REINFORCE (EQ R4.4)
+     with one state. Tracks pi(better arm) over steps and
+     draws the learning curve. STEP advances 20 rollouts.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("pg-bandit");
+    if (!root) return;
+    var canvas = document.getElementById("pg-bandit-canvas");
+    var lrIn = document.getElementById("pg-bandit-lr");
+    var lrOut = document.getElementById("pg-bandit-lr-out");
+    var gapIn = document.getElementById("pg-bandit-gap");
+    var gapOut = document.getElementById("pg-bandit-gap-out");
+    var pbestEl = document.getElementById("pg-bandit-pbest");
+    var stepsEl = document.getElementById("pg-bandit-steps");
+    var avgEl = document.getElementById("pg-bandit-avg");
+    var stepBtn = document.getElementById("pg-bandit-step");
+    var resetBtn = document.getElementById("pg-bandit-reset");
+
+    var rng = FM.mulberry32(7);
+    var theta, steps, rewardSum, history;
+
+    function reset() {
+      theta = [0, 0];          // softmax logits; arm 1 ("B") is the better arm
+      steps = 0;
+      rewardSum = 0;
+      history = [0.5];         // pi(better arm) starts at exactly 0.5
+      render();
+    }
+
+    function policy() {
+      var m = Math.max(theta[0], theta[1]);
+      var e0 = Math.exp(theta[0] - m), e1 = Math.exp(theta[1] - m);
+      var s = e0 + e1;
+      return [e0 / s, e1 / s];
+    }
+
+    // standard-normal sample via Box-Muller on our deterministic RNG
+    function gauss() {
+      var u1 = Math.max(rng(), 1e-9), u2 = rng();
+      return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+    }
+
+    function oneStep() {
+      var gap = +gapIn.value;
+      var means = [1.0, 1.0 + gap];          // arm B exceeds arm A by the gap
+      var lr = +lrIn.value;
+      var p = policy();
+      var a = rng() < p[0] ? 0 : 1;          // sample an action
+      var reward = means[a] + gauss();       // noisy reward
+      // score = 1[i=a] - p[i]; update theta += lr * reward * score  (EQ R4.4)
+      var score0 = (a === 0 ? 1 : 0) - p[0];
+      var score1 = (a === 1 ? 1 : 0) - p[1];
+      theta[0] += lr * reward * score0;
+      theta[1] += lr * reward * score1;
+      rewardSum += reward;
+      steps += 1;
+      history.push(policy()[1]);
+      if (history.length > 600) history.shift();
+    }
+
+    function render() {
+      var p = policy();
+      lrOut.textContent = fnum(+lrIn.value, 2);
+      gapOut.textContent = fnum(+gapIn.value, 1);
+      pbestEl.textContent = fnum(p[1], 3);
+      stepsEl.textContent = String(steps);
+      avgEl.textContent = steps ? fnum(rewardSum / steps, 2) : "—";
+
+      var c = FM.setupCanvas(canvas, 300);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      ctx.clearRect(0, 0, w, h);
+      var padL = 42, padR = 90, padT = 18, padB = 28;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+
+      // frame + gridlines (probability 0..1)
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(x0, y1, x1 - x0, y0 - y1);
+      ctx.font = C.MONO; ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      for (var gl = 0; gl <= 4; gl++) {
+        var gv = gl / 4, gy = y0 - gv * (y0 - y1);
+        ctx.strokeStyle = "rgba(47,50,52,.5)";
+        ctx.beginPath(); ctx.moveTo(x0, gy); ctx.lineTo(x1, gy); ctx.stroke();
+        ctx.fillStyle = C.MUT; ctx.fillText(gv.toFixed(2), x0 - 6, gy);
+      }
+      // 0.5 reference line (no preference)
+      var midY = y0 - 0.5 * (y0 - y1);
+      ctx.strokeStyle = "rgba(155,155,155,.35)"; ctx.setLineDash([3, 3]);
+      ctx.beginPath(); ctx.moveTo(x0, midY); ctx.lineTo(x1, midY); ctx.stroke();
+      ctx.setLineDash([]);
+
+      // learning curve: pi(better arm) over steps
+      var n = history.length;
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      for (var i = 0; i < n; i++) {
+        var xx = x0 + (n <= 1 ? 0 : (x1 - x0) * i / (n - 1));
+        var yy = y0 - history[i] * (y0 - y1);
+        if (i === 0) ctx.moveTo(xx, yy); else ctx.lineTo(xx, yy);
+      }
+      ctx.stroke();
+
+      // axis labels
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText("rollouts →", x0, y0 + 6);
+      ctx.fillStyle = C.MINT; ctx.textAlign = "left";
+      ctx.fillText("π(BETTER ARM)", x0 + 6, y1 + 4);
+
+      // two arm bars on the right margin
+      var bx = x1 + 22, bw = 22, bbot = y0, btop = y1;
+      var labels = ["A", "B"], cols = ["rgba(155,155,155,.7)", C.MINT];
+      for (var k = 0; k < 2; k++) {
+        var ph = p[k] * (bbot - btop);
+        var bxk = bx + k * (bw + 14);
+        ctx.fillStyle = "rgba(47,50,52,.5)";
+        ctx.fillRect(bxk, btop, bw, bbot - btop);
+        ctx.fillStyle = cols[k];
+        ctx.fillRect(bxk, bbot - ph, bw, ph);
+        ctx.font = C.MONO; ctx.fillStyle = C.SEC;
+        ctx.textAlign = "center"; ctx.textBaseline = "top";
+        ctx.fillText(labels[k], bxk + bw / 2, bbot + 4);
+        ctx.fillStyle = cols[k]; ctx.textBaseline = "bottom";
+        ctx.fillText(p[k].toFixed(2), bxk + bw / 2, bbot - ph - 3);
+      }
+    }
+
+    function burst() {
+      // advance 20 rollouts, animated in two setTimeout ticks for liveliness
+      var done = 0;
+      function chunk() {
+        for (var j = 0; j < 10 && done < 20; j++, done++) oneStep();
+        render();
+        if (done < 20) setTimeout(chunk, 40);
+      }
+      chunk();
+    }
+
+    lrIn.addEventListener("input", render);
+    gapIn.addEventListener("input", render);
+    stepBtn.addEventListener("click", burst);
+    resetBtn.addEventListener("click", reset);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    reset();
+  })();
+
+  /* ========================================================
+     INSTRUMENT R4.2 — Baseline variance reduction
+     Samples many returns from a 2-arm bandit with a large
+     constant offset; histograms the gradient-weight Psi
+     (raw return G vs advantage G - V). Same spread, mint
+     re-centered on zero -> lower squared magnitude. EQ R4.5.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("pg-baseline");
+    if (!root) return;
+    var canvas = document.getElementById("pg-baseline-canvas");
+    var offIn = document.getElementById("pg-baseline-off");
+    var offOut = document.getElementById("pg-baseline-off-out");
+    var v0El = document.getElementById("pg-baseline-v0");
+    var v1El = document.getElementById("pg-baseline-v1");
+    var redEl = document.getElementById("pg-baseline-red");
+
+    var rng = FM.mulberry32(13);
+    function gauss() {
+      var u1 = Math.max(rng(), 1e-9), u2 = rng();
+      return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+    }
+
+    function variance(arr) {
+      var m = 0, i;
+      for (i = 0; i < arr.length; i++) m += arr[i];
+      m /= arr.length;
+      var v = 0;
+      for (i = 0; i < arr.length; i++) v += (arr[i] - m) * (arr[i] - m);
+      return v / arr.length;
+    }
+
+    function render() {
+      var off = +offIn.value;
+      offOut.textContent = String(off);
+
+      // sample N returns: arm pays mean in {off, off+1} + noise; baseline = mean return
+      var N = 4000;
+      var raw = [], adv = [];
+      var rng2 = FM.mulberry32(31);          // fresh deterministic stream per render
+      function g2() { var u1 = Math.max(rng2(), 1e-9), u2 = rng2(); return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2); }
+      var baseline = off + 0.5;              // V(s) ~ average return across the two arms
+      for (var i = 0; i < N; i++) {
+        var armMean = (rng2() < 0.5 ? off : off + 1.0);
+        var Gret = armMean + g2();
+        raw.push(Gret);
+        adv.push(Gret - baseline);
+      }
+      var vr = variance(raw), va = variance(adv);
+      // NOTE: subtracting a constant baseline does NOT change the spread of G itself;
+      // the variance REDUCTION shows up in E[Psi^2] (the squared magnitude that the
+      // gradient actually scales with), since the mean is moved to zero.
+      function meanSq(arr) { var s = 0; for (var i = 0; i < arr.length; i++) s += arr[i] * arr[i]; return s / arr.length; }
+      var msRaw = meanSq(raw), msAdv = meanSq(adv);
+      v0El.textContent = fnum(msRaw, 2);
+      v1El.textContent = fnum(msAdv, 2);
+      redEl.textContent = (msRaw / Math.max(msAdv, 1e-6)).toFixed(1) + "×";
+
+      // draw two overlaid histograms on a shared x-axis
+      var c = FM.setupCanvas(canvas, 260);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      ctx.clearRect(0, 0, w, h);
+      var padL = 36, padR = 14, padT = 14, padB = 30;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+
+      var lo = -6, hi = off + off + 8;       // x-range spans both clouds
+      if (hi <= lo + 1) hi = lo + 12;
+      var bins = 48;
+      var hRaw = new Array(bins).fill(0), hAdv = new Array(bins).fill(0);
+      function binOf(x) { var b = Math.floor((x - lo) / (hi - lo) * bins); return b < 0 ? 0 : (b >= bins ? bins - 1 : b); }
+      for (i = 0; i < N; i++) { hRaw[binOf(raw[i])]++; hAdv[binOf(adv[i])]++; }
+      var peak = 1;
+      for (i = 0; i < bins; i++) { peak = Math.max(peak, hRaw[i], hAdv[i]); }
+
+      // frame
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(x0, y1, x1 - x0, y0 - y1);
+
+      // zero reference line (the baselined cloud should center here)
+      var zx = x0 + (0 - lo) / (hi - lo) * (x1 - x0);
+      ctx.strokeStyle = "rgba(78,138,247,.6)"; ctx.setLineDash([4, 4]); ctx.lineWidth = 1.3;
+      ctx.beginPath(); ctx.moveTo(zx, y1); ctx.lineTo(zx, y0); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.font = C.MONO; ctx.fillStyle = C.BLUE;
+      ctx.textAlign = "center"; ctx.textBaseline = "top";
+      ctx.fillText("Ψ = 0", zx, y1 + 2);
+
+      var bw = (x1 - x0) / bins;
+      // grey raw-return histogram
+      ctx.fillStyle = "rgba(155,155,155,.45)";
+      for (i = 0; i < bins; i++) {
+        var bh = (hRaw[i] / peak) * (y0 - y1);
+        ctx.fillRect(x0 + i * bw, y0 - bh, bw * 0.96, bh);
+      }
+      // mint advantage histogram on top
+      ctx.fillStyle = "rgba(166,242,204,.6)";
+      for (i = 0; i < bins; i++) {
+        var bh2 = (hAdv[i] / peak) * (y0 - y1);
+        ctx.fillRect(x0 + i * bw, y0 - bh2, bw * 0.96, bh2);
+      }
+
+      // x ticks
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText(lo.toFixed(0), x0, y0 + 6);
+      ctx.textAlign = "right"; ctx.fillText(hi.toFixed(0), x1, y0 + 6);
+      ctx.textAlign = "center"; ctx.fillText("gradient-weight  Ψ", (x0 + x1) / 2, y0 + 6);
+
+      // legend
+      ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillStyle = "rgba(155,155,155,.85)";
+      ctx.fillText("■ raw return G", x0 + 6, y1 + 4);
+      ctx.fillStyle = C.MINT;
+      ctx.fillText("■ advantage G − V(s)", x0 + 6, y1 + 16);
+    }
+
+    offIn.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT R4.3 — Actor-critic architecture panel
+     Compute the TD error delta = r + gamma*V(s') - V(s) from
+     four sliders and route it visually to both heads, sign-
+     coloured. Meaningful initial render with no interaction.
+     EQ R4.6 / R4.7.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("pg-actorcritic");
+    if (!root) return;
+    var canvas = document.getElementById("pg-ac-canvas");
+    var rIn = document.getElementById("pg-ac-r");
+    var vsIn = document.getElementById("pg-ac-vs");
+    var vspIn = document.getElementById("pg-ac-vsp");
+    var gIn = document.getElementById("pg-ac-g");
+    var rOut = document.getElementById("pg-ac-r-out");
+    var vsOut = document.getElementById("pg-ac-vs-out");
+    var vspOut = document.getElementById("pg-ac-vsp-out");
+    var gOut = document.getElementById("pg-ac-g-out");
+    var deltaEl = document.getElementById("pg-ac-delta");
+    var actorEl = document.getElementById("pg-ac-actor");
+    var criticEl = document.getElementById("pg-ac-critic");
+
+    function box(ctx, x, y, w2, h2, stroke, fill) {
+      ctx.beginPath();
+      var r = 6;
+      ctx.moveTo(x + r, y); ctx.arcTo(x + w2, y, x + w2, y + h2, r);
+      ctx.arcTo(x + w2, y + h2, x, y + h2, r); ctx.arcTo(x, y + h2, x, y, r);
+      ctx.arcTo(x, y, x + w2, y, r); ctx.closePath();
+      if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+      ctx.strokeStyle = stroke; ctx.lineWidth = 1.3; ctx.stroke();
+    }
+
+    function arrow(ctx, x1, y1, x2, y2, color, lw) {
+      ctx.strokeStyle = color; ctx.lineWidth = lw; ctx.setLineDash([]);
+      ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+      var ang = Math.atan2(y2 - y1, x2 - x1);
+      ctx.fillStyle = color;
+      ctx.beginPath(); ctx.moveTo(x2, y2);
+      ctx.lineTo(x2 - 9 * Math.cos(ang - 0.4), y2 - 9 * Math.sin(ang - 0.4));
+      ctx.lineTo(x2 - 9 * Math.cos(ang + 0.4), y2 - 9 * Math.sin(ang + 0.4));
+      ctx.closePath(); ctx.fill();
+    }
+
+    function render() {
+      var r = +rIn.value, vs = +vsIn.value, vsp = +vspIn.value, g = +gIn.value;
+      rOut.textContent = fnum(r, 2);
+      vsOut.textContent = fnum(vs, 1);
+      vspOut.textContent = fnum(vsp, 1);
+      gOut.textContent = fnum(g, 2);
+
+      var target = r + g * vsp;            // bootstrap target r + gamma*V(s')
+      var delta = target - vs;             // EQ R4.6
+      var pos = delta >= 0;
+      var dcol = Math.abs(delta) < 0.005 ? C.SEC : (pos ? C.MINT : C.RED);
+
+      deltaEl.textContent = (delta >= 0 ? "+" : "") + fnum(delta, 2);
+      deltaEl.style.color = dcol;
+      actorEl.textContent = Math.abs(delta) < 0.005 ? "no change"
+        : (pos ? "↑ reinforce action" : "↓ suppress action");
+      actorEl.style.color = dcol;
+      criticEl.textContent = Math.abs(delta) < 0.005 ? "V(s) holds"
+        : (pos ? "↑ raise V(s)" : "↓ lower V(s)");
+      criticEl.style.color = dcol;
+
+      var c = FM.setupCanvas(canvas, 280);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      ctx.clearRect(0, 0, w, h);
+
+      var bw = 150, bh = 50;
+      var actorX = 30, actorY = 30;
+      var criticX = 30, criticY = h - 30 - bh;
+      var deltaCx = w * 0.62, deltaCy = h / 2;
+
+      // actor box
+      box(ctx, actorX, actorY, bw, bh, C.DEEP, "rgba(166,242,204,0.05)");
+      ctx.fillStyle = C.BRIGHT; ctx.font = "12px ui-monospace,Menlo,monospace";
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText("ACTOR  π_θ(a|s)", actorX + bw / 2, actorY + bh / 2 - 6);
+      ctx.font = "9px ui-monospace,Menlo,monospace"; ctx.fillStyle = C.MUT;
+      ctx.fillText("θ ← θ + αδ ∇log π", actorX + bw / 2, actorY + bh / 2 + 11);
+
+      // critic box
+      box(ctx, criticX, criticY, bw, bh, C.HAIR, "#1e2124");
+      ctx.fillStyle = C.BRIGHT; ctx.font = "12px ui-monospace,Menlo,monospace";
+      ctx.fillText("CRITIC  V_w(s)", criticX + bw / 2, criticY + bh / 2 - 6);
+      ctx.font = "9px ui-monospace,Menlo,monospace"; ctx.fillStyle = C.MUT;
+      ctx.fillText("w ← w + αδ ∇V", criticX + bw / 2, criticY + bh / 2 + 11);
+
+      // central delta node (sign-coloured)
+      var rad = 30;
+      ctx.beginPath(); ctx.arc(deltaCx, deltaCy, rad, 0, 2 * Math.PI);
+      ctx.fillStyle = pos ? "rgba(166,242,204,.12)" : "rgba(255,65,54,.12)";
+      if (Math.abs(delta) < 0.005) ctx.fillStyle = "rgba(155,155,155,.10)";
+      ctx.fill();
+      ctx.lineWidth = 2; ctx.strokeStyle = dcol; ctx.stroke();
+      ctx.fillStyle = dcol; ctx.font = "13px ui-monospace,Menlo,monospace";
+      ctx.textBaseline = "middle"; ctx.textAlign = "center";
+      ctx.fillText("δ", deltaCx, deltaCy - 7);
+      ctx.font = "11px ui-monospace,Menlo,monospace";
+      ctx.fillText((delta >= 0 ? "+" : "") + fnum(delta, 2), deltaCx, deltaCy + 9);
+
+      // arrows: delta -> actor and delta -> critic
+      var lw = 1.4 + Math.min(3, Math.abs(delta) * 0.9);
+      arrow(ctx, deltaCx - rad, deltaCy - 6, actorX + bw + 6, actorY + bh / 2 + 4, dcol, lw);
+      arrow(ctx, deltaCx - rad, deltaCy + 6, criticX + bw + 6, criticY + bh / 2 - 4, dcol, lw);
+
+      // the bootstrap target box (informational), top-right
+      ctx.font = C.MONO; ctx.fillStyle = C.SEC;
+      ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText("TARGET  r + γV(s′) = " + fnum(target, 2), deltaCx - 40, 14);
+      ctx.fillStyle = C.MUT;
+      ctx.fillText("minus  V(s) = " + fnum(vs, 1), deltaCx - 40, 28);
+
+      // bottom caption
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+      ctx.fillText("ONE TD ERROR · ROUTED TO BOTH HEADS · EQ R4.7", w / 2, h - 6);
+    }
+
+    rIn.addEventListener("input", render);
+    vsIn.addEventListener("input", render);
+    vspIn.addEventListener("input", render);
+    gIn.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

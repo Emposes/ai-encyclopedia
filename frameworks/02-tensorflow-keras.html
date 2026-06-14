@@ -1,0 +1,775 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>TensorFlow &amp; Keras — AI Encyclopedia</title>
+<meta name="description" content="Keras made deep learning a few lines of code; understanding what those lines hide is what separates a user from an engineer. The graph heritage, the layers API, tf.data pipelines, fit versus custom loops, and how to choose between TensorFlow and PyTorch." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+</head>
+<body data-track="frameworks" data-level="core">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ FRAMEWORKS / 02 / TENSORFLOW &amp; KERAS</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../frameworks/03-ecosystem-deployment.html">NEXT: ECOSYSTEM &amp; DEPLOYMENT →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">FRAMEWORKS · CHAPTER 02 / 03</div>
+    <h1>TensorFlow &amp; Keras</h1>
+    <p class="lede">Keras reduces a working neural network to a few readable lines: stack layers, call <code>compile</code>, call <code>fit</code>. <strong>That brevity is the value and the hazard, because the lines hide the machinery an engineer eventually has to reason about.</strong> This chapter covers what they hide: TensorFlow's graph heritage, what a <code>Dense</code> layer allocates, how <code>tf.data</code> keeps an accelerator fed, what <code>model.fit</code> does on your behalf, and when to prefer it over PyTorch.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 24 MIN</b></span>
+      <span>BUILDS ON<b>FRAMEWORKS 01 · DEEP LEARNING 01</b></span>
+      <span>INSTRUMENTS<b>SEQUENTIAL BUILDER · CODE COMPARE · EAGER vs GRAPH</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">2.1</span>TensorFlow &amp; the graph heritage</a>
+      <a href="#s2"><span class="n">2.2</span>Keras — the high-level API</a>
+      <a href="#s3"><span class="n">2.3</span>tf.data input pipelines</a>
+      <a href="#s4"><span class="n">2.4</span>Training — fit vs custom loops</a>
+      <a href="#s5"><span class="n">2.5</span>TensorFlow vs PyTorch</a>
+      <a href="#s6"><span class="n">2.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 2.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">2.1</span><h2>TensorFlow &amp; the graph heritage</h2></div>
+        <p>TensorFlow began in 2015 as Google's successor to an internal system called DistBelief, and its founding bet was the <strong>computation graph</strong>. You did not run arithmetic; you <em>described</em> it — building a directed graph whose nodes are operations and whose edges are tensors flowing between them — and only then handed that static graph to a runtime (a <code>Session</code>) that executed it, possibly across many GPUs or a TPU pod. The name is literal: tensors flow through the graph.</p>
+
+        <p>The payoff of a static graph is that the framework sees the <em>entire</em> program before running a single op. That lets it fuse adjacent operations, prune dead branches, lay out memory ahead of time, place each node on the best device, and serialize the whole thing to a language-independent artifact you can deploy in C++, on a phone, or in a browser with no Python in sight. The cost was ergonomic: TensorFlow 1.x's <em>define-then-run</em> model meant your Python code built a graph but never touched a number, so a shape bug surfaced as an inscrutable error from deep inside the runtime, and a <code>print</code> showed you a symbolic node, not a value.</p>
+
+        <p><strong>TensorFlow 2.0 (2019) flipped the default to eager execution</strong> — operations run immediately, like NumPy, so tensors hold real values you can print and debug — while keeping the graph available on demand through <code>tf.function</code>, which traces your Python into a graph the first time it runs and reuses it thereafter. The mental model that survives to 2026 is exactly this duality: <em>eager</em> for writing and debugging, <em>graph</em> for speed and deployment. The same idea reappears in PyTorch's <code>torch.compile</code> (Chapter 01) — the field converged on "write eager, compile to a graph when it matters."</p>
+
+        <div class="eq"><span class="eq-tag">EQ F2.1 — A NODE IN THE COMPUTATION GRAPH</span>
+        $$ z \;=\; f(x, y), \qquad \frac{\partial \mathcal{L}}{\partial x} \;=\; \frac{\partial \mathcal{L}}{\partial z}\,\frac{\partial z}{\partial x} \quad\text{(reverse-mode, accumulated over the graph)} $$
+        <div class="eq-note">Every op \(f\) records both how to compute its output \(z\) (the <b>forward</b> pass) and how to push a gradient from its output back to its inputs (the <b>backward</b> pass). Stringing the per-node local derivatives together by the chain rule, in reverse topological order, is reverse-mode automatic differentiation — what <code>tf.GradientTape</code> records and replays. The graph is not an optimization detail bolted on later: it <b>is</b> the data structure that makes backpropagation mechanical. Static graphs let the compiler see all of \(f\) at once; eager mode builds the same graph one node at a time and differentiates the trace.</div>
+        </div>
+
+        <p class="note"><strong>Honest caveat.</strong> The 1.x-to-2.x transition was painful and fragmented the ecosystem; a great deal of legacy code, tutorials, and Stack Overflow answers still assume <code>Session</code>s and <code>placeholder</code>s that no longer apply. If you read TensorFlow material that calls <code>sess.run(...)</code>, it predates 2.0 — treat it as historical.</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># A "graph" is just a record of ops + their local derivatives.
+# Here is reverse-mode autodiff (EQ F2.1) for z = (x*y) + sin(x), by hand.
+import numpy as np
+
+x, y = 2.0, 3.0
+# forward pass: compute each node, remember the values we'll need
+a = x * y                 # node a = x*y
+b = np.sin(x)             # node b = sin(x)
+z = a + b                 # node z = a + b   (the "loss")
+
+# backward pass: seed dz/dz = 1, push gradients to inputs (chain rule)
+dz = 1.0
+da = dz * 1.0             # z = a + b  -> dz/da = 1
+db = dz * 1.0             # z = a + b  -> dz/db = 1
+dx = da * y + db * np.cos(x)   # a=x*y -> y ; b=sin(x) -> cos(x)
+dy = da * x                    # a=x*y -> x
+
+print(f"z = {z:.4f}")
+print(f"dz/dx = {dx:.4f}   (analytic: y + cos(x) = {y + np.cos(x):.4f})")
+print(f"dz/dy = {dy:.4f}   (analytic: x          = {x:.4f})")
+print("this is exactly what tf.GradientTape / torch.autograd automate.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="tf-eager" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT F2.1 — EAGER vs GRAPH EXECUTION</span><span class="w-sub">WHAT tf.function TRADES · CONCEPTUAL</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>EXECUTION MODE</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-tf-mode="eager">EAGER</button>
+                  <button class="w-btn ghost" data-tf-mode="graph">@tf.function (GRAPH)</button>
+                </div>
+              </div>
+              <div class="ctl"><label>CALLS TO THE STEP <output id="tf-eager-n-out">200</output></label><input type="range" id="tf-eager-n" min="1" max="2000" step="1" value="200"/></div>
+            </div>
+            <canvas class="w-canvas" id="tf-eager-canvas" height="240"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">MODE</div><div class="r-value" id="tf-eager-mode">EAGER</div></div>
+              <div class="readout acc"><div class="r-label">MODELLED WALL TIME</div><div class="r-value" id="tf-eager-time">—</div></div>
+              <div class="readout"><div class="r-label">DEBUGGABLE?</div><div class="r-value" id="tf-eager-debug">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">A toy cost model. <b>Eager</b> dispatches every op from Python each call: cheap to start, but a fixed per-op Python overhead is paid on every one of N calls. <b>Graph</b> mode pays a one-time tracing/compile cost, then runs a fused graph with near-zero Python overhead per call. Slide the call count: graph mode loses on a single call and wins decisively once the step runs in a loop — which is exactly what training does. The crossover is the whole reason <code>tf.function</code> exists.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 2.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">2.2</span><h2>Keras — the high-level API</h2></div>
+        <p>Keras started in 2015 as François Chollet's framework-agnostic frontend; since TensorFlow 2.0 it has been TF's official high-level API (imported as <code>tf.keras</code>), and as of Keras 3 (2023) it once again runs on a <em>choice</em> of backends — TensorFlow, JAX, or PyTorch — behind one identical API. Its design philosophy is "progressive disclosure of complexity": the easy thing is one line, and every layer of customization is available exactly when you need it, never before.</p>
+
+        <p>The smallest unit is the <strong>layer</strong>: an object that owns weights and maps an input tensor to an output tensor. The workhorse is <code>Dense</code> — a fully-connected layer computing an affine transform followed by a nonlinearity:</p>
+
+        <div class="eq"><span class="eq-tag">EQ F2.2 — A DENSE LAYER</span>
+        $$ \mathbf{y} \;=\; \phi\!\big( W\mathbf{x} + \mathbf{b} \big), \qquad W \in \mathbb{R}^{\,u \times d_{\text{in}}},\;\; \mathbf{b} \in \mathbb{R}^{\,u} $$
+        <div class="eq-note">A <code>Dense(u)</code> layer reading \(d_{\text{in}}\) features holds a weight matrix \(W\) of shape \(u \times d_{\text{in}}\) and a bias vector \(\mathbf{b}\) of length \(u\); \(\phi\) is the activation (ReLU, softmax, …). Its trainable parameter count is therefore \(d_{\text{in}}\!\cdot u + u = (d_{\text{in}}+1)\,u\) — the <b>+1</b> is the bias. Note that \(d_{\text{in}}\) is not something you pass: Keras infers it from whatever tensor first flows in, which is why a freshly built layer reports <b>0 parameters until it sees a shape</b>. The single most common surprise for newcomers is exactly this lazy build.</div>
+        </div>
+
+        <p>A whole network is then just an ordered stack of such layers. Keras offers three ways to express one, in increasing power:</p>
+        <table class="data">
+          <thead><tr><th>API</th><th>Shape</th><th>Use when…</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Sequential</strong></td><td class="m">a plain list of layers</td><td>The model is a single chain, input → output, no branching.</td></tr>
+            <tr><td><strong>Functional</strong></td><td class="m">a DAG of layers</td><td>You need multiple inputs/outputs, skip connections, or shared layers — most real models.</td></tr>
+            <tr><td><strong>Subclassing</strong></td><td class="m">imperative <code>call()</code></td><td>Control flow depends on the data (dynamic loops, research architectures).</td></tr>
+          </tbody>
+        </table>
+
+        <p>The parameter count of a stack is just the sum over its layers, and tracking it is not academic: parameters set your memory budget, your overfitting risk, and your serving cost. The instrument and the calculator below make EQ F2.2 tactile — add a layer, watch the count move.</p>
+
+        <div class="exercise" data-answer="2048" data-tol="0.001" data-hint="A Dense layer's weight matrix (excluding bias) is units × input_features.">
+          <div class="ex-q">A <code>Dense(64)</code> layer receives an input with \(32\) features. How many <b>weights</b> does it hold, <em>excluding</em> the bias terms? (Use \(d_{\text{in}}\cdot u\) from EQ F2.2.)</div>
+          <div class="ex-reveal-src">The weight matrix \(W\) has shape \(u \times d_{\text{in}} = 64 \times 32\), so it contains \(64 \cdot 32 = \) <b>2048</b> weights. Adding the \(64\) bias terms would bring the layer's total trainable parameters to \(2048 + 64 = 2112\); the question asked for weights only, so the answer is <b>2048</b>.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># A tiny MLP forward pass "Keras-style", but in pure numpy (EQ F2.2).
+# Sequential([Dense(8, relu), Dense(3, softmax)]) on a 4-feature input.
+import numpy as np
+rng = np.random.default_rng(0)
+
+def dense(x, W, b, act):                 # y = act(x @ W.T + b)
+    z = x @ W.T + b
+    if act == "relu":    return np.maximum(0.0, z)
+    if act == "softmax":
+        e = np.exp(z - z.max(-1, keepdims=True))
+        return e / e.sum(-1, keepdims=True)
+    return z
+
+x  = rng.normal(0, 1, (5, 4))            # batch of 5, 4 features each
+W1 = rng.normal(0, 0.5, (8, 4)); b1 = np.zeros(8)   # Dense(8): 4 -> 8
+W2 = rng.normal(0, 0.5, (3, 8)); b2 = np.zeros(3)   # Dense(3): 8 -> 3
+
+h   = dense(x, W1, b1, "relu")           # hidden activations
+out = dense(h, W2, b2, "softmax")        # class probabilities
+
+np.set_printoptions(precision=3, suppress=True)
+print("output probabilities (rows = examples, cols = 3 classes):")
+print(out)
+print("\nevery row sums to 1:", out.sum(1).round(6))
+print("params:", W1.size + b1.size + W2.size + b2.size,
+      "= (4+1)*8 + (8+1)*3 =", (4+1)*8 + (8+1)*3)</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Parameter-count calculator for a Dense stack (EQ F2.2): (d_in+1)*u per layer.
+# This is what model.summary() prints, by hand.
+def dense_params(input_dim, units):
+    """Return (weights, biases, total) for one Dense layer."""
+    weights = input_dim * units
+    biases  = units
+    return weights, biases, weights + biases
+
+# A small MLP: 32 features -> 64 -> 64 -> 10 classes
+layers = [("Dense(64)", 32, 64),
+          ("Dense(64)", 64, 64),
+          ("Dense(10)", 64, 10)]
+
+total = 0
+print(f"{'layer':<12}{'in':>5}{'units':>7}{'weights':>10}{'+bias':>8}{'params':>10}")
+for name, d_in, u in layers:
+    w, b, p = dense_params(d_in, u)
+    total += p
+    print(f"{name:<12}{d_in:>5}{u:>7}{w:>10,}{b:>8}{p:>10,}")
+print("-" * 52)
+print(f"{'TOTAL':<12}{'':>5}{'':>7}{'':>10}{'':>8}{total:>10,} trainable params")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="tf-seq" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT F2.2 — KERAS SEQUENTIAL BUILDER</span><span class="w-sub">STACK DENSE LAYERS · LIVE PARAM COUNT · EQ F2.2</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>INPUT FEATURES <output id="tf-seq-in-out">784</output></label><input type="range" id="tf-seq-in" min="8" max="1024" step="8" value="784"/></div>
+              <div class="ctl"><label>HIDDEN LAYERS <output id="tf-seq-nl-out">2</output></label><input type="range" id="tf-seq-nl" min="0" max="5" step="1" value="2"/></div>
+              <div class="ctl"><label>UNITS / HIDDEN LAYER <output id="tf-seq-u-out">128</output></label><input type="range" id="tf-seq-u" min="8" max="512" step="8" value="128"/></div>
+            </div>
+            <div class="ctl-row">
+              <div class="ctl"><label>OUTPUT UNITS (classes) <output id="tf-seq-out-out">10</output></label><input type="range" id="tf-seq-out" min="1" max="100" step="1" value="10"/></div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>BIAS</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-tf-bias="1">use_bias=True</button>
+                  <button class="w-btn ghost" data-tf-bias="0">False</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="tf-seq-canvas" height="260"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">TOTAL PARAMS</div><div class="r-value" id="tf-seq-total">—</div></div>
+              <div class="readout"><div class="r-label">LARGEST LAYER</div><div class="r-value" id="tf-seq-big">—</div></div>
+              <div class="readout"><div class="r-label">WEIGHTS @ FP32</div><div class="r-value" id="tf-seq-mem">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Each bar is one <code>Dense</code> layer; its width is its parameter share of the model. Defaults build the classic MNIST classifier <code>Sequential([Dense(128, relu), Dense(128, relu), Dense(10, softmax)])</code> on flattened 28×28 = 784 pixels — about 118K params. Turn the bias off and every layer loses exactly its <em>units</em> count. Push input features or units up and watch the <b>first</b> layer dominate: the layer touching the raw input is almost always the heaviest, which is why convolutions and embeddings exist to tame it.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 2.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">2.3</span><h2>tf.data input pipelines</h2></div>
+        <p>A model is only as fast as the data reaching it. If the GPU finishes a step in 8&nbsp;ms but the CPU needs 20&nbsp;ms to read, decode, and augment the next batch, the accelerator sits idle 60% of the time — you bought a sports car and left it in the garage. <strong><code>tf.data</code> is TensorFlow's answer: a declarative pipeline that overlaps data preparation with model execution so the accelerator never waits.</strong></p>
+
+        <p>A pipeline is a chain of transformations on a <code>tf.data.Dataset</code>: <code>.map()</code> applies a preprocessing function, <code>.shuffle(buffer)</code> randomizes order through a fixed-size buffer, <code>.batch(n)</code> groups examples, and the two that matter most for throughput:</p>
+        <ul>
+          <li><strong><code>.prefetch(k)</code></strong> — lets the input pipeline produce batch \(t{+}1\) on the CPU <em>while</em> the model trains on batch \(t\) on the GPU. With <code>tf.data.AUTOTUNE</code> the runtime tunes the buffer size for you. This single call is usually the largest free speedup available.</li>
+          <li><strong><code>.cache()</code></strong> — keeps the dataset in memory (or on disk) after the first epoch, so repeated epochs skip re-reading and re-decoding. Place it <em>after</em> expensive deterministic work and <em>before</em> random augmentation, or you will cache one fixed set of augmentations forever.</li>
+        </ul>
+
+        <p>The reason prefetch works is a pipeline identity. Without overlap, each step costs the sum of input time and compute time; with overlap, the two run concurrently, so a step costs only the larger of the two:</p>
+
+        <div class="eq"><span class="eq-tag">EQ F2.3 — PIPELINE STEP TIME</span>
+        $$ t_{\text{serial}} = t_{\text{input}} + t_{\text{compute}}, \qquad t_{\text{overlapped}} = \max\!\big(t_{\text{input}},\, t_{\text{compute}}\big) $$
+        <div class="eq-note">Prefetch turns a <b>sum</b> into a <b>max</b>. If input and compute are balanced (each \(t\)), serial costs \(2t\) per step and overlapped costs \(t\) — a clean 2× speedup. The win shrinks as one side dominates: if compute is 10× the input cost, you were already nearly compute-bound and prefetch buys little. The corollary is the rule every practitioner learns the hard way: <b>profile first.</b> Overlap can hide the input cost only up to the point where input becomes the bottleneck — past that, you must make the input itself cheaper (cache, parallel <code>map</code>, a better file format like TFRecord).</div>
+        </div>
+
+        <div class="exercise" data-answer="20" data-tol="0.001" data-unit="ms" data-hint="With prefetch the per-step time is max(t_input, t_compute), not their sum.">
+          <div class="ex-q">A training step needs \(t_{\text{input}} = 12\) ms to prepare a batch on the CPU and \(t_{\text{compute}} = 20\) ms to run it on the GPU. With <code>.prefetch()</code> overlapping the two (EQ F2.3), how many milliseconds does one overlapped step take?</div>
+          <div class="ex-reveal-src">Overlapped step time is \(\max(t_{\text{input}}, t_{\text{compute}}) = \max(12, 20) = \) <b>20</b> ms — the pipeline is fully hidden behind compute. Without prefetch it would be \(12 + 20 = 32\) ms, so overlap removes the entire 12 ms of input cost here; if input had instead been 25 ms, the step would be \(\max(25,20)=25\) ms and the pipeline, not the GPU, would be your bottleneck.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># EQ F2.3: why .prefetch() turns a sum into a max. A throughput simulator.
+import numpy as np
+
+t_input, t_compute = 12.0, 20.0     # ms per batch (CPU prep, GPU step)
+n_steps = 500
+
+serial      = n_steps * (t_input + t_compute)        # no overlap
+overlapped  = t_input + n_steps * max(t_input, t_compute)  # +1 warm-up batch
+
+print(f"per-step serial     : {t_input + t_compute:.1f} ms")
+print(f"per-step overlapped : {max(t_input, t_compute):.1f} ms  (max, not sum)")
+print(f"{n_steps} steps serial    : {serial/1000:.2f} s")
+print(f"{n_steps} steps prefetch  : {overlapped/1000:.2f} s")
+print(f"speedup             : {serial/overlapped:.2f}x")
+
+# utilization = fraction of wall time the GPU is actually computing
+util_serial     = t_compute / (t_input + t_compute)
+util_overlapped = t_compute / max(t_input, t_compute)
+print(f"\nGPU utilization  serial : {util_serial*100:4.1f} %")
+print(f"GPU utilization  prefetch: {min(util_overlapped,1)*100:4.1f} %")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <p class="note">The same overlap principle governs PyTorch's <code>DataLoader</code> (<code>num_workers</code> for parallel loading, <code>pin_memory</code> + <code>prefetch_factor</code> for the host-to-device overlap). The vocabulary differs; the bottleneck — and the fix — does not. Every framework's input API exists to win back EQ F2.3's wasted <code>t_input</code>.</p>
+      </section>
+
+      <!-- ====================== 2.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">2.4</span><h2>Training — model.fit vs custom loops</h2></div>
+        <p>Once a model is built and a dataset is ready, training is a loop. Keras gives you that loop for free. After <code>model.compile(optimizer, loss, metrics)</code>, a single call to <code>model.fit(dataset, epochs=...)</code> runs the entire schedule: it iterates batches, does the forward pass, computes the loss, runs backpropagation, applies the optimizer update, accumulates metrics, and — if you pass <code>validation_data</code> — evaluates each epoch. <strong>Everything inside the loop is the framework's responsibility; you supplied only the model, the loss, and the data.</strong></p>
+
+        <p>What <code>fit</code> automates, one batch at a time, is exactly the gradient-descent step:</p>
+
+        <div class="eq"><span class="eq-tag">EQ F2.4 — ONE fit() STEP (SGD)</span>
+        $$ \theta \;\leftarrow\; \theta \;-\; \eta\,\nabla_{\!\theta}\,\frac{1}{|B|}\sum_{(\mathbf{x},y)\,\in\,B}\mathcal{L}\big(f_\theta(\mathbf{x}),\,y\big) $$
+        <div class="eq-note">For each minibatch \(B\): run the forward pass \(f_\theta\), average the per-example loss, take the gradient with respect to the parameters \(\theta\) (the backward pass), and step downhill with learning rate \(\eta\). <code>fit</code> wraps this in epoch and batch loops, handles the optimizer's internal state (momentum, Adam moments), runs metric accumulation, and fires <b>callbacks</b> at the right moments. The math is identical to a hand-written loop — <code>fit</code> is convenience, not magic, and that is precisely why it is the right default.</div>
+        </div>
+
+        <p>The extensibility hooks matter as much as the loop itself:</p>
+        <ul>
+          <li><strong>Callbacks</strong> — objects that observe and steer training without you touching the loop: <code>ModelCheckpoint</code> (save the best weights), <code>EarlyStopping</code> (halt when validation stalls), <code>ReduceLROnPlateau</code>, <code>TensorBoard</code> logging. They are the reason <code>fit</code> scales from a toy to a serious run.</li>
+          <li><strong>Override <code>train_step</code></strong> — keep <code>fit</code>'s outer machinery (callbacks, distribution, metrics) but replace just the inner forward/backward logic. This is the modern sweet spot for custom losses like GANs or contrastive learning.</li>
+        </ul>
+
+        <p>You drop to a <strong>fully custom loop</strong> — opening a <code>tf.GradientTape</code>, computing gradients, and calling <code>optimizer.apply_gradients</code> yourself — only when control flow genuinely demands it: multiple interacting optimizers, exotic gradient surgery, reinforcement-learning rollouts, or research that needs to inspect intermediate quantities every step. The trade is total control for the loss of every convenience <code>fit</code> bundled in. A good engineer reaches for the custom loop <em>last</em>, not first — most "I need a custom loop" instincts are satisfied by a custom <code>train_step</code> or a callback.</p>
+
+        <div class="exercise" data-answer="true" data-tol="0" data-hint="model.fit() iterates batches and epochs, running forward/backward/update on each, for you.">
+          <div class="ex-q">True or false: calling <code>model.fit()</code> runs the training loop on your behalf — iterating over batches and epochs and performing the forward pass, backpropagation, and optimizer update each step — so you do not have to write that loop yourself. (Answer <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src"><code>fit</code> is precisely the built-in training loop: given a compiled model and a dataset, it walks every batch of every epoch and on each one runs the forward pass, computes and backpropagates the loss, and applies the optimizer update (EQ F2.4), while also accumulating metrics and firing callbacks. Writing that loop by hand is exactly what you avoid by calling <code>fit</code>. The statement is <b>true</b>.</div>
+        </div>
+
+        <div class="widget" id="tf-compare" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT F2.3 — KERAS fit vs PyTorch LOOP</span><span class="w-sub">SAME MLP, SIDE BY SIDE</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>SHOW</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-tf-cmp="both">BOTH</button>
+                  <button class="w-btn ghost" data-tf-cmp="keras">KERAS</button>
+                  <button class="w-btn ghost" data-tf-cmp="torch">PYTORCH</button>
+                </div>
+              </div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>STAGE</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-tf-stage="model">MODEL</button>
+                  <button class="w-btn ghost" data-tf-stage="train">TRAIN</button>
+                </div>
+              </div>
+            </div>
+            <div id="tf-compare-grid" style="display:flex;gap:14px;flex-wrap:wrap;margin-top:6px;"></div>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">KERAS LINES (TRAIN)</div><div class="r-value" id="tf-cmp-kl">—</div></div>
+              <div class="readout acc"><div class="r-label">PYTORCH LINES (TRAIN)</div><div class="r-value" id="tf-cmp-tl">—</div></div>
+              <div class="readout"><div class="r-label">WHO WRITES THE LOOP</div><div class="r-value" id="tf-cmp-who" style="font-size:11px;line-height:1.5;">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The same two-layer classifier, defined and trained in each framework. Switch STAGE to <b>TRAIN</b> and the asymmetry is the lesson: Keras hides the loop behind <code>fit</code>; PyTorch makes you write <code>zero_grad → forward → loss → backward → step</code> explicitly every iteration. Neither is "better" — Keras optimizes for the common case, PyTorch for visibility. Knowing what the Keras side <em>elides</em> is the difference the chapter is about.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 2.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">2.5</span><h2>TensorFlow vs PyTorch — choosing</h2></div>
+        <p>This is the question every team eventually asks, and the honest 2026 answer starts with a fact: <strong>in research and in most new projects, PyTorch is the default.</strong> By citation share at the major ML conferences and by the dominant choice of new open-source models on Hugging Face, PyTorch has been the leading framework since roughly 2019–2020 and remains so. That is the realistic baseline; the rest is where the picture is genuinely more nuanced than the headline.</p>
+
+        <table class="data">
+          <thead><tr><th>Dimension</th><th>PyTorch</th><th>TensorFlow / Keras</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Default style</strong></td><td>Eager, Pythonic; <code>torch.compile</code> for graphs</td><td>Eager by default (TF2); <code>tf.function</code> for graphs</td></tr>
+            <tr><td><strong>Research mindshare</strong></td><td class="hl">Dominant</td><td class="m">Declining for new work</td></tr>
+            <tr><td><strong>Production / mobile / web</strong></td><td>Strong &amp; improving (ExecuTorch, TorchServe)</td><td class="hl">Mature: TF Serving, TF Lite/LiteRT, TF.js</td></tr>
+            <tr><td><strong>High-level API</strong></td><td>Lightning, fastai (third-party)</td><td class="hl">Keras, built in</td></tr>
+            <tr><td><strong>TPU support</strong></td><td>via PyTorch/XLA</td><td class="hl">First-class, native</td></tr>
+            <tr><td><strong>Backend-agnostic</strong></td><td>—</td><td class="hl">Keras 3: TF / JAX / PyTorch</td></tr>
+          </tbody>
+        </table>
+
+        <p>So where does TensorFlow still earn its place in 2026? Three honest answers. <strong>(1) Deployment breadth:</strong> the mobile/edge story (LiteRT, formerly TF Lite) and the browser story (TensorFlow.js) remain more battle-tested than the alternatives, and TF Serving is a known quantity in production. <strong>(2) TPUs:</strong> if you train on Google's TPU hardware, TensorFlow — and increasingly JAX — is the path of least resistance. <strong>(3) Keras 3 as a hedge:</strong> because Keras now runs on TensorFlow, JAX, <em>or</em> PyTorch behind one API, you can write Keras and stay portable across backends — a genuinely new reason to consider it that did not exist a few years ago.</p>
+
+        <p>A note of nuance experts would insist on: the eager-versus-graph and Pythonic-versus-not distinctions that once cleanly separated the two frameworks have largely <em>converged</em>. Both default to eager; both compile to graphs; both target the same accelerators. The remaining differences are about <strong>ecosystem and deployment surface, not core capability</strong>. The pragmatic advice: pick the framework your team and your target hardware already know, prefer PyTorch if you are starting fresh in research, prefer the TensorFlow/Keras stack if your hard constraint is TPUs or a mature mobile/web/serving pipeline — and remember that the deployment layer, covered next, often matters more than the training framework you started in.</p>
+
+        <p class="note"><strong>Contested point, stated plainly.</strong> Framework "market share" numbers vary wildly by source and methodology (conference papers vs. job postings vs. GitHub stars vs. enterprise surveys), and partisans cite whichever favors their side. The defensible claim is narrow and the one made above: PyTorch leads new research and open-model releases; TensorFlow retains an edge in certain deployment targets and TPUs. Anything stronger than that is marketing.</p>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>You can now build and train a model in either framework — but a trained model is not a product.</strong> Chapter 03 turns to the ecosystem and deployment: exporting to SavedModel / ONNX / TorchScript, serving with TF Serving and friends, shrinking for the edge with LiteRT, and running inference in the browser — where, as this chapter hinted, the framework you trained in often stops mattering and the framework you <em>serve</em> in takes over.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 2.R ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">2.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://arxiv.org/abs/1605.08695" target="_blank" rel="noopener">Abadi, M. et al. (2016). <span class="ref-venue">TensorFlow: A System for Large-Scale Machine Learning</span>.</a> <span class="ref-meta">OSDI 2016 — the computation-graph runtime and distributed execution model behind §2.1.</span></li>
+          <li><a href="https://keras.io" target="_blank" rel="noopener">Chollet, F. (2015). <span class="ref-venue">Keras</span>.</a> <span class="ref-meta">Official documentation — the high-level layers/Sequential/Functional API of §2.2 and the current Keras 3 multi-backend design.</span></li>
+          <li><a href="https://www.manning.com/books/deep-learning-with-python-second-edition" target="_blank" rel="noopener">Chollet, F. (2021). <span class="ref-venue">Deep Learning with Python (2nd ed.)</span>.</a> <span class="ref-meta">Manning — the canonical Keras text by its author; covers layers, fit, callbacks, and custom training loops.</span></li>
+          <li><a href="https://arxiv.org/abs/1603.04467" target="_blank" rel="noopener">Abadi, M. et al. (2016). <span class="ref-venue">TensorFlow: Large-Scale Machine Learning on Heterogeneous Distributed Systems</span>.</a> <span class="ref-meta">arXiv — the original TensorFlow white paper describing the dataflow-graph design.</span></li>
+          <li><a href="https://www.tensorflow.org/guide/data" target="_blank" rel="noopener">TensorFlow Team. <span class="ref-venue">tf.data: Build TensorFlow input pipelines</span>.</a> <span class="ref-meta">Official guide — <code>map</code>/<code>shuffle</code>/<code>batch</code>/<code>prefetch</code>/<code>cache</code> and the overlap of §2.3 (EQ F2.3).</span></li>
+          <li><a href="https://arxiv.org/abs/1912.01703" target="_blank" rel="noopener">Paszke, A. et al. (2019). <span class="ref-venue">PyTorch: An Imperative Style, High-Performance Deep Learning Library</span>.</a> <span class="ref-meta">NeurIPS 2019 — the eager/imperative design contrasted against TensorFlow in §2.5.</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../frameworks/01-pytorch.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">01</span> PyTorch</div></a>
+        <a class="next" href="../frameworks/03-ecosystem-deployment.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">03</span> Ecosystem &amp; Deployment</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — FRAMEWORKS · CH 02</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* chapter instruments — single IIFE, no globals */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  /* ============================================================
+     INSTRUMENT F2.1 — EAGER vs GRAPH EXECUTION
+     A toy cost model: eager pays per-op Python overhead on every
+     call; graph pays a one-time trace cost then runs cheaply.
+     ============================================================ */
+  (function () {
+    var root = document.getElementById("tf-eager");
+    if (!root) return;
+    var canvas = document.getElementById("tf-eager-canvas");
+    var nIn = document.getElementById("tf-eager-n");
+    var nOut = document.getElementById("tf-eager-n-out");
+    var modeOut = document.getElementById("tf-eager-mode");
+    var timeOut = document.getElementById("tf-eager-time");
+    var dbgOut = document.getElementById("tf-eager-debug");
+    var btns = root.querySelectorAll("[data-tf-mode]");
+    var mode = "eager";
+
+    /* toy constants (microseconds), illustrative not measured */
+    var OPS = 40;             // ops in one training step
+    var PY_PER_OP = 6;        // us python dispatch overhead per op (eager)
+    var KERNEL = 3;           // us actual kernel time per op
+    var TRACE = 9000;         // us one-time tracing/compile cost (graph)
+    var GRAPH_PER_CALL = OPS * KERNEL * 0.55; // fused: kernels + tiny overhead
+
+    function stepTimeEager() { return OPS * (PY_PER_OP + KERNEL); }      // us/call
+    function totalEager(n) { return n * stepTimeEager(); }
+    function totalGraph(n) { return TRACE + n * GRAPH_PER_CALL; }
+
+    function fmtUs(us) {
+      var ms = us / 1000;
+      if (ms >= 1000) return (ms / 1000).toFixed(2) + " s";
+      if (ms >= 1) return ms.toFixed(1) + " ms";
+      return us.toFixed(0) + " µs";
+    }
+
+    function render() {
+      var n = parseInt(nIn.value, 10);
+      nOut.textContent = n;
+      modeOut.textContent = mode === "eager" ? "EAGER" : "GRAPH";
+      var total = mode === "eager" ? totalEager(n) : totalGraph(n);
+      timeOut.textContent = fmtUs(total);
+      dbgOut.textContent = mode === "eager" ? "YES — print/pdb work" : "NO — symbolic trace";
+
+      var s = FM.setupCanvas(canvas, 240);
+      var ctx = s.ctx, W = s.w, H = s.h;
+      ctx.clearRect(0, 0, W, H);
+
+      var padL = 46, padR = 16, padT = 22, padB = 30;
+      var x0 = padL, x1 = W - padR, y0 = H - padB, y1 = padT;
+
+      /* both curves over the call-count axis (0..max) */
+      var maxN = parseInt(nIn.max, 10);
+      var samples = 60, i;
+      var maxT = Math.max(totalEager(maxN), totalGraph(maxN));
+
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(x0, y1, x1 - x0, y0 - y1);
+
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      var g;
+      for (g = 0; g <= 4; g++) {
+        var gv = maxT * g / 4;
+        var gy = y0 - (g / 4) * (y0 - y1);
+        ctx.strokeStyle = "rgba(47,50,52,.5)";
+        ctx.beginPath(); ctx.moveTo(x0, gy); ctx.lineTo(x1, gy); ctx.stroke();
+        ctx.fillStyle = C.MUT; ctx.fillText(fmtUs(gv), x0 - 6, gy);
+      }
+
+      function px(nn) { return x0 + (nn / maxN) * (x1 - x0); }
+      function py(t) { return y0 - (t / maxT) * (y0 - y1); }
+
+      function curve(fn, color, active) {
+        ctx.strokeStyle = color;
+        ctx.lineWidth = active ? 2.4 : 1.2;
+        ctx.globalAlpha = active ? 1 : 0.45;
+        ctx.beginPath();
+        for (i = 0; i <= samples; i++) {
+          var nn = maxN * i / samples;
+          var X = px(nn), Y = py(fn(nn));
+          if (i === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y);
+        }
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+      curve(totalEager, C.BLUE, mode === "eager");
+      curve(totalGraph, C.MINT, mode === "graph");
+
+      /* crossover marker: where graph overtakes eager */
+      var denom = stepTimeEager() - GRAPH_PER_CALL;
+      if (denom > 0) {
+        var cross = TRACE / denom;
+        if (cross > 0 && cross < maxN) {
+          var cx = px(cross);
+          ctx.strokeStyle = C.SEC; ctx.setLineDash([3, 3]); ctx.lineWidth = 1;
+          ctx.beginPath(); ctx.moveTo(cx, y1); ctx.lineTo(cx, y0); ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.fillStyle = C.SEC; ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+          ctx.fillText("crossover ≈ " + Math.round(cross) + " calls", cx, y1 + 11);
+        }
+      }
+
+      /* current-n marker */
+      var mx = px(n);
+      ctx.strokeStyle = C.RED; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(mx, y1); ctx.lineTo(mx, y0); ctx.stroke();
+
+      /* labels + legend */
+      ctx.font = C.MONO; ctx.textBaseline = "top";
+      ctx.fillStyle = C.SEC; ctx.textAlign = "left";
+      ctx.fillText("WALL TIME vs CALLS", x0 + 4, y1 + 3);
+      ctx.textAlign = "right";
+      ctx.fillStyle = C.BLUE; ctx.fillText("— eager", x1 - 70, y1 + 3);
+      ctx.fillStyle = C.MINT; ctx.fillText("— graph", x1 - 6, y1 + 3);
+      ctx.fillStyle = C.MUT; ctx.textAlign = "center";
+      ctx.fillText("calls to the step →", (x0 + x1) / 2, y0 + 8);
+    }
+
+    btns.forEach(function (b) {
+      b.addEventListener("click", function () {
+        mode = b.getAttribute("data-tf-mode");
+        btns.forEach(function (x) { x.classList.remove("on"); });
+        b.classList.add("on");
+        render();
+      });
+    });
+    nIn.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ============================================================
+     INSTRUMENT F2.2 — KERAS SEQUENTIAL BUILDER
+     Stack Dense layers; show per-layer + total params (EQ F2.2).
+     params(layer) = (d_in [+1 bias]) * units
+     ============================================================ */
+  (function () {
+    var root = document.getElementById("tf-seq");
+    if (!root) return;
+    var canvas = document.getElementById("tf-seq-canvas");
+    var inIn = document.getElementById("tf-seq-in");
+    var nlIn = document.getElementById("tf-seq-nl");
+    var uIn = document.getElementById("tf-seq-u");
+    var outIn = document.getElementById("tf-seq-out");
+    var inOut = document.getElementById("tf-seq-in-out");
+    var nlOut = document.getElementById("tf-seq-nl-out");
+    var uOut = document.getElementById("tf-seq-u-out");
+    var outOut = document.getElementById("tf-seq-out-out");
+    var totalOut = document.getElementById("tf-seq-total");
+    var bigOut = document.getElementById("tf-seq-big");
+    var memOut = document.getElementById("tf-seq-mem");
+    var biasBtns = root.querySelectorAll("[data-tf-bias]");
+    var useBias = 1;
+
+    function buildLayers() {
+      var dIn = parseInt(inIn.value, 10);
+      var nl = parseInt(nlIn.value, 10);
+      var u = parseInt(uIn.value, 10);
+      var oUnits = parseInt(outIn.value, 10);
+      var layers = [];
+      var prev = dIn, i;
+      for (i = 0; i < nl; i++) {
+        layers.push({ name: "Dense(" + u + ")", din: prev, units: u, act: "relu" });
+        prev = u;
+      }
+      layers.push({ name: "Dense(" + oUnits + ")", din: prev, units: oUnits, act: "softmax" });
+      var L;
+      for (i = 0; i < layers.length; i++) {
+        L = layers[i];
+        L.params = L.din * L.units + (useBias ? L.units : 0);
+      }
+      return layers;
+    }
+
+    function render() {
+      inOut.textContent = inIn.value;
+      nlOut.textContent = nlIn.value;
+      uOut.textContent = uIn.value;
+      outOut.textContent = outIn.value;
+
+      var layers = buildLayers();
+      var total = 0, big = 0, bigName = "", i;
+      for (i = 0; i < layers.length; i++) {
+        total += layers[i].params;
+        if (layers[i].params > big) { big = layers[i].params; bigName = layers[i].name; }
+      }
+
+      totalOut.textContent = total.toLocaleString();
+      bigOut.textContent = bigName + " · " + FM.siFormat(big, 1);
+      memOut.textContent = (total * 4 / 1048576).toFixed(2) + " MB";
+
+      var s = FM.setupCanvas(canvas, 260);
+      var ctx = s.ctx, W = s.w, H = s.h;
+      ctx.clearRect(0, 0, W, H);
+
+      var padL = 12, padR = 12, padT = 16, padB = 16;
+      var rowH = Math.min(34, (H - padT - padB) / layers.length);
+      var gap = 6;
+      var barMaxW = W - padL - padR - 150;
+      var y = padT;
+
+      for (i = 0; i < layers.length; i++) {
+        var L = layers[i];
+        var frac = total > 0 ? L.params / total : 0;
+        var bw = Math.max(2, frac * barMaxW);
+        var isOut = (i === layers.length - 1);
+        var col = isOut ? C.BLUE : C.MINT;
+        var fill = isOut ? "rgba(78,138,247,.22)" : "rgba(166,242,204,.20)";
+
+        /* bar */
+        ctx.fillStyle = fill;
+        ctx.fillRect(padL, y, bw, rowH - gap);
+        ctx.strokeStyle = col; ctx.lineWidth = 1.1;
+        ctx.strokeRect(padL, y, bw, rowH - gap);
+
+        /* label */
+        ctx.font = C.MONO; ctx.textBaseline = "middle";
+        ctx.fillStyle = C.BRIGHT; ctx.textAlign = "left";
+        ctx.fillText(L.name + " " + L.act, padL + bw + 8, y + (rowH - gap) / 2 - 6);
+        ctx.fillStyle = C.SEC;
+        ctx.fillText(L.din + "→" + L.units + "  ·  " + L.params.toLocaleString() + " p  ("
+          + (frac * 100).toFixed(1) + "%)", padL + bw + 8, y + (rowH - gap) / 2 + 6);
+
+        y += rowH;
+      }
+    }
+
+    biasBtns.forEach(function (b) {
+      b.addEventListener("click", function () {
+        useBias = parseInt(b.getAttribute("data-tf-bias"), 10);
+        biasBtns.forEach(function (x) { x.classList.remove("on"); });
+        b.classList.add("on");
+        render();
+      });
+    });
+    inIn.addEventListener("input", render);
+    nlIn.addEventListener("input", render);
+    uIn.addEventListener("input", render);
+    outIn.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ============================================================
+     INSTRUMENT F2.3 — KERAS fit vs PyTorch LOOP
+     Side-by-side code panes for the same MLP, model vs train.
+     ============================================================ */
+  (function () {
+    var root = document.getElementById("tf-compare");
+    if (!root) return;
+    var grid = document.getElementById("tf-compare-grid");
+    var klOut = document.getElementById("tf-cmp-kl");
+    var tlOut = document.getElementById("tf-cmp-tl");
+    var whoOut = document.getElementById("tf-cmp-who");
+    var cmpBtns = root.querySelectorAll("[data-tf-cmp]");
+    var stageBtns = root.querySelectorAll("[data-tf-stage]");
+    var show = "both", stage = "model";
+
+    var CODE = {
+      keras: {
+        model:
+          "import tensorflow as tf\n" +
+          "from tensorflow import keras\n\n" +
+          "model = keras.Sequential([\n" +
+          "    keras.layers.Dense(128, activation='relu'),\n" +
+          "    keras.layers.Dense(10,  activation='softmax'),\n" +
+          "])\n" +
+          "model.compile(\n" +
+          "    optimizer='adam',\n" +
+          "    loss='sparse_categorical_crossentropy',\n" +
+          "    metrics=['accuracy'])",
+        train:
+          "# the entire training loop is one call\n" +
+          "model.fit(\n" +
+          "    train_ds,\n" +
+          "    epochs=10,\n" +
+          "    validation_data=val_ds,\n" +
+          "    callbacks=[keras.callbacks.EarlyStopping()])\n\n" +
+          "# forward, loss, backward, optimizer step,\n" +
+          "# metrics, validation -> all handled by fit()"
+      },
+      torch: {
+        model:
+          "import torch\n" +
+          "import torch.nn as nn\n\n" +
+          "model = nn.Sequential(\n" +
+          "    nn.Linear(784, 128), nn.ReLU(),\n" +
+          "    nn.Linear(128, 10),\n" +
+          ")\n" +
+          "loss_fn = nn.CrossEntropyLoss()\n" +
+          "opt = torch.optim.Adam(model.parameters())\n" +
+          "# (softmax folded into CrossEntropyLoss)",
+        train:
+          "# you write the loop yourself\n" +
+          "for epoch in range(10):\n" +
+          "    for xb, yb in train_dl:\n" +
+          "        opt.zero_grad()        # clear grads\n" +
+          "        out = model(xb)        # forward\n" +
+          "        loss = loss_fn(out, yb)\n" +
+          "        loss.backward()        # backward\n" +
+          "        opt.step()             # update\n" +
+          "    # validation / metrics: also your job"
+      }
+    };
+
+    function esc(s) {
+      return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    function pane(title, color, code) {
+      return "<div style='flex:1 1 300px;min-width:280px;border:1px solid var(--hairline);border-radius:4px;overflow:hidden;'>" +
+        "<div style='font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:.14em;color:" + color +
+        ";padding:8px 12px;border-bottom:1px solid var(--hairline);'>" + title + "</div>" +
+        "<pre style='margin:0;padding:12px;font-family:ui-monospace,Menlo,monospace;font-size:11px;line-height:1.55;color:var(--text);white-space:pre;overflow-x:auto;'>" +
+        esc(code) + "</pre></div>";
+    }
+
+    function lineCount(s) {
+      return s.split("\n").filter(function (l) {
+        var t = l.trim();
+        return t.length > 0 && t[0] !== "#";
+      }).length;
+    }
+
+    function render() {
+      var html = "";
+      if (show === "both" || show === "keras")
+        html += pane("KERAS · tf.keras", C.MINT, CODE.keras[stage]);
+      if (show === "both" || show === "torch")
+        html += pane("PYTORCH · nn", C.BLUE, CODE.torch[stage]);
+      grid.innerHTML = html;
+
+      klOut.textContent = lineCount(CODE.keras.train) + " lines";
+      tlOut.textContent = lineCount(CODE.torch.train) + " lines";
+      whoOut.innerHTML = "<span style='color:" + C.MINT + "'>Keras: fit()</span><br/>" +
+        "<span style='color:" + C.BLUE + "'>PyTorch: you</span>";
+    }
+
+    cmpBtns.forEach(function (b) {
+      b.addEventListener("click", function () {
+        show = b.getAttribute("data-tf-cmp");
+        cmpBtns.forEach(function (x) { x.classList.remove("on"); });
+        b.classList.add("on");
+        render();
+      });
+    });
+    stageBtns.forEach(function (b) {
+      b.addEventListener("click", function () {
+        stage = b.getAttribute("data-tf-stage");
+        stageBtns.forEach(function (x) { x.classList.remove("on"); });
+        b.classList.add("on");
+        render();
+      });
+    });
+    render();
+  })();
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

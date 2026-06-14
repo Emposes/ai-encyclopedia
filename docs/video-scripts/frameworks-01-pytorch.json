@@ -1,0 +1,169 @@
+{
+  "concepts": [
+    {
+      "id": "frameworks-01-pytorch-s1",
+      "chapter": "frameworks/01-pytorch",
+      "section": "s1",
+      "title": "Tensors & the GPU",
+      "eyebrow": "FRAMEWORKS",
+      "beats": [
+        {
+          "text": "A tensor is PyTorch's core data structure: an n-dimensional array of one dtype in a contiguous block of memory.",
+          "visual": { "type": "title", "text": "Tensors & the GPU", "sub": "shape, stride, and one device switch" }
+        },
+        {
+          "text": "Every tensor carries a shape and a stride; the flat memory address of an element is a dot product of its index with the stride vector.",
+          "visual": { "type": "equation", "tex": "\\text{offset}(i_0,\\dots,i_{n-1}) = \\sum_{k=0}^{n-1} i_k \\cdot s_k", "note": "For a contiguous 2x3 tensor strides are (3,1); element (1,2) sits at offset 5." }
+        },
+        {
+          "text": "Views like transpose and reshape share storage and only reinterpret strides, so reshaping a billion-element tensor copies nothing.",
+          "visual": { "type": "stat", "value": 0, "label": "bytes copied by a view", "unit": "B" }
+        },
+        {
+          "text": "Broadcasting aligns shapes from the right; a pair of axes is compatible if they are equal or one of them is 1.",
+          "visual": { "type": "equation", "tex": "\\text{out}_k = \\max(a_k, b_k) \\iff a_k = b_k \\;\\lor\\; a_k = 1 \\;\\lor\\; b_k = 1", "note": "(64,1) with (768,) gives (64,768); (3,) with (4,) is an error." }
+        },
+        {
+          "text": "Move the same tensor to a GPU with x.to('cuda') and every operation dispatches to a CUDA kernel; the math is identical, only the silicon changes.",
+          "visual": { "type": "bars", "values": [1, 768, 64], "labels": ["A dim 1", "B dim 1", "result dim 0"], "highlight": 2 }
+        },
+        {
+          "text": "One honest caveat: PyTorch defaults to float32 where NumPy uses float64, and CPU and GPU reductions can differ bit-for-bit.",
+          "visual": { "type": "lattice" }
+        }
+      ]
+    },
+    {
+      "id": "frameworks-01-pytorch-s2",
+      "chapter": "frameworks/01-pytorch",
+      "section": "s2",
+      "title": "Autograd — the dynamic graph",
+      "eyebrow": "FRAMEWORKS",
+      "beats": [
+        {
+          "text": "Setting requires_grad on a tensor makes PyTorch record every operation that touches it into a directed acyclic graph.",
+          "visual": { "type": "title", "text": "Autograd", "sub": "the dynamic, define-by-run graph" }
+        },
+        {
+          "text": "The graph is dynamic: it is built during the forward pass and torn down after backward, so an if or a loop produces a different graph each iteration.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "Calling loss.backward() walks the graph in reverse, applying the chain rule, and the adjoint of a node sums contributions from every child it feeds.",
+          "visual": { "type": "equation", "tex": "\\bar{x} = \\frac{\\partial L}{\\partial x} = \\sum_{y \\in \\text{children}(x)} \\bar{y}\\,\\frac{\\partial y}{\\partial x}", "note": "A tensor that fans out to several children has its gradient summed over all paths." }
+        },
+        {
+          "text": "On the graph c = a*b, d = c + a, L = d squared at a=2, b=3, the leaf a feeds two children so its gradient lands at 64.",
+          "visual": { "type": "stat", "value": 64, "label": "a.grad after L.backward()" }
+        },
+        {
+          "text": "Reverse-mode autodiff gets the gradient of one scalar loss with respect to all parameters in a single backward pass.",
+          "visual": { "type": "bars", "values": [48, 16], "labels": ["path a->c", "path a->d"], "highlight": 0 }
+        },
+        {
+          "text": "Two traps: .grad accumulates across backward calls so you must zero it, and only leaf tensors keep a gradient by default.",
+          "visual": { "type": "plot", "ys": [16, 32, 48, 64], "dot": 3, "xlabel": "backward() calls without zero_grad", "ylabel": "a.grad" }
+        }
+      ]
+    },
+    {
+      "id": "frameworks-01-pytorch-s3",
+      "chapter": "frameworks/01-pytorch",
+      "section": "s3",
+      "title": "nn.Module & building models",
+      "eyebrow": "FRAMEWORKS",
+      "beats": [
+        {
+          "text": "nn.Module is a base class that bookkeeps parameters: subclass it, register child modules in __init__, and define forward.",
+          "visual": { "type": "title", "text": "nn.Module", "sub": "parameters tracked for you" }
+        },
+        {
+          "text": "module.parameters() recursively yields every learnable tensor, which is exactly what you hand to the optimizer.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "A single nn.Linear holds a weight of shape d_out by d_in and a bias of shape d_out, computing a learned affine map.",
+          "visual": { "type": "equation", "tex": "y = x W^{\\top} + b, \\quad W \\in \\mathbb{R}^{d_{\\text{out}} \\times d_{\\text{in}}}, \\; b \\in \\mathbb{R}^{d_{\\text{out}}}", "note": "Parameter count per layer is d_out times (d_in + 1); the +1 is the bias." }
+        },
+        {
+          "text": "The two-layer MLP Linear(784,128) then Linear(128,10) carries 101,770 learnable parameters; ReLU adds none.",
+          "visual": { "type": "bars", "values": [100480, 1290], "labels": ["fc1 784->128", "fc2 128->10"], "highlight": 0 }
+        },
+        {
+          "text": "Total parameter count for the MLP, summing both linear layers with their biases.",
+          "visual": { "type": "stat", "value": 101770, "label": "learnable parameters in the MLP" }
+        },
+        {
+          "text": "Use nn.Parameter, not a plain tensor, or the optimizer never sees it; that is a classic loss-won't-go-down bug.",
+          "visual": { "type": "lattice" }
+        }
+      ]
+    },
+    {
+      "id": "frameworks-01-pytorch-s4",
+      "chapter": "frameworks/01-pytorch",
+      "section": "s4",
+      "title": "The training loop",
+      "eyebrow": "FRAMEWORKS",
+      "beats": [
+        {
+          "text": "Everything converges on five lines you write yourself; PyTorch deliberately does not hide the loop, which is why it is easy to debug.",
+          "visual": { "type": "title", "text": "The training loop", "sub": "five lines, run millions of times" }
+        },
+        {
+          "text": "The order is load-bearing: zero_grad, then forward, then loss, then backward, then step.",
+          "visual": { "type": "bars", "values": [1, 2, 3, 4, 5], "labels": ["zero_grad", "forward", "loss", "backward", "step"], "highlight": 3 }
+        },
+        {
+          "text": "The optimizer step is where learning happens; for plain SGD it subtracts the learning rate times the gradient.",
+          "visual": { "type": "equation", "tex": "\\theta_{t+1} = \\theta_t - \\eta\\,\\nabla_\\theta L, \\qquad \\nabla_\\theta L = \\theta.\\texttt{grad}", "note": "step() walks every parameter and consumes the .grad values backward() just deposited." }
+        },
+        {
+          "text": "A parameter at 2.0 with gradient 3.0 and learning rate 0.2 moves to 1.4 after one optimizer step.",
+          "visual": { "type": "stat", "value": 1.4, "label": "theta after one SGD step", "decimals": 1 }
+        },
+        {
+          "text": "Run the loop on a noisy line and the mean squared error loss falls steeply over the first epochs.",
+          "visual": { "type": "plot", "ys": [4.2, 1.8, 0.7, 0.3, 0.12, 0.04], "dot": 5, "xlabel": "step", "ylabel": "MSE loss" }
+        },
+        {
+          "text": "Forget zero_grad and gradients sum across iterations; call step before backward and you update on stale gradients.",
+          "visual": { "type": "lattice" }
+        }
+      ]
+    },
+    {
+      "id": "frameworks-01-pytorch-s5",
+      "chapter": "frameworks/01-pytorch",
+      "section": "s5",
+      "title": "Datasets, DataLoaders & devices",
+      "eyebrow": "FRAMEWORKS",
+      "beats": [
+        {
+          "text": "A Dataset answers two questions: how many examples it has, and how to return example i as a features-and-label tuple.",
+          "visual": { "type": "title", "text": "Datasets & DataLoaders", "sub": "batching, shuffling, device discipline" }
+        },
+        {
+          "text": "A DataLoader wraps a Dataset and handles batching, shuffling each epoch, and parallel loading via worker subprocesses.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "Steps per epoch is the ceiling of N over B; the loader yields that many minibatches and that many optimizer steps.",
+          "visual": { "type": "equation", "tex": "\\text{steps/epoch} = \\left\\lceil \\frac{N}{B} \\right\\rceil", "note": "Total optimizer steps equal epochs times ceil(N/B), the number that sets your training budget." }
+        },
+        {
+          "text": "With 10,000 examples and batch size 128, one epoch takes 79 optimizer steps; the last batch holds the remaining 16.",
+          "visual": { "type": "stat", "value": 79, "label": "optimizer steps per epoch" }
+        },
+        {
+          "text": "Device discipline means a tensor and the parameters it meets must live on the same device, or PyTorch raises an error.",
+          "visual": { "type": "bars", "values": [78, 1], "labels": ["full batches of 128", "ragged batch of 16"], "highlight": 1 }
+        },
+        {
+          "text": "From here torch.compile, mixed precision, and DistributedDataParallel scale the same loop without changing the four core ideas.",
+          "visual": { "type": "plot", "ys": [9984, 9984, 16], "xlabel": "batch index", "ylabel": "examples in batch" }
+        }
+      ]
+    }
+  ]
+}

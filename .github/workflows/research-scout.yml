@@ -1,0 +1,43 @@
+# Weekly research-scout routine (Claude Code).
+# Sweeps arXiv / HN / Reddit / lab blogs for genuinely new developments, checks
+# them against content.json, and PROPOSES additions as GitHub issues (never
+# auto-publishes chapters). See scripts/routines/research-scout.md.
+#
+# Required repo secrets (Settings → Secrets and variables → Actions):
+#   ANTHROPIC_API_KEY – Claude API key (platform.claude.com)
+# Also requires the Claude GitHub App installed on the repo.
+
+name: Research scout (weekly)
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # 06:00 UTC every Monday
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  scout:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Run research-scout routine
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: >
+            Run the routine described in scripts/routines/research-scout.md.
+            Sweep recent AI/ML/quant research, score for relevance and durability,
+            check coverage against content.json, and PROPOSE worthy additions as
+            GitHub issues labelled `research` + `proposal` (and stubs under
+            docs/research-queue/). Do not author full chapters. Cite primary
+            sources and follow every guardrail in that file.
+          claude_args: "--max-turns 25 --allowedTools Bash,Read,Edit,Write,Grep,Glob,WebSearch,WebFetch"

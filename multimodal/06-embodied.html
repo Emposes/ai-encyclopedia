@@ -1,0 +1,649 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Embodied AI &amp; Robotics — AI Encyclopedia</title>
+<meta name="description" content="The last modality is action — vision-language-action models turn a transformer into a robot's brain, if you can find the data. Action tokenization, RT-2 and π0, sim-to-real transfer, imitation vs RL, and the robotics data bottleneck." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+</head>
+<body data-track="multimodal" data-level="advanced">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ MULTIMODAL / 06 / EMBODIED AI</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../openmodels/01-open-vs-closed.html">NEXT: OPEN MODELS · 01 →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">MULTIMODAL &amp; WORLD MODELS · CHAPTER 06 / 06</div>
+    <h1>Embodied AI &amp; Robotics</h1>
+    <p class="lede">Every modality so far in this volume describes the world: text, images, audio, video. <strong>Action is the modality that acts on it, and vision-language-action models put a transformer in control of a robot, given enough data.</strong> The architecture is the tractable part: a pretrained vision-language model, motor commands written as tokens, and a policy mapping pixels and an instruction to the next move. The constraint is data. The internet holds no demonstrations of folding laundry, and a robot learning from its own mistakes can damage itself in the process.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>ADVANCED</b></span>
+      <span>READING TIME<b>≈ 24 MIN</b></span>
+      <span>BUILDS ON<b>MM 01–05 · RL 04</b></span>
+      <span>INSTRUMENTS<b>ACTION TOKENS · SIM-TO-REAL · IL vs RL</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">6.1</span>From perception to action</a>
+      <a href="#s2"><span class="n">6.2</span>Vision-language-action models</a>
+      <a href="#s3"><span class="n">6.3</span>Sim-to-real transfer</a>
+      <a href="#s4"><span class="n">6.4</span>Imitation &amp; RL for control</a>
+      <a href="#s5"><span class="n">6.5</span>The data bottleneck</a>
+      <a href="#s6"><span class="n">6.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 6.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">6.1</span><h2>From perception to action</h2></div>
+        <p>A language model and a robot policy are the same shape of object. Both consume a context and emit the next symbol — for the LLM a word piece, for the robot a motor command. The difference is the consequence: the LLM's mistake costs a token, the robot's mistake costs a dropped cup or a stripped gear. Formally, control is a <strong>partially observed Markov decision process</strong>. At each step the agent receives an observation \(o_t\) (camera frames, joint encoders, an instruction), maintains a belief, and emits an action \(a_t\); the environment transitions and pays a reward.</p>
+
+        <div class="eq"><span class="eq-tag">EQ MM6.1 — THE CONTROL POLICY</span>
+        $$ a_t \sim \pi_\theta\!\left(a_t \mid o_{\le t},\, \ell\right), \qquad o_t = (\text{image}_t,\ \text{proprioception}_t), \quad \ell = \text{language instruction} $$
+        <div class="eq-note">A policy \(\pi_\theta\) maps the history of observations \(o_{\le t}\) and a goal \(\ell\) to a distribution over actions. Swap "next token" for "next action" and a decoder-only transformer <b>is</b> a policy — that single substitution is the whole bet of embodied foundation models. The action \(a_t\) is usually a low-dimensional continuous vector: end-effector pose deltas, gripper open/close, sometimes joint torques.</div>
+        </div>
+
+        <p>Three properties make action harder than text and force everything that follows.</p>
+        <ul>
+          <li><strong>The output is continuous.</strong> A 7-DoF arm command is seven real numbers, not a choice from a fixed vocabulary. To reuse the cross-entropy machinery of an LLM you must <em>discretize</em> the action into tokens (§6.2) — or replace the head with a continuous generator (a diffusion or flow model).</li>
+          <li><strong>Errors compound.</strong> Each action changes the world the next observation is drawn from, so a small per-step mistake drifts the robot into states the policy never trained on. This <em>covariate shift</em> is the central pathology of imitation learning (§6.4).</li>
+          <li><strong>Real data is brutally expensive.</strong> A web crawl yields trillions of text tokens for free; a robot demonstration is a human teleoperating a physical arm in real time. The entire field is organized around this scarcity (§6.5).</li>
+        </ul>
+
+        <p class="note">The reward, transition, and value machinery underneath EQ MM6.1 is the subject of the Reinforcement Learning volume; here we treat the MDP as given and focus on what is unique to embodiment — turning a perception model into something that moves.</p>
+      </section>
+
+      <!-- ====================== 6.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">6.2</span><h2>Vision-language-action models (RT-2, π0)</h2></div>
+        <p>A <strong>vision-language-action (VLA)</strong> model is a vision-language model whose output space has been extended to include motor commands. The provocation of <strong>RT-2</strong> (Brohan et al., 2023) was to make that extension almost free: take a VLM already trained on web images and text, and represent each robot action as a short string of <em>tokens drawn from the model's existing vocabulary</em>. The model then generates an action the exact way it generates a sentence — autoregressively, one token at a time — and is co-trained on web vision-language data and robot trajectories together, so internet-scale semantics leak into the robot's behavior.</p>
+
+        <h3>Action tokenization</h3>
+        <p>The bridge from continuous control to a token model is <strong>discretization</strong>. Clip each action dimension to a working range \([\,a_{\min}, a_{\max}]\), split that range into \(B\) uniform bins, and map a value to the index of its bin. RT-2 used \(B = 256\) bins per dimension, repurposing 256 of the language model's least-used token ids as the "action vocabulary".</p>
+
+        <div class="eq"><span class="eq-tag">EQ MM6.2 — ACTION TOKENIZATION (UNIFORM BINNING)</span>
+        $$ \Delta = \frac{a_{\max} - a_{\min}}{B}, \qquad t = \mathrm{clip}\!\left(\left\lfloor \frac{a - a_{\min}}{\Delta} \right\rfloor,\ 0,\ B-1\right), \qquad \hat{a} = a_{\min} + \left(t + \tfrac{1}{2}\right)\Delta $$
+        <div class="eq-note">Encode a real action \(a\) to a discrete token \(t \in \{0,\dots,B-1\}\); decode by returning the <b>center</b> of bin \(t\). The round-trip is lossy: the worst-case error is half a bin, \(|a - \hat a| \le \Delta/2\). With \(B = 256\) over a normalized range \([-1, 1]\), \(\Delta = 2/256\) and the maximum error is \(\Delta/2 = 1/256 \approx 0.0039\) — under one part in 256, fine for end-effector deltas but the reason fine-grained policies later moved to continuous heads.</div>
+        </div>
+
+        <div class="exercise" data-answer="0.00390625" data-tol="0.02" data-hint="Bin width is (a_max - a_min)/B; the worst-case quantization error is half a bin.">
+          <div class="ex-q">An action dimension is normalized to \([-1, 1]\) and tokenized with \(B = 256\) uniform bins (EQ MM6.2). What is the worst-case quantization error \(\Delta/2\) (the largest possible \(|a - \hat a|\))?</div>
+          <div class="ex-reveal-src">Bin width \(\Delta = \dfrac{a_{\max}-a_{\min}}{B} = \dfrac{1-(-1)}{256} = \dfrac{2}{256} = 0.0078125\). Decoding to the bin center, the worst case is half a bin: \(\Delta/2 = 0.0078125 / 2 = \) <b>0.00390625</b>. That is \(1/256\) of full range — the resolution ceiling a 256-bin tokenizer imposes on every action dimension.</div>
+        </div>
+
+        <div class="exercise" data-answer="true" data-tol="0" data-hint="RT-2 reuses a VLM's vocabulary to emit actions as tokens, decoded autoregressively like text.">
+          <div class="ex-q">True or false: RT-2 outputs robot actions as tokens emitted by a vision-language model — the same model, the same autoregressive decoding, with a slice of the vocabulary repurposed as discretized action bins. (Answer <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">This is RT-2's defining design. Each action dimension is binned (EQ MM6.2) into one of 256 levels, those levels are mapped onto 256 existing token ids, and the VLM generates an action string token-by-token exactly as it would generate a caption. Co-training on web vision-language data and robot trajectories lets internet semantics transfer to control. The statement is <b>true</b>.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># EQ MM6.2: discretize a continuous action into tokens, then round-trip back
+import numpy as np
+rng = np.random.default_rng(0)
+
+a_min, a_max, B = -1.0, 1.0, 256          # range and number of bins (RT-2 used 256)
+delta = (a_max - a_min) / B               # bin width
+
+def encode(a):                            # continuous -> token id
+    a = np.clip(a, a_min, a_max)
+    return np.clip(((a - a_min) / delta).astype(int), 0, B - 1)
+
+def decode(t):                            # token id -> bin CENTER
+    return a_min + (t + 0.5) * delta
+
+a = rng.uniform(a_min, a_max, 7)          # a 7-DoF end-effector command
+tok = encode(a)
+a_hat = decode(tok)
+err = np.abs(a - a_hat)
+
+np.set_printoptions(precision=4, suppress=True)
+print("action   :", a)
+print("tokens   :", tok)                  # the 7 ints RT-2 would emit
+print("decoded  :", a_hat)
+print(f"max error: {err.max():.6f}   (theory bound delta/2 = {delta/2:.6f})")
+print("within bound:", bool(err.max() &lt;= delta / 2 + 1e-12))</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="embodied-tok" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT MM6.1 — ACTION-TOKENIZATION EXPLAINER</span><span class="w-sub">CONTINUOUS → TOKEN → DECODED · EQ MM6.2</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>ACTION VALUE a <output id="embodied-tok-a-out">0.37</output></label><input type="range" id="embodied-tok-a" min="-1" max="1" step="0.001" value="0.37"/></div>
+              <div class="ctl"><label>BINS B <output id="embodied-tok-b-out">256</output></label><input type="range" id="embodied-tok-b" min="2" max="8" step="1" value="8"/></div>
+            </div>
+            <canvas class="w-canvas" id="embodied-tok-canvas" height="220"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">BIN WIDTH Δ</div><div class="r-value" id="embodied-tok-delta">—</div></div>
+              <div class="readout acc"><div class="r-label">TOKEN ID t</div><div class="r-value" id="embodied-tok-id">—</div></div>
+              <div class="readout"><div class="r-label">DECODED â (CENTER)</div><div class="r-value" id="embodied-tok-dec">—</div></div>
+              <div class="readout acc"><div class="r-label">QUANT ERROR |a−â|</div><div class="r-value" id="embodied-tok-err">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The bar is one action dimension's range \([-1,1]\) sliced into \(B\) bins; the white tick is your continuous value \(a\), the mint cell is the bin it lands in, and the mint dot is the decoded center \(\hat a\). Drop \(B\) to 4 and the error gets coarse and visible; push \(B\) toward 256 (the slider is in powers of two) and the decoded value snaps onto \(a\) — the round-trip error halves every time you double the bins, the exact \(\Delta/2\) law of EQ MM6.2.</div>
+        </div>
+
+        <h3>π0 and the move to continuous actions</h3>
+        <p><strong>π0</strong> (Black et al., 2024) keeps the VLM backbone but rejects discretization for fine manipulation. Instead of emitting binned tokens, it attaches a separate <em>action expert</em> that produces continuous action <em>chunks</em> — short horizons of future actions — using a <strong>flow-matching</strong> objective borrowed from modern image and video generators. The policy learns a velocity field that transports noise to an action sequence; sampling integrates that field. This buys two things discretization cannot: smooth, high-frequency control (π0 runs up to ~50 Hz) and the ability to commit to a coherent multi-step motion rather than re-deciding every frame.</p>
+
+        <div class="eq"><span class="eq-tag">EQ MM6.3 — FLOW-MATCHING ACTION HEAD (π0-STYLE)</span>
+        $$ \mathcal{L}(\theta) = \mathbb{E}_{\tau,\, a_0,\, a_1}\Big[\big\lVert\, v_\theta(a_\tau,\, o,\, \ell;\, \tau) - (a_1 - a_0)\,\big\rVert^2\Big], \qquad a_\tau = (1-\tau)\,a_0 + \tau\, a_1 $$
+        <div class="eq-note">\(a_1\) is the expert action chunk, \(a_0 \sim \mathcal{N}(0, I)\) is noise, and \(a_\tau\) interpolates between them at flow time \(\tau \in [0,1]\). The network \(v_\theta\) is trained to predict the constant velocity \((a_1 - a_0)\) that carries noise to data; at inference you integrate \(v_\theta\) from \(a_0\) to recover a continuous action. <b>No bins, no quantization floor</b> — the cost is a small iterative sampler instead of a single argmax. This is the same conditional-flow-matching objective used for image generation, now conditioned on pixels and an instruction.</div>
+        </div>
+
+        <p class="note"><strong>The honest caveat.</strong> Whether tokenized (RT-2, OpenVLA) or continuous (π0, diffusion policies), VLAs in 2026 are real but narrow: they generalize impressively across <em>objects and phrasing</em> they were broadly exposed to, yet remain brittle to genuinely novel scenes, long horizons, and lighting they have not seen. The benchmarks are not yet standardized, success rates are reported on small task suites, and "zero-shot" claims deserve scrutiny — the field's own researchers say so.</p>
+      </section>
+
+      <!-- ====================== 6.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">6.3</span><h2>Sim-to-real transfer</h2></div>
+        <p>If real demonstrations are scarce (§6.5), simulation is the obvious escape: a physics engine can generate millions of trajectories overnight, with perfect labels and no hardware to break. The catch has a name — the <strong>reality gap</strong>. A simulator is an approximation: contact dynamics, friction, sensor noise, latency, lighting, and the exact mass of every object differ from the real world. A policy that overfits to the simulator's quirks excels in sim and fails on the robot.</p>
+
+        <div class="exercise" data-answer="true" data-tol="0" data-hint="The reality gap is the mismatch between simulator and the physical world; sim-to-real methods exist to close it.">
+          <div class="ex-q">True or false: sim-to-real transfer addresses the <em>reality gap</em> — the mismatch between a simulator's dynamics, sensing, and appearance and those of the physical world. (Answer <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">Yes. Sim-to-real is the discipline of training a policy in simulation and deploying it on hardware <em>despite</em> the reality gap. Every technique below — domain randomization, system identification, real-world fine-tuning — is a way to shrink or paper over that mismatch. The statement is <b>true</b>.</div>
+        </div>
+
+        <p>The dominant fix is <strong>domain randomization</strong>: rather than try to match reality precisely, randomize the simulator's parameters — masses, frictions, textures, lighting, sensor delays, camera pose — so widely that the real world looks like just another sample from the training distribution. If the policy is robust across thousands of simulated "physics", it has no reason to depend on the specific physics it will eventually meet.</p>
+
+        <div class="eq"><span class="eq-tag">EQ MM6.4 — DOMAIN RANDOMIZATION OBJECTIVE</span>
+        $$ \theta^\star = \arg\max_\theta\ \mathbb{E}_{\,\xi \sim p(\xi)}\Big[\, \mathbb{E}_{\tau \sim \pi_\theta,\, \xi}\big[\,R(\tau)\,\big] \Big], \qquad \xi = (\text{mass},\ \text{friction},\ \text{lighting},\ \text{latency},\ \dots) $$
+        <div class="eq-note">\(\xi\) is a vector of simulator parameters drawn from a chosen distribution \(p(\xi)\); the policy maximizes expected return <b>averaged over the whole family of simulators</b>, not one. The wager: if \(p(\xi)\) is wide enough to <em>contain</em> reality, the reality gap collapses into ordinary in-distribution generalization. Too narrow and the policy still overfits; too wide and it learns an over-conservative average policy that is mediocre everywhere — randomization range is the central knob.</div>
+        </div>
+
+        <p>Two complements sharpen this. <strong>System identification</strong> measures the real robot to center \(p(\xi)\) on the truth, narrowing the randomization to a useful band. <strong>Real-world fine-tuning</strong> takes the sim-trained policy and adapts it on a small batch of physical episodes — often the highest-leverage hour of the whole pipeline. The trade-off is a U-shaped curve in randomization width: too little and sim performance does not transfer; too much and the policy sacrifices competence to robustness.</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Sim-to-real toy: a sim-tuned gain vs a domain-randomized one, on a shifted "real" plant
+import numpy as np
+rng = np.random.default_rng(1)
+
+# A 1-D plant: optimal control gain depends on an unknown friction parameter mu.
+# Cost of using gain g on a plant with friction mu (minimized when g == mu):
+def cost(g, mu): return (g - mu) ** 2 + 0.05
+
+mu_sim = 1.0                                   # the simulator's (wrong) friction
+g_naive = mu_sim                               # policy that overfits the single sim
+
+# Domain randomization: train over a band of frictions, keep the gain that is best ON AVERAGE
+band = rng.uniform(0.6, 1.4, 400)              # p(xi): randomized frictions
+grid = np.linspace(0.5, 1.5, 101)
+avg_cost = np.array([cost(g, band).mean() for g in grid])
+g_dr = grid[avg_cost.argmin()]                 # the robust gain
+
+# "Reality" is shifted away from the nominal sim:
+mu_real = 1.3
+print(f"naive  (sim-only) gain {g_naive:.2f} -> real cost {cost(g_naive, mu_real):.4f}")
+print(f"domain-randomized gain {g_dr:.2f} -> real cost {cost(g_dr,    mu_real):.4f}")
+print("randomization survives the reality gap:",
+      cost(g_dr, mu_real) &lt; cost(g_naive, mu_real))</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="embodied-s2r" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT MM6.2 — SIM-TO-REAL GAP VISUALIZER</span><span class="w-sub">RANDOMIZATION WIDTH vs REAL-WORLD RETURN · EQ MM6.4</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>RANDOMIZATION WIDTH σ <output id="embodied-s2r-w-out">0.40</output></label><input type="range" id="embodied-s2r-w" min="0" max="1" step="0.02" value="0.4"/></div>
+              <div class="ctl"><label>REALITY GAP (sim → real shift) <output id="embodied-s2r-g-out">0.30</output></label><input type="range" id="embodied-s2r-g" min="0" max="0.8" step="0.02" value="0.3"/></div>
+            </div>
+            <canvas class="w-canvas" id="embodied-s2r-canvas" height="240"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">SIM RETURN</div><div class="r-value" id="embodied-s2r-sim">—</div></div>
+              <div class="readout acc"><div class="r-label">REAL RETURN</div><div class="r-value" id="embodied-s2r-real">—</div></div>
+              <div class="readout"><div class="r-label">SIM−REAL DROP</div><div class="r-value" id="embodied-s2r-drop">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The curves are real-world return as a function of randomization width, for your chosen reality gap. With <b>zero</b> width the policy is a sim specialist: high sim return, but it falls off a cliff on the shifted real plant. Widen randomization and real return climbs to a peak, then declines as the policy grows over-conservative — the U-shaped curve of EQ MM6.4. Increase the reality gap and the whole real-return curve sinks and its optimum shifts to <em>wider</em> randomization: the further reality is from your nominal sim, the more you must randomize to cover it.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 6.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">6.4</span><h2>Imitation &amp; RL for control</h2></div>
+        <p>Two recipes turn data into a policy, and they sit at opposite ends of a sample-efficiency / safety trade-off.</p>
+
+        <p><strong>Imitation learning (behavior cloning).</strong> Collect expert demonstrations \(\{(o_i, a_i)\}\) and fit the policy by supervised learning — minimize the discrepancy between the policy's action and the expert's on the same observations. It is exactly LLM pretraining with actions for tokens: stable, sample-efficient, and the workhorse behind RT-2, π0, and ALOHA's bimanual policies.</p>
+
+        <div class="eq"><span class="eq-tag">EQ MM6.5 — BEHAVIOR CLONING</span>
+        $$ \theta^\star = \arg\min_\theta\ \frac{1}{N}\sum_{i=1}^{N} \big\lVert\, \pi_\theta(o_i) - a_i \,\big\rVert^2 \qquad\text{(continuous actions; cross-entropy for tokenized)} $$
+        <div class="eq-note">Pure supervised regression of expert actions onto observations. Its fatal flaw is <b>covariate shift</b>: the policy is trained only on states the <em>expert</em> visited, but at test time its own small errors push it into states it never saw, where errors are larger still — a drift that compounds quadratically in the horizon. <b>DAgger</b> patches this by iteratively querying the expert on states the <em>learner</em> actually reaches; action chunking (ACT, π0) reduces the number of decision points and so the number of chances to drift.</div>
+        </div>
+
+        <div class="exercise" data-answer="0.77" data-tol="0.02" data-hint="No-intercept least squares: w = Σ(o·a) / Σ(o²).">
+          <div class="ex-q">Behavior-clone a 1-D policy \(a = w\,o\) (no intercept) on four expert pairs \((o,a)\): \((1,1),\ (2,2),\ (3,2),\ (4,3)\). The least-squares slope is \(w = \dfrac{\sum o_i a_i}{\sum o_i^2}\). Compute \(w\) (round to two decimals).</div>
+          <div class="ex-reveal-src">\(\sum o_i a_i = 1\!\cdot\!1 + 2\!\cdot\!2 + 3\!\cdot\!2 + 4\!\cdot\!3 = 1 + 4 + 6 + 12 = 23\). \(\sum o_i^2 = 1 + 4 + 9 + 16 = 30\). So \(w = \dfrac{23}{30} = 0.7\overline{6} \approx\) <b>0.77</b> — the cloned policy's slope, recovered from demonstrations alone (EQ MM6.5). The pycell below fits the same kind of line and prints its imitation error.</div>
+        </div>
+
+        <p><strong>Reinforcement learning.</strong> When you have a reward instead of (or in addition to) demonstrations, RL lets the policy improve <em>past</em> the demonstrator by trial and error — the only route to genuinely superhuman control. The price is sample efficiency: RL can need orders of magnitude more interaction than imitation, and on physical hardware every interaction is slow, costly, and potentially destructive. The pragmatic stack is therefore <em>imitation first, RL second</em>: behavior-clone a competent base policy from demonstrations, then fine-tune with RL (often in simulation, then transferred per §6.3) to squeeze out the last reliability.</p>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Behavior cloning on a toy trajectory: fit a linear policy, print imitation error (EQ MM6.5)
+import numpy as np
+rng = np.random.default_rng(2)
+
+# An "expert" policy is roughly linear in the observation, with a little noise.
+N = 60
+o = np.linspace(-2, 2, N)                       # 1-D observation along a trajectory
+expert = 0.8 * o + 0.3                          # the true expert action
+a = expert + rng.normal(0, 0.05, N)             # noisy demonstrations
+
+# Behavior cloning = least-squares fit of pi(o) = w*o + b to the demos.
+X = np.column_stack([o, np.ones(N)])            # design matrix [o, 1]
+w, b = np.linalg.lstsq(X, a, rcond=None)[0]     # closed-form BC solution
+pred = w * o + b
+
+imit_err = np.sqrt(np.mean((pred - a) ** 2))    # imitation (training) error, RMSE
+print(f"fitted policy : a_hat = {w:.3f} * o + {b:.3f}")
+print(f"true expert   : a     = 0.800 * o + 0.300")
+print(f"imitation error (RMSE vs demos): {imit_err:.4f}")
+print("BC recovers the expert's slope and intercept from demonstrations alone.")
+plot_scatter(o, a)                              # demos vs the fitted line's domain</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="embodied-ilrl" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT MM6.3 — IMITATION vs RL SAMPLE EFFICIENCY</span><span class="w-sub">SUCCESS RATE vs EPISODES · DETERMINISTIC</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>DEMONSTRATIONS (for IL / IL+RL warm start) <output id="embodied-ilrl-d-out">40</output></label><input type="range" id="embodied-ilrl-d" min="0" max="120" step="5" value="40"/></div>
+              <div class="ctl"><label>RL EXPLORATION BUDGET <output id="embodied-ilrl-e-out">600</output> ep</label><input type="range" id="embodied-ilrl-e" min="50" max="2000" step="50" value="600"/></div>
+            </div>
+            <canvas class="w-canvas" id="embodied-ilrl-canvas" height="260"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">IMITATION (CEILING)</div><div class="r-value" id="embodied-ilrl-il">—</div></div>
+              <div class="readout"><div class="r-label">PURE RL @ BUDGET</div><div class="r-value" id="embodied-ilrl-rl">—</div></div>
+              <div class="readout acc"><div class="r-label">IL→RL @ BUDGET</div><div class="r-value" id="embodied-ilrl-mix">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Three learning curves on the same task. <span style="color:var(--blue);">Imitation</span> jumps to a high success rate almost immediately but plateaus at the demonstrator's ceiling — it cannot exceed its teacher. <span style="color:var(--secondary);">Pure RL</span> starts at zero and crawls up the sample-efficiency curve, eventually surpassing imitation but only after a large exploration budget. <span style="color:var(--accent);">IL→RL</span> behavior-clones first, then fine-tunes — inheriting imitation's fast start and RL's higher ceiling. Add more demonstrations and both IL curves rise; cut the RL budget and pure RL never catches up. This is exactly why production robotics warm-starts RL with imitation.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 6.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">6.5</span><h2>The data bottleneck in robotics</h2></div>
+        <p>Every chapter in this volume has ridden the same wave: a modality unlocks once enough paired data exists. Text had the web; images had alt-text and captions; video had YouTube. <strong>Robotics has no such corpus.</strong> The internet records what the world looks like, never the torques and grasps that act on it. A robot demonstration must be produced in real time, usually by a human teleoperating physical hardware — there is no equivalent of "scrape it for free".</p>
+
+        <p>The scale of the gap is stark. Frontier language models train on the order of \(10^{13}\) tokens. The largest open robot dataset to date, <strong>Open X-Embodiment</strong> (2023), pooled the field's efforts into roughly one million trajectories across 22 robot embodiments — and that pooling was itself the headline contribution. Counted in the action-token currency of §6.2, all of robotics' shared data is many orders of magnitude smaller than a single LLM's pretraining set.</p>
+
+        <table class="data">
+          <thead><tr><th>Data source</th><th>How it scales</th><th>Cost per unit</th><th>Catch</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Teleoperation</strong></td><td class="m">human-hours</td><td>minutes of human time per demo</td><td>Gold-standard quality; does not scale to internet size.</td></tr>
+            <tr><td><strong>Simulation</strong></td><td class="m">compute</td><td>cheap, parallel, perfectly labeled</td><td>The reality gap (§6.3) — must be bridged, never free.</td></tr>
+            <tr><td><strong>Cross-embodiment pooling</strong></td><td class="m">community</td><td>amortizes everyone's collection</td><td>Different robots, sensors, action spaces; hard to unify (Open X-Embodiment).</td></tr>
+            <tr><td><strong>Human / web video</strong></td><td class="m">abundant</td><td>billions of hours exist</td><td>No action labels and an embodiment mismatch — actions must be <em>inferred</em>.</td></tr>
+            <tr><td><strong>Web VLM pretraining</strong></td><td class="m">already done</td><td>free semantic prior</td><td>Carries no motor knowledge; only the perception/language half transfers.</td></tr>
+          </tbody>
+        </table>
+
+        <p>The strategies that define 2026-era robotics are all responses to this scarcity. <strong>Co-training</strong> (RT-2, π0) leans on web VLM data so the robot data only has to teach <em>motor</em> skills, not vision and language from scratch. <strong>Cross-embodiment</strong> training pools data across robot types so a policy learns from arms it will never run on. <strong>Learning from human video</strong> tries to recover the missing action labels from unlabeled footage. And <strong>simulation plus sim-to-real</strong> trades the data problem for a transfer problem. None of these has produced a robotics "GPT-3 moment", and whether scaling alone will — or whether embodiment needs a different ingredient — is the field's central open question. The honest summary: the architecture caught up to language models; the data did not.</p>
+
+        <div class="exercise" data-answer="100000000" data-tol="0.02" data-hint="Trajectory-steps = trajectories × steps-per-trajectory = 1e6 × 100.">
+          <div class="ex-q">A robot dataset has \(10^6\) trajectories, each \(100\) timesteps long. How many <em>trajectory-steps</em> of supervision is that — i.e. \(10^6 \times 100\)?</div>
+          <div class="ex-reveal-src">\(10^6 \times 100 = 10^{8} = \) <b>100000000</b> decision steps. Even if each step is a \(100\)-token action chunk, that is only \(10^{10}\) action tokens — roughly <em>a thousand times smaller</em> than a frontier LLM's \(\sim\!10^{13}\) text tokens. The data gap, not the model, is the bottleneck.</div>
+        </div>
+
+        <div class="callout warn">
+          <span class="co-icon">CONTESTED</span>
+          <p><strong>Will scaling fix robotics?</strong> One camp argues VLAs are pre-GPT-3 and only need a robotics-scale data engine; another argues that action is qualitatively harder than perception — closed-loop, safety-critical, embodiment-specific — and that no amount of demonstration data substitutes for better world models, on-robot learning, or new architectures. As of 2026 the question is genuinely open; treat confident predictions in either direction with suspicion.</p>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>This volume built models from the modalities up; the next asks who gets to build them.</strong> Open Models, Chapter 01: open-weight versus closed-API foundation models — the licenses, the economics, and what "open" actually means when the weights ship but the data and training code do not.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 6.R References ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">6.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://arxiv.org/abs/2307.15818" target="_blank" rel="noopener">Brohan, A., Brown, N., Carbajal, J., Chebotar, Y., et al. (2023). <span class="ref-venue">RT-2: Vision-Language-Action Models Transfer Web Knowledge to Robotic Control</span>.</a> <span class="ref-meta">Google DeepMind — action tokenization over a VLM vocabulary and web/robot co-training (§6.2, EQ MM6.2).</span></li>
+          <li><a href="https://arxiv.org/abs/2410.24164" target="_blank" rel="noopener">Black, K., Brown, N., Driess, D., Esmail, A., et al. (2024). <span class="ref-venue">π0: A Vision-Language-Action Flow Model for General Robot Control</span>.</a> <span class="ref-meta">Physical Intelligence — flow-matching continuous action chunks at high frequency (§6.2, EQ MM6.3).</span></li>
+          <li><a href="https://arxiv.org/abs/2304.13705" target="_blank" rel="noopener">Zhao, T. Z., Kumar, V., Levine, S. &amp; Finn, C. (2023). <span class="ref-venue">Learning Fine-Grained Bimanual Manipulation with Low-Cost Hardware</span>.</a> <span class="ref-meta">RSS 2023 — ACT (action chunking with transformers) and the ALOHA teleoperation platform (§6.4).</span></li>
+          <li><a href="https://arxiv.org/abs/2406.09246" target="_blank" rel="noopener">Kim, M. J., Pertsch, K., Karamcheti, S., Xiao, T., et al. (2024). <span class="ref-venue">OpenVLA: An Open-Source Vision-Language-Action Model</span>.</a> <span class="ref-meta">CoRL 2024 — an open-weight tokenized VLA, the reproducible counterpart to RT-2 (§6.2).</span></li>
+          <li><a href="https://arxiv.org/abs/2310.08864" target="_blank" rel="noopener">Open X-Embodiment Collaboration (2023). <span class="ref-venue">Open X-Embodiment: Robotic Learning Datasets and RT-X Models</span>.</a> <span class="ref-meta">ICRA 2024 — pooling ~1M trajectories across 22 embodiments; the cross-embodiment data effort (§6.5).</span></li>
+          <li><a href="https://arxiv.org/abs/1703.06907" target="_blank" rel="noopener">Tobin, J., Fong, R., Ray, A., Schneider, J., Zaremba, W. &amp; Abbeel, P. (2017). <span class="ref-venue">Domain Randomization for Transferring Deep Neural Networks from Simulation to the Real World</span>.</a> <span class="ref-meta">IROS 2017 — the foundational sim-to-real randomization technique (§6.3, EQ MM6.4).</span></li>
+          <li><a href="https://arxiv.org/abs/1011.0686" target="_blank" rel="noopener">Ross, S., Gordon, G. &amp; Bagnell, D. (2011). <span class="ref-venue">A Reduction of Imitation Learning and Structured Prediction to No-Regret Online Learning</span>.</a> <span class="ref-meta">AISTATS 2011 — DAgger and the formal account of covariate shift in behavior cloning (§6.4, EQ MM6.5).</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../multimodal/05-world-models.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">05</span> World Models</div></a>
+        <a class="next" href="../openmodels/01-open-vs-closed.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">01</span> Open vs Closed</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — MULTIMODAL · CH 06</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* ============================================================
+   EMBODIED AI & ROBOTICS — chapter instruments
+   Single IIFE, no globals, FM helpers, setTimeout-only motion.
+   ============================================================ */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  /* ---------- INSTRUMENT MM6.1 — Action-tokenization explainer ---------- */
+  (function () {
+    var root = document.getElementById("embodied-tok");
+    if (!root) return;
+    var canvas = document.getElementById("embodied-tok-canvas");
+    var aIn = document.getElementById("embodied-tok-a");
+    var bIn = document.getElementById("embodied-tok-b");
+    var aOut = document.getElementById("embodied-tok-a-out");
+    var bOut = document.getElementById("embodied-tok-b-out");
+    var dW = document.getElementById("embodied-tok-delta");
+    var dId = document.getElementById("embodied-tok-id");
+    var dDec = document.getElementById("embodied-tok-dec");
+    var dErr = document.getElementById("embodied-tok-err");
+    var A_MIN = -1, A_MAX = 1;
+
+    function render() {
+      var a = parseFloat(aIn.value);
+      var B = Math.pow(2, parseInt(bIn.value, 10));   // 4..256, powers of two
+      var delta = (A_MAX - A_MIN) / B;
+      var t = Math.min(B - 1, Math.max(0, Math.floor((a - A_MIN) / delta)));
+      var dec = A_MIN + (t + 0.5) * delta;
+      var err = Math.abs(a - dec);
+
+      aOut.textContent = a.toFixed(2);
+      bOut.textContent = B;
+      dW.textContent = delta.toFixed(4);
+      dId.textContent = t + " / " + (B - 1);
+      dDec.textContent = dec.toFixed(4);
+      dErr.textContent = err.toFixed(4);
+
+      var s = FM.setupCanvas(canvas, 220), ctx = s.ctx, w = s.w, h = s.h;
+      ctx.clearRect(0, 0, w, h);
+      var padL = 16, padR = 16, barW = w - padL - padR;
+      var barY = 70, barH = 46;
+      function px(v) { return padL + (v - A_MIN) / (A_MAX - A_MIN) * barW; }
+
+      ctx.fillStyle = C.MUT; ctx.font = C.MONO;
+      ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+      ctx.fillText("ACTION DIMENSION  [-1, 1]  SPLIT INTO " + B + " BINS", padL, 30);
+
+      /* bins */
+      var i;
+      for (i = 0; i < B; i++) {
+        var x0 = px(A_MIN + i * delta);
+        var x1 = px(A_MIN + (i + 1) * delta);
+        ctx.fillStyle = (i === t) ? "rgba(166,242,204,0.42)" : "rgba(47,50,52,0.5)";
+        ctx.fillRect(x0 + 0.5, barY, (x1 - x0) - 1, barH);
+        if (B <= 64) {
+          ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+          ctx.strokeRect(x0 + 0.5, barY, (x1 - x0) - 1, barH);
+        }
+      }
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(padL, barY, barW, barH);
+
+      /* decoded center (mint dot) */
+      var cx = px(dec);
+      ctx.fillStyle = C.MINT;
+      ctx.beginPath(); ctx.arc(cx, barY + barH / 2, 4, 0, 2 * Math.PI); ctx.fill();
+
+      /* true value tick (white) */
+      var ax = px(a);
+      ctx.strokeStyle = C.BRIGHT; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(ax, barY - 12); ctx.lineTo(ax, barY + barH + 12); ctx.stroke();
+      ctx.fillStyle = C.BRIGHT; ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+      ctx.fillText("a = " + a.toFixed(2), ax, barY - 16);
+
+      /* labels under bar */
+      ctx.fillStyle = C.MUT; ctx.textAlign = "center"; ctx.textBaseline = "top";
+      ctx.fillText("-1", padL, barY + barH + 8);
+      ctx.fillText("0", px(0), barY + barH + 8);
+      ctx.fillText("+1", padL + barW, barY + barH + 8);
+      ctx.fillStyle = C.MINT; ctx.textAlign = "center";
+      ctx.fillText("decoded â = " + dec.toFixed(3) + "   (token " + t + ")", w / 2, barY + barH + 28);
+    }
+
+    aIn.addEventListener("input", render);
+    bIn.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ---------- INSTRUMENT MM6.2 — Sim-to-real gap visualizer ---------- */
+  (function () {
+    var root = document.getElementById("embodied-s2r");
+    if (!root) return;
+    var canvas = document.getElementById("embodied-s2r-canvas");
+    var wIn = document.getElementById("embodied-s2r-w");
+    var gIn = document.getElementById("embodied-s2r-g");
+    var wOut = document.getElementById("embodied-s2r-w-out");
+    var gOut = document.getElementById("embodied-s2r-g-out");
+    var simOut = document.getElementById("embodied-s2r-sim");
+    var realOut = document.getElementById("embodied-s2r-real");
+    var dropOut = document.getElementById("embodied-s2r-drop");
+
+    /* Return models (all in [0,1]). sigma = randomization width, gap = reality shift.
+       SIM return: a wide policy spends capacity on robustness -> slightly lower in-sim.
+       REAL return: needs sigma >= gap to "cover" reality, but over-wide -> conservative.
+       This is a deterministic toy with a U-shaped real curve whose optimum tracks gap. */
+    function simReturn(sigma) {
+      return 0.97 - 0.22 * sigma * sigma;                 // gently decreasing in width
+    }
+    function realReturn(sigma, gap) {
+      var cover = 1 / (1 + Math.exp(-12 * (sigma - gap)));  // need width to cover the gap
+      var conservatism = 0.30 * sigma * sigma;              // over-wide -> average policy
+      var base = 0.97 - 0.22 * sigma * sigma;
+      return Math.max(0, base * cover - conservatism);
+    }
+
+    function render() {
+      var sigma = parseFloat(wIn.value);
+      var gap = parseFloat(gIn.value);
+      wOut.textContent = sigma.toFixed(2);
+      gOut.textContent = gap.toFixed(2);
+
+      var sim = simReturn(sigma);
+      var real = realReturn(sigma, gap);
+      simOut.textContent = (sim * 100).toFixed(0) + "%";
+      realOut.textContent = (real * 100).toFixed(0) + "%";
+      dropOut.textContent = ((sim - real) * 100).toFixed(0) + " pts";
+
+      var s = FM.setupCanvas(canvas, 240), ctx = s.ctx, w = s.w, h = s.h;
+      ctx.clearRect(0, 0, w, h);
+      var padL = 40, padR = 16, padT = 16, padB = 30;
+      var gx0 = padL, gx1 = w - padR, gy0 = h - padB, gy1 = padT;
+      function X(v) { return gx0 + v * (gx1 - gx0); }            // v in [0,1] = sigma
+      function Y(r) { return gy0 - r * (gy0 - gy1); }            // r in [0,1] = return
+
+      /* axes */
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(gx0, gy1); ctx.lineTo(gx0, gy0); ctx.lineTo(gx1, gy0); ctx.stroke();
+      ctx.fillStyle = C.MUT; ctx.font = C.MONO; ctx.textAlign = "center"; ctx.textBaseline = "top";
+      ctx.fillText("RANDOMIZATION WIDTH σ →", (gx0 + gx1) / 2, gy0 + 10);
+      ctx.save(); ctx.translate(12, (gy0 + gy1) / 2); ctx.rotate(-Math.PI / 2);
+      ctx.textAlign = "center"; ctx.textBaseline = "top"; ctx.fillText("RETURN →", 0, 0); ctx.restore();
+
+      /* sim curve (muted dashed) and real curve (mint) */
+      function curve(fn, stroke, dash) {
+        ctx.strokeStyle = stroke; ctx.lineWidth = 2;
+        ctx.setLineDash(dash || []); ctx.beginPath();
+        var k;
+        for (k = 0; k <= 100; k++) {
+          var sv = k / 100;
+          var xx = X(sv), yy = Y(Math.max(0, Math.min(1, fn(sv))));
+          if (k === 0) ctx.moveTo(xx, yy); else ctx.lineTo(xx, yy);
+        }
+        ctx.stroke(); ctx.setLineDash([]);
+      }
+      curve(function (sv) { return simReturn(sv); }, "rgba(155,155,155,0.55)", [5, 4]);
+      curve(function (sv) { return realReturn(sv, gap); }, C.MINT);
+
+      /* marker at current sigma on real curve */
+      var mx = X(sigma), my = Y(Math.max(0, Math.min(1, real)));
+      ctx.fillStyle = C.BRIGHT;
+      ctx.beginPath(); ctx.arc(mx, my, 4, 0, 2 * Math.PI); ctx.fill();
+      ctx.strokeStyle = "rgba(255,255,255,0.25)"; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+      ctx.beginPath(); ctx.moveTo(mx, gy0); ctx.lineTo(mx, my); ctx.stroke(); ctx.setLineDash([]);
+
+      /* gap marker (where coverage kicks in) */
+      var gx = X(gap);
+      ctx.strokeStyle = "rgba(255,65,54,0.45)"; ctx.lineWidth = 1; ctx.setLineDash([2, 4]);
+      ctx.beginPath(); ctx.moveTo(gx, gy0); ctx.lineTo(gx, gy1); ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillStyle = "rgba(255,65,54,0.8)"; ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+      ctx.fillText("σ = gap", gx, gy1 + 12);
+
+      /* legend */
+      ctx.font = C.MONO; ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillStyle = "rgba(155,155,155,0.85)"; ctx.fillText("— — SIM RETURN", gx1 - 150, gy1 + 2);
+      ctx.fillStyle = C.MINT; ctx.fillText("——— REAL RETURN", gx1 - 150, gy1 + 16);
+    }
+
+    wIn.addEventListener("input", render);
+    gIn.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ---------- INSTRUMENT MM6.3 — Imitation vs RL sample efficiency ---------- */
+  (function () {
+    var root = document.getElementById("embodied-ilrl");
+    if (!root) return;
+    var canvas = document.getElementById("embodied-ilrl-canvas");
+    var dIn = document.getElementById("embodied-ilrl-d");
+    var eIn = document.getElementById("embodied-ilrl-e");
+    var dOut = document.getElementById("embodied-ilrl-d-out");
+    var eOut = document.getElementById("embodied-ilrl-e-out");
+    var ilOut = document.getElementById("embodied-ilrl-il");
+    var rlOut = document.getElementById("embodied-ilrl-rl");
+    var mixOut = document.getElementById("embodied-ilrl-mix");
+    var EP_MAX = 2000;
+
+    /* Success-rate curves over episodes, all in [0,1], deterministic.
+       IL: instant jump to a demo-count-dependent ceiling, flat after.
+       RL: starts ~0, saturating climb to a high ceiling, slow (sample-hungry).
+       IL->RL: starts at IL ceiling, then RL-style climb to the RL ceiling. */
+    function ilCeiling(demos) { return 0.30 + 0.55 * (1 - Math.exp(-demos / 45)); }
+    function rlAt(ep) { return 0.95 * (1 - Math.exp(-ep / 700)); }            // RL ceiling 0.95
+    function mixAt(ep, demos) {
+      var start = ilCeiling(demos);
+      var climb = 0.95 - start;
+      return start + Math.max(0, climb) * (1 - Math.exp(-ep / 450));          // faster than pure RL
+    }
+
+    function render() {
+      var demos = parseInt(dIn.value, 10);
+      var budget = parseInt(eIn.value, 10);
+      dOut.textContent = demos;
+      eOut.textContent = budget;
+
+      var il = ilCeiling(demos);
+      var rl = rlAt(budget);
+      var mix = mixAt(budget, demos);
+      ilOut.textContent = (il * 100).toFixed(0) + "%";
+      rlOut.textContent = (rl * 100).toFixed(0) + "%";
+      mixOut.textContent = (mix * 100).toFixed(0) + "%";
+
+      var s = FM.setupCanvas(canvas, 260), ctx = s.ctx, w = s.w, h = s.h;
+      ctx.clearRect(0, 0, w, h);
+      var padL = 42, padR = 16, padT = 18, padB = 30;
+      var gx0 = padL, gx1 = w - padR, gy0 = h - padB, gy1 = padT;
+      function X(ep) { return gx0 + (ep / EP_MAX) * (gx1 - gx0); }
+      function Y(r) { return gy0 - r * (gy0 - gy1); }
+
+      /* gridlines at 25/50/75/100% */
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      var g;
+      for (g = 0; g <= 4; g++) {
+        var yy = Y(g / 4);
+        ctx.strokeStyle = "rgba(47,50,52,0.7)"; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(gx0, yy); ctx.lineTo(gx1, yy); ctx.stroke();
+        ctx.textAlign = "right"; ctx.textBaseline = "middle";
+        ctx.fillText((g * 25) + "%", gx0 - 6, yy);
+      }
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(gx0, gy1); ctx.lineTo(gx0, gy0); ctx.lineTo(gx1, gy0); ctx.stroke();
+      ctx.textAlign = "center"; ctx.textBaseline = "top";
+      ctx.fillText("EPISODES OF INTERACTION →", (gx0 + gx1) / 2, gy0 + 10);
+
+      function curve(fn, stroke, dash) {
+        ctx.strokeStyle = stroke; ctx.lineWidth = 2; ctx.setLineDash(dash || []);
+        ctx.beginPath();
+        var k;
+        for (k = 0; k <= 120; k++) {
+          var ep = (k / 120) * EP_MAX;
+          var xx = X(ep), yy = Y(Math.max(0, Math.min(1, fn(ep))));
+          if (k === 0) ctx.moveTo(xx, yy); else ctx.lineTo(xx, yy);
+        }
+        ctx.stroke(); ctx.setLineDash([]);
+      }
+      /* IL is flat at its ceiling (no exploration needed) */
+      curve(function () { return il; }, C.BLUE, [6, 4]);
+      curve(function (ep) { return rlAt(ep); }, "rgba(155,155,155,0.8)");
+      curve(function (ep) { return mixAt(ep, demos); }, C.MINT);
+
+      /* budget marker */
+      var bx = X(budget);
+      ctx.strokeStyle = "rgba(255,255,255,0.22)"; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+      ctx.beginPath(); ctx.moveTo(bx, gy0); ctx.lineTo(bx, gy1); ctx.stroke(); ctx.setLineDash([]);
+      function dot(yv, col) {
+        ctx.fillStyle = col;
+        ctx.beginPath(); ctx.arc(bx, Y(Math.max(0, Math.min(1, yv))), 3.5, 0, 2 * Math.PI); ctx.fill();
+      }
+      dot(rl, "rgba(200,200,200,1)");
+      dot(mix, C.MINT);
+      dot(il, C.BLUE);
+
+      /* legend */
+      ctx.textAlign = "left"; ctx.textBaseline = "top"; ctx.font = C.MONO;
+      ctx.fillStyle = C.BLUE; ctx.fillText("- - IMITATION", gx1 - 150, gy1);
+      ctx.fillStyle = "rgba(155,155,155,0.9)"; ctx.fillText("——— PURE RL", gx1 - 150, gy1 + 14);
+      ctx.fillStyle = C.MINT; ctx.fillText("——— IL → RL", gx1 - 150, gy1 + 28);
+    }
+
+    dIn.addEventListener("input", render);
+    eIn.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

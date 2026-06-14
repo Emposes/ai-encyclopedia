@@ -1,0 +1,45 @@
+# Daily feedback-triage routine (Claude Code).
+# Reads new rows from the Supabase `feedback` table, auto-fixes small issues via
+# a PR, and opens issues for larger requests. See scripts/routines/feedback-triage.md.
+#
+# Required repo secrets (Settings → Secrets and variables → Actions):
+#   ANTHROPIC_API_KEY          – Claude API key (platform.claude.com)
+#   SUPABASE_URL               – https://jltpzwzeevbzgwxtievu.supabase.co
+#   SUPABASE_SERVICE_ROLE_KEY  – Supabase service-role key (read/patch feedback)
+# Also requires the Claude GitHub App installed on the repo (claude /install-github-app).
+
+name: Feedback triage (daily)
+
+on:
+  schedule:
+    - cron: "0 7 * * *" # 07:00 UTC daily
+  workflow_dispatch: {} # allow manual runs for testing
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Run feedback-triage routine
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: >
+            Run the routine described in scripts/routines/feedback-triage.md.
+            Read new feedback from Supabase (status=new), auto-fix small issues
+            and open a single PR for them, open GitHub issues for larger requests,
+            update each row's status, and follow every guardrail in that file.
+          claude_args: "--max-turns 25 --allowedTools Bash,Read,Edit,Write,Grep,Glob"
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}

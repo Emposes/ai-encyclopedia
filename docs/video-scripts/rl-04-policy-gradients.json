@@ -1,0 +1,169 @@
+{
+  "concepts": [
+    {
+      "id": "rl-04-policy-gradients-s1",
+      "chapter": "rl/04-policy-gradients",
+      "section": "s1",
+      "title": "Optimizing the policy directly",
+      "eyebrow": "REINFORCEMENT LEARNING",
+      "beats": [
+        {
+          "text": "Value methods fit a value function and read a policy off it; policy gradients optimize the policy itself.",
+          "visual": { "type": "title", "text": "Optimizing the Policy Directly", "sub": "No argmax. The policy is the answer." }
+        },
+        {
+          "text": "Write the policy as a differentiable function and do gradient ascent on the expected discounted return.",
+          "visual": { "type": "equation", "tex": "J(\\theta) = \\mathbb{E}_{\\tau \\sim \\pi_\\theta}\\!\\left[ \\sum_{t=0}^{T} \\gamma^{t} r_{t+1} \\right]", "note": "EQ R4.1 — the objective, viewed as a function of theta" }
+        },
+        {
+          "text": "Continuous actions are the first reason: a network outputs the action directly instead of searching for an argmax.",
+          "visual": { "type": "stat", "value": 50, "label": "joints a robot pose can have", "unit": "DOF" }
+        },
+        {
+          "text": "Stochastic optimal policies are the second reason; rock-paper-scissors has no good deterministic strategy.",
+          "visual": { "type": "bars", "values": [0.333, 0.333, 0.334], "labels": ["ROCK", "PAPER", "SCISSORS"], "highlight": 2 }
+        },
+        {
+          "text": "Smooth improvement is the third: a small parameter change is a small policy change, not a sudden flip.",
+          "visual": { "type": "plot", "ys": [0.5, 0.55, 0.63, 0.71, 0.8, 0.88], "xlabel": "parameter step", "ylabel": "policy behavior", "mark": "smooth" }
+        },
+        {
+          "text": "The cost of directness is that gradient estimates are unbiased but high variance, the chapter's central theme.",
+          "visual": { "type": "lattice" }
+        }
+      ]
+    },
+    {
+      "id": "rl-04-policy-gradients-s2",
+      "chapter": "rl/04-policy-gradients",
+      "section": "s2",
+      "title": "The policy gradient theorem",
+      "eyebrow": "REINFORCEMENT LEARNING",
+      "beats": [
+        {
+          "text": "To ascend the objective we need its gradient, but theta sits inside the distribution we average over.",
+          "visual": { "type": "title", "text": "The Policy Gradient Theorem", "sub": "Differentiating an expectation" }
+        },
+        {
+          "text": "The log-derivative trick turns the gradient of an expectation into an expectation of a gradient.",
+          "visual": { "type": "equation", "tex": "\\nabla_\\theta\\, \\mathbb{E}_{x \\sim p_\\theta}[f(x)] = \\mathbb{E}_{x \\sim p_\\theta}\\!\\big[ f(x)\\, \\nabla_\\theta \\log p_\\theta(x) \\big]", "note": "EQ R4.2 — the single identity behind every policy gradient" }
+        },
+        {
+          "text": "Applied to trajectories, environment transitions differentiate to zero and only the policy terms survive.",
+          "visual": { "type": "equation", "tex": "\\nabla_\\theta J(\\theta) = \\mathbb{E}_{\\tau \\sim \\pi_\\theta}\\!\\left[ \\sum_{t=0}^{T} \\nabla_\\theta \\log \\pi_\\theta(a_t \\mid s_t)\\; \\Psi_t \\right]", "note": "EQ R4.3 — score times a scalar weight Psi" }
+        },
+        {
+          "text": "Each step raises the log-probability of actions that led to high reward and lowers it for low reward.",
+          "visual": { "type": "bars", "values": [0.8, -0.6, 0.5, -0.3], "labels": ["GOOD", "BAD", "GOOD", "BAD"], "highlight": 0 }
+        },
+        {
+          "text": "For a softmax policy at probability 0.6, the score for the sampled action is one minus that probability.",
+          "visual": { "type": "stat", "value": 0.4, "label": "softmax score 1 minus pi(a|s)", "decimals": 1 }
+        },
+        {
+          "text": "The score estimator is unbiased but high variance, since one return multiplies every action's score.",
+          "visual": { "type": "plot", "ys": [0.2, 0.9, -0.4, 1.1, -0.2, 0.7], "xlabel": "rollout", "ylabel": "gradient estimate", "mark": "noisy" }
+        }
+      ]
+    },
+    {
+      "id": "rl-04-policy-gradients-s3",
+      "chapter": "rl/04-policy-gradients",
+      "section": "s3",
+      "title": "REINFORCE & the baseline",
+      "eyebrow": "REINFORCEMENT LEARNING",
+      "beats": [
+        {
+          "text": "REINFORCE is the simplest realization: run an episode, weight each score by the return-to-go.",
+          "visual": { "type": "title", "text": "REINFORCE & the Baseline", "sub": "Monte-Carlo policy gradient, 1992" }
+        },
+        {
+          "text": "Only rewards after an action enter its return-to-go, the causality refinement that already cuts variance.",
+          "visual": { "type": "equation", "tex": "\\theta \\leftarrow \\theta + \\alpha \\sum_{t=0}^{T} \\nabla_\\theta \\log \\pi_\\theta(a_t \\mid s_t)\\; G_t", "note": "EQ R4.4 — REINFORCE update, G_t is the return-to-go" }
+        },
+        {
+          "text": "If every return hovers near plus one hundred, all actions get reinforced and the shared offset dominates.",
+          "visual": { "type": "stat", "value": 100, "label": "shared reward offset drowning the signal" }
+        },
+        {
+          "text": "Subtracting any action-independent baseline leaves the gradient unbiased because the expected score is zero.",
+          "visual": { "type": "equation", "tex": "\\mathbb{E}_{a \\sim \\pi_\\theta}\\!\\big[ \\nabla_\\theta \\log \\pi_\\theta(a \\mid s)\\; b(s) \\big] = b(s)\\, \\nabla_\\theta\\, 1 = 0", "note": "EQ R4.5 — the baseline adds zero in expectation" }
+        },
+        {
+          "text": "Re-centering returns around their typical value keeps the gradient direction but sharply lowers its variance.",
+          "visual": { "type": "bars", "values": [105, 5], "labels": ["RAW E[Psi^2]", "BASELINED"], "highlight": 1 }
+        },
+        {
+          "text": "The best baseline is the state value, turning the weight into the advantage and pointing straight at actor-critic.",
+          "visual": { "type": "equation", "tex": "G_t - V^\\pi(s_t) \\approx A^\\pi(s_t, a_t)", "note": "did this action beat the policy's own average from here?" }
+        }
+      ]
+    },
+    {
+      "id": "rl-04-policy-gradients-s4",
+      "chapter": "rl/04-policy-gradients",
+      "section": "s4",
+      "title": "Actor-critic methods",
+      "eyebrow": "REINFORCEMENT LEARNING",
+      "beats": [
+        {
+          "text": "Actor-critic learns the baseline as its own function, then uses it to bootstrap instead of waiting for the full return.",
+          "visual": { "type": "title", "text": "Actor-Critic Methods", "sub": "Two networks, two jobs" }
+        },
+        {
+          "text": "The actor is the policy that chooses actions; the critic is a value function that judges how good a state is.",
+          "visual": { "type": "bars", "values": [1, 1], "labels": ["ACTOR pi", "CRITIC V"], "highlight": 1 }
+        },
+        {
+          "text": "The TD error compares a better-informed value estimate against the critic's current prediction.",
+          "visual": { "type": "equation", "tex": "\\delta_t = r_{t+1} + \\gamma\\, V_w(s_{t+1}) - V_w(s_t) \\approx A^\\pi(s_t, a_t)", "note": "EQ R4.6 — a low-variance, one-sample advantage estimate" }
+        },
+        {
+          "text": "The same delta drives both updates: it pushes the actor and tells the critic how wrong its estimate was.",
+          "visual": { "type": "equation", "tex": "\\theta \\leftarrow \\theta + \\alpha_\\theta\\, \\delta_t\\, \\nabla_\\theta \\log \\pi_\\theta(a_t \\mid s_t)", "note": "EQ R4.7 — actor update; critic does TD(0) regression on the same delta" }
+        },
+        {
+          "text": "With V of s at 5, V of s-prime at 6, reward 0.5 and gamma 0.9, the TD error works out to 0.9.",
+          "visual": { "type": "stat", "value": 0.9, "label": "TD error delta = r + gamma V(s') - V(s)", "decimals": 1 }
+        },
+        {
+          "text": "REINFORCE has zero bias and maximum variance; one-step actor-critic trades a little bias for much less.",
+          "visual": { "type": "plot", "ys": [10, 6, 4, 3, 2.5, 2], "xlabel": "bootstrap horizon (REINFORCE to one-step)", "ylabel": "gradient variance", "mark": "tradeoff" }
+        }
+      ]
+    },
+    {
+      "id": "rl-04-policy-gradients-s5",
+      "chapter": "rl/04-policy-gradients",
+      "section": "s5",
+      "title": "A2C / A3C",
+      "eyebrow": "REINFORCEMENT LEARNING",
+      "beats": [
+        {
+          "text": "Consecutive samples from one rollout are highly correlated, which inflates gradient variance and destabilizes training.",
+          "visual": { "type": "title", "text": "A2C / A3C", "sub": "Decorrelate by running actors in parallel" }
+        },
+        {
+          "text": "A policy gradient must stay on-policy, so a replay buffer is off-limits; A3C instead runs many parallel actors.",
+          "visual": { "type": "bars", "values": [1, 1, 1, 1, 1, 1], "labels": ["W1", "W2", "W3", "W4", "W5", "W6"], "highlight": 3 }
+        },
+        {
+          "text": "The advantage actor-critic objective uses an n-step advantage plus an entropy bonus to keep exploring.",
+          "visual": { "type": "equation", "tex": "\\nabla_\\theta J = \\mathbb{E}\\!\\big[ \\nabla_\\theta \\log \\pi_\\theta(a_t \\mid s_t)\\; \\hat{A}_t \\big] + \\beta\\, \\nabla_\\theta\\, \\mathcal{H}[\\pi_\\theta]", "note": "EQ R4.8 — the template PPO and IMPALA build on" }
+        },
+        {
+          "text": "The n-step advantage is the bias-variance compromise between REINFORCE at infinity and one-step at n equals one.",
+          "visual": { "type": "equation", "tex": "\\hat{A}_t = \\sum_{i=0}^{n-1}\\gamma^{i} r_{t+i+1} + \\gamma^{n} V_w(s_{t+n}) - V_w(s_t)", "note": "n dials bias against variance explicitly" }
+        },
+        {
+          "text": "A2C found that parallelism, not asynchrony, was the benefit; it batches lockstep environments into one update.",
+          "visual": { "type": "stat", "value": 2016, "label": "year DeepMind shipped A3C", "decimals": 0 }
+        },
+        {
+          "text": "Vanilla policy gradients are step-size sensitive; trust regions and PPO's clipped objective made them robust.",
+          "visual": { "type": "plot", "ys": [0.2, 0.5, 0.8, 0.3, 0.05, 0.04], "xlabel": "step size", "ylabel": "policy performance", "mark": "collapse" }
+        }
+      ]
+    }
+  ]
+}

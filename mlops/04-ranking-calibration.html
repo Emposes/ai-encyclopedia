@@ -1,0 +1,916 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Ranking, Calibration, ROC, KS &amp; PSI — AI Encyclopedia</title>
+<meta name="description" content="A good score ranks risk correctly and means what it says — ROC/AUC and KS judge the ranking, calibration judges the meaning. ROC and PR curves, the KS statistic and Gini, reliability curves and the Brier score, and choosing a cutoff by cost." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+</head>
+<body data-track="mlops" data-level="core">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ MODEL RISK / 04 / RANKING &amp; CALIBRATION</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../mlops/05-stability-drift.html">NEXT: 05 STABILITY &amp; DRIFT →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">MODEL VALIDATION &amp; RISK · CHAPTER 04 / 07</div>
+    <h1>Ranking, Calibration, ROC, KS &amp; PSI</h1>
+    <p class="lede">A scoring model makes two separate promises, and most teams check only the first. One is correct <em>ordering</em>, placing risky cases above safe ones. The other is correct <em>magnitude</em>: a score of 0.30 should default about 30% of the time. <strong>ROC/AUC and KS measure the ranking; calibration measures whether the scores match observed rates.</strong> The two properties are independent, and a model can satisfy one while failing the other.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 28 MIN</b></span>
+      <span>BUILDS ON<b>MLOPS 03 · STATS 04</b></span>
+      <span>INSTRUMENTS<b>ROC/PR · CALIBRATION · COST CUTOFF</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">4.1</span>ROC curves &amp; AUC</a>
+      <a href="#s2"><span class="n">4.2</span>Precision–recall curves</a>
+      <a href="#s3"><span class="n">4.3</span>The KS statistic &amp; Gini</a>
+      <a href="#s4"><span class="n">4.4</span>Calibration &amp; Brier score</a>
+      <a href="#s5"><span class="n">4.5</span>Cutoff selection by cost</a>
+      <a href="#s6"><span class="n">4.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 4.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">4.1</span><h2>ROC curves &amp; AUC</h2></div>
+        <p>A binary classifier that emits a <em>score</em> (a probability, a logit, a credit grade) does not commit to a decision until you pick a threshold. Sweep the threshold from high to low and you trace out the full menu of operating points the model can offer. The <strong>Receiver Operating Characteristic</strong> curve plots two of them against each other: the <strong>true positive rate</strong> (recall, sensitivity) on the vertical axis and the <strong>false positive rate</strong> (1 − specificity) on the horizontal.</p>
+
+        <div class="eq"><span class="eq-tag">EQ V4.1 — THE TWO RATES OF THE ROC AXES</span>
+        $$ \mathrm{TPR}(t) = \frac{\mathrm{TP}(t)}{\mathrm{TP}(t) + \mathrm{FN}(t)}, \qquad \mathrm{FPR}(t) = \frac{\mathrm{FP}(t)}{\mathrm{FP}(t) + \mathrm{TN}(t)} $$
+        <div class="eq-note">At threshold \(t\), everything scoring \(\ge t\) is called positive. TPR is the fraction of true positives the model catches; FPR is the fraction of true negatives it falsely raises. As \(t \to \infty\) you predict nothing positive and sit at \((0,0)\); as \(t \to -\infty\) you predict everything positive and sit at \((1,1)\). <b>Crucially, both rates condition on the true class</b> — so the ROC curve is invariant to class prevalence. A 1%-positive fraud set and a balanced one produce the same ROC for the same ranking, which is exactly why it is the standard summary of a model's <em>discrimination</em>.</div>
+        </div>
+
+        <p>The single-number summary is the <strong>Area Under the ROC Curve</strong> (AUC, or AUROC). Its value is not a coincidence of geometry — it equals a probability:</p>
+
+        <div class="eq"><span class="eq-tag">EQ V4.2 — AUC AS A RANKING PROBABILITY</span>
+        $$ \mathrm{AUC} = \int_0^1 \mathrm{TPR}\,\big(\mathrm{FPR}^{-1}(u)\big)\,du \;=\; \Pr\big(\,s(X^{+}) > s(X^{-})\,\big) + \tfrac{1}{2}\Pr\big(\,s(X^{+}) = s(X^{-})\,\big) $$
+        <div class="eq-note">Draw one random positive and one random negative; AUC is the probability the model scores the positive higher (ties split evenly). This is the Wilcoxon–Mann–Whitney statistic. <b>AUC = 1.0 is a perfect ranker, 0.5 is a coin flip, and below 0.5 means your score is backwards</b> (flip its sign and you are above 0.5 again). Because it asks only "is the positive ranked above the negative?", AUC measures <em>ordering</em> and is completely blind to whether the scores are calibrated probabilities — the gap §4.4 exists to fill.</div>
+        <div class="eq-x"><button class="eq-x-toggle">WORKED EXAMPLE ▾</button><div class="eq-x-body" hidden>
+          <div class="x-step"><span class="x-n">01</span><div>Two positives score \((0.9,\ 0.6)\); three negatives score \((0.7,\ 0.4,\ 0.2)\). Form all \(2\times3 = 6\) positive–negative pairs.</div></div>
+          <div class="x-step"><span class="x-n">02</span><div>Count pairs where the positive outranks the negative: \(0.9\) beats all three (3); \(0.6\) beats \(0.4\) and \(0.2\) but loses to \(0.7\) (2). Total concordant \(= 5\), with no ties.</div></div>
+          <div class="x-step"><span class="x-n">03</span><div>\(\mathrm{AUC} = \dfrac{\text{concordant} + \tfrac12\,\text{ties}}{\text{all pairs}} = \dfrac{5 + 0}{6} = 0.8\overline{3}\).</div></div>
+          <span class="x-result">RESULT: AUC = 5/6 ≈ 0.833 — five of six pairs ranked correctly</span>
+        </div></div>
+        </div>
+
+        <p>Computing AUC by sweeping thresholds is the slow way; the pair-counting identity is the fast and exact way. Sort by score, walk the list, and accumulate how many negatives each positive outranks — \(O(n \log n)\), no integration error.</p>
+
+        <div class="exercise" data-answer="1.0" data-tol="0.001" data-unit="" data-hint="A perfect ranker places every positive above every negative — what fraction of pos/neg pairs is then concordant?">
+          <div class="ex-q">A <b>perfect</b> classifier assigns every positive a higher score than every negative. Using EQ V4.2 (AUC = probability a random positive outranks a random negative), what is its AUC?</div>
+          <div class="ex-reveal-src">If every positive outranks every negative, then for <em>every</em> positive–negative pair the positive wins: the concordant fraction is \(1\) and there are no ties, so \(\mathrm{AUC} = \Pr(s(X^+) > s(X^-)) = \) <b>1.0</b>. The ROC curve hugs the top-left corner, passing through \((0,1)\).</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># ROC points and AUC from scores, two ways: threshold sweep vs pair-counting.
+import numpy as np
+rng = np.random.default_rng(0)
+
+# 600 negatives ~ N(0,1), 400 positives ~ N(1.1,1): overlapping but separable.
+neg = rng.normal(0.0, 1.0, 600)
+pos = rng.normal(1.1, 1.0, 400)
+scores = np.concatenate([neg, pos])
+y      = np.concatenate([np.zeros(600), np.ones(400)]).astype(int)
+
+# --- ROC points by sweeping every distinct score as a threshold (EQ V4.1) ---
+order = np.argsort(-scores)                 # high score first
+ys = y[order]
+P, Nn = ys.sum(), (1 - ys).sum()
+tpr = np.cumsum(ys) / P                      # caught positives so far
+fpr = np.cumsum(1 - ys) / Nn                 # false alarms so far
+auc_curve = np.sum(np.diff(fpr) * (tpr[1:] + tpr[:-1]) / 2)  # trapezoid area
+
+# --- AUC by the Mann-Whitney pair-counting identity (EQ V4.2) ---
+ranks = scores.argsort().argsort() + 1      # average-free rank of each score
+auc_rank = (ranks[y == 1].sum() - P*(P+1)/2) / (P*Nn)
+
+print(f"positives: {int(P)}   negatives: {int(Nn)}")
+print(f"AUC (threshold sweep / trapezoid) : {auc_curve:.4f}")
+print(f"AUC (Mann-Whitney pair counting)  : {auc_rank:.4f}")
+print(f"the two agree to rounding         : {abs(auc_curve-auc_rank) < 1e-3}")
+plot_xy(fpr, tpr)                            # the ROC curve itself</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="rank-roc-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT V4.1 — ROC / PR / KS EXPLORER</span><span class="w-sub">DRAG THE TWO CLASS DISTRIBUTIONS · EQ V4.1–V4.2</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>CLASS SEPARATION (Δμ) <output id="rank-sep-out">1.40</output></label><input type="range" id="rank-sep" min="0" max="3.5" step="0.05" value="1.4"/></div>
+              <div class="ctl"><label>POSITIVE SPREAD (σ⁺) <output id="rank-spread-out">1.00</output></label><input type="range" id="rank-spread" min="0.5" max="2" step="0.05" value="1"/></div>
+              <div class="ctl"><label>PREVALENCE (% POS) <output id="rank-prev-out">40%</output></label><input type="range" id="rank-prev" min="2" max="50" step="1" value="40"/></div>
+            </div>
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>VIEW</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" id="rank-view-roc">ROC</button>
+                  <button class="w-btn ghost" id="rank-view-pr">PRECISION–RECALL</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="rank-roc-canvas" height="340"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">AUC (AUROC)</div><div class="r-value" id="rank-auc">—</div></div>
+              <div class="readout acc"><div class="r-label">KS STATISTIC</div><div class="r-value" id="rank-ks">—</div></div>
+              <div class="readout"><div class="r-label">AVG PRECISION (PR-AUC)</div><div class="r-value" id="rank-ap">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The two bell curves are the score distributions of <span style="color:var(--secondary);">negatives</span> and <span style="color:var(--accent);">positives</span>. Slide <b>SEPARATION</b> to zero and the curves collapse onto the diagonal — AUC → 0.5, a useless ranker. Pull them apart and the ROC bows toward the top-left corner. The <span style="color:var(--blue);">KS gap</span> marked on the ROC view is the largest vertical distance between TPR and FPR (§4.3). Switch to <b>PRECISION–RECALL</b> and drop <b>PREVALENCE</b> to 2% to watch the lesson of §4.2: the ROC barely moves, but the PR curve collapses — because precision pays the rent on rarity.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 4.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">4.2</span><h2>Precision–recall curves</h2></div>
+        <p>ROC's prevalence-invariance is a feature when you want to judge a ranker in the abstract — and a trap when you deploy it. On a 1%-positive fraud problem, a model can post a gorgeous 0.95 AUC and still flag fifty false alarms for every real fraud, because the false-positive rate is measured against the <em>vast</em> negative pool. The <strong>precision–recall curve</strong> tells the story ROC hides: it plots <strong>precision</strong> (of the cases I flagged, what fraction were right?) against <strong>recall</strong> (of the real positives, what fraction did I catch?).</p>
+
+        <div class="eq"><span class="eq-tag">EQ V4.3 — PRECISION, RECALL, AND THE PR BASELINE</span>
+        $$ \mathrm{Precision}(t) = \frac{\mathrm{TP}(t)}{\mathrm{TP}(t) + \mathrm{FP}(t)}, \qquad \mathrm{Recall}(t) = \mathrm{TPR}(t), \qquad \text{baseline} = \frac{P}{P + N} = \pi $$
+        <div class="eq-note">Precision has \(\mathrm{FP}\) in its denominator, and \(\mathrm{FP}\) scales with the size of the negative pool — so <b>precision is acutely sensitive to prevalence in a way TPR and FPR are not</b>. The no-skill baseline of a PR curve is the positive rate \(\pi\) (a random classifier holds precision \(\pi\) at every recall), versus the fixed diagonal at AUC = 0.5 for ROC. The area under the PR curve is summarized by <b>Average Precision</b> (AP), the precision averaged over the recall levels at which a new positive is retrieved.</div>
+        </div>
+
+        <p>The practical rule, widely repeated since Saito &amp; Rehmsmeier's 2015 study and still the consensus in 2026: <strong>use ROC/AUC to compare rankers and report discrimination; use PR/AP when positives are rare and the cost of false alarms is concrete.</strong> A change that is invisible on ROC can be dramatic on PR precisely because the rare class is where the action is. The two are not rivals — they answer different questions about the same ranking.</p>
+
+        <div class="callout warn">
+          <span class="co-icon">THE PREVALENCE TRAP</span>
+          <p><strong>"0.97 AUC" is not a deployment guarantee.</strong> AUC conditions on the true class, so it cannot see that your negatives outnumber positives 100-to-1. Two models with identical AUC can have wildly different false-alarm volumes at any usable operating point. Before you ship a rare-event detector, look at the PR curve and the absolute counts at your chosen threshold — precision, not AUC, is what your reviewers and on-call team will actually feel.</p>
+        </div>
+
+        <div class="exercise" data-answer="0.6" data-tol="0.01" data-unit="" data-hint="Precision = TP / (TP + FP). You flagged 50, of which 30 were truly positive.">
+          <div class="ex-q">At your chosen threshold the model flags 50 cases as positive; 30 of them are truly positive (\(\mathrm{TP} = 30\), \(\mathrm{FP} = 20\)). What is the precision, \(\dfrac{\mathrm{TP}}{\mathrm{TP}+\mathrm{FP}}\)?</div>
+          <div class="ex-reveal-src">Of the 50 flagged, 30 are correct and 20 are false alarms: \(\mathrm{Precision} = \dfrac{30}{30+20} = \dfrac{30}{50} = \) <b>0.6</b>. Sixty percent of your alerts are real — a number ROC's two rates never put in front of you.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Same ranking, two prevalences: AUC barely moves, PR-AUC collapses.
+import numpy as np
+rng = np.random.default_rng(2)
+
+def auc_ap(pos, neg):
+    s = np.concatenate([pos, neg])
+    y = np.concatenate([np.ones(len(pos)), np.zeros(len(neg))]).astype(int)
+    order = np.argsort(-s); ys = y[order]
+    P, N = ys.sum(), (1 - ys).sum()
+    tpr = np.cumsum(ys) / P
+    fpr = np.cumsum(1 - ys) / N
+    auc = np.sum(np.diff(fpr) * (tpr[1:] + tpr[:-1]) / 2)  # trapezoid area
+    prec = np.cumsum(ys) / np.arange(1, len(ys) + 1)   # precision at each cutoff
+    rec  = tpr
+    ap = np.sum(np.diff(np.concatenate([[0], rec])) * prec)  # area under PR
+    return auc, ap, P / (P + N)
+
+# Identical separability; only the negative pool grows.
+mu = 1.3
+for n_neg in (500, 5000, 50000):
+    pos = rng.normal(mu, 1.0, 500)
+    neg = rng.normal(0.0, 1.0, n_neg)
+    auc, ap, pi = auc_ap(pos, neg)
+    print(f"prevalence {100*pi:5.1f}%  ->  AUC {auc:.3f}   PR-AUC {ap:.3f}   baseline {pi:.3f}")
+
+print("\nAUC is nearly constant (it conditions on the true class);")
+print("PR-AUC sinks toward the shrinking baseline as positives get rarer.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <p class="note">PR-AUC is summarized two ways and they differ: <strong>Average Precision</strong> (a step-wise sum, the scikit-learn default) and the trapezoidal area (which can be optimistic because linear interpolation between PR points is not achievable). Report which one you mean — and never compare an AP from one library to a trapezoidal PR-AUC from another.</p>
+      </section>
+
+      <!-- ====================== 4.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">4.3</span><h2>The KS statistic &amp; Gini (credit scoring)</h2></div>
+        <p>Credit risk has its own ranking dialect, inherited from decades of scorecard practice. Two numbers dominate model documentation in banking: the <strong>Kolmogorov–Smirnov statistic</strong> and the <strong>Gini coefficient</strong>. Both measure the same thing AUC does — how well the score separates good from bad — but in coordinates a risk committee reads fluently.</p>
+
+        <p>The KS statistic is the largest gap between the two cumulative distributions of the score: the cumulative share of positives (bads) versus the cumulative share of negatives (goods), as you walk the score from one end to the other.</p>
+
+        <div class="eq"><span class="eq-tag">EQ V4.4 — THE KS STATISTIC</span>
+        $$ \mathrm{KS} = \max_{t}\;\big|\, F_{+}(t) - F_{-}(t)\,\big| \;=\; \max_{t}\;\big|\,\mathrm{TPR}(t) - \mathrm{FPR}(t)\,\big| $$
+        <div class="eq-note">\(F_{+}\) and \(F_{-}\) are the cumulative distribution functions of the score among positives and negatives. Because \(\mathrm{TPR} = 1 - F_{+}\) and \(\mathrm{FPR} = 1 - F_{-}\) up to orientation, <b>KS is exactly the maximum vertical distance between the ROC curve and the diagonal</b> — the most-separated operating point. KS ranges 0 (curves identical, no separation) to 1 (perfectly disjoint). In retail credit, KS in the 30s–40s is a healthy application scorecard; above ~75 usually means a leak, not a triumph. The threshold at which the gap is maximized is a natural — though rarely cost-optimal (§4.5) — cutoff.</div>
+        </div>
+
+        <p>The <strong>Gini coefficient</strong> is just AUC rescaled to put a random model at zero and a perfect model at one:</p>
+
+        <div class="eq"><span class="eq-tag">EQ V4.5 — GINI FROM AUC</span>
+        $$ \mathrm{Gini} = 2\,\mathrm{AUC} - 1 \qquad\Longleftrightarrow\qquad \mathrm{AUC} = \frac{\mathrm{Gini} + 1}{2} $$
+        <div class="eq-note">Gini is the ratio of the area between the ROC curve and the diagonal to the area between the perfect curve and the diagonal — twice the area AUC adds above 0.5. A model with AUC 0.80 has Gini 0.60; AUC 0.5 → Gini 0; AUC 1.0 → Gini 1. <b>KS, Gini, and AUC all rank a model's discrimination, but they are not monotone transforms of one another</b>: Gini is a fixed function of AUC, whereas KS depends on the <em>shape</em> of the separation and can reorder two models that AUC ranks the other way. Banks report all three because regulators expect them, and because a model strong on KS but weak on Gini (or vice versa) signals an unusual score distribution worth a second look.</div>
+        </div>
+
+        <div class="exercise" data-answer="true" data-tol="0" data-unit="" data-hint="Look at EQ V4.4 — what does the max over the threshold of |F+ − F−| compute?">
+          <div class="ex-q">The KS statistic is the <b>maximum gap</b> between the two classes' cumulative distribution functions of the score (equivalently, the largest vertical distance between the ROC curve and the diagonal). True or false? (Answer <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">By definition (EQ V4.4), \(\mathrm{KS} = \max_t |F_{+}(t) - F_{-}(t)| = \max_t |\mathrm{TPR}(t) - \mathrm{FPR}(t)|\) — precisely the maximum separation between the cumulative distributions of positives and negatives, which is the largest vertical gap between the ROC curve and the chance diagonal. The statement is <b>true</b>.</div>
+        </div>
+
+        <div class="exercise" data-answer="0.6" data-tol="0.01" data-unit="" data-hint="Gini = 2·AUC − 1 from EQ V4.5, with AUC = 0.80.">
+          <div class="ex-q">A scorecard reports \(\mathrm{AUC} = 0.80\). Using EQ V4.5, what is its Gini coefficient (\(2\,\mathrm{AUC} - 1\))?</div>
+          <div class="ex-reveal-src">\(\mathrm{Gini} = 2 \times 0.80 - 1 = 1.60 - 1 = \) <b>0.6</b>. Equivalently, the model captures 60% of the way from a coin flip (Gini 0) to a perfect ranker (Gini 1).</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># KS statistic and Gini from two score distributions (goods vs bads).
+import numpy as np
+rng = np.random.default_rng(5)
+
+bads  = rng.normal(0.65, 0.18, 800).clip(0, 1)   # higher score = riskier
+goods = rng.normal(0.40, 0.18, 4000).clip(0, 1)
+
+# KS: walk a common grid of thresholds, compare cumulative shares (EQ V4.4).
+grid = np.linspace(0, 1, 501)
+F_bad  = np.searchsorted(np.sort(bads),  grid, side="right") / len(bads)
+F_good = np.searchsorted(np.sort(goods), grid, side="right") / len(goods)
+gap = np.abs(F_bad - F_good)
+ks = gap.max()
+ks_at = grid[gap.argmax()]
+
+# AUC by pair-counting -> Gini = 2*AUC - 1 (EQ V4.2, V4.5).
+s = np.concatenate([bads, goods])
+y = np.concatenate([np.ones(len(bads)), np.zeros(len(goods))])
+ranks = s.argsort().argsort() + 1
+P, N = len(bads), len(goods)
+auc = (ranks[y == 1].sum() - P*(P+1)/2) / (P*N)
+gini = 2*auc - 1
+
+print(f"AUC  = {auc:.4f}")
+print(f"Gini = 2*AUC - 1 = {gini:.4f}")
+print(f"KS   = {ks:.4f}  (max gap at score ~ {ks_at:.2f})")
+print("\nKS is the widest separation of the two cumulative curves;")
+print("Gini is AUC stretched so chance=0 and perfect=1.")
+plot_xy(grid, gap)                                # the KS gap as a function of cutoff</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <p class="note"><strong>A note on PSI.</strong> The Population Stability Index — the workhorse for detecting that today's score distribution has drifted from the development sample — lives in the same credit-scoring toolbox and shares KS's distribution-comparison spirit, but it answers a <em>different</em> question: not "how well does the score separate good from bad?" but "has the input or score population <em>shifted</em> since the model was built?" PSI is therefore a stability and drift diagnostic, and Chapter 05 develops it in full alongside characteristic-stability and drift detection. Here it is enough to know that KS/Gini measure <em>discrimination</em>, PSI measures <em>population shift</em>, and a healthy KS today says nothing about whether PSI has quietly crept past its alarm threshold.</p>
+      </section>
+
+      <!-- ====================== 4.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">4.4</span><h2>Calibration — reliability curves &amp; Brier score</h2></div>
+        <p>Everything so far judged <em>ordering</em>. None of it cares about the actual value of the score, because you can apply any strictly increasing transform — square it, pass it through a sigmoid, raise it to the tenth power — and AUC, KS, and Gini are all unchanged. But a score that drives a decision usually has to <em>mean</em> something: an expected-loss calculation needs a real probability of default, a triage tool needs to say "this patient has a 12% chance," not merely "this patient ranks 47th." <strong>Calibration</strong> is the property that closes the gap between the number and the world.</p>
+
+        <div class="eq"><span class="eq-tag">EQ V4.6 — PERFECT CALIBRATION</span>
+        $$ \Pr\big(\,Y = 1 \,\mid\, \hat{p}(X) = p\,\big) = p \qquad \text{for all } p \in [0, 1] $$
+        <div class="eq-note">Among all cases the model assigns probability \(p\), a fraction \(p\) should actually be positive. <b>Calibration and discrimination are orthogonal.</b> A model can be perfectly calibrated yet useless at ranking (predict the base rate \(\pi\) for everyone — calibrated, AUC = 0.5), or a flawless ranker yet badly miscalibrated (AUC = 1.0 with every probability squashed toward 0.5). You need both, and you must measure them separately because no single ranking metric will ever catch a calibration failure.</div>
+        </div>
+
+        <p>You inspect calibration with a <strong>reliability curve</strong>: bin the predicted probabilities, and for each bin plot the mean prediction against the observed positive frequency. Perfect calibration is the 45° diagonal. A curve that sags below it means the model is <strong>over-confident</strong> (it says 0.9 but only 0.7 actually happen); a curve that bows above means it is <strong>under-confident</strong>. The classic shapes have classic causes: modern neural nets and boosted trees tend to over-confidence, naive Bayes pushes probabilities toward the extremes, and a well-regularized logistic regression is often calibrated almost for free.</p>
+
+        <p>The standard scalar summary is the <strong>Brier score</strong> — the mean squared error of the probabilities themselves:</p>
+
+        <div class="eq"><span class="eq-tag">EQ V4.7 — THE BRIER SCORE</span>
+        $$ \mathrm{BS} = \frac{1}{n}\sum_{i=1}^{n}\big(\hat{p}_i - y_i\big)^2, \qquad y_i \in \{0, 1\} $$
+        <div class="eq-note">Lower is better; \(0\) is perfect, and predicting the base rate \(\pi\) for everyone gives \(\pi(1-\pi)\). The Brier score is a <b>strictly proper scoring rule</b>: it is uniquely minimized in expectation by the true probabilities, so you cannot game it by shading your forecasts. Its great virtue is also its limit — it bundles two things together. The Murphy decomposition splits it into <em>calibration</em> (reliability) plus <em>refinement</em> (resolution minus uncertainty), so a low Brier score can come from sharp-and-calibrated forecasts <em>or</em> from a timid model hugging the base rate. Read it alongside the reliability curve, never alone; for a pure calibration number, the Expected Calibration Error (the average bin-wise gap from the diagonal) is the common companion.</div>
+        </div>
+
+        <p>When a model ranks well but is miscalibrated, you do not retrain — you <strong>recalibrate</strong> the output with a cheap monotone post-processor fit on held-out data: <strong>Platt scaling</strong> (a one-parameter logistic on the scores) or <strong>isotonic regression</strong> (a free-form non-decreasing step function). Both preserve the ranking exactly — AUC, KS, and Gini are untouched — while bending the reliability curve back onto the diagonal. Isotonic is more flexible but needs more data and can overfit; Platt is robust on small validation sets. This is the standard fix established by Niculescu-Mizil &amp; Caruana and unchanged in practice today.</p>
+
+        <div class="exercise" data-answer="0.025" data-tol="0.02" data-unit="" data-hint="Brier = mean of (p − y)². Two cases: (0.8, y=1) and (0.9, y=1).">
+          <div class="ex-q">Two predictions, both for true positives (\(y = 1\)): \(\hat{p}_1 = 0.8\) and \(\hat{p}_2 = 0.9\). Using EQ V4.7, what is the Brier score \(\tfrac{1}{2}\big[(\hat{p}_1 - 1)^2 + (\hat{p}_2 - 1)^2\big]\)?</div>
+          <div class="ex-reveal-src">\((0.8 - 1)^2 = (-0.2)^2 = 0.04\) and \((0.9 - 1)^2 = (-0.1)^2 = 0.01\). The mean is \(\tfrac{1}{2}(0.04 + 0.01) = \tfrac{0.05}{2} = \) <b>0.025</b> — the squared-error penalty grows fast as a probability drifts from the truth.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Discrimination vs calibration are orthogonal: same ranking, three Brier scores.
+import numpy as np
+rng = np.random.default_rng(11)
+
+n = 4000
+p_true = rng.beta(2, 5, n)                    # the genuine probabilities
+y = (rng.random(n) < p_true).astype(int)      # outcomes drawn from them
+
+def brier(p): return np.mean((p - y) ** 2)
+def auc(p):
+    r = p.argsort().argsort() + 1
+    P, N = y.sum(), (1 - y).sum()
+    return (r[y == 1].sum() - P*(P+1)/2) / (P*N)
+
+def warp(p, gamma):                           # scale the logit -> a monotone re-map
+    logit = np.log(p / (1 - p)) * gamma       # gamma>1 sharpens, gamma<1 softens
+    return 1 / (1 + np.exp(-logit))
+
+calibrated  = p_true                          # honest: gamma = 1
+overconf    = warp(p_true, 2.2)               # over-confident: probs pushed to extremes
+underconf   = warp(p_true, 0.45)              # under-confident: probs squashed to 0.5
+
+print(f"{'model':<16}{'AUC':>8}{'Brier':>9}")
+for name, p in [("calibrated", calibrated),
+                ("over-confident", overconf),
+                ("under-confident", underconf)]:
+    print(f"{name:<16}{auc(p):>8.3f}{brier(p):>9.4f}")
+
+print("\nAUC is IDENTICAL for all three -- warp() is monotone, so the ranking")
+print("never changes. Brier separates them: only the calibrated model is honest")
+print("about its probabilities. Discrimination cannot see what calibration measures.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="rank-calib-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT V4.2 — RELIABILITY CURVE &amp; BRIER</span><span class="w-sub">OVER- vs UNDER-CONFIDENT MODELS · EQ V4.6–V4.7</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>CONFIDENCE (γ) <output id="rank-conf-out">1.00</output></label><input type="range" id="rank-conf" min="0.25" max="3" step="0.05" value="1"/></div>
+              <div class="ctl"><label>BIN COUNT <output id="rank-bins-out">10</output></label><input type="range" id="rank-bins" min="5" max="20" step="1" value="10"/></div>
+            </div>
+            <canvas class="w-canvas" id="rank-calib-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">REGIME</div><div class="r-value" id="rank-calib-regime" style="font-size:13px;">—</div></div>
+              <div class="readout acc"><div class="r-label">BRIER SCORE</div><div class="r-value" id="rank-brier">—</div></div>
+              <div class="readout acc"><div class="r-label">EXPECTED CALIB. ERROR</div><div class="r-value" id="rank-ece">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The model's probabilities are warped by an exponent \(\gamma\): the dots are binned predictions, the dashed line is perfect calibration. At \(\gamma = 1\) the model sits on the <span style="color:var(--accent);">diagonal</span> — honest. Push \(\gamma\) above 1 to make it <b>over-confident</b> (the curve sags below the line; it claims more certainty than it has) and below 1 to make it <b>under-confident</b> (the curve bows above). Watch the Brier score and ECE bottom out exactly at \(\gamma = 1\) — and note the ranking never changes, because \(\gamma\) is a monotone transform: this is calibration moving while discrimination stands still.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 4.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">4.5</span><h2>Cutoff selection by cost</h2></div>
+        <p>The ROC curve hands you every operating point the model can reach; it does not tell you which one to stand on. The default of 0.5 is almost always wrong — it is correct only when classes are balanced <em>and</em> the two error types cost the same, which is to say almost never. The right threshold is the one that minimizes <strong>expected cost</strong>, and that depends on numbers the model never sees: the price of a false positive, the price of a false negative, and the prevalence.</p>
+
+        <div class="eq"><span class="eq-tag">EQ V4.8 — EXPECTED COST OF A THRESHOLD</span>
+        $$ \mathbb{E}[\text{cost}](t) = c_{\mathrm{FP}}\cdot\mathrm{FP}(t) + c_{\mathrm{FN}}\cdot\mathrm{FN}(t) \;\;\Big(- \, b_{\mathrm{TP}}\cdot\mathrm{TP}(t) - b_{\mathrm{TN}}\cdot\mathrm{TN}(t)\Big) $$
+        <div class="eq-note">Each cell of the confusion matrix carries a cost (or benefit); the total is their weighted sum, and you choose the \(t\) that minimizes it. The benefit terms in parentheses are optional — when only errors are penalized, dropping them does not move the optimum. <b>The optimal threshold is governed by the cost ratio, not by 0.5.</b> If a missed fraud costs ten times a false alarm, you should accept far more false alarms to catch it — the cutoff slides down accordingly.</div>
+        </div>
+
+        <p>For a model that emits a true probability \(\hat{p}\), the cost-minimizing rule has a clean closed form. Flagging a case is worth it when its expected cost of being positive falls below the expected cost of being negative, which rearranges to a single threshold on the probability:</p>
+
+        <div class="eq"><span class="eq-tag">EQ V4.9 — THE COST-OPTIMAL PROBABILITY THRESHOLD</span>
+        $$ t^{\star} = \frac{c_{\mathrm{FP}}}{c_{\mathrm{FP}} + c_{\mathrm{FN}}} \qquad\Longleftrightarrow\qquad \text{predict positive when } \hat{p} \;\ge\; t^{\star} $$
+        <div class="eq-note">The optimal cutoff depends only on the <em>ratio</em> of error costs. Equal costs (\(c_{\mathrm{FP}} = c_{\mathrm{FN}}\)) give \(t^{\star} = 0.5\) — the only case the default is right. If a false negative costs \(9\times\) a false positive, \(t^{\star} = \frac{1}{1+9} = 0.1\): flag anything above a 10% probability. <b>This formula is only valid if \(\hat{p}\) is calibrated</b> — which is precisely why §4.4 comes before §4.5. Feed it the over-confident scores of an uncalibrated model and the "optimal" threshold is optimal for a world that does not exist. Calibrate first, then optimize the cutoff; otherwise you are tuning a decision on a lie.</div>
+        </div>
+
+        <p>Two things follow. First, the whole pipeline composes: rank well (§4.1–4.3), calibrate the probabilities (§4.4), then place the cutoff by cost (§4.5). Skip the middle step and the last one is meaningless. Second, when costs are uncertain — as they usually are — do not pick a single \(t^{\star}\); sweep the cost ratio and present the <em>operating frontier</em>, so the business owner can see the trade and choose with open eyes rather than inherit a hidden 0.5.</p>
+
+        <div class="exercise" data-answer="0.1" data-tol="0.02" data-unit="" data-hint="t* = c_FP / (c_FP + c_FN), with c_FP = 1 and c_FN = 9.">
+          <div class="ex-q">A false positive costs \(c_{\mathrm{FP}} = 1\) and a false negative costs \(c_{\mathrm{FN}} = 9\). Using EQ V4.9, at what calibrated probability \(t^{\star}\) should you start predicting positive (\(\tfrac{c_{\mathrm{FP}}}{c_{\mathrm{FP}}+c_{\mathrm{FN}}}\))?</div>
+          <div class="ex-reveal-src">\(t^{\star} = \dfrac{c_{\mathrm{FP}}}{c_{\mathrm{FP}} + c_{\mathrm{FN}}} = \dfrac{1}{1 + 9} = \dfrac{1}{10} = \) <b>0.1</b>. Because a miss is nine times as expensive as a false alarm, you flag any case with at least a 10% probability — far below the naive 0.5.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Cost-based cutoff: sweep thresholds, find the minimum-cost operating point.
+import numpy as np
+rng = np.random.default_rng(9)
+
+n = 6000
+y = (rng.random(n) < 0.15).astype(int)        # 15% positive
+p = np.clip(0.15 + 0.55*y + rng.normal(0, 0.20, n), 0.001, 0.999)  # calibrated-ish
+
+c_fp, c_fn = 1.0, 9.0                          # a miss costs 9x a false alarm
+ts = np.linspace(0.01, 0.99, 99)
+costs = []
+for t in ts:
+    pred = (p >= t).astype(int)
+    fp = int(((pred == 1) & (y == 0)).sum())
+    fn = int(((pred == 0) & (y == 1)).sum())
+    costs.append(c_fp*fp + c_fn*fn)
+costs = np.array(costs)
+
+t_star_grid = ts[costs.argmin()]              # empirically optimal cutoff
+t_star_formula = c_fp / (c_fp + c_fn)         # EQ V4.9 closed form
+
+print(f"closed-form t* = c_FP/(c_FP+c_FN) = {t_star_formula:.3f}")
+print(f"grid-search    t* (min cost)      = {t_star_grid:.3f}")
+print(f"cost at t=0.50 (naive default)    = {costs[np.argmin(np.abs(ts-0.5))]:.0f}")
+print(f"cost at t*     (cost-optimal)     = {costs.min():.0f}")
+print("\nThe default 0.5 leaves money on the table whenever costs are asymmetric.")
+plot_xy(ts, costs)                            # the cost-vs-threshold curve (U-shaped)</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="rank-cost-demo" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT V4.3 — COST-BASED CUTOFF OPTIMIZER</span><span class="w-sub">SWEEP THE THRESHOLD · EQ V4.8–V4.9</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>FALSE-POSITIVE COST <output id="rank-cfp-out">1</output></label><input type="range" id="rank-cfp" min="1" max="20" step="1" value="1"/></div>
+              <div class="ctl"><label>FALSE-NEGATIVE COST <output id="rank-cfn-out">9</output></label><input type="range" id="rank-cfn" min="1" max="20" step="1" value="9"/></div>
+              <div class="ctl"><label>PREVALENCE (% POS) <output id="rank-cprev-out">15%</output></label><input type="range" id="rank-cprev" min="2" max="50" step="1" value="15"/></div>
+            </div>
+            <canvas class="w-canvas" id="rank-cost-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">COST-OPTIMAL t*</div><div class="r-value" id="rank-tstar">—</div></div>
+              <div class="readout"><div class="r-label">COST @ t* vs @ 0.50</div><div class="r-value" id="rank-cost-vs" style="font-size:12px;">—</div></div>
+              <div class="readout acc"><div class="r-label">SAVINGS vs DEFAULT</div><div class="r-value" id="rank-save">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The U-shaped curve is total expected cost (EQ V4.8) as the threshold sweeps left to right; the <span style="color:var(--accent);">mint marker</span> is the cost-minimizing \(t^{\star}\), the <span style="color:var(--secondary);">grey line</span> is the naive 0.5. Raise <b>FALSE-NEGATIVE COST</b> and watch \(t^{\star}\) slide left — you accept more false alarms to stop catching fewer expensive misses — landing near the closed form \(c_{\mathrm{FP}}/(c_{\mathrm{FP}}+c_{\mathrm{FN}})\) of EQ V4.9. The "savings vs default" readout is the money the standard 0.5 quietly throws away whenever your costs are asymmetric.</div>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>These metrics all assume the world stays still — the population you scored yesterday is the population you score today.</strong> It never does. Chapter 05 turns to <em>stability and drift</em>: the Population Stability Index (PSI) and characteristic stability that catch a shifting input distribution, covariate and concept drift, and the monitoring that tells you when a once-excellent AUC has quietly stopped describing reality.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 4.R — References ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">4.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://doi.org/10.1016/j.patrec.2005.10.010" target="_blank" rel="noopener">Fawcett, T. (2006). <span class="ref-venue">An Introduction to ROC Analysis</span>.</a> <span class="ref-meta">Pattern Recognition Letters 27(8) — the canonical tutorial on ROC curves, AUC, and the pair-counting identity (§4.1).</span></li>
+          <li><a href="https://doi.org/10.1007/s10994-009-5119-5" target="_blank" rel="noopener">Hand, D. J. (2009). <span class="ref-venue">Measuring Classifier Performance: A Coherent Alternative to the Area Under the ROC Curve</span>.</a> <span class="ref-meta">Machine Learning 77(1) — the influential critique of AUC and the proposed H-measure.</span></li>
+          <li><a href="https://doi.org/10.1145/1102351.1102430" target="_blank" rel="noopener">Niculescu-Mizil, A. &amp; Caruana, R. (2005). <span class="ref-venue">Predicting Good Probabilities With Supervised Learning</span>.</a> <span class="ref-meta">ICML 2005 — calibration behavior across model families and the Platt / isotonic fixes (§4.4).</span></li>
+          <li><a href="https://doi.org/10.1371/journal.pone.0118432" target="_blank" rel="noopener">Saito, T. &amp; Rehmsmeier, M. (2015). <span class="ref-venue">The Precision–Recall Plot Is More Informative than the ROC Plot When Evaluating Binary Classifiers on Imbalanced Datasets</span>.</a> <span class="ref-meta">PLOS ONE 10(3) — the empirical case for PR over ROC under class imbalance (§4.2).</span></li>
+          <li><a href="https://doi.org/10.1175/1520-0493(1950)078%3C0001:VOFEIT%3E2.0.CO;2" target="_blank" rel="noopener">Brier, G. W. (1950). <span class="ref-venue">Verification of Forecasts Expressed in Terms of Probability</span>.</a> <span class="ref-meta">Monthly Weather Review 78(1) — the original mean-squared-error scoring rule for probabilities (§4.4).</span></li>
+          <li><a href="https://doi.org/10.1037/h0026256" target="_blank" rel="noopener">Hanley, J. A. &amp; McNeil, B. J. (1982). <span class="ref-venue">The Meaning and Use of the Area Under a Receiver Operating Characteristic (ROC) Curve</span>.</a> <span class="ref-meta">Radiology 143(1) — the AUC = Wilcoxon–Mann–Whitney equivalence (EQ V4.2).</span></li>
+          <li><a href="https://proceedings.mlr.press/v70/guo17a.html" target="_blank" rel="noopener">Guo, C., Pleiss, G., Sun, Y. &amp; Weinberger, K. Q. (2017). <span class="ref-venue">On Calibration of Modern Neural Networks</span>.</a> <span class="ref-meta">ICML 2017 — modern deep networks are systematically over-confident; temperature scaling as a fix (§4.4).</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../mlops/03-regression-classification-metrics.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">03</span> Metrics</div></a>
+        <a class="next" href="../mlops/05-stability-drift.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">05</span> Stability &amp; Drift</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — MODEL VALIDATION &amp; RISK · CH 04</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* ============================================================
+   Ranking, Calibration, ROC, KS & PSI — chapter instruments
+   Single IIFE, no globals. A deterministic Gaussian model of two
+   score distributions drives the ROC/PR/KS explorer; an exponent
+   warp drives the reliability curve; a confusion-matrix sweep
+   drives the cost optimizer. setTimeout (never rAF) for resize.
+   ============================================================ */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
+  /* standard-normal CDF via the Abramowitz-Stegun erf approximation */
+  function normCdf(z) {
+    var t = 1 / (1 + 0.2316419 * Math.abs(z));
+    var d = 0.3989422804014327 * Math.exp(-z * z / 2);
+    var p = d * t * (0.319381530 + t * (-0.356563782 + t * (1.781477937 +
+            t * (-1.821255978 + t * 1.330274429))));
+    return z >= 0 ? 1 - p : p;
+  }
+
+  /* ========================================================
+     INSTRUMENT V4.1 — ROC / PR / KS explorer
+     Two Gaussian score distributions: negatives N(0,1),
+     positives N(sep, spread). Everything (ROC, PR, KS, AUC,
+     AP) is computed analytically over a fine score grid, so
+     the curves are exact for the chosen parameters.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("rank-roc-demo");
+    if (!root) return;
+    var canvas = document.getElementById("rank-roc-canvas");
+    var sepEl = document.getElementById("rank-sep");
+    var spreadEl = document.getElementById("rank-spread");
+    var prevEl = document.getElementById("rank-prev");
+    var sepOut = document.getElementById("rank-sep-out");
+    var spreadOut = document.getElementById("rank-spread-out");
+    var prevOut = document.getElementById("rank-prev-out");
+    var bRoc = document.getElementById("rank-view-roc");
+    var bPr = document.getElementById("rank-view-pr");
+    var aucEl = document.getElementById("rank-auc");
+    var ksEl = document.getElementById("rank-ks");
+    var apEl = document.getElementById("rank-ap");
+
+    var view = "roc";       /* "roc" | "pr" */
+    var NG = 400;           /* score-grid resolution */
+    var LO = -5, HI = 7;    /* score range */
+
+    function model() {
+      var sep = +sepEl.value, spread = +spreadEl.value, pi = +prevEl.value / 100;
+      /* sweep threshold from HI down to LO; everything >= t is "positive" */
+      var pts = [], i, t, tpr, fpr, prec, ks = 0, ksT = 0;
+      var auc = 0, ap = 0, prevTpr = 0, prevFpr = 0, prevRec = 0;
+      for (i = 0; i <= NG; i++) {
+        t = HI - (HI - LO) * i / NG;
+        tpr = 1 - normCdf((t - sep) / spread);     /* P(score>=t | positive) */
+        fpr = 1 - normCdf(t);                        /* P(score>=t | negative) */
+        /* precision = pi*tpr / (pi*tpr + (1-pi)*fpr) */
+        var denom = pi * tpr + (1 - pi) * fpr;
+        prec = denom > 1e-9 ? (pi * tpr) / denom : 1;
+        pts.push({ t: t, tpr: tpr, fpr: fpr, prec: prec, rec: tpr });
+        var gap = tpr - fpr; if (gap > ks) { ks = gap; ksT = t; }
+        if (i > 0) {
+          auc += (fpr - prevFpr) * (tpr + prevTpr) / 2;   /* trapezoid in ROC space */
+          ap  += (tpr - prevRec) * prec;                   /* step-wise AP */
+        }
+        prevTpr = tpr; prevFpr = fpr; prevRec = tpr;
+      }
+      return { pts: pts, auc: auc, ap: ap, ks: ks, ksT: ksT, sep: sep, spread: spread, pi: pi };
+    }
+
+    function render() {
+      sepOut.textContent = (+sepEl.value).toFixed(2);
+      spreadOut.textContent = (+spreadEl.value).toFixed(2);
+      prevOut.textContent = prevEl.value + "%";
+      bRoc.classList.toggle("on", view === "roc");
+      bPr.classList.toggle("on", view === "pr");
+
+      var m = model();
+      var c = FM.setupCanvas(canvas, 340);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      ctx.clearRect(0, 0, w, h);
+
+      /* layout: left distribution panel, right curve panel */
+      var padT = 14, padB = 28;
+      var gap = 18;
+      var leftW = Math.min(w * 0.42, 230);
+      var L = { x: 8, y: padT, w: leftW, h: h - padT - padB };
+      var R = { x: L.x + L.w + gap, y: padT, w: w - (L.x + L.w + gap) - 12, h: h - padT - padB };
+
+      ctx.font = C.MONO; ctx.textBaseline = "middle";
+
+      /* ---- LEFT: the two score distributions ---- */
+      ctx.fillStyle = C.MUT; ctx.textAlign = "left";
+      ctx.fillText("SCORE DISTRIBUTIONS", L.x, L.y - 2);
+      var bx0 = L.x, bx1 = L.x + L.w, by0 = L.y + 12, by1 = L.y + L.h - 12;
+      /* baseline */
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(bx0, by1); ctx.lineTo(bx1, by1); ctx.stroke();
+      function pdf(x, mu, s) { var z = (x - mu) / s; return Math.exp(-z * z / 2) / (s * 2.5066); }
+      var maxP = 0, gx;
+      for (gx = 0; gx <= 120; gx++) {
+        var xv = LO + (HI - LO) * gx / 120;
+        maxP = Math.max(maxP, pdf(xv, 0, 1), pdf(xv, m.sep, m.spread));
+      }
+      function drawPdf(mu, s, col) {
+        ctx.beginPath();
+        for (gx = 0; gx <= 120; gx++) {
+          var xv = LO + (HI - LO) * gx / 120;
+          var px = bx0 + (bx1 - bx0) * gx / 120;
+          var py = by1 - (by1 - by0) * (pdf(xv, mu, s) / maxP);
+          gx === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+        }
+        ctx.strokeStyle = col; ctx.lineWidth = 1.6; ctx.stroke();
+      }
+      drawPdf(0, 1, C.SEC);
+      drawPdf(m.sep, m.spread, C.MINT);
+      /* KS threshold marker on the distributions */
+      var ksx = bx0 + (bx1 - bx0) * (m.ksT - LO) / (HI - LO);
+      ctx.strokeStyle = "rgba(78,138,247,.7)"; ctx.setLineDash([3, 3]);
+      ctx.beginPath(); ctx.moveTo(ksx, by0); ctx.lineTo(ksx, by1); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = C.SEC; ctx.textAlign = "left"; ctx.fillText("NEG", bx0, by1 + 12);
+      ctx.fillStyle = C.MINT; ctx.textAlign = "right"; ctx.fillText("POS", bx1, by1 + 12);
+
+      /* ---- RIGHT: ROC or PR curve in a unit box ---- */
+      var gx0 = R.x + 26, gx1 = R.x + R.w, gy0 = R.y + 12, gy1 = R.y + R.h - 14;
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(gx0, gy0, gx1 - gx0, gy1 - gy0);
+      function X(u) { return gx0 + (gx1 - gx0) * u; }
+      function Y(v) { return gy1 - (gy1 - gy0) * v; }
+
+      ctx.fillStyle = C.MUT; ctx.textAlign = "left";
+      if (view === "roc") {
+        ctx.fillText("ROC  ·  TPR vs FPR", gx0, R.y - 2);
+        /* chance diagonal */
+        ctx.strokeStyle = "rgba(99,99,99,.5)"; ctx.setLineDash([4, 4]);
+        ctx.beginPath(); ctx.moveTo(X(0), Y(0)); ctx.lineTo(X(1), Y(1)); ctx.stroke();
+        ctx.setLineDash([]);
+        /* the curve */
+        ctx.beginPath();
+        for (var i = 0; i < m.pts.length; i++) {
+          var p = m.pts[i], px = X(p.fpr), py = Y(p.tpr);
+          i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+        }
+        ctx.strokeStyle = C.MINT; ctx.lineWidth = 2; ctx.stroke();
+        /* fill under curve faintly */
+        ctx.lineTo(X(1), Y(0)); ctx.lineTo(X(0), Y(0)); ctx.closePath();
+        ctx.fillStyle = "rgba(166,242,204,.08)"; ctx.fill();
+        /* KS as a vertical segment between TPR and FPR at ksT */
+        var pk = null, best = -1;
+        for (var j = 0; j < m.pts.length; j++) { var g = m.pts[j].tpr - m.pts[j].fpr; if (g > best) { best = g; pk = m.pts[j]; } }
+        if (pk) {
+          ctx.strokeStyle = C.BLUE; ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.moveTo(X(pk.fpr), Y(pk.fpr)); ctx.lineTo(X(pk.fpr), Y(pk.tpr)); ctx.stroke();
+          ctx.fillStyle = C.BLUE; ctx.textAlign = "left";
+          ctx.fillText("KS", X(pk.fpr) + 5, Y((pk.tpr + pk.fpr) / 2));
+        }
+        ctx.fillStyle = C.MUT; ctx.textAlign = "center";
+        ctx.fillText("FPR", (gx0 + gx1) / 2, gy1 + 11);
+        ctx.save(); ctx.translate(R.x + 8, (gy0 + gy1) / 2); ctx.rotate(-Math.PI / 2);
+        ctx.fillText("TPR", 0, 0); ctx.restore();
+      } else {
+        ctx.fillText("PRECISION vs RECALL", gx0, R.y - 2);
+        /* baseline = prevalence */
+        ctx.strokeStyle = "rgba(99,99,99,.5)"; ctx.setLineDash([4, 4]);
+        ctx.beginPath(); ctx.moveTo(X(0), Y(m.pi)); ctx.lineTo(X(1), Y(m.pi)); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        for (var ii = 0; ii < m.pts.length; ii++) {
+          var pp = m.pts[ii], px2 = X(pp.rec), py2 = Y(pp.prec);
+          ii === 0 ? ctx.moveTo(px2, py2) : ctx.lineTo(px2, py2);
+        }
+        ctx.strokeStyle = C.MINT; ctx.lineWidth = 2; ctx.stroke();
+        ctx.fillStyle = C.MUT; ctx.textAlign = "left";
+        ctx.fillText("baseline π = " + (100 * m.pi).toFixed(0) + "%", X(0.02), Y(m.pi) - 8);
+        ctx.textAlign = "center";
+        ctx.fillText("RECALL", (gx0 + gx1) / 2, gy1 + 11);
+        ctx.save(); ctx.translate(R.x + 8, (gy0 + gy1) / 2); ctx.rotate(-Math.PI / 2);
+        ctx.fillText("PRECISION", 0, 0); ctx.restore();
+      }
+
+      /* readouts */
+      aucEl.textContent = m.auc.toFixed(3);
+      ksEl.textContent = m.ks.toFixed(3);
+      apEl.textContent = m.ap.toFixed(3);
+    }
+
+    sepEl.addEventListener("input", render);
+    spreadEl.addEventListener("input", render);
+    prevEl.addEventListener("input", render);
+    bRoc.addEventListener("click", function () { view = "roc"; render(); });
+    bPr.addEventListener("click", function () { view = "pr"; render(); });
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();   /* meaningful initial state with zero interaction */
+  })();
+
+  /* ========================================================
+     INSTRUMENT V4.2 — Reliability curve & Brier
+     True probabilities ~ Beta(2,5) (fixed, deterministic grid).
+     The model warps them by p^gamma renormalized: gamma>1 is
+     over-confident, gamma<1 under-confident. Reliability curve,
+     Brier score and ECE are computed in closed form per bin.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("rank-calib-demo");
+    if (!root) return;
+    var canvas = document.getElementById("rank-calib-canvas");
+    var confEl = document.getElementById("rank-conf");
+    var binsEl = document.getElementById("rank-bins");
+    var confOut = document.getElementById("rank-conf-out");
+    var binsOut = document.getElementById("rank-bins-out");
+    var regimeEl = document.getElementById("rank-calib-regime");
+    var brierEl = document.getElementById("rank-brier");
+    var eceEl = document.getElementById("rank-ece");
+
+    /* a fixed population of true probabilities on a deterministic grid */
+    var N = 2000, pTrue = [], i;
+    var rng = FM.mulberry32(4040404);
+    function betaish() {  /* cheap Beta(2,5)-ish via min of draws, deterministic RNG */
+      var a = rng(), b = rng(), c2 = rng();
+      return clamp((a + b * 0.4 + c2 * 0.2) / 1.6 * 0.8, 0.001, 0.999);
+    }
+    for (i = 0; i < N; i++) pTrue.push(betaish());
+
+    /* warp: over/under-confidence as an odds-power transform around 0.5 */
+    function warp(p, g) {
+      /* logit, scale by g, back -> monotone; g>1 sharpens (over-confident) */
+      var lo = Math.log(p / (1 - p)) * g;
+      return 1 / (1 + Math.exp(-lo));
+    }
+
+    function render() {
+      var g = +confEl.value, B = +binsEl.value;
+      confOut.textContent = g.toFixed(2);
+      binsOut.textContent = B;
+
+      /* bins: mean predicted prob vs expected observed freq (= mean true prob) */
+      var sumPred = new Array(B).fill(0), sumTrue = new Array(B).fill(0), cnt = new Array(B).fill(0);
+      var brier = 0, k;
+      for (i = 0; i < N; i++) {
+        var pt = pTrue[i];
+        var ph = warp(pt, g);
+        k = Math.min(B - 1, Math.floor(ph * B));
+        sumPred[k] += ph; sumTrue[k] += pt; cnt[k] += 1;
+        /* expected Brier contribution: E[(ph - Y)^2] = (ph-pt)^2 + pt(1-pt) */
+        brier += (ph - pt) * (ph - pt) + pt * (1 - pt);
+      }
+      brier /= N;
+      var ece = 0, kk;
+      var pred = [], obs = [], wts = [];
+      for (kk = 0; kk < B; kk++) {
+        if (cnt[kk] === 0) { pred.push(null); obs.push(null); continue; }
+        var mp = sumPred[kk] / cnt[kk], mo = sumTrue[kk] / cnt[kk];
+        pred.push(mp); obs.push(mo);
+        ece += (cnt[kk] / N) * Math.abs(mp - mo);
+        wts.push(cnt[kk]);
+      }
+
+      var c = FM.setupCanvas(canvas, 320);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      ctx.clearRect(0, 0, w, h);
+
+      var padL = 40, padR = 16, padT = 16, padB = 30;
+      var gx0 = padL, gx1 = w - padR, gy0 = padT, gy1 = h - padB;
+      function X(u) { return gx0 + (gx1 - gx0) * u; }
+      function Y(v) { return gy1 - (gy1 - gy0) * v; }
+
+      ctx.font = C.MONO; ctx.textBaseline = "middle";
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1; ctx.strokeRect(gx0, gy0, gx1 - gx0, gy1 - gy0);
+      /* perfect-calibration diagonal */
+      ctx.strokeStyle = C.MINT; ctx.setLineDash([5, 4]); ctx.lineWidth = 1.4;
+      ctx.beginPath(); ctx.moveTo(X(0), Y(0)); ctx.lineTo(X(1), Y(1)); ctx.stroke();
+      ctx.setLineDash([]);
+
+      /* reliability curve + points */
+      ctx.beginPath(); var started = false;
+      for (kk = 0; kk < B; kk++) {
+        if (pred[kk] === null) continue;
+        var px = X(pred[kk]), py = Y(obs[kk]);
+        started ? ctx.lineTo(px, py) : ctx.moveTo(px, py); started = true;
+      }
+      ctx.strokeStyle = C.BLUE; ctx.lineWidth = 2; ctx.stroke();
+      for (kk = 0; kk < B; kk++) {
+        if (pred[kk] === null) continue;
+        ctx.fillStyle = C.BLUE;
+        ctx.beginPath(); ctx.arc(X(pred[kk]), Y(obs[kk]), 3, 0, 6.2832); ctx.fill();
+      }
+
+      /* axis labels */
+      ctx.fillStyle = C.MUT; ctx.textAlign = "center";
+      ctx.fillText("MEAN PREDICTED PROBABILITY", (gx0 + gx1) / 2, gy1 + 14);
+      ctx.save(); ctx.translate(12, (gy0 + gy1) / 2); ctx.rotate(-Math.PI / 2);
+      ctx.fillText("OBSERVED FREQUENCY", 0, 0); ctx.restore();
+      ctx.textAlign = "right"; ctx.fillText("1", gx0 - 4, Y(1)); ctx.fillText("0", gx0 - 4, Y(0));
+
+      /* readouts */
+      var reg = Math.abs(g - 1) < 0.04 ? "CALIBRATED" : g > 1 ? "OVER-CONFIDENT" : "UNDER-CONFIDENT";
+      regimeEl.textContent = reg;
+      regimeEl.style.color = reg === "CALIBRATED" ? C.MINT : C.RED;
+      brierEl.textContent = brier.toFixed(4);
+      eceEl.textContent = ece.toFixed(4);
+    }
+
+    confEl.addEventListener("input", render);
+    binsEl.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();   /* meaningful initial state with zero interaction */
+  })();
+
+  /* ========================================================
+     INSTRUMENT V4.3 — Cost-based cutoff optimizer
+     Two Gaussian score distributions -> analytic FP/FN counts at
+     every threshold. Expected cost (EQ V4.8) is swept; the
+     minimum and the naive-0.5 cost are marked, and savings shown.
+     The cost-optimal cutoff tracks c_FP/(c_FP+c_FN) (EQ V4.9)
+     for calibrated probabilities.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("rank-cost-demo");
+    if (!root) return;
+    var canvas = document.getElementById("rank-cost-canvas");
+    var cfpEl = document.getElementById("rank-cfp");
+    var cfnEl = document.getElementById("rank-cfn");
+    var prevEl = document.getElementById("rank-cprev");
+    var cfpOut = document.getElementById("rank-cfp-out");
+    var cfnOut = document.getElementById("rank-cfn-out");
+    var prevOut = document.getElementById("rank-cprev-out");
+    var tstarEl = document.getElementById("rank-tstar");
+    var costVsEl = document.getElementById("rank-cost-vs");
+    var saveEl = document.getElementById("rank-save");
+
+    /* model in PROBABILITY space: P(y=1) follows a Beta-like mixture so the
+       score IS a calibrated probability. We discretize the population on a
+       grid of probability values weighted by a smooth density. */
+    var NB = 200;                    /* probability grid bins, 0..1 */
+    /* class-conditional probability densities: positives concentrate high,
+       negatives low; mixed by prevalence. We model the JOINT so cost = sum. */
+    function buildPop(pi) {
+      /* density of predicted prob p among positives and negatives.
+         Positives: more mass near 1; negatives: more mass near 0. */
+      var pop = [], i;
+      for (i = 0; i < NB; i++) {
+        var p = (i + 0.5) / NB;
+        var dPos = Math.pow(p, 1.6) * Math.pow(1 - p, 0.6);   /* skew high */
+        var dNeg = Math.pow(p, 0.6) * Math.pow(1 - p, 1.6);   /* skew low  */
+        pop.push({ p: p, pos: dPos, neg: dNeg });
+      }
+      /* normalize each class density to integrate to its class share */
+      var sPos = 0, sNeg = 0;
+      for (i = 0; i < NB; i++) { sPos += pop[i].pos; sNeg += pop[i].neg; }
+      var TOT = 10000;
+      for (i = 0; i < NB; i++) {
+        pop[i].pos = pop[i].pos / sPos * pi * TOT;
+        pop[i].neg = pop[i].neg / sNeg * (1 - pi) * TOT;
+      }
+      return pop;
+    }
+
+    function costAt(pop, t, cfp, cfn) {
+      /* predict positive when p >= t. FP = negatives with p>=t; FN = positives with p<t */
+      var fp = 0, fn = 0, i;
+      for (i = 0; i < NB; i++) {
+        if (pop[i].p >= t) fp += pop[i].neg; else fn += pop[i].pos;
+      }
+      return cfp * fp + cfn * fn;
+    }
+
+    function render() {
+      var cfp = +cfpEl.value, cfn = +cfnEl.value, pi = +prevEl.value / 100;
+      cfpOut.textContent = cfp; cfnOut.textContent = cfn; prevOut.textContent = prevEl.value + "%";
+      var pop = buildPop(pi);
+
+      var NT = 99, ts = [], costs = [], i, minC = Infinity, minT = 0.5;
+      for (i = 1; i <= NT; i++) {
+        var t = i / (NT + 1);
+        var cc = costAt(pop, t, cfp, cfn);
+        ts.push(t); costs.push(cc);
+        if (cc < minC) { minC = cc; minT = t; }
+      }
+      var cost50 = costAt(pop, 0.5, cfp, cfn);
+      var tStarFormula = cfp / (cfp + cfn);
+
+      var c = FM.setupCanvas(canvas, 320);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      ctx.clearRect(0, 0, w, h);
+
+      var padL = 46, padR = 16, padT = 16, padB = 30;
+      var gx0 = padL, gx1 = w - padR, gy0 = padT, gy1 = h - padB;
+      var maxC = Math.max.apply(null, costs) * 1.05;
+      function X(u) { return gx0 + (gx1 - gx0) * u; }
+      function Y(v) { return gy1 - (gy1 - gy0) * (v / maxC); }
+
+      ctx.font = C.MONO; ctx.textBaseline = "middle";
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1; ctx.strokeRect(gx0, gy0, gx1 - gx0, gy1 - gy0);
+
+      /* naive 0.5 line */
+      ctx.strokeStyle = "rgba(155,155,155,.6)"; ctx.setLineDash([4, 4]); ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(X(0.5), gy0); ctx.lineTo(X(0.5), gy1); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = C.SEC; ctx.textAlign = "center"; ctx.fillText("0.50", X(0.5), gy0 + 8);
+
+      /* the cost curve */
+      ctx.beginPath();
+      for (i = 0; i < ts.length; i++) { var px = X(ts[i]), py = Y(costs[i]); i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py); }
+      ctx.strokeStyle = C.SEC; ctx.lineWidth = 1.6; ctx.stroke();
+      ctx.lineTo(X(ts[ts.length - 1]), gy1); ctx.lineTo(X(ts[0]), gy1); ctx.closePath();
+      ctx.fillStyle = "rgba(99,99,99,.08)"; ctx.fill();
+
+      /* optimum marker */
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 1.4;
+      ctx.beginPath(); ctx.moveTo(X(minT), gy0); ctx.lineTo(X(minT), gy1); ctx.stroke();
+      ctx.fillStyle = C.MINT;
+      ctx.beginPath(); ctx.arc(X(minT), Y(minC), 4, 0, 6.2832); ctx.fill();
+      ctx.textAlign = "center"; ctx.fillText("t* = " + minT.toFixed(2), X(minT), gy1 + 14);
+
+      /* closed-form marker (EQ V4.9) */
+      ctx.strokeStyle = "rgba(78,138,247,.7)"; ctx.setLineDash([2, 3]); ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(X(tStarFormula), gy0); ctx.lineTo(X(tStarFormula), gy1); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = C.BLUE; ctx.textAlign = "left";
+      ctx.fillText("c_FP/(c_FP+c_FN)", X(tStarFormula) + 4, gy0 + 8);
+
+      /* axis labels */
+      ctx.fillStyle = C.MUT; ctx.textAlign = "center";
+      ctx.fillText("THRESHOLD t", (gx0 + gx1) / 2, gy1 + 14);
+      ctx.save(); ctx.translate(12, (gy0 + gy1) / 2); ctx.rotate(-Math.PI / 2);
+      ctx.fillText("EXPECTED COST", 0, 0); ctx.restore();
+
+      /* readouts */
+      tstarEl.textContent = minT.toFixed(2);
+      costVsEl.textContent = Math.round(minC) + " vs " + Math.round(cost50);
+      var save = cost50 > 0 ? (100 * (cost50 - minC) / cost50) : 0;
+      saveEl.textContent = save < 0.05 ? "0% (0.5 optimal)" : save.toFixed(1) + "%";
+    }
+
+    cfpEl.addEventListener("input", render);
+    cfnEl.addEventListener("input", render);
+    prevEl.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();   /* meaningful initial state with zero interaction */
+  })();
+
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

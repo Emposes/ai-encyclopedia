@@ -13,11 +13,24 @@ import { fileURLToPath } from "node:url";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const SITE = "https://llm-manual.vercel.app";
 
+// Track list drives search, llms.txt, cache-busting, link-checking, content.json.
+// `part` groups tracks for the hub/onboarding; existing four keep their VOL tags.
 const VOLUMES = [
-  { dir: "ml", tag: "VOL I", name: "Volume I — Foundations of Machine Learning" },
-  { dir: "chapters", tag: "VOL II", name: "Volume II — The LLM Field Manual" },
-  { dir: "prompting", tag: "VOL III", name: "Volume III — Prompting" },
-  { dir: "agents", tag: "VOL IV", name: "Volume IV — Agent Engineering" },
+  { dir: "stats",       tag: "STATS",   name: "Mathematics & Statistics",          part: "Foundations" },
+  { dir: "data",        tag: "DATA",    name: "Data & Feature Engineering",         part: "Foundations" },
+  { dir: "ml",          tag: "VOL I",   name: "Machine Learning",                   part: "Classical ML" },
+  { dir: "mlops",       tag: "MLOPS",   name: "Model Validation & Risk / MLOps",    part: "Classical ML" },
+  { dir: "dl",          tag: "DL",      name: "Deep Learning",                      part: "Deep Learning & RL" },
+  { dir: "rl",          tag: "RL",      name: "Reinforcement Learning",             part: "Deep Learning & RL" },
+  { dir: "game-theory", tag: "GAME",    name: "Game Theory",                        part: "Deep Learning & RL" },
+  { dir: "timeseries",  tag: "TIME",    name: "Time Series & Econometrics",         part: "Quant" },
+  { dir: "quant",       tag: "QUANT",   name: "Quantitative Finance",               part: "Quant" },
+  { dir: "chapters",    tag: "VOL II",  name: "The LLM Field Manual",               part: "AI Systems" },
+  { dir: "prompting",   tag: "VOL III", name: "Prompting",                          part: "AI Systems" },
+  { dir: "agents",      tag: "VOL IV",  name: "Agent Engineering",                  part: "AI Systems" },
+  { dir: "frameworks",  tag: "FRAME",   name: "Frameworks",                         part: "AI Systems" },
+  { dir: "multimodal",  tag: "MM",      name: "Multimodal & World Models",          part: "AI Systems" },
+  { dir: "openmodels",  tag: "OPEN",    name: "Open Models & Practice",             part: "AI Systems" },
 ];
 
 function pagesIn(dir) {
@@ -33,7 +46,7 @@ function strip(html) {
     .replace(/<[^>]+>/g, " ")
     .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
     .replace(/&nbsp;|&shy;/g, " ").replace(/&#?\w+;/g, " ")
-    .replace(/\s+/g, " ").trim();
+    .replace(/\s+/g, " ").replace(/ ([;:,.)])/g, "$1").trim();
 }
 
 function extract(rel) {
@@ -78,6 +91,63 @@ for (const vol of VOLUMES) {
 /* ---------- write artifacts ---------- */
 writeFileSync(join(ROOT, "search-index.json"), JSON.stringify(searchIndex));
 
+/* ---------- content.json manifest (track × level) + bibliography ---------- */
+function getRefs(html) {
+  const out = [];
+  const blocks = html.match(/<ol class="ref-list">[\s\S]*?<\/ol>/g) || [];
+  const refSec = html.match(/<h2>\s*References\s*<\/h2>([\s\S]*?)<\/section>/i); // pilot fallback (inline ol)
+  if (refSec) blocks.push(refSec[1]);
+  const seen = new Set();
+  for (const block of blocks) {
+    for (const li of block.match(/<li>[\s\S]*?<\/li>/g) || []) {
+      const href = (li.match(/href="(https?:\/\/[^"]+)"/) || [])[1];
+      if (!href || seen.has(href)) continue;
+      seen.add(href);
+      out.push({ cite: strip(li), url: href });
+    }
+  }
+  return out;
+}
+const manifest = [];
+const biblio = new Map(); // url -> { cite, tracks:Set }
+for (const vol of VOLUMES) {
+  for (const rel of pagesIn(vol.dir)) {
+    const html = readFileSync(join(ROOT, rel), "utf8");
+    const track = (html.match(/<body[^>]*\bdata-track="([^"]+)"/) || [])[1] || vol.dir;
+    const level = ((html.match(/<body[^>]*\bdata-level="([^"]+)"/) || [])[1]
+      || (html.match(/LEVEL<b>([^<]+)<\/b>/) || [])[1] || "").toLowerCase();
+    const { title, lede, sections } = extract(rel);
+    manifest.push({ file: "/" + rel, dir: vol.dir, track, level, part: vol.part, tag: vol.tag,
+      title, desc: lede.slice(0, 160), sections: sections.map(s => ({ id: s.id, h: s.h })) });
+    for (const r of getRefs(html)) {
+      if (!biblio.has(r.url)) biblio.set(r.url, { cite: r.cite, tracks: new Set() });
+      biblio.get(r.url).tracks.add(vol.tag);
+    }
+  }
+}
+writeFileSync(join(ROOT, "content.json"), JSON.stringify(manifest));
+
+const refsSorted = [...biblio.entries()].sort((a, b) => a[1].cite.localeCompare(b[1].cite));
+const biblioHtml = `<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Bibliography — AI Encyclopedia</title><meta name="description" content="Every primary source cited across the AI Encyclopedia." />
+<link rel="stylesheet" href="assets/css/manual.css" /></head>
+<body data-track="bibliography" data-level="intro">
+<header class="topbar"><a class="wordmark" href="index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+<span class="crumb">/ REFERENCES / BIBLIOGRAPHY</span><span class="spacer"></span>
+<a class="bar-link" href="index.html#toc">INDEX</a></header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+<div class="shell"><section class="chapter-hero"><div class="ch-index">REFERENCES</div>
+<h1>Bibliography</h1><p class="lede">Every primary source cited across the encyclopedia — <strong>${refsSorted.length} references</strong>, linked to where you can read them.</p></section>
+<div class="chapter-grid"><main><section class="section" id="s1"><div class="sec-head"><span class="sec-num">§</span><h2>All sources</h2></div>
+<ol class="ref-list">
+${refsSorted.map(([url, v]) => `  <li><a href="${url}" target="_blank" rel="noopener">${v.cite.replace(/\s+/g, " ").trim()}</a> <span class="ref-meta">${[...v.tracks].join(" · ")}</span></li>`).join("\n")}
+</ol></section></main></div></div>
+<footer class="footer"><div class="shell"><div class="f-col">AI // ENCYCLOPEDIA — BIBLIOGRAPHY</div><div class="f-col"><a href="index.html#toc">FULL CONTENTS ↗</a></div></div></footer>
+<script src="assets/js/shared.js"></script></body></html>`;
+writeFileSync(join(ROOT, "bibliography.html"), biblioHtml);
+console.log("content.json entries:", manifest.length, "| bibliography refs:", refsSorted.length);
+
 const llmsTxt = `# The AI Encyclopedia
 
 > A free, open, interactive encyclopedia of AI: machine learning from first
@@ -121,7 +191,7 @@ function hashOf(relAsset) {
   return hashCache[relAsset];
 }
 const ASSET_RE = /(href|src)="((?:\.\.\/|\/)?(assets\/(?:css|js)\/[\w.-]+\.(?:css|js)|gym\/(?:gym|decks\/[\w-]+)\.js))(\?v=[^"]*)?"/g;
-const htmlFiles = ["index.html", "404.html", ...VOLUMES.flatMap(v => pagesIn(v.dir)), ...(existsSync(join(ROOT, "gym/index.html")) ? ["gym/index.html"] : [])];
+const htmlFiles = ["index.html", "404.html", "studio.html", "bibliography.html", ...VOLUMES.flatMap(v => pagesIn(v.dir)), ...(existsSync(join(ROOT, "gym/index.html")) ? ["gym/index.html"] : [])].filter(f => existsSync(join(ROOT, f)));
 let stamped = 0;
 for (const rel of htmlFiles) {
   if (!existsSync(join(ROOT, rel))) continue;
@@ -148,7 +218,7 @@ try {
 
 /* ---------- link check ---------- */
 const broken = [];
-const allPages = ["index.html", ...VOLUMES.flatMap(v => pagesIn(v.dir)), ...(existsSync(join(ROOT, "gym/index.html")) ? ["gym/index.html"] : [])];
+const allPages = ["index.html", "studio.html", ...VOLUMES.flatMap(v => pagesIn(v.dir)), ...(existsSync(join(ROOT, "gym/index.html")) ? ["gym/index.html"] : [])].filter(f => existsSync(join(ROOT, f)));
 for (const rel of allPages) {
   const html = readFileSync(join(ROOT, rel), "utf8");
   const hrefs = [...html.matchAll(/href="([^"#?]+?\.(?:html|txt|json|css))(?:[?#][^"]*)?"/g)].map(x => x[1]);

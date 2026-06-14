@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Bayesian Inference — AI Encyclopedia</title>
+<meta name="description" content="Bayesian inference treats parameters as beliefs — priors updated by data into posteriors — with conjugate updates, MAP vs MLE, credible vs confidence intervals, and when the Bayesian machine earns its keep." />
+<link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
+<meta name="theme-color" content="#000000" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+</head>
+<body data-track="stats" data-level="core">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ STATISTICS / 05 / BAYESIAN</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../stats/06-linear-algebra.html">NEXT: LINEAR ALGEBRA →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">MATHEMATICS &amp; STATISTICS · CHAPTER 05 / 08</div>
+    <h1>Bayesian Inference</h1>
+    <p class="lede">Frequentist statistics treats a parameter as a fixed unknown and the data as random; Bayesian inference reverses this. <strong>A parameter becomes a probability distribution that data updates, a prior turned by likelihood into a posterior.</strong> Bayes' theorem drives the entire procedure and resolves several frequentist paradoxes, at the cost of requiring you to state your assumptions explicitly as a prior.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 24 MIN</b></span>
+      <span>BUILDS ON<b>STATS 01–04</b></span>
+      <span>INSTRUMENTS<b>BETA UPDATER · PRIOR SENSITIVITY · MAP vs MLE</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">5.1</span>Prior · likelihood · posterior</a>
+      <a href="#s2"><span class="n">5.2</span>Conjugate priors</a>
+      <a href="#s3"><span class="n">5.3</span>MAP vs MLE</a>
+      <a href="#s4"><span class="n">5.4</span>Credible vs confidence</a>
+      <a href="#s5"><span class="n">5.5</span>When to go Bayesian</a>
+      <a href="#s6"><span class="n">5.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 5.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">5.1</span><h2>Prior, likelihood, posterior</h2></div>
+        <p>Start from the definition of conditional probability and read it as a learning rule. You hold a belief about a parameter \(\theta\) before seeing data — the <strong>prior</strong> \(p(\theta)\). The data \(D\) arrive with a <strong>likelihood</strong> \(p(D \mid \theta)\), the probability the model assigns to what you observed for each candidate value of \(\theta\). Bayes' theorem combines them into the <strong>posterior</strong> \(p(\theta \mid D)\) — your updated belief:</p>
+
+        <div class="eq"><span class="eq-tag">EQ S5.1 — BAYES' THEOREM</span>
+        $$ p(\theta \mid D) \;=\; \frac{p(D \mid \theta)\, p(\theta)}{p(D)}, \qquad p(D) = \int p(D \mid \theta)\, p(\theta)\, \mathrm{d}\theta $$
+        <div class="eq-note">The denominator \(p(D)\) — the <b>marginal likelihood</b> or <b>evidence</b> — is just the constant that makes the posterior integrate to 1; it does not depend on \(\theta\). So for inference about \(\theta\) you can usually drop it and work with the proportionality <b>posterior \(\propto\) likelihood \(\times\) prior</b>. The hard part of Bayesian computation is almost always that integral over \(\theta\); conjugacy (§5.2) makes it disappear, and when it cannot, you reach for MCMC or variational methods.</div>
+        </div>
+
+        <p>The unnormalized form is the one to keep in your head, because it shows exactly how the three pieces interact:</p>
+
+        <div class="eq"><span class="eq-tag">EQ S5.2 — POSTERIOR AS A PRODUCT</span>
+        $$ \underbrace{p(\theta \mid D)}_{\text{posterior}} \;\propto\; \underbrace{p(D \mid \theta)}_{\text{likelihood}} \;\cdot\; \underbrace{p(\theta)}_{\text{prior}} $$
+        <div class="eq-note">The prior is a soft starting point; the likelihood pulls it toward whatever the data support. <b>With little data the prior dominates; as data accumulate the likelihood overwhelms any non-dogmatic prior and the posterior converges to the truth</b> (the Bernstein–von Mises theorem makes this precise: the posterior becomes asymptotically Gaussian and prior-independent). A prior that puts zero mass on a value can never recover — Cromwell's rule: never assign probability exactly 0 or 1 to something you might be wrong about.</div>
+        </div>
+
+        <p>Three properties make this more than a formula. First, it is <strong>sequential</strong>: yesterday's posterior is today's prior, and processing data in one batch or in a stream gives the identical result. Second, it returns a <em>whole distribution</em>, not a point estimate — uncertainty is first-class, not an afterthought computed from a sampling thought-experiment. Third, every quantity in it is a probability about \(\theta\) itself, which is what most people actually want to know and (contestably) believe a confidence interval already tells them.</p>
+
+        <div class="callout">
+          <span class="co-icon">KEY</span>
+          <p><strong>The interpretive split is real, not cosmetic.</strong> To a frequentist, \(\theta\) is a fixed constant and probability statements about it are meaningless; randomness lives in the data and the procedure. To a Bayesian, \(\theta\) is uncertain and probability <em>is</em> the language of that uncertainty. Both camps agree on the math of EQ S5.1 — they disagree on what a probability <em>is</em>. Most working statisticians today are pragmatic: Bayesian when priors are defensible and uncertainty must be honest, frequentist when a guarantee over repeated use is what matters.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 5.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">5.2</span><h2>Conjugate priors: Beta–Binomial &amp; Normal–Normal</h2></div>
+        <p>The integral in EQ S5.1 is what makes Bayes hard. A <strong>conjugate prior</strong> sidesteps it entirely: if the prior and posterior belong to the same family, updating is just arithmetic on the parameters. The canonical pair is the <strong>Beta prior with a Binomial likelihood</strong> — the model for "estimate a coin's bias from heads and tails."</p>
+
+        <div class="eq"><span class="eq-tag">EQ S5.3 — BETA–BINOMIAL UPDATE</span>
+        $$ \theta \sim \mathrm{Beta}(\alpha, \beta), \quad k \mid \theta \sim \mathrm{Binomial}(n, \theta) \;\;\Longrightarrow\;\; \theta \mid k \sim \mathrm{Beta}(\alpha + k,\; \beta + n - k) $$
+        <div class="eq-note">Observe \(k\) successes in \(n\) trials and you simply <b>add the successes to \(\alpha\) and the failures to \(\beta\)</b>. The prior parameters act as <em>pseudo-counts</em>: \(\mathrm{Beta}(1,1)\) is uniform (one imaginary head, one imaginary tail — total ignorance over \([0,1]\)); \(\mathrm{Beta}(2,2)\) is a gentle nudge toward a fair coin. The posterior mean is \(\dfrac{\alpha + k}{\alpha + \beta + n}\) — a data MLE \(k/n\) shrunk toward the prior mean \(\alpha/(\alpha+\beta)\), with the shrinkage fading as \(n\) grows.</div>
+        </div>
+
+        <p>The same trick works for a Gaussian mean with known variance. A <strong>Normal prior</strong> on the mean, combined with <strong>Normal data</strong>, yields a Normal posterior whose mean is a precision-weighted average of prior and data:</p>
+
+        <div class="eq"><span class="eq-tag">EQ S5.4 — NORMAL–NORMAL UPDATE (KNOWN σ²)</span>
+        $$ \mu \sim \mathcal{N}(\mu_0, \tau_0^2), \;\; x_i \mid \mu \sim \mathcal{N}(\mu, \sigma^2) \;\;\Longrightarrow\;\; \mu \mid \bar{x} \sim \mathcal{N}\!\left( \frac{\tfrac{\mu_0}{\tau_0^2} + \tfrac{n\bar{x}}{\sigma^2}}{\tfrac{1}{\tau_0^2} + \tfrac{n}{\sigma^2}},\; \left(\tfrac{1}{\tau_0^2} + \tfrac{n}{\sigma^2}\right)^{-1} \right) $$
+        <div class="eq-note">Work in <b>precision</b> (inverse variance) and it is beautifully simple: <b>posterior precision = prior precision + data precision</b>, and the posterior mean is the average of \(\mu_0\) and \(\bar{x}\) weighted by those precisions. Each observation adds \(1/\sigma^2\) of precision, so the posterior tightens like \(1/n\) and the data term \(n\bar{x}/\sigma^2\) eventually swamps the prior. This is the engine behind Kalman filters, ridge regression's Bayesian reading, and Gaussian hierarchical models.</div>
+        </div>
+
+        <div class="exercise" data-answer="0.643" data-tol="0.01" data-hint="Beta posterior is Beta(α+k, β+n−k); the mean is the first parameter over the sum of both.">
+          <div class="ex-q">You start with a \( \mathrm{Beta}(2,2) \) prior on a coin's bias and observe <b>7 heads in 10 flips</b>. What is the posterior <b>mean</b>? (Use EQ S5.3, then \( \tfrac{\alpha'}{\alpha'+\beta'} \).)</div>
+          <div class="ex-reveal-src">Update: \( \alpha' = 2 + 7 = 9 \), \( \beta' = 2 + (10-7) = 5 \), so the posterior is \( \mathrm{Beta}(9,5) \). Posterior mean \( = \dfrac{9}{9+5} = \dfrac{9}{14} = \) <b>0.643</b>. Note it sits below the raw MLE of \(7/10 = 0.70\): the symmetric prior shrinks the estimate toward \(0.5\).</div>
+        </div>
+
+        <div class="exercise" data-answer="0.75" data-tol="0.01" data-hint="The mean of a Beta(α, β) distribution is α / (α + β).">
+          <div class="ex-q">A posterior comes out as \( \mathrm{Beta}(3, 1) \). What is its <b>mean</b>?</div>
+          <div class="ex-reveal-src">The mean of \( \mathrm{Beta}(\alpha,\beta) \) is \( \dfrac{\alpha}{\alpha+\beta} = \dfrac{3}{3+1} = \dfrac{3}{4} = \) <b>0.75</b>. (Its mode, by contrast, is \( \tfrac{\alpha-1}{\alpha+\beta-2} = \tfrac{2}{2} = 1 \) — mean and mode part ways for skewed Betas.)</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># EQ S5.3: Beta-Binomial conjugate update -- posterior mean vs MLE
+import numpy as np
+
+a0, b0 = 2.0, 2.0          # Beta(2,2) prior: gentle nudge toward a fair coin
+k, n   = 7, 10             # observed: 7 heads in 10 flips
+
+a, b = a0 + k, b0 + (n - k)            # EQ S5.3: add heads to a, tails to b
+post_mean = a / (a + b)               # E[theta | data]
+post_var  = a * b / ((a + b)**2 * (a + b + 1))
+prior_mean = a0 / (a0 + b0)
+mle = k / n
+
+print(f"prior     : Beta({a0:.0f},{b0:.0f})  mean {prior_mean:.4f}")
+print(f"posterior : Beta({a:.0f},{b:.0f})  mean {post_mean:.4f}  sd {post_var**0.5:.4f}")
+print(f"MLE k/n   : {mle:.4f}")
+print(f"shrinkage : posterior sits {mle - post_mean:+.4f} from the MLE,")
+print(f"            pulled toward the prior mean {prior_mean:.2f}")
+
+# draw the posterior density on a grid (unnormalized Beta kernel, then normalize)
+grid = np.linspace(0.001, 0.999, 200)
+dx   = grid[1] - grid[0]
+dens = grid**(a - 1) * (1 - grid)**(b - 1)
+dens /= dens.sum() * dx                # normalize to unit area (Riemann)
+plot_xy(grid, dens)</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="bayes-beta" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT S5.1 — BETA–BINOMIAL UPDATER</span><span class="w-sub">EQ S5.3 · LIVE POSTERIOR</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>PRIOR α <output id="bayes-a-out">2</output></label><input type="range" id="bayes-a" min="0.5" max="20" step="0.5" value="2"/></div>
+              <div class="ctl"><label>PRIOR β <output id="bayes-b-out">2</output></label><input type="range" id="bayes-b" min="0.5" max="20" step="0.5" value="2"/></div>
+              <div class="ctl"><label>TRUE BIAS (COIN) <output id="bayes-p-out">0.70</output></label><input type="range" id="bayes-p" min="0.05" max="0.95" step="0.05" value="0.7"/></div>
+            </div>
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>FLIP COINS</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost" data-bayes-flip="1">+1</button>
+                  <button class="w-btn ghost" data-bayes-flip="10">+10</button>
+                  <button class="w-btn ghost" data-bayes-flip="100">+100</button>
+                  <button class="w-btn ghost" id="bayes-reset">RESET</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="bayes-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">DATA (HEADS / FLIPS)</div><div class="r-value" id="bayes-data">0 / 0</div></div>
+              <div class="readout acc"><div class="r-label">POSTERIOR Beta(α′,β′)</div><div class="r-value" id="bayes-post" style="font-size:14px;">—</div></div>
+              <div class="readout acc"><div class="r-label">POSTERIOR MEAN</div><div class="r-value" id="bayes-mean">—</div></div>
+              <div class="readout"><div class="r-label">95% CREDIBLE</div><div class="r-value" id="bayes-ci" style="font-size:13px;">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The <span style="color:var(--text-muted);">grey</span> curve is the prior, the <span style="color:var(--accent);">mint</span> curve the posterior; the dashed line is the true bias. Flip a few coins and the posterior is broad and prior-shaped; flip a hundred and watch it collapse to a spike on the truth — the likelihood drowning the prior exactly as §5.1 promised. Set α = β = 1 for a flat prior and the posterior mean tracks the raw MLE; crank α and β up to feel a stubborn prior resist the data.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 5.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">5.3</span><h2>MAP vs MLE: two ways to pick one number</h2></div>
+        <p>A full posterior is the honest answer, but engineering often wants a single estimate. Two point estimates dominate. <strong>Maximum likelihood (MLE)</strong> picks the \(\theta\) that makes the data most probable, ignoring any prior. <strong>Maximum a posteriori (MAP)</strong> picks the <em>mode</em> of the posterior — the most probable \(\theta\) given the data <em>and</em> the prior:</p>
+
+        <div class="eq"><span class="eq-tag">EQ S5.5 — MLE AND MAP</span>
+        $$ \hat{\theta}_{\text{MLE}} = \arg\max_{\theta}\; p(D \mid \theta), \qquad \hat{\theta}_{\text{MAP}} = \arg\max_{\theta}\; p(D \mid \theta)\, p(\theta) $$
+        <div class="eq-note">MAP is MLE with the prior multiplied back in — equivalently, with \(\log p(\theta)\) added to the log-likelihood. <b>MAP collapses to MLE exactly when the prior is flat</b> (\(p(\theta)\) constant), so MLE is the special case "I refuse to state a prior." Crucially, MAP is <em>not</em> the same as the posterior mean: for a skewed posterior the mode, mean, and median all differ, and MAP — being a single point — throws away the very uncertainty that motivated going Bayesian.</div>
+        </div>
+
+        <p>The connection to machine learning is direct and worth internalizing: <strong>regularization is a prior</strong>. Adding an \(L_2\) penalty \(\lambda\lVert\theta\rVert^2\) to a loss is precisely MAP estimation under a Gaussian prior \(\mathcal{N}(0, 1/(2\lambda))\) on the weights; an \(L_1\) penalty is a Laplace prior. The penalty strength \(\lambda\) <em>is</em> the prior's tightness. Seen this way, "regularized MLE" and "MAP" are the same computation under two vocabularies.</p>
+
+        <div class="eq"><span class="eq-tag">EQ S5.6 — MAP MEAN OF A BETA POSTERIOR</span>
+        $$ \hat{\theta}_{\text{MAP}} = \frac{\alpha + k - 1}{\alpha + \beta + n - 2}, \qquad \hat{\theta}_{\text{mean}} = \frac{\alpha + k}{\alpha + \beta + n}, \qquad \hat{\theta}_{\text{MLE}} = \frac{k}{n} $$
+        <div class="eq-note">For the Beta–Binomial model all three estimators have closed forms, and comparing them is the cleanest way to feel the difference. With a flat \(\mathrm{Beta}(1,1)\) prior the MAP \(\tfrac{k}{n}\) <b>coincides with the MLE</b> (the "\(-1\)" terms cancel the "\(+1\)" pseudo-counts), while the posterior mean \(\tfrac{k+1}{n+2}\) is Laplace's rule of succession — still shrunk toward \(0.5\). On small \(n\), these can differ enough to matter; by large \(n\) they converge.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Grid-approximate a Normal-mean posterior (EQ S5.4 shape, computed numerically)
+# then read off the 95% credible interval from the posterior CDF.
+import numpy as np
+rng = np.random.default_rng(0)
+
+mu_true, sigma = 5.0, 2.0          # known data variance
+data = rng.normal(mu_true, sigma, size=8)    # a SMALL sample of 8
+mu0, tau0 = 0.0, 5.0               # weak prior: N(0, 5^2) on the mean
+
+grid = np.linspace(-2, 12, 2000)   # candidate values of mu
+logprior = -0.5 * ((grid - mu0) / tau0)**2
+# log-likelihood of the sample under each candidate mu (sum over data points)
+loglik = -0.5 * (((data[:, None] - grid[None, :]) / sigma)**2).sum(0)
+logpost = logprior + loglik
+post = np.exp(logpost - logpost.max())       # stabilize, then normalize
+dx   = grid[1] - grid[0]
+post /= post.sum() * dx                       # unit-area posterior
+
+cdf = np.cumsum(post) * dx                    # running probability mass
+lo = grid[np.searchsorted(cdf, 0.025)]       # 2.5th percentile
+hi = grid[np.searchsorted(cdf, 0.975)]       # 97.5th percentile
+mean = (grid * post).sum() * dx              # E[mu | data]
+
+print(f"sample mean (MLE)     : {data.mean():.3f}")
+print(f"posterior mean        : {mean:.3f}")
+print(f"95% credible interval : [{lo:.3f}, {hi:.3f}]")
+print(f"interpretation        : P(mu in interval | data) = 0.95 -- a")
+print(f"                        statement about mu, not about the procedure")
+plot_xy(grid, post)</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="bayes-map" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT S5.2 — MAP vs MLE ON A SMALL SAMPLE</span><span class="w-sub">EQ S5.6 · BETA–BINOMIAL</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>HEADS k <output id="bayes-m-k-out">2</output></label><input type="range" id="bayes-m-k" min="0" max="20" step="1" value="2"/></div>
+              <div class="ctl"><label>FLIPS n <output id="bayes-m-n-out">3</output></label><input type="range" id="bayes-m-n" min="1" max="40" step="1" value="3"/></div>
+              <div class="ctl"><label>PRIOR α=β <output id="bayes-m-pr-out">2.0</output></label><input type="range" id="bayes-m-pr" min="1" max="12" step="0.5" value="2"/></div>
+            </div>
+            <canvas class="w-canvas" id="bayes-m-canvas" height="280"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">MLE  k/n</div><div class="r-value" id="bayes-m-mle">—</div></div>
+              <div class="readout acc"><div class="r-label">MAP  (mode)</div><div class="r-value" id="bayes-m-map">—</div></div>
+              <div class="readout acc"><div class="r-label">POSTERIOR MEAN</div><div class="r-value" id="bayes-m-mean">—</div></div>
+              <div class="readout"><div class="r-label">GAP  MLE − MAP</div><div class="r-value" id="bayes-m-gap">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Three vertical markers on the posterior: <span style="color:var(--blue);">blue</span> MLE, <span style="color:var(--accent);">mint</span> MAP (mode), and a paler mint posterior mean. With <b>n = 3</b> and a \(\mathrm{Beta}(2,2)\) prior they sit far apart — small data is exactly where the prior earns its keep. Drag <b>n</b> up to 40 and the three markers march together, the posterior narrows, and the choice of estimator stops mattering. Set the prior to 1 and the MAP snaps onto the MLE (EQ S5.6).</div>
+        </div>
+      </section>
+
+      <!-- ====================== 5.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">5.4</span><h2>Credible intervals vs confidence intervals</h2></div>
+        <p>This is the comparison where the two philosophies collide most sharply, and where the difference is routinely misstated. Both produce an interval; they answer different questions.</p>
+
+        <div class="eq"><span class="eq-tag">EQ S5.7 — A 95% CREDIBLE INTERVAL</span>
+        $$ \mathbb{P}\big(\theta \in [L, U] \,\big|\, D\big) = 0.95, \qquad \text{e.g. } \int_{L}^{U} p(\theta \mid D)\, \mathrm{d}\theta = 0.95 $$
+        <div class="eq-note">A credible interval is a direct probability statement <b>about the parameter</b>: given the data you actually saw, there is a 95% probability \(\theta\) lies in \([L, U]\). Two common flavors: the <b>equal-tailed</b> interval (cut 2.5% off each tail of the posterior) and the <b>highest-posterior-density (HPD)</b> interval (the shortest interval containing 95% of the mass — every point inside is more probable than every point outside). For symmetric posteriors they coincide; for skewed ones the HPD is tighter and more honest.</div>
+        </div>
+
+        <p>A <strong>confidence interval</strong> makes no such statement. Its 95% is a property of the <em>procedure</em> across hypothetical repetitions: if you reran the whole experiment many times and computed an interval each time, about 95% of those intervals would contain the true (fixed) \(\theta\). For the one interval in front of you, \(\theta\) is either in it or not — the 95% does not transfer to this realization. The seductive sentence "there's a 95% chance the parameter is in this interval" is a credible-interval statement smuggled onto a confidence interval, and it is false under the frequentist definition.</p>
+
+        <table class="data">
+          <thead><tr><th></th><th>Credible interval (Bayesian)</th><th>Confidence interval (frequentist)</th></tr></thead>
+          <tbody>
+            <tr><td><strong>What's random</strong></td><td class="m">θ (the belief)</td><td class="m">the interval (the data)</td></tr>
+            <tr><td><strong>The 95% means</strong></td><td>P(θ in [L,U] | this data) = 0.95</td><td>95% of such intervals cover the fixed θ over repeats</td></tr>
+            <tr><td><strong>Needs a prior</strong></td><td class="hl">yes</td><td class="m">no</td></tr>
+            <tr><td><strong>Guarantee</strong></td><td>conditional on the data you saw</td><td>long-run, over the procedure</td></tr>
+            <tr><td><strong>"95% chance θ is inside"</strong></td><td class="hl">correct</td><td><span style="color:var(--danger);">wrong</span></td></tr>
+          </tbody>
+        </table>
+
+        <p>For large samples with a flat prior the two intervals nearly coincide numerically — which is why the distinction looks pedantic until it isn't. They <em>diverge</em> when the prior carries real information, when \(n\) is small, or when the parameter lives near a boundary (a near-zero proportion, a variance close to zero), where confidence intervals can behave pathologically — even extending below zero for a quantity that cannot be negative — while a properly bounded prior keeps the credible interval inside the feasible region.</p>
+
+        <div class="exercise" data-answer="0.95" data-tol="0.001" data-hint="A credible interval is defined by the posterior probability mass it contains.">
+          <div class="ex-q">A Bayesian reports a <b>95%</b> credible interval \([L, U]\) for \( \theta \). Reading it correctly: what is \( \mathbb{P}(\theta \in [L, U] \mid D) \), the probability the parameter lies inside <em>given the observed data</em>?</div>
+          <div class="ex-reveal-src">By definition (EQ S5.7), a 95% credible interval is exactly the interval whose posterior mass is 0.95, so \( \mathbb{P}(\theta \in [L,U] \mid D) = \) <b>0.95</b>. This is the statement people <em>want</em> a confidence interval to make — and the reason credible intervals are easier to communicate honestly.</div>
+        </div>
+
+        <div class="callout warn">
+          <span class="co-icon">CONTESTED</span>
+          <p><strong>The interpretation gap cuts both ways.</strong> Bayesians point out that the credible interval answers the question people actually ask. Frequentists counter that it only does so <em>if you accept the prior</em> — and that a confidence interval's coverage guarantee holds regardless of any belief, which is exactly what you want for a regulator or a referee. Neither is "more correct"; they optimize for different things. The honest summary: report a credible interval when a defensible prior exists and you owe a statement about <em>this</em> parameter; report a confidence interval when you owe a guarantee that survives an adversary's choice of θ.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 5.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">5.5</span><h2>When to go Bayesian: small data, real priors, hierarchy</h2></div>
+        <p>Bayesian inference is not a moral upgrade over frequentist statistics — it is a tool with a cost (you must specify a prior, and often pay for sampling) and three regimes where it clearly pays for itself.</p>
+
+        <ul>
+          <li><strong>Small data.</strong> When \(n\) is tiny, the MLE is high-variance and can sit on the boundary (zero successes \(\Rightarrow\) "the true rate is 0"). A mild prior regularizes the estimate and, more importantly, the posterior reports its own width — you get calibrated uncertainty instead of an overconfident point. This is exactly the regime Instrument S5.2 dramatizes.</li>
+          <li><strong>Genuine prior information.</strong> If you actually know something — a physical constraint, last quarter's conversion rate, a published effect size — discarding it to "let the data speak" is throwing away signal. A prior is the disciplined way to encode it, and the posterior shows precisely how much the new data revised it.</li>
+          <li><strong>Hierarchy &amp; partial pooling.</strong> When you estimate many related quantities at once — conversion rates for 500 stores, batting averages for 200 players, effects across 30 hospitals — a <strong>hierarchical model</strong> lets a shared hyper-prior <em>borrow strength</em> across groups. Each estimate is shrunk toward the population mean by an amount the data decide; noisy small-sample groups shrink a lot, well-measured groups barely move. This is the modern form of the James–Stein result that a pooled estimator dominates independent MLEs.</li>
+        </ul>
+
+        <div class="eq"><span class="eq-tag">EQ S5.8 — A HIERARCHICAL (PARTIAL-POOLING) MODEL</span>
+        $$ \phi \sim p(\phi), \qquad \theta_j \mid \phi \sim p(\theta_j \mid \phi)\;\; (j = 1,\dots,J), \qquad y_{ij} \mid \theta_j \sim p(y \mid \theta_j) $$
+        <div class="eq-note">A top-level <b>hyperparameter</b> \(\phi\) (e.g. the population mean and spread) generates group-level parameters \(\theta_j\), which generate the observations. Fitting \(\phi\) and all \(\theta_j\) jointly produces <b>shrinkage toward the group mean</b> — the cure for both the "no pooling" extreme (every group on its own, wildly overfit) and the "complete pooling" extreme (one number for everyone, badly biased). Closed-form conjugacy rarely survives here, so these models are the daily reason practitioners reach for <b>MCMC</b> (Hamiltonian Monte Carlo / NUTS in Stan, PyMC, NumPyro) or variational inference.</div>
+        </div>
+
+        <p class="note"><strong>When to stay frequentist.</strong> If a defensible prior is genuinely unavailable and a referee will challenge whatever you pick; if you need a coverage guarantee that holds for an adversarially chosen θ (much regulatory and clinical work); or if the model is simple, data abundant, and the two answers coincide anyway — the frequentist route is cheaper and beyond dispute. The mature stance is fluency in both, not allegiance to one.</p>
+
+        <div class="widget" id="bayes-prior" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT S5.3 — PRIOR-SENSITIVITY EXPLORER</span><span class="w-sub">SAME DATA · THREE PRIORS · EQ S5.3</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>HEADS k <output id="bayes-s-k-out">3</output></label><input type="range" id="bayes-s-k" min="0" max="50" step="1" value="3"/></div>
+              <div class="ctl"><label>FLIPS n <output id="bayes-s-n-out">5</output></label><input type="range" id="bayes-s-n" min="1" max="100" step="1" value="5"/></div>
+            </div>
+            <canvas class="w-canvas" id="bayes-s-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">FLAT  Beta(1,1)</div><div class="r-value" id="bayes-s-flat">—</div></div>
+              <div class="readout acc"><div class="r-label">FAIR-LEANING  Beta(10,10)</div><div class="r-value" id="bayes-s-fair">—</div></div>
+              <div class="readout"><div class="r-label">SKEPTIC  Beta(2,8)</div><div class="r-value" id="bayes-s-skep">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The identical data feed three posteriors: a <span style="color:var(--text-secondary);">flat</span> prior (let the data speak), a strong <span style="color:var(--accent);">fair-coin</span> prior, and a <span style="color:var(--blue);">skeptic</span> who expects a low rate. With <b>n = 5</b> the three posterior means disagree sharply — prior choice is doing real work. Now drag <b>n</b> toward 100: the curves converge and the disagreement evaporates. <b>That convergence is the honest defence of priors</b> — with enough data they wash out; with little data, stating yours is just being explicit about an assumption you were making anyway.</div>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>Every update in this chapter — precision-weighted means, conjugate sums, the integral in Bayes' theorem — is linear algebra in disguise.</strong> Chapter 06 lays the foundation those operations stand on: vectors and matrices, eigen-decomposition, the SVD, and the geometry of projections that turns "weighted average of prior and data" into a single matrix equation.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 5.R ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">5.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://doi.org/10.1098/rstl.1763.0053" target="_blank" rel="noopener">Bayes, T. &amp; Price, R. (1763). <span class="ref-venue">An Essay towards solving a Problem in the Doctrine of Chances</span>.</a> <span class="ref-meta">Phil. Trans. R. Soc. — the original statement of the theorem.</span></li>
+          <li><a href="http://www.stat.columbia.edu/~gelman/book/" target="_blank" rel="noopener">Gelman, A., Carlin, J. B., Stern, H. S., Dunson, D. B., Vehtari, A. &amp; Rubin, D. B. (2013). <span class="ref-venue">Bayesian Data Analysis</span> (3rd ed.).</a> <span class="ref-meta">CRC Press — the standard modern reference for conjugacy, hierarchy, and computation.</span></li>
+          <li><a href="https://doi.org/10.1017/CBO9780511790423" target="_blank" rel="noopener">Jaynes, E. T. (2003). <span class="ref-venue">Probability Theory: The Logic of Science</span>.</a> <span class="ref-meta">Cambridge University Press — the objective-Bayesian case for probability as extended logic.</span></li>
+          <li><a href="https://doi.org/10.1214/aos/1176344552" target="_blank" rel="noopener">Efron, B. &amp; Morris, C. (1975). <span class="ref-venue">Data Analysis Using Stein's Estimator and Its Generalizations</span>.</a> <span class="ref-meta">JASA / Ann. Statist. — shrinkage and partial pooling as empirical Bayes.</span></li>
+          <li><a href="https://doi.org/10.1214/ss/1177013604" target="_blank" rel="noopener">Casella, G. &amp; Berger, R. L. (1987). <span class="ref-venue">Reconciling Bayesian and Frequentist Evidence in the One-Sided Testing Problem</span>.</a> <span class="ref-meta">JASA — a careful account of where the two frameworks agree and diverge.</span></li>
+          <li><a href="https://mc-stan.org/users/documentation/" target="_blank" rel="noopener">Carpenter, B. et al. (2017). <span class="ref-venue">Stan: A Probabilistic Programming Language</span>.</a> <span class="ref-meta">J. Stat. Softw. — Hamiltonian Monte Carlo for the hierarchical models of §5.5.</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../stats/04-inference-testing.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">04</span> Inference &amp; Testing</div></a>
+        <a class="next" href="../stats/06-linear-algebra.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">06</span> Linear Algebra</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — STATISTICS · CH 05</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* ============================================================
+   Bayesian Inference — chapter instruments
+   Single IIFE, no globals. Shared Beta machinery (log-gamma,
+   density, mean, credible interval) feeds all three widgets so
+   the page and the Python cells agree. setTimeout only.
+   ============================================================ */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  /* --- Lanczos log-gamma; underpins the Beta normalizer --- */
+  var G = [676.5203681218851, -1259.1392167224028, 771.32342877765313,
+           -176.61502916214059, 12.507343278686905, -0.13857109526572012,
+           9.9843695780195716e-6, 1.5056327351493116e-7];
+  function logGamma(z) {
+    if (z < 0.5) {
+      return Math.log(Math.PI / Math.sin(Math.PI * z)) - logGamma(1 - z);
+    }
+    z -= 1;
+    var x = 0.99999999999980993, i;
+    for (i = 0; i < G.length; i++) x += G[i] / (z + i + 1);
+    var t = z + G.length - 0.5;
+    return 0.5 * Math.log(2 * Math.PI) + (z + 0.5) * Math.log(t) - t + Math.log(x);
+  }
+  function logBeta(a, b) { return logGamma(a) + logGamma(b) - logGamma(a + b); }
+
+  /* Beta(a,b) density at x in (0,1), via stable log form */
+  function betaPdf(x, a, b) {
+    if (x <= 0 || x >= 1) return 0;
+    return Math.exp((a - 1) * Math.log(x) + (b - 1) * Math.log(1 - x) - logBeta(a, b));
+  }
+  function betaMean(a, b) { return a / (a + b); }
+  function betaMode(a, b) {
+    if (a > 1 && b > 1) return (a - 1) / (a + b - 2);
+    if (a <= 1 && b > 1) return 0;
+    if (a > 1 && b <= 1) return 1;
+    return 0.5; /* a,b <= 1: bimodal/uniform — report center for display */
+  }
+
+  /* equal-tailed credible interval from a numeric grid of a Beta */
+  function betaCredible(a, b, lvl) {
+    var N = 1200, i, x, d, dx = 1 / N, cum = 0, total = 0, dens = new Array(N + 1);
+    for (i = 0; i <= N; i++) { x = i / N; d = betaPdf(x, a, b); dens[i] = d; total += d * dx; }
+    var loT = (1 - lvl) / 2, hiT = 1 - loT, lo = 0, hi = 1, gotLo = false;
+    for (i = 0; i <= N; i++) {
+      cum += dens[i] * dx / total;
+      if (!gotLo && cum >= loT) { lo = i / N; gotLo = true; }
+      if (cum >= hiT) { hi = i / N; break; }
+    }
+    return [lo, hi];
+  }
+
+  /* shared canvas plotter for Beta densities on [0,1] */
+  function plotDensities(canvas, curves, markers, dataLabel) {
+    var c = FM.setupCanvas(canvas, canvas.dataset.h ? +canvas.dataset.h : 300);
+    var ctx = c.ctx, w = c.w, h = c.h;
+    var padL = 40, padR = 14, padT = 16, padB = 26;
+    var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+    ctx.clearRect(0, 0, w, h);
+    /* vertical range across all curves */
+    var hi = 0, i, j;
+    for (i = 0; i < curves.length; i++)
+      for (j = 0; j < curves[i].ys.length; j++)
+        if (isFinite(curves[i].ys[j]) && curves[i].ys[j] > hi) hi = curves[i].ys[j];
+    if (hi <= 0) hi = 1;
+    hi *= 1.12;
+    function px(t) { return x0 + t * (x1 - x0); }
+    function py(v) { return y0 - (v / hi) * (y0 - y1); }
+    /* frame + grid */
+    ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+    ctx.strokeRect(x0, y1, x1 - x0, y0 - y1);
+    ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+    ctx.textAlign = "center"; ctx.textBaseline = "top";
+    for (i = 0; i <= 5; i++) {
+      var t = i / 5, gx = px(t);
+      ctx.strokeStyle = "rgba(47,50,52,.5)";
+      ctx.beginPath(); ctx.moveTo(gx, y1); ctx.lineTo(gx, y0); ctx.stroke();
+      ctx.fillStyle = C.MUT; ctx.fillText(t.toFixed(1), gx, y0 + 5);
+    }
+    ctx.textAlign = "left"; ctx.fillText("θ", x0 + 2, y0 + 5);
+    /* curves */
+    for (i = 0; i < curves.length; i++) {
+      var cur = curves[i];
+      ctx.strokeStyle = cur.color;
+      ctx.lineWidth = cur.width || 2;
+      if (cur.dash) ctx.setLineDash(cur.dash); else ctx.setLineDash([]);
+      ctx.beginPath();
+      for (j = 0; j < cur.ys.length; j++) {
+        var X = px(j / (cur.ys.length - 1)), Y = py(cur.ys[j]);
+        if (j === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y);
+      }
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    /* vertical markers (true value, estimators) */
+    if (markers) {
+      for (i = 0; i < markers.length; i++) {
+        var m = markers[i];
+        ctx.strokeStyle = m.color; ctx.lineWidth = m.width || 1.5;
+        ctx.setLineDash(m.dash || [4, 4]);
+        ctx.beginPath(); ctx.moveTo(px(m.t), y0); ctx.lineTo(px(m.t), y1); ctx.stroke();
+        ctx.setLineDash([]);
+        if (m.label) {
+          ctx.fillStyle = m.color; ctx.font = C.MONO;
+          ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+          ctx.fillText(m.label, px(m.t), y1 + 12);
+        }
+      }
+    }
+    if (dataLabel) {
+      ctx.fillStyle = C.SEC; ctx.font = C.MONO;
+      ctx.textAlign = "right"; ctx.textBaseline = "top";
+      ctx.fillText(dataLabel, x1 - 6, y1 + 4);
+    }
+  }
+
+  function sampleBeta(a, b, n) {
+    var ys = new Array(n + 1), i;
+    for (i = 0; i <= n; i++) ys[i] = betaPdf(i / n, a, b);
+    return ys;
+  }
+  function fnum(x, d) { d = d === undefined ? 3 : d; return x.toFixed(d); }
+
+  /* ========================================================
+     INSTRUMENT S5.1 — Beta–Binomial updater (flip coins)
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("bayes-beta");
+    if (!root) return;
+    var aIn = document.getElementById("bayes-a");
+    var bIn = document.getElementById("bayes-b");
+    var pIn = document.getElementById("bayes-p");
+    var aOut = document.getElementById("bayes-a-out");
+    var bOut = document.getElementById("bayes-b-out");
+    var pOut = document.getElementById("bayes-p-out");
+    var canvas = document.getElementById("bayes-canvas");
+    var dataEl = document.getElementById("bayes-data");
+    var postEl = document.getElementById("bayes-post");
+    var meanEl = document.getElementById("bayes-mean");
+    var ciEl = document.getElementById("bayes-ci");
+    var rnd = FM.mulberry32(20240613);
+    var heads = 0, flips = 0;
+
+    function flip(count) {
+      var p = +pIn.value, i;
+      for (i = 0; i < count; i++) { if (rnd() < p) heads++; flips++; }
+      render();
+    }
+    function reset() { heads = 0; flips = 0; render(); }
+
+    function render() {
+      var a0 = +aIn.value, b0 = +bIn.value, p = +pIn.value;
+      aOut.textContent = a0; bOut.textContent = b0; pOut.textContent = fnum(p, 2);
+      var a = a0 + heads, b = b0 + (flips - heads);
+      var N = 200, prior = new Array(N + 1), post = new Array(N + 1), i, x;
+      for (i = 0; i <= N; i++) {
+        x = i / N;
+        prior[i] = betaPdf(x, a0, b0);
+        post[i] = betaPdf(x, a, b);
+      }
+      var ci = betaCredible(a, b, 0.95);
+      plotDensities(canvas, [
+        { ys: prior, color: C.MUT, width: 1.5, dash: [3, 3] },
+        { ys: post, color: C.MINT, width: 2.5 }
+      ], [
+        { t: p, color: C.SEC, dash: [5, 4], label: "TRUE " + fnum(p, 2) }
+      ], flips + " FLIPS");
+      dataEl.textContent = heads + " / " + flips;
+      postEl.textContent = "(" + fnum(a, 1) + ", " + fnum(b, 1) + ")";
+      meanEl.textContent = fnum(betaMean(a, b), 3);
+      ciEl.textContent = "[" + fnum(ci[0], 2) + ", " + fnum(ci[1], 2) + "]";
+    }
+
+    root.querySelectorAll("[data-bayes-flip]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        flip(parseInt(btn.getAttribute("data-bayes-flip"), 10));
+      });
+    });
+    document.getElementById("bayes-reset").addEventListener("click", reset);
+    aIn.addEventListener("input", render);
+    bIn.addEventListener("input", render);
+    pIn.addEventListener("input", function () { render(); });
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT S5.2 — MAP vs MLE on a small sample
+     ======================================================== */
+  (function () {
+    var canvas = document.getElementById("bayes-m-canvas");
+    if (!canvas) return;
+    var kIn = document.getElementById("bayes-m-k");
+    var nIn = document.getElementById("bayes-m-n");
+    var prIn = document.getElementById("bayes-m-pr");
+    var kOut = document.getElementById("bayes-m-k-out");
+    var nOut = document.getElementById("bayes-m-n-out");
+    var prOut = document.getElementById("bayes-m-pr-out");
+    var mleEl = document.getElementById("bayes-m-mle");
+    var mapEl = document.getElementById("bayes-m-map");
+    var meanEl = document.getElementById("bayes-m-mean");
+    var gapEl = document.getElementById("bayes-m-gap");
+
+    function render() {
+      var n = +nIn.value;
+      var k = Math.min(+kIn.value, n);   /* keep k <= n */
+      if (+kIn.value > n) { kIn.value = n; k = n; }
+      var pr = +prIn.value;
+      kOut.textContent = k; nOut.textContent = n; prOut.textContent = fnum(pr, 1);
+      var a = pr + k, b = pr + (n - k);
+      var mle = k / n;
+      var map = betaMode(a, b);
+      var mean = betaMean(a, b);
+      var ys = sampleBeta(a, b, 240);
+      plotDensities(canvas, [
+        { ys: ys, color: C.MINT, width: 2.5 }
+      ], [
+        { t: mle, color: C.BLUE, dash: [4, 4], label: "MLE" },
+        { t: map, color: C.MINT, dash: [], width: 2, label: "MAP" },
+        { t: mean, color: "rgba(166,242,204,.55)", dash: [2, 3], label: "MEAN" }
+      ], "Beta(" + fnum(a, 1) + ", " + fnum(b, 1) + ")");
+      mleEl.textContent = fnum(mle, 3);
+      mapEl.textContent = fnum(map, 3);
+      meanEl.textContent = fnum(mean, 3);
+      gapEl.textContent = (mle - map >= 0 ? "+" : "") + fnum(mle - map, 3);
+    }
+    kIn.addEventListener("input", render);
+    nIn.addEventListener("input", render);
+    prIn.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT S5.3 — Prior-sensitivity explorer
+     ======================================================== */
+  (function () {
+    var canvas = document.getElementById("bayes-s-canvas");
+    if (!canvas) return;
+    var kIn = document.getElementById("bayes-s-k");
+    var nIn = document.getElementById("bayes-s-n");
+    var kOut = document.getElementById("bayes-s-k-out");
+    var nOut = document.getElementById("bayes-s-n-out");
+    var flatEl = document.getElementById("bayes-s-flat");
+    var fairEl = document.getElementById("bayes-s-fair");
+    var skepEl = document.getElementById("bayes-s-skep");
+    var priors = [
+      { a: 1, b: 1, color: C.SEC },     /* flat */
+      { a: 10, b: 10, color: C.MINT },  /* fair-leaning */
+      { a: 2, b: 8, color: C.BLUE }     /* skeptic: expects a low rate */
+    ];
+
+    function render() {
+      var n = +nIn.value;
+      var k = Math.min(+kIn.value, n);
+      if (+kIn.value > n) { kIn.value = n; k = n; }
+      kOut.textContent = k; nOut.textContent = n;
+      var curves = [], means = [], i;
+      for (i = 0; i < priors.length; i++) {
+        var a = priors[i].a + k, b = priors[i].b + (n - k);
+        curves.push({ ys: sampleBeta(a, b, 240), color: priors[i].color, width: 2 });
+        means.push(betaMean(a, b));
+      }
+      var mle = k / n;
+      plotDensities(canvas, curves, [
+        { t: mle, color: C.MUT, dash: [3, 3], label: "MLE " + fnum(mle, 2) }
+      ], k + " / " + n);
+      flatEl.textContent = fnum(means[0], 3);
+      fairEl.textContent = fnum(means[1], 3);
+      skepEl.textContent = fnum(means[2], 3);
+    }
+    kIn.addEventListener("input", render);
+    nIn.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

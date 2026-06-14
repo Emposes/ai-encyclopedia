@@ -1,0 +1,169 @@
+{
+  "concepts": [
+    {
+      "id": "openmodels-04-training-techniques-s1",
+      "chapter": "openmodels/04-training-techniques",
+      "section": "s1",
+      "title": "Dataset curation & tagging",
+      "eyebrow": "OPEN MODELS",
+      "beats": [
+        {
+          "text": "The most common reason a fine-tune disappoints is not the algorithm, it is the data you feed it.",
+          "visual": { "type": "title", "text": "Dataset curation & tagging", "sub": "Every example must earn its place" }
+        },
+        {
+          "text": "Four checks do most of the work in order: deduplicate, decontaminate, quality filter, then balance the set.",
+          "visual": { "type": "bars", "values": [4, 3, 2, 1], "labels": ["Dedup", "Decontaminate", "Quality", "Balance"], "highlight": 2 }
+        },
+        {
+          "text": "Tagging turns a flat pile of text into a steerable signal by labeling each example with its source, domain, and quality.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "Effective diversity is the exponential of the entropy of the source mixture, not the raw count of sources.",
+          "visual": { "type": "equation", "tex": "N_{\\text{eff}} = e^{H} = \\exp\\!\\Big(\\!-\\!\\sum_i p_i \\log p_i\\Big)", "note": "perplexity of the source distribution" }
+        },
+        {
+          "text": "A corpus that is ninety percent one source and ten percent another has an effective diversity near one point three eight.",
+          "visual": { "type": "stat", "value": 1.38, "label": "effective sources at 90/10 mix", "decimals": 2 }
+        },
+        {
+          "text": "Read fifty of your own examples by hand before training, since the cheapest quality filter is a pair of eyes.",
+          "visual": { "type": "stat", "value": 50, "label": "examples to read by hand first", "unit": "rows" }
+        }
+      ]
+    },
+    {
+      "id": "openmodels-04-training-techniques-s2",
+      "chapter": "openmodels/04-training-techniques",
+      "section": "s2",
+      "title": "Freezing & unfreezing blocks",
+      "eyebrow": "OPEN MODELS",
+      "beats": [
+        {
+          "text": "A transformer's layers do not all do the same job, so where you draw the freeze line is a high-leverage knob.",
+          "visual": { "type": "title", "text": "Freezing & unfreezing blocks", "sub": "Which weights you let move" }
+        },
+        {
+          "text": "Freezing a block excludes its parameters from the optimizer, so they keep pre-trained values and need no optimizer state.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "Freezing the first k of L blocks leaves a trainable count of L minus k blocks plus the output head.",
+          "visual": { "type": "equation", "tex": "P_{\\text{train}} = (L-k)\\,P_b + P_h, \\qquad f = \\frac{P_{\\text{train}}}{P_e + L\\,P_b + P_h}", "note": "trainable fraction under freezing" }
+        },
+        {
+          "text": "Freezing twenty-four of thirty-two equal blocks leaves exactly one quarter of the parameters trainable.",
+          "visual": { "type": "stat", "value": 0.25, "label": "trainable fraction, k=24 of L=32", "decimals": 2 }
+        },
+        {
+          "text": "Trainable parameters and the optimizer memory they demand fall as you freeze more of the backbone.",
+          "visual": { "type": "plot", "ys": [6.93, 5.33, 3.73, 2.13, 0.73], "dot": 3, "xlabel": "frozen blocks k", "ylabel": "trainable params (B)" }
+        },
+        {
+          "text": "Gradual unfreezing thaws layers top-down over time, each with a smaller learning rate than the one above it.",
+          "visual": { "type": "bars", "values": [1, 2, 3, 4], "labels": ["head", "+ top", "+ next", "+ deeper"], "highlight": 0 }
+        }
+      ]
+    },
+    {
+      "id": "openmodels-04-training-techniques-s3",
+      "chapter": "openmodels/04-training-techniques",
+      "section": "s3",
+      "title": "Continued pre-training & domain adaptation",
+      "eyebrow": "OPEN MODELS",
+      "beats": [
+        {
+          "text": "Instruction fine-tuning teaches a model how to behave, but it does not, by itself, teach it a new domain.",
+          "visual": { "type": "title", "text": "Continued pre-training", "sub": "Adapt the base before you specialize it" }
+        },
+        {
+          "text": "Continued pre-training keeps the next-token objective running, now on a large corpus of in-domain raw text.",
+          "visual": { "type": "equation", "tex": "\\theta_0 \\xrightarrow{\\;\\mathcal{L}_{\\text{LM}}(\\mathcal{D}_{\\text{domain}})\\;} \\theta_1 \\xrightarrow{\\;\\mathcal{L}_{\\text{task}}(\\mathcal{D}_{\\text{task}})\\;} \\theta_2", "note": "two-stage objective: adapt, then fine-tune" }
+        },
+        {
+          "text": "The first arrow moves the model's distribution onto your domain, the second teaches the actual skill.",
+          "visual": { "type": "plot", "ys": [1, 3, 6, 8, 9], "dot": 4, "xlabel": "training stage", "ylabel": "domain fit" }
+        },
+        {
+          "text": "Use a fraction of the original pre-training peak learning rate, since too high overwrites general knowledge.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "Mix a slice of general text back into the domain corpus, or you get a model that has forgotten normal conversation.",
+          "visual": { "type": "bars", "values": [95, 5], "labels": ["domain", "replay"], "highlight": 1 }
+        },
+        {
+          "text": "Reach for it when held-out perplexity on your domain is high, signaling the model has not read enough of your world.",
+          "visual": { "type": "stat", "value": 1, "label": "epochs of domain text, standard shape", "unit": "to few" }
+        }
+      ]
+    },
+    {
+      "id": "openmodels-04-training-techniques-s4",
+      "chapter": "openmodels/04-training-techniques",
+      "section": "s4",
+      "title": "Curriculum & data mixing",
+      "eyebrow": "OPEN MODELS",
+      "beats": [
+        {
+          "text": "Two questions about order and proportion remain: in what sequence and in what ratio do examples arrive.",
+          "visual": { "type": "title", "text": "Curriculum & data mixing", "sub": "Order and proportion shape the optimizer's view" }
+        },
+        {
+          "text": "Presenting examples easy first and hard later can speed convergence and reach better optima than random shuffling.",
+          "visual": { "type": "plot", "ys": [2, 3, 5, 6.5, 7.5, 8], "dot": 5, "xlabel": "difficulty order", "ylabel": "quality" }
+        },
+        {
+          "text": "A mixed objective weights the new domain by one minus r and the old replay corpus by the replay fraction r.",
+          "visual": { "type": "equation", "tex": "\\mathcal{L}_{\\text{mix}} = (1-r)\\,\\mathbb{E}_{x\\sim\\mathcal{D}_{\\text{new}}}[\\ell(x)] + r\\,\\mathbb{E}_{x\\sim\\mathcal{D}_{\\text{old}}}[\\ell(x)]", "note": "r in [0,1] is the replay fraction" }
+        },
+        {
+          "text": "A small replay fraction, often one to ten percent, recovers most retained capability for a small slowdown.",
+          "visual": { "type": "bars", "values": [1, 5, 10], "labels": ["1%", "5%", "10%"], "highlight": 1 }
+        },
+        {
+          "text": "Replay is the single most reliable defense against forgetting because old gradients stay partly alive.",
+          "visual": { "type": "stat", "value": 5, "label": "replay fraction that just works", "unit": "%" }
+        },
+        {
+          "text": "Skewing the new mix toward one source collapses effective diversity even though the source count is unchanged.",
+          "visual": { "type": "plot", "ys": [3, 2.4, 1.8, 1.4, 1.1], "dot": 4, "xlabel": "skew", "ylabel": "effective sources" }
+        }
+      ]
+    },
+    {
+      "id": "openmodels-04-training-techniques-s5",
+      "chapter": "openmodels/04-training-techniques",
+      "section": "s5",
+      "title": "Catastrophic forgetting & mitigations",
+      "eyebrow": "OPEN MODELS",
+      "beats": [
+        {
+          "text": "Catastrophic forgetting is the tendency of a network trained on task B to overwrite the weights that encoded task A.",
+          "visual": { "type": "title", "text": "Catastrophic forgetting", "sub": "The failure mode the whole chapter circles" }
+        },
+        {
+          "text": "It is not a bug in the optimizer, the loss on B says nothing about A so updates can freely wreck A.",
+          "visual": { "type": "plot", "ys": [0.9, 0.7, 0.5, 0.35, 0.25], "dot": 4, "xlabel": "steps on task B", "ylabel": "task A accuracy" }
+        },
+        {
+          "text": "Forgetting is the gap between old-task score before and after, with retention as the ratio of the two.",
+          "visual": { "type": "equation", "tex": "F = a^{\\text{old}}_{\\text{before}} - a^{\\text{old}}_{\\text{after}}, \\qquad R = \\frac{a^{\\text{old}}_{\\text{after}}}{a^{\\text{old}}_{\\text{before}}}", "note": "absolute forgetting and retention ratio" }
+        },
+        {
+          "text": "A model dropping from ninety to fifty-five percent on a benchmark has lost thirty-five accuracy points.",
+          "visual": { "type": "stat", "value": 0.35, "label": "absolute forgetting F", "decimals": 2 }
+        },
+        {
+          "text": "Mitigations rise in cost: replay, parameter-efficient fine-tuning, lower learning rates, then EWC regularizers.",
+          "visual": { "type": "bars", "values": [1, 1, 2, 3], "labels": ["replay", "PEFT", "lower LR", "EWC"], "highlight": 0 }
+        },
+        {
+          "text": "Elastic Weight Consolidation adds a quadratic penalty that makes important weights stiff and free ones movable.",
+          "visual": { "type": "equation", "tex": "\\mathcal{L}_{\\text{EWC}}(\\theta) = \\mathcal{L}_{\\text{new}}(\\theta) + \\frac{\\lambda}{2}\\sum_i F_i\\,(\\theta_i - \\theta^{\\star}_i)^2", "note": "Fisher importance anchors each weight" }
+        }
+      ]
+    }
+  ]
+}

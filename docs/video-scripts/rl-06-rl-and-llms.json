@@ -1,0 +1,169 @@
+{
+  "concepts": [
+    {
+      "id": "rl-06-rl-and-llms-s1",
+      "chapter": "rl/06-rl-and-llms",
+      "section": "s1",
+      "title": "Bandits & the contextual case",
+      "eyebrow": "REINFORCEMENT LEARNING",
+      "beats": [
+        {
+          "text": "A multi-armed bandit is the smallest RL problem: one state, several arms, each returning a noisy reward.",
+          "visual": { "type": "title", "text": "Bandits & the contextual case", "sub": "One state, K arms, one dilemma" }
+        },
+        {
+          "text": "There are no transitions and no credit assignment over time, so it isolates the explore-exploit trade-off cleanly.",
+          "visual": { "type": "bars", "values": [0.4, 1.0, 0.7, 0.2, 0.9], "labels": ["arm1", "arm2", "arm3", "arm4", "arm5"], "highlight": 1 }
+        },
+        {
+          "text": "In a contextual bandit the agent sees a context x first, then picks an arm conditioned on it.",
+          "visual": { "type": "equation", "tex": "\\max_{\\pi}\\; \\mathbb{E}_{x \\sim \\mathcal{D}}\\; \\mathbb{E}_{a \\sim \\pi(\\cdot \\mid x)}\\big[\\, r(x, a) \\,\\big]", "note": "The full RL return collapses to one expected reward" }
+        },
+        {
+          "text": "The episode lasts exactly one step: observe, act, get rewarded, terminate, with no next state to plan toward.",
+          "visual": { "type": "stat", "value": 1, "label": "environment steps per episode", "decimals": 0 }
+        },
+        {
+          "text": "Read x as the prompt, a as the whole response, and r as how good the answer was, and RLHF is a contextual bandit.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "Two things are missing: where the reward comes from, and how to optimize it over a combinatorially huge action space.",
+          "visual": { "type": "plot", "ys": [0.2, 0.5, 0.7, 0.85, 0.93], "dot": 4, "xlabel": "samples scored", "ylabel": "policy quality" }
+        }
+      ]
+    },
+    {
+      "id": "rl-06-rl-and-llms-s2",
+      "chapter": "rl/06-rl-and-llms",
+      "section": "s2",
+      "title": "RLHF — learning from human preferences",
+      "eyebrow": "REINFORCEMENT LEARNING",
+      "beats": [
+        {
+          "text": "People cannot reliably score a response on an absolute scale, but they can reliably compare two of them.",
+          "visual": { "type": "title", "text": "RLHF", "sub": "Learning a reward from preferences" }
+        },
+        {
+          "text": "The Bradley-Terry model turns comparisons into a scalar: the preference probability is the sigmoid of the reward gap.",
+          "visual": { "type": "equation", "tex": "P\\big(y_w \\succ y_l \\mid x\\big) = \\sigma\\!\\big(r_\\phi(x, y_w) - r_\\phi(x, y_l)\\big)", "note": "Only the difference of rewards matters" }
+        },
+        {
+          "text": "Equal rewards give exactly 0.5, a coin flip, and only the gap matters, so the scale is fixed up to a shift.",
+          "visual": { "type": "plot", "ys": [0.05, 0.12, 0.27, 0.5, 0.73, 0.88, 0.95], "dot": 3, "xlabel": "reward gap", "ylabel": "P(chosen wins)" }
+        },
+        {
+          "text": "The reward model is a transformer with its token head swapped for a single scalar head reading the final hidden state.",
+          "visual": { "type": "equation", "tex": "\\mathcal{L}_{\\text{RM}}(\\phi) = -\\,\\mathbb{E}\\Big[\\, \\log \\sigma\\!\\big(r_\\phi(x, y_w) - r_\\phi(x, y_l)\\big) \\Big]", "note": "Logistic regression on the reward gap" }
+        },
+        {
+          "text": "When the two answers are equally good the loss hits its maximum, log 2, roughly 0.69.",
+          "visual": { "type": "stat", "value": 0.69, "label": "max RM loss at equal rewards", "decimals": 2 }
+        },
+        {
+          "text": "The classic RLHF pipeline runs three stages: supervised fine-tuning, reward-model training, then policy optimization.",
+          "visual": { "type": "bars", "values": [1, 2, 3], "labels": ["SFT", "reward model", "PPO"], "highlight": 2 }
+        }
+      ]
+    },
+    {
+      "id": "rl-06-rl-and-llms-s3",
+      "chapter": "rl/06-rl-and-llms",
+      "section": "s3",
+      "title": "PPO for language models",
+      "eyebrow": "REINFORCEMENT LEARNING",
+      "beats": [
+        {
+          "text": "Stage three optimizes the policy against the reward model using PPO, chosen because it takes small, conservative steps.",
+          "visual": { "type": "title", "text": "PPO for language models", "sub": "Small steps against a fragile reward" }
+        },
+        {
+          "text": "PPO's clipped surrogate caps the probability ratio so one update cannot move the policy too far.",
+          "visual": { "type": "equation", "tex": "\\mathcal{L}^{\\text{CLIP}}(\\theta) = \\mathbb{E}_t\\Big[\\, \\min\\big(\\rho_t\\,\\hat A_t,\\; \\operatorname{clip}(\\rho_t, 1-\\varepsilon, 1+\\varepsilon)\\,\\hat A_t\\big) \\Big]", "note": "The min makes the bound pessimistic" }
+        },
+        {
+          "text": "With epsilon at 0.2 the effective ratio is capped at 1.2, so pushing the ratio higher buys no extra objective.",
+          "visual": { "type": "plot", "ys": [0.4, 0.7, 1.0, 1.2, 1.2, 1.2, 1.2], "dot": 3, "xlabel": "probability ratio", "ylabel": "clipped objective" }
+        },
+        {
+          "text": "RLHF adds a per-token KL penalty against the SFT model, optimizing the reward minus a leash on drift.",
+          "visual": { "type": "equation", "tex": "\\max_{\\pi_\\theta}\\; \\mathbb{E}\\big[\\, r_\\phi(x, y) \\,\\big] - \\beta\\, \\mathbb{D}_{\\mathrm{KL}}\\!\\big(\\pi_\\theta \\,\\|\\, \\pi_{\\text{ref}}\\big)", "note": "Keeps the policy where the reward model is trustworthy" }
+        },
+        {
+          "text": "Standard PPO-RLHF keeps four large models in memory at once: policy, reference, reward model, and a critic.",
+          "visual": { "type": "stat", "value": 4, "label": "models resident at once", "decimals": 0 }
+        },
+        {
+          "text": "It works and produced InstructGPT and ChatGPT, but it is heavy, finicky, and hard to reproduce.",
+          "visual": { "type": "bars", "values": [4, 2], "labels": ["PPO-RLHF", "DPO"], "highlight": 0 }
+        }
+      ]
+    },
+    {
+      "id": "rl-06-rl-and-llms-s4",
+      "chapter": "rl/06-rl-and-llms",
+      "section": "s4",
+      "title": "DPO — preferences without RL",
+      "eyebrow": "REINFORCEMENT LEARNING",
+      "beats": [
+        {
+          "text": "The KL-regularized objective is not an open search: for a fixed reward it has a known closed-form optimal policy.",
+          "visual": { "type": "title", "text": "DPO", "sub": "Preferences without an RL loop" }
+        },
+        {
+          "text": "That optimum is the reference distribution reweighted by the exponentiated reward, a Gibbs distribution.",
+          "visual": { "type": "equation", "tex": "\\pi_r(y \\mid x) = \\frac{1}{Z(x)}\\,\\pi_{\\text{ref}}(y \\mid x)\\,\\exp\\!\\Big(\\tfrac{1}{\\beta}\\, r(x, y)\\Big)", "note": "Z(x) is intractable; it sums over all sequences" }
+        },
+        {
+          "text": "Inverting it and substituting into Bradley-Terry, the intractable partition function cancels exactly in the difference.",
+          "visual": { "type": "equation", "tex": "\\mathcal{L}_{\\text{DPO}}(\\theta) = -\\,\\mathbb{E}\\!\\left[\\log \\sigma\\!\\left( \\beta \\log \\frac{\\pi_\\theta(y_w\\mid x)}{\\pi_{\\text{ref}}(y_w\\mid x)} - \\beta \\log \\frac{\\pi_\\theta(y_l\\mid x)}{\\pi_{\\text{ref}}(y_l\\mid x)} \\right)\\right]", "note": "The policy is its own reward model" }
+        },
+        {
+          "text": "No reward model is trained, no rollouts are sampled, no RL loop runs, just a forward and backward pass.",
+          "visual": { "type": "bars", "values": [2, 0], "labels": ["models in memory", "online rollouts"], "highlight": 1 }
+        },
+        {
+          "text": "With pi over ref at 2 for the chosen and 0.5 for the rejected, the model assigns the chosen completion 0.8.",
+          "visual": { "type": "stat", "value": 0.8, "label": "P(chosen) at gap 2 ln 2", "decimals": 1 }
+        },
+        {
+          "text": "DPO is offline and cannot explore beyond its fixed data, so well-tuned PPO can still edge it on the hardest tasks.",
+          "visual": { "type": "plot", "ys": [0.3, 0.55, 0.7, 0.78, 0.8, 0.79, 0.76], "dot": 4, "xlabel": "off-distribution drift", "ylabel": "implicit reward" }
+        }
+      ]
+    },
+    {
+      "id": "rl-06-rl-and-llms-s5",
+      "chapter": "rl/06-rl-and-llms",
+      "section": "s5",
+      "title": "GRPO & RLVR — verifiable rewards",
+      "eyebrow": "REINFORCEMENT LEARNING",
+      "beats": [
+        {
+          "text": "For math and code the reward needs no human: an answer is right or wrong, tests pass or they do not.",
+          "visual": { "type": "title", "text": "GRPO & RLVR", "sub": "Verifiable, ungameable rewards" }
+        },
+        {
+          "text": "RLVR replaces the learned, hackable reward model with a deterministic checker returning a clean signal.",
+          "visual": { "type": "bars", "values": [1, 0, 1, 1], "labels": ["r1", "r2", "r3", "r4"], "highlight": 0 }
+        },
+        {
+          "text": "GRPO attacks PPO's most expensive piece, the value network, and deletes it entirely.",
+          "visual": { "type": "equation", "tex": "\\hat A_i = \\frac{r_i - \\operatorname{mean}(r_1, \\ldots, r_G)}{\\operatorname{std}(r_1, \\ldots, r_G)}", "note": "Baseline is the group mean, scale the group std" }
+        },
+        {
+          "text": "For a group of four scoring rewards one, zero, zero, one, a correct response gets a standardized advantage of one.",
+          "visual": { "type": "stat", "value": 1, "label": "advantage of a correct response", "decimals": 0 }
+        },
+        {
+          "text": "Sample several answers, reward each, standardize within the group, and reasoning behavior emerges unsupervised.",
+          "visual": { "type": "plot", "ys": [-1, -1, 0, 1, 1], "dot": 3, "xlabel": "response in group", "ylabel": "group-relative advantage" }
+        },
+        {
+          "text": "Reward hacking haunts every method here: the policy optimizes the measured reward, not the intended one.",
+          "visual": { "type": "plot", "ys": [0.2, 0.5, 0.72, 0.6, 0.4, 0.25, 0.15], "dot": 2, "xlabel": "optimization pressure", "ylabel": "true quality" }
+        }
+      ]
+    }
+  ]
+}

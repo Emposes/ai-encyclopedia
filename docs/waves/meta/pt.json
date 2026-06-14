@@ -1,0 +1,59 @@
+{
+  "file": "frameworks/01-pytorch.html",
+  "glossary": [
+    {
+      "term": "Tensor",
+      "def": "PyTorch's core data structure: an n-dimensional array of a single dtype stored in a contiguous block of memory, described by a shape (logical dimensions) and a stride (elements to step per axis). It mirrors NumPy's ndarray but adds two superpowers — it can live on a GPU and it can record an autograd history for automatic differentiation."
+    },
+    {
+      "term": "Stride / view",
+      "def": "Stride is the per-axis step count that maps a multi-dimensional index to a flat memory offset. Operations like view, transpose, permute, and most slices return a new tensor that shares the same storage and only reinterprets the strides, so they are zero-copy; a non-contiguous result sometimes needs .contiguous() before ops that demand a packed layout."
+    },
+    {
+      "term": "Broadcasting",
+      "def": "The rule that lets tensors of different shapes combine without explicit replication. Shapes are aligned from the right, each axis pair must be equal or have a 1 on one side, and a size-1 axis is virtually stretched (stride 0, no memory copied) to match. Getting it wrong yields a silently mis-shaped result rather than a crash — the most common source of shape bugs."
+    },
+    {
+      "term": "Autograd graph",
+      "def": "The directed acyclic graph PyTorch records on the fly during the forward pass whenever a tensor has requires_grad=True. Each node stores the op that produced it and a grad_fn for its local derivative. It is dynamic (define-by-run): control flow builds a fresh graph every iteration, and the graph is freed after the backward pass."
+    },
+    {
+      "term": "Reverse-mode autodiff (.backward)",
+      "def": "The algorithm loss.backward() runs: it walks the autograd graph in reverse topological order, applies the chain rule at each node, and deposits dloss/dtheta into each leaf tensor's .grad. One backward pass yields the gradient of a single scalar loss with respect to all parameters at once — the regime deep learning needs."
+    },
+    {
+      "term": "Gradient accumulation / zero_grad",
+      "def": "PyTorch adds each backward pass's gradients into .grad rather than overwriting, which is why a fan-out node sums contributions over all paths and why you must call optimizer.zero_grad() every step. The same behavior lets you split a large effective batch across several backward passes before one optimizer step."
+    },
+    {
+      "term": "nn.Module",
+      "def": "The base class for PyTorch models. Subclass it, register child modules and nn.Parameter tensors in __init__, and define forward(); then parameters() recursively yields every learnable tensor for the optimizer, and to(device), state_dict(), and train()/eval() are handled for you. A raw tensor assigned as an attribute is invisible to the optimizer — use nn.Parameter or register_buffer."
+    },
+    {
+      "term": "Dataset / DataLoader",
+      "def": "A Dataset exposes __len__ and __getitem__(i) to return one example; a DataLoader wraps it to handle batching (collation), shuffling each epoch, and parallel prefetch via num_workers. One epoch yields ceil(N/B) minibatches and therefore that many optimizer steps, the number that sets the training budget."
+    }
+  ],
+  "refs": [
+    {
+      "cite": "Paszke, A., Gross, S., Massa, F. et al. (2019). PyTorch: An Imperative Style, High-Performance Deep Learning Library. NeurIPS 32.",
+      "url": "https://arxiv.org/abs/1912.01703"
+    },
+    {
+      "cite": "The PyTorch Team. PyTorch Documentation (stable).",
+      "url": "https://pytorch.org/docs/stable/index.html"
+    },
+    {
+      "cite": "Baydin, A. G., Pearlmutter, B. A., Radul, A. A. & Siskind, J. M. (2018). Automatic Differentiation in Machine Learning: a Survey. JMLR 18(153).",
+      "url": "https://jmlr.org/papers/v18/17-468.html"
+    },
+    {
+      "cite": "The PyTorch Team. Automatic Differentiation with torch.autograd (tutorial).",
+      "url": "https://pytorch.org/tutorials/beginner/basics/autogradqs_tutorial.html"
+    },
+    {
+      "cite": "Ansel, J. et al. (2024). PyTorch 2: Faster Machine Learning Through Dynamic Python Bytecode Transformation and Graph Compilation. ASPLOS 2024.",
+      "url": "https://openreview.net/forum?id=BygdyxHFDS"
+    }
+  ]
+}

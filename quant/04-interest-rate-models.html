@@ -1,0 +1,774 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Interest-Rate Models — Vasicek, CIR &amp; Hull–White — AI Encyclopedia</title>
+<meta name="description" content="Interest rates wander but are pulled home — mean-reverting short-rate models (Vasicek, CIR, Hull–White) price every bond and swaption from that one idea." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+</head>
+<body data-track="quant" data-level="advanced">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ QUANT / 04 / INTEREST-RATE MODELS</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../quant/05-monte-carlo.html">NEXT: MONTE CARLO →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">QUANTITATIVE FINANCE · CHAPTER 04 / 06</div>
+    <h1>Interest-Rate Models — Vasicek, CIR &amp; Hull–White</h1>
+    <p class="lede">In Black–Scholes the rate \(r\) was a constant you looked up; here it becomes the quantity being modelled. The field rests on one stylized fact: rates wander but are pulled back toward a long-run level. <strong>Mean-reverting short-rate models price every bond and swaption from that idea, with a single stochastic differential equation generating the entire yield curve and the derivatives written on it.</strong></p>
+    <div class="ch-meta">
+      <span>LEVEL<b>ADVANCED</b></span>
+      <span>READING TIME<b>≈ 28 MIN</b></span>
+      <span>BUILDS ON<b>QUANT 01 · 03</b></span>
+      <span>INSTRUMENTS<b>VASICEK SIM · CURVE · CIR vs VASICEK</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">4.1</span>The term structure</a>
+      <a href="#s2"><span class="n">4.2</span>Short-rate framework</a>
+      <a href="#s3"><span class="n">4.3</span>Vasicek</a>
+      <a href="#s4"><span class="n">4.4</span>Cox–Ingersoll–Ross</a>
+      <a href="#s5"><span class="n">4.5</span>Hull–White &amp; the curve</a>
+      <a href="#s6"><span class="n">4.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 4.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">4.1</span><h2>The term structure of interest rates</h2></div>
+        <p>There is not one interest rate, there is a curve of them. Lend money for three months and you earn one rate; lend for thirty years and you earn another. The <strong>term structure</strong> — the map from maturity to yield — is the central object of fixed-income finance, and almost everything in this chapter is a way to produce it from a smaller set of moving parts.</p>
+
+        <p>The cleanest coordinate is the <strong>zero-coupon bond</strong> \(P(t,T)\): the price today (time \(t\)) of one dollar paid with certainty at maturity \(T\), with no coupons along the way. Every fixed cash flow is a bundle of these, so the function \(T \mapsto P(t,T)\) — the <em>discount curve</em> — prices any default-free instrument by linearity. From it, three equivalent descriptions of the same information:</p>
+
+        <div class="eq"><span class="eq-tag">EQ Q4.1 — THREE FACES OF THE CURVE</span>
+        $$ \underbrace{y(t,T) = -\frac{\ln P(t,T)}{T - t}}_{\text{continuously-compounded yield}}, \qquad \underbrace{f(t,T) = -\frac{\partial \ln P(t,T)}{\partial T}}_{\text{instantaneous forward rate}}, \qquad \underbrace{r_t = f(t,t) = \lim_{T \to t} y(t,T)}_{\text{short rate}} $$
+        <div class="eq-note">The <b>yield</b> \(y\) is the single rate that, compounded over \([t,T]\), reproduces the bond price. The <b>forward rate</b> \(f(t,T)\) is the rate locked in today for an instantaneous loan starting at \(T\); the yield is the average of forwards across the maturity, \(y(t,T) = \frac{1}{T-t}\int_t^T f(t,u)\,du\). The <b>short rate</b> \(r_t\) is the front end of the curve — the overnight rate. <b>The entire chapter is the project of choosing a stochastic model for \(r_t\) and deriving \(P(t,T)\), hence the whole curve, from it.</b></div>
+        </div>
+
+        <p>Empirically the curve is usually <strong>upward-sloping</strong> (long money pays more, compensating for term risk and expected rate rises), occasionally <strong>flat</strong>, and sometimes <strong>inverted</strong> — short rates above long rates, the historically reliable recession signal that appeared across 2022–2024 before normalizing. A good model must be able to produce all three shapes without re-tuning, and it must let the curve <em>evolve randomly</em>, because that randomness is exactly what interest-rate options pay off on.</p>
+
+        <div class="callout">
+          <span class="co-icon">WHY r MATTERS NOW</span>
+          <p><strong>In Quant 03 we held \(r\) constant and known — harmless for a three-month equity call.</strong> It is not harmless for a 30-year swap, a callable bond, or a swaption, where the underlying <em>is</em> the rate and its volatility drives the price. Treating \(r\) as a stochastic process is not a refinement here; it is the whole subject.</p>
+        </div>
+
+        <div class="exercise" data-answer="0.04" data-tol="0.01" data-hint="continuously-compounded yield is y = -ln(P)/(T-t)">
+          <div class="ex-q">A zero-coupon bond maturing in \(T - t = 5\) years trades at \(P = 0.8187\) per dollar of face. What is its continuously-compounded yield \(y = -\ln(P)/(T-t)\)? (Use \(\ln 0.8187 = -0.2000\).)</div>
+          <div class="ex-reveal-src">\(y = -\dfrac{\ln 0.8187}{5} = -\dfrac{-0.2000}{5} = \dfrac{0.2000}{5} = \) <b>0.04</b> — a flat 4% curve at that maturity.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 4.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">4.2</span><h2>Short-rate models — the framework</h2></div>
+        <p>A <strong>short-rate model</strong> posits a single stochastic differential equation (SDE) for the instantaneous short rate \(r_t\) under the risk-neutral measure \(\mathbb{Q}\), then derives every bond price as a risk-neutral expectation — the same machine as Quant 03's EQ Q3.1, now applied to the rate that does the discounting:</p>
+
+        <div class="eq"><span class="eq-tag">EQ Q4.2 — BOND PRICE AS A RISK-NEUTRAL EXPECTATION</span>
+        $$ P(t,T) \;=\; \mathbb{E}^{\mathbb{Q}}\!\left[\, \exp\!\Big(-\!\int_t^T r_s\,\mathrm{d}s\Big)\;\Big|\;\mathcal{F}_t \,\right] $$
+        <div class="eq-note">The bond pays \$1 at \(T\); its value today is the expected discount factor, where discounting itself is now random because \(r_s\) is random. <b>This single formula reduces every short-rate model to one question: can we compute that expectation?</b> When \(r_t\) is a Gaussian or square-root diffusion the integral \(\int_t^T r_s\,\mathrm{d}s\) is tractable and the answer is a closed-form exponential — the defining luxury of the models in this chapter.</div>
+        </div>
+
+        <p>A model is called <strong>affine</strong> when the resulting yield is a linear (affine) function of the short rate. Affine models are the backbone of the field because they collapse the expectation in EQ Q4.2 into an exponential of \(r_t\):</p>
+
+        <div class="eq"><span class="eq-tag">EQ Q4.3 — THE AFFINE TERM-STRUCTURE FORM</span>
+        $$ P(t,T) = A(t,T)\,e^{-B(t,T)\,r_t} \qquad\Longleftrightarrow\qquad y(t,T) = \frac{B(t,T)}{T-t}\,r_t \;-\; \frac{\ln A(t,T)}{T-t} $$
+        <div class="eq-note">\(A\) and \(B\) are deterministic functions of the calendar, solved from ordinary differential equations (Riccati equations) implied by the SDE. <b>Vasicek, CIR and Hull–White are all affine</b> — that is precisely why each admits a closed-form bond price. \(B(t,T)\) is a duration-like sensitivity: it measures how strongly the bond's log-price responds to a move in the short rate, and it shrinks toward \(1/a\) as maturity grows.</div>
+        </div>
+
+        <p>Two more pieces of vocabulary that organize the whole zoo. A model is an <strong>equilibrium</strong> model if you specify the dynamics and read off whatever curve they imply (Vasicek, CIR); it is a <strong>no-arbitrage</strong> model if you instead let parameters become time-dependent so the model reproduces <em>today's observed curve exactly</em> (Hull–White, HJM). Equilibrium models are honest about the economics but generically misprice traded bonds on day one; no-arbitrage models fit by construction, at the cost of a function rather than a number to estimate. Production desks use no-arbitrage models because mispricing the hedging instruments is not an option.</p>
+
+        <div class="callout warn">
+          <span class="co-icon">ONE-FACTOR LIMITATION</span>
+          <p><strong>Every model in this chapter is driven by a single Brownian motion.</strong> That means all points on the curve move in lockstep — a one-factor model cannot produce a yield curve that simultaneously steepens at the front and flattens at the back, and it forces perfect correlation between all rates. Principal-component analysis of real curves shows roughly three independent factors (level, slope, curvature). One-factor models survive because they are tractable and calibrate adequately to a single product; serious curve-and-vol work uses multi-factor or HJM/LMM frameworks (beyond this chapter).</p>
+        </div>
+      </section>
+
+      <!-- ====================== 4.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">4.3</span><h2>Vasicek: mean reversion in its purest form</h2></div>
+        <p>Vasicek (1977) wrote the simplest equation that captures the central stylized fact. The short rate is an <strong>Ornstein–Uhlenbeck process</strong>: a drift that always points back toward a long-run level, plus constant-magnitude Gaussian noise.</p>
+
+        <div class="eq"><span class="eq-tag">EQ Q4.4 — THE VASICEK SDE</span>
+        $$ \mathrm{d}r_t \;=\; a\,(b - r_t)\,\mathrm{d}t \;+\; \sigma\,\mathrm{d}W_t $$
+        <div class="eq-note">\(a &gt; 0\) is the <b>speed of mean reversion</b> (how hard the rate is pulled home), \(b\) the <b>long-run mean level</b> it is pulled toward, and \(\sigma\) the <b>instantaneous volatility</b>. When \(r_t &gt; b\) the drift \(a(b - r_t)\) is negative and the rate falls; when \(r_t &lt; b\) it rises. <b>Without the noise, \(r_t\) decays exponentially to \(b\) with time-constant \(1/a\); the noise keeps it perpetually wandering around \(b\).</b> The half-life of a shock is \(\ln 2 / a\).</div>
+        </div>
+
+        <p>Because the equation is linear with additive Gaussian noise, it solves in closed form. Conditional on today's rate, the future rate is normally distributed:</p>
+
+        <div class="eq"><span class="eq-tag">EQ Q4.5 — VASICEK: MEAN, VARIANCE, STATIONARY LAW</span>
+        $$ \mathbb{E}[r_T \mid r_t] = b + (r_t - b)\,e^{-a(T-t)}, \qquad \mathrm{Var}[r_T \mid r_t] = \frac{\sigma^2}{2a}\Big(1 - e^{-2a(T-t)}\Big) $$
+        $$ r_\infty \sim \mathcal{N}\!\left(b,\ \frac{\sigma^2}{2a}\right) $$
+        <div class="eq-note">The conditional mean is a weighted average of the start \(r_t\) and the target \(b\), with the weight on \(b\) growing as \(e^{-a(T-t)} \to 0\). As \(T \to \infty\) the mean converges to \(b\) and the variance saturates at \(\sigma^2/2a\) — the <b>stationary variance</b>. So Vasicek's long horizon is a Gaussian bell centered on \(b\) with spread set by the noise-to-reversion ratio. <b>Faster reversion (larger \(a\)) or smaller \(\sigma\) gives a tighter long-run distribution.</b></div>
+        </div>
+
+        <div class="exercise" data-answer="0.03" data-tol="0.001" data-hint="the Vasicek long-run mean is exactly the level parameter b (here written theta)">
+          <div class="ex-q">A Vasicek short rate follows \( \mathrm{d}r_t = a(\theta - r_t)\,\mathrm{d}t + \sigma\,\mathrm{d}W_t \) with reversion level \( \theta = 0.03 \), speed \( a = 0.4 \), and vol \( \sigma = 0.01 \). What is its long-run (stationary) mean, \( \lim_{T\to\infty} \mathbb{E}[r_T] \)?</div>
+          <div class="ex-reveal-src">The Ornstein–Uhlenbeck process reverts to its level parameter, so \( \lim_{T\to\infty}\mathbb{E}[r_T] = \theta = \) <b>0.03</b>. The speed \(a\) and vol \(\sigma\) set how fast it gets there and how wide it wanders, but not where it centers.</div>
+        </div>
+
+        <p>Because Vasicek is affine, the bond-price coefficients of EQ Q4.3 have explicit closed forms:</p>
+
+        <div class="eq"><span class="eq-tag">EQ Q4.6 — VASICEK ZERO-COUPON BOND</span>
+        $$ B(t,T) = \frac{1 - e^{-a(T-t)}}{a}, \qquad \ln A(t,T) = \Big(b - \frac{\sigma^2}{2a^2}\Big)\big(B(t,T) - (T-t)\big) - \frac{\sigma^2}{4a}\,B(t,T)^2 $$
+        <div class="eq-note">Plug into \(P = A\,e^{-B r_t}\) for an exact price; differentiate the yield \(y(t,T)\) and you can produce upward, flat, humped and inverted curves by moving \(r_t\) relative to \(b\). The \(-\sigma^2/2a^2\) term is a <b>convexity correction</b> — volatility lowers long yields, because a bond price is convex in rates and Jensen's inequality bites. <b>Closed-form bonds plus Gaussian \(r_T\) also make European bond options and swaptions closed-form (Jamshidian's trick)</b>, which is why Vasicek's Gaussian descendant, Hull–White, runs trading desks.</div>
+        </div>
+
+        <p class="note"><strong>The famous flaw.</strong> Because \(r_T\) is Gaussian, Vasicek assigns positive probability to <em>negative</em> rates. For decades this was treated as a fatal defect — until 2014–2021, when policy rates in the euro area, Japan, Switzerland and elsewhere actually went negative, and the "flaw" became a feature. The honest verdict in 2026: negative-rate capability is sometimes exactly what you want, but Vasicek's symmetric Gaussian tail can still send rates implausibly far below zero, and it cannot reproduce the way real volatility rises with the level of rates. That second point is what CIR fixes.</p>
+
+        <div class="widget" id="ir-vasicek-sim" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT Q4.1 — VASICEK PATH SIMULATOR</span><span class="w-sub">EQ Q4.4 · EULER · 5 PATHS · SEEDED</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>REVERSION SPEED a <output id="ir-vsim-a-out">0.40</output></label><input type="range" id="ir-vsim-a" min="0.05" max="2" step="0.05" value="0.40"/></div>
+              <div class="ctl"><label>LONG-RUN LEVEL b <output id="ir-vsim-b-out">0.030</output></label><input type="range" id="ir-vsim-b" min="0" max="0.08" step="0.005" value="0.030"/></div>
+              <div class="ctl"><label>VOLATILITY σ <output id="ir-vsim-sig-out">0.015</output></label><input type="range" id="ir-vsim-sig" min="0.002" max="0.04" step="0.001" value="0.015"/></div>
+            </div>
+            <div class="ctl-row">
+              <div class="ctl"><label>START RATE r₀ <output id="ir-vsim-r0-out">0.060</output></label><input type="range" id="ir-vsim-r0" min="-0.02" max="0.10" step="0.005" value="0.060"/></div>
+            </div>
+            <canvas class="w-canvas" id="ir-vsim-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">SHOCK HALF-LIFE (ln2 / a)</div><div class="r-value" id="ir-vsim-hl">—</div></div>
+              <div class="readout acc"><div class="r-label">STATIONARY MEAN</div><div class="r-value" id="ir-vsim-mean">—</div></div>
+              <div class="readout acc"><div class="r-label">STATIONARY STD √(σ²/2a)</div><div class="r-value" id="ir-vsim-std">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The dashed mint line is the long-run level \(b\); the shaded band is the stationary \(\pm 1\sigma_\infty = \pm\sqrt{\sigma^2/2a}\) corridor. Start \(r_0\) high and watch every path decay toward \(b\) at rate \(a\) — raise \(a\) and the pull snaps the paths home in a fraction of the window; drop \(a\) toward zero and the band balloons as reversion can no longer contain the noise. Push \(b\) low and \(\sigma\) high and some paths dip <span style="color:var(--danger);">below zero</span> — Vasicek's Gaussian tail made visible.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Simulate Vasicek short-rate paths; check the long-run mean & variance (EQ Q4.5)
+import numpy as np
+rng = np.random.default_rng(0)
+
+a, b, sig, r0 = 0.4, 0.03, 0.015, 0.06     # speed, level, vol, start
+T, dt = 30.0, 1/52                          # 30 years, weekly steps
+n = int(T/dt); paths = 4000
+r = np.full(paths, r0)
+for _ in range(n):                          # Euler-Maruyama on dr = a(b-r)dt + sig dW
+    r += a*(b - r)*dt + sig*np.sqrt(dt)*rng.standard_normal(paths)
+
+print(f"simulated mean at T : {r.mean():.5f}   (theory b = {b})")
+print(f"simulated var  at T : {r.var():.6e}   (theory sig^2/2a = {sig**2/(2*a):.6e})")
+print(f"simulated std  at T : {r.std():.5f}   (theory = {np.sqrt(sig**2/(2*a)):.5f})")
+print(f"fraction of paths below zero : {100*np.mean(r < 0):.2f} %  <- Vasicek can go negative")
+print(f"shock half-life ln2/a        : {np.log(2)/a:.2f} years")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="ir-curve" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT Q4.2 — YIELD-CURVE SHAPER</span><span class="w-sub">EQ Q4.6 · VASICEK · y(0,T) vs MATURITY</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>SHORT RATE r₀ <output id="ir-cv-r0-out">0.020</output></label><input type="range" id="ir-cv-r0" min="0" max="0.10" step="0.0025" value="0.020"/></div>
+              <div class="ctl"><label>LONG-RUN LEVEL b <output id="ir-cv-b-out">0.050</output></label><input type="range" id="ir-cv-b" min="0" max="0.10" step="0.0025" value="0.050"/></div>
+            </div>
+            <div class="ctl-row">
+              <div class="ctl"><label>REVERSION SPEED a <output id="ir-cv-a-out">0.30</output></label><input type="range" id="ir-cv-a" min="0.05" max="1.5" step="0.05" value="0.30"/></div>
+              <div class="ctl"><label>VOLATILITY σ <output id="ir-cv-sig-out">0.015</output></label><input type="range" id="ir-cv-sig" min="0" max="0.04" step="0.001" value="0.015"/></div>
+            </div>
+            <canvas class="w-canvas" id="ir-cv-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">SHAPE</div><div class="r-value" id="ir-cv-shape" style="font-size:13px;">—</div></div>
+              <div class="readout acc"><div class="r-label">30Y YIELD</div><div class="r-value" id="ir-cv-long">—</div></div>
+              <div class="readout"><div class="r-label">CONVEXITY DROP @30Y</div><div class="r-value" id="ir-cv-conv">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The same SDE makes every curve shape. Set the short rate \(r_0\) <em>below</em> the long-run level \(b\) for the textbook upward slope; set it <em>above</em> \(b\) and the curve <strong>inverts</strong> — the recession signal of 2022–24, here a one-slider phenomenon. The asymptotic long yield is \(b - \sigma^2/2a^2\); crank \(\sigma\) and watch the entire long end sag below \(b\) as the <span style="color:var(--blue);">convexity</span> correction grows. With \(\sigma = 0\) the curve is the pure expectation of future short rates.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Price a zero-coupon bond under Vasicek: closed form (EQ Q4.6) vs Monte Carlo (EQ Q4.2)
+import numpy as np
+rng = np.random.default_rng(0)
+
+a, b, sig, r0, T = 0.3, 0.05, 0.02, 0.03, 5.0
+
+def vasicek_bond(a, b, sig, r0, T):                 # closed form P(0,T)
+    B = (1 - np.exp(-a*T)) / a
+    lnA = (b - sig**2/(2*a**2))*(B - T) - (sig**2/(4*a))*B**2
+    return np.exp(lnA) * np.exp(-B*r0)
+
+# Monte Carlo: simulate r, discount by exp(-integral r ds) per EQ Q4.2
+dt = 1/250; n = int(T/dt); paths = 60000
+r = np.full(paths, r0); acc = np.zeros(paths)
+for _ in range(n):
+    acc += r*dt                                     # accumulate integral of r
+    r   += a*(b - r)*dt + sig*np.sqrt(dt)*rng.standard_normal(paths)
+mc = np.exp(-acc).mean()
+se = np.exp(-acc).std()/np.sqrt(paths)
+cf = vasicek_bond(a, b, sig, r0, T)
+
+print(f"closed-form  P(0,{T:.0f}) : {cf:.6f}   yield {-np.log(cf)/T:.5f}")
+print(f"Monte-Carlo  P(0,{T:.0f}) : {mc:.6f}  (+/- {1.96*se:.6f}, 95% CI)")
+print(f"gap (MC - CF)            : {mc - cf:+.6f}")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 4.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">4.4</span><h2>Cox–Ingersoll–Ross: the square-root fix</h2></div>
+        <p>Cox, Ingersoll and Ross (1985) kept Vasicek's mean-reverting drift but multiplied the noise by \(\sqrt{r_t}\). One small change buys two important properties.</p>
+
+        <div class="eq"><span class="eq-tag">EQ Q4.7 — THE CIR SDE</span>
+        $$ \mathrm{d}r_t \;=\; a\,(b - r_t)\,\mathrm{d}t \;+\; \sigma\,\sqrt{r_t}\;\mathrm{d}W_t $$
+        <div class="eq-note">Same drift as Vasicek, but the diffusion now scales with \(\sqrt{r_t}\). <b>As \(r_t \to 0\) the volatility vanishes</b>, so the noise cannot push the rate through zero — the drift \(ab &gt; 0\) at the boundary deterministically lifts it back up. The result: rates that get small naturally calm down, matching the empirical fact that interest-rate volatility tends to rise with the level of rates. The conditional law of \(r_T\) is a (scaled) <b>non-central chi-squared</b>, not a normal.</div>
+        </div>
+
+        <p>Whether zero is truly unreachable depends on a sharp threshold. The <strong>Feller condition</strong> states the boundary at zero is inaccessible — rates stay strictly positive with probability one — exactly when:</p>
+
+        <div class="eq"><span class="eq-tag">EQ Q4.8 — THE FELLER CONDITION</span>
+        $$ 2\,a\,b \;\ge\; \sigma^2 $$
+        <div class="eq-note">When the mean-reversion "budget" \(2ab\) at the origin dominates the noise \(\sigma^2\), the process never touches zero. If \(2ab &lt; \sigma^2\) the rate can hit zero (and reflect off it) but, crucially, <b>still never goes negative</b> — the square-root diffusion guarantees \(r_t \ge 0\) regardless. <b>This non-negativity is CIR's headline difference from Vasicek</b>, and the reason CIR became the standard whenever the modelled quantity (a nominal rate, a default intensity, a stochastic variance) must stay positive — it is the same square-root process Heston used for variance in Quant 03's EQ Q3.7.</div>
+        </div>
+
+        <div class="exercise" data-answer="CIR" data-tol="0" data-hint="which model multiplies its noise by the square root of the rate, forcing volatility to vanish at zero?">
+          <div class="ex-q">One of the two models in this chapter can produce negative short rates; the other cannot. Which model <b>rules out negative rates</b> by construction — Vasicek or CIR? (Answer with the model name.)</div>
+          <div class="ex-reveal-src">Vasicek's additive Gaussian noise has support on the whole real line, so it can drift below zero. CIR multiplies its noise by \(\sqrt{r_t}\), which vanishes at the boundary and lets the positive drift push the rate back up — keeping \(r_t \ge 0\) always. The model that rules out negative rates is <b>CIR</b>.</div>
+        </div>
+
+        <p>CIR is still affine, so the bond price keeps the \(P = A\,e^{-B r_t}\) form — only the coefficients change, now built from \(\gamma = \sqrt{a^2 + 2\sigma^2}\):</p>
+
+        <div class="eq"><span class="eq-tag">EQ Q4.9 — CIR ZERO-COUPON BOND</span>
+        $$ B(t,T) = \frac{2\big(e^{\gamma(T-t)} - 1\big)}{(\gamma + a)\big(e^{\gamma(T-t)} - 1\big) + 2\gamma}, \qquad A(t,T) = \left[\frac{2\gamma\,e^{(a+\gamma)(T-t)/2}}{(\gamma + a)\big(e^{\gamma(T-t)} - 1\big) + 2\gamma}\right]^{\!2ab/\sigma^2} $$
+        <div class="eq-note">Messier than Vasicek but just as closed-form, with \(\gamma = \sqrt{a^2 + 2\sigma^2}\). As \(\sigma \to 0\) these collapse to the deterministic-rate discount factor, and for small \(\sigma\) they track Vasicek's coefficients closely — the two models only diverge meaningfully when rates approach zero or volatility is large. <b>The price of CIR's realism is that its conditional distribution is non-central \(\chi^2\)</b>, so simulation and option pricing are more involved than Vasicek's clean Gaussian.</div>
+        </div>
+
+        <div class="widget" id="ir-compare" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT Q4.3 — CIR vs VASICEK · THE ZERO FLOOR</span><span class="w-sub">SAME a, b, σ · TERMINAL DENSITY OF r_T</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>REVERSION SPEED a <output id="ir-cmp-a-out">0.30</output></label><input type="range" id="ir-cmp-a" min="0.05" max="1.5" step="0.05" value="0.30"/></div>
+              <div class="ctl"><label>LONG-RUN LEVEL b <output id="ir-cmp-b-out">0.030</output></label><input type="range" id="ir-cmp-b" min="0.005" max="0.08" step="0.005" value="0.030"/></div>
+            </div>
+            <div class="ctl-row">
+              <div class="ctl"><label>VOLATILITY σ <output id="ir-cmp-sig-out">0.060</output></label><input type="range" id="ir-cmp-sig" min="0.01" max="0.15" step="0.005" value="0.060"/></div>
+              <div class="ctl"><label>HORIZON T (yrs) <output id="ir-cmp-T-out">5.0</output></label><input type="range" id="ir-cmp-T" min="0.5" max="15" step="0.5" value="5.0"/></div>
+            </div>
+            <canvas class="w-canvas" id="ir-cmp-canvas" height="320"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">FELLER 2ab vs σ²</div><div class="r-value" id="ir-cmp-feller" style="font-size:13px;">—</div></div>
+              <div class="readout acc"><div class="r-label">VASICEK P(r_T &lt; 0)</div><div class="r-value" id="ir-cmp-pneg">—</div></div>
+              <div class="readout acc"><div class="r-label">CIR P(r_T &lt; 0)</div><div class="r-value" id="ir-cmp-cirneg">0.00%</div></div>
+            </div>
+          </div>
+          <div class="w-note">Both densities are the law of \(r_T\) started at \(r_0 = b\) under identical \((a,b,\sigma)\). The <span style="color:var(--accent);">mint</span> curve is Vasicek's symmetric Gaussian — push \(\sigma\) up or \(b\) down and watch its left tail spill across the <span style="color:var(--danger);">zero line</span>, the shaded negative-rate region. The <span style="color:var(--blue);">blue</span> curve is CIR's non-central \(\chi^2\): it is right-skewed, pinned at zero, and never assigns mass to negative rates. When the Feller readout turns <span style="color:var(--danger);">red</span> (\(2ab &lt; \sigma^2\)) CIR can touch zero but still reflects — it never crosses.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 4.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">4.5</span><h2>Hull–White &amp; fitting the curve exactly</h2></div>
+        <p>Vasicek and CIR are <em>equilibrium</em> models: feed them constant parameters and they produce <em>a</em> curve, which will generally not match the curve quoted in the market this morning. For a trading desk that hedges with real bonds, a model that misprices its own hedging instruments at \(t = 0\) is unusable. Hull and White (1990) fixed this with one elegant move: make the drift's target <strong>time-dependent</strong>.</p>
+
+        <div class="eq"><span class="eq-tag">EQ Q4.10 — THE HULL–WHITE (EXTENDED VASICEK) SDE</span>
+        $$ \mathrm{d}r_t \;=\; \big(\theta(t) - a\,r_t\big)\,\mathrm{d}t \;+\; \sigma\,\mathrm{d}W_t $$
+        <div class="eq-note">This is Vasicek with the constant target \(ab\) promoted to a deterministic function \(\theta(t)\). That single degree of freedom — a whole function, not a number — is exactly enough to reproduce <b>today's observed term structure perfectly</b>, by construction. \(a\) and \(\sigma\) are left to calibrate the model's <em>volatility</em> (the prices of caps and swaptions), while \(\theta(t)\) absorbs the <em>shape</em> of the initial curve. It is the workhorse of interest-rate desks.</div>
+        </div>
+
+        <p>The function \(\theta(t)\) is not guessed — it is read off the market forward curve \(f(0,t)\) so that EQ Q4.2 returns the observed bond prices:</p>
+
+        <div class="eq"><span class="eq-tag">EQ Q4.11 — CALIBRATING θ(t) TO THE MARKET CURVE</span>
+        $$ \theta(t) \;=\; \frac{\partial f(0,t)}{\partial t} \;+\; a\,f(0,t) \;+\; \frac{\sigma^2}{2a}\Big(1 - e^{-2at}\Big) $$
+        <div class="eq-note">Here \(f(0,t)\) is the instantaneous forward rate <em>observed today</em> (EQ Q4.1). The first two terms make the model's expected rate track the forward curve; the third is the same convexity correction seen in Vasicek. <b>Once \(\theta(t)\) is fixed this way, the model fits every quoted zero-coupon bond exactly</b> and Hull–White retains Vasicek's Gaussian tractability — closed-form bonds, bond options, and (via Jamshidian's decomposition) European swaptions. The cost, inherited from Vasicek, is that rates can still go negative.</div>
+        </div>
+
+        <p>That trade-off is the whole reason the model zoo exists. There is no single best short-rate model; there is a menu of compromises along three axes — tractability, realism, and exact fit to the market — and which corner you choose depends on the product you must price and hedge.</p>
+
+        <table class="data">
+          <thead><tr><th>Model</th><th>SDE</th><th>r &lt; 0?</th><th>Fits today's curve?</th><th>Where it wins</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Vasicek</strong></td><td class="m">a(b − r)dt + σ dW</td><td class="m">yes</td><td>no (equilibrium)</td><td>The pedagogical baseline; cleanest closed forms.</td></tr>
+            <tr><td><strong>CIR</strong></td><td class="m">a(b − r)dt + σ√r dW</td><td class="hl">no (r ≥ 0)</td><td>no (equilibrium)</td><td>When positivity matters: nominal rates, default intensity, variance.</td></tr>
+            <tr><td><strong>Hull–White</strong></td><td class="m">(θ(t) − a r)dt + σ dW</td><td class="m">yes</td><td class="hl">yes (no-arbitrage)</td><td>Production desks; exact curve fit + closed-form swaptions.</td></tr>
+            <tr><td><strong>Black–Karasinski</strong></td><td class="m">d ln r = (θ(t) − a ln r)dt + σ dW</td><td class="hl">no (r &gt; 0)</td><td class="hl">yes</td><td>Lognormal rate, positive + curve-fitting; no closed-form bond.</td></tr>
+            <tr><td><strong>G2++ / HW two-factor</strong></td><td class="m">two correlated Gaussian factors</td><td class="m">yes</td><td class="hl">yes</td><td>Realistic curve <em>moves</em> (de-correlated front vs back).</td></tr>
+          </tbody>
+        </table>
+
+        <p class="note"><strong>Where the field sits in 2026.</strong> One-factor Gaussian models (Hull–White, G2++) remain the default for vanilla rate derivatives because they are fast and calibrate cleanly. For the full smile of caps and swaptions, desks layer on the <strong>SABR</strong> stochastic-vol model per expiry/tenor, or move to the <strong>LIBOR/forward Market Model (LMM)</strong> framework, which models observable forward rates directly rather than the unobservable instantaneous short rate. The post-2021 transition from LIBOR to risk-free overnight benchmarks (SOFR, €STR, SONIA) reshaped the plumbing — discounting, fixings, and convexity adjustments — but left the short-rate mathematics of this chapter intact: SOFR-based curves are still bootstrapped to zero-coupon bonds, and Hull–White still prices the options on them.</p>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>Three of this chapter's instruments leaned on Monte-Carlo when no closed form was at hand</strong> — the Vasicek bond cross-check, CIR's non-central \(\chi^2\), every path-dependent exotic. Quant 05 makes that the main event: simulating SDEs properly (Euler vs Milstein, where discretization bias hides), variance reduction (antithetics, control variates, the closed-form Vasicek bond as its own control), quasi-random sequences, and why the same engine that priced these bonds prices the whole derivatives book.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 4.R — References ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">4.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://doi.org/10.1016/0304-405X(77)90016-2" target="_blank" rel="noopener">Vasicek, O. (1977). <span class="ref-venue">An Equilibrium Characterization of the Term Structure</span>.</a> <span class="ref-meta">Journal of Financial Economics 5(2) — the Ornstein–Uhlenbeck short rate and its closed-form bond (EQ Q4.4–Q4.6).</span></li>
+          <li><a href="https://doi.org/10.2307/1911242" target="_blank" rel="noopener">Cox, J. C., Ingersoll, J. E. &amp; Ross, S. A. (1985). <span class="ref-venue">A Theory of the Term Structure of Interest Rates</span>.</a> <span class="ref-meta">Econometrica 53(2) — the square-root diffusion, the Feller condition, and non-negative rates (EQ Q4.7–Q4.9).</span></li>
+          <li><a href="https://doi.org/10.1093/rfs/3.4.573" target="_blank" rel="noopener">Hull, J. &amp; White, A. (1990). <span class="ref-venue">Pricing Interest-Rate-Derivative Securities</span>.</a> <span class="ref-meta">Review of Financial Studies 3(4) — time-dependent drift that fits the initial curve exactly (EQ Q4.10–Q4.11).</span></li>
+          <li><a href="https://doi.org/10.1111/j.1540-6261.1989.tb02413.x" target="_blank" rel="noopener">Jamshidian, F. (1989). <span class="ref-venue">An Exact Bond Option Formula</span>.</a> <span class="ref-meta">Journal of Finance 44(1) — decomposes a swaption into a portfolio of bond options, making Gaussian models swaption-closed-form.</span></li>
+          <li><a href="https://doi.org/10.2307/1913210" target="_blank" rel="noopener">Heath, D., Jarrow, R. &amp; Morton, A. (1992). <span class="ref-venue">Bond Pricing and the Term Structure of Interest Rates: A New Methodology</span>.</a> <span class="ref-meta">Econometrica 60(1) — the HJM no-arbitrage framework that generalizes all short-rate models to the whole forward curve.</span></li>
+          <li><a href="https://www.springer.com/gp/book/9783540221494" target="_blank" rel="noopener">Brigo, D. &amp; Mercurio, F. (2006). <span class="ref-venue">Interest Rate Models — Theory and Practice</span> (2nd ed.).</a> <span class="ref-meta">Springer Finance — the standard practitioner reference for Vasicek, CIR, Hull–White, G2++, and calibration.</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../quant/03-black-scholes.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">03</span> Black–Scholes</div></a>
+        <a class="next" href="../quant/05-monte-carlo.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">05</span> Monte Carlo</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — QUANT · CH 04</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* ============================================================
+   Interest-Rate Models — Vasicek, CIR & Hull–White
+   Chapter instruments. Single IIFE, no globals. All animations
+   use setTimeout (background-tab safe). Each widget is guarded
+   by element existence and renders a meaningful initial state.
+   ============================================================ */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  function fnum(x, d) { d = d === undefined ? 4 : d; return x.toFixed(d); }
+  function pct(x, d) { d = d === undefined ? 2 : d; return (100 * x).toFixed(d) + "%"; }
+
+  /* --- Vasicek affine bond coefficients (EQ Q4.6) --- */
+  function vasicekBond(a, b, sig, r, T) {
+    var B = (1 - Math.exp(-a * T)) / a;
+    var lnA = (b - sig * sig / (2 * a * a)) * (B - T) - (sig * sig / (4 * a)) * B * B;
+    return Math.exp(lnA) * Math.exp(-B * r);            /* P(0,T) */
+  }
+  function vasicekYield(a, b, sig, r, T) {
+    return -Math.log(vasicekBond(a, b, sig, r, T)) / T;
+  }
+
+  /* --- standard normal pdf, for the Vasicek terminal density --- */
+  function npdf(x) { return Math.exp(-0.5 * x * x) / Math.sqrt(2 * Math.PI); }
+  function nGauss(x, mu, sd) { return npdf((x - mu) / sd) / sd; }
+  /* erf for Gaussian CDF (Abramowitz & Stegun 7.1.26) — P(r_T < 0) under Vasicek */
+  function erf(x) {
+    var s = x < 0 ? -1 : 1; x = Math.abs(x);
+    var t = 1 / (1 + 0.3275911 * x);
+    var y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t
+                  - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x);
+    return s * y;
+  }
+  function ncdf(x) { return 0.5 * (1 + erf(x / Math.SQRT2)); }
+
+  /* shared canvas axis frame helper */
+  function frame(ctx, x0, y1, x1, y0) {
+    ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+    ctx.strokeRect(x0, y1, x1 - x0, y0 - y1);
+  }
+
+  /* ========================================================
+     INSTRUMENT Q4.1 — Vasicek path simulator (EQ Q4.4)
+     ======================================================== */
+  (function () {
+    var canvas = document.getElementById("ir-vsim-canvas");
+    if (!canvas) return;
+    var aEl = document.getElementById("ir-vsim-a");
+    var bEl = document.getElementById("ir-vsim-b");
+    var sEl = document.getElementById("ir-vsim-sig");
+    var r0El = document.getElementById("ir-vsim-r0");
+    var aOut = document.getElementById("ir-vsim-a-out");
+    var bOut = document.getElementById("ir-vsim-b-out");
+    var sOut = document.getElementById("ir-vsim-sig-out");
+    var r0Out = document.getElementById("ir-vsim-r0-out");
+    var hlEl = document.getElementById("ir-vsim-hl");
+    var meanEl = document.getElementById("ir-vsim-mean");
+    var stdEl = document.getElementById("ir-vsim-std");
+    var YEARS = 12, STEPS = 360, NPATH = 5;
+    var dt = YEARS / STEPS;
+    var COLORS = [C.MINT, C.BLUE, "#9b9b9b", "#c8c8c8", C.DEEP];
+
+    function simulate(a, b, sig, r0) {
+      /* deterministic seeded paths so initial render is meaningful and stable */
+      var paths = [], p, rng, r, i;
+      for (p = 0; p < NPATH; p++) {
+        rng = FM.mulberry32(1009 + p * 7919);
+        r = r0; var arr = [r];
+        for (i = 0; i < STEPS; i++) {
+          /* Box–Muller from two uniforms for a normal increment */
+          var u1 = Math.max(rng(), 1e-12), u2 = rng();
+          var z = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+          r += a * (b - r) * dt + sig * Math.sqrt(dt) * z;
+          arr.push(r);
+        }
+        paths.push(arr);
+      }
+      return paths;
+    }
+
+    function render() {
+      var a = +aEl.value, b = +bEl.value, sig = +sEl.value, r0 = +r0El.value;
+      aOut.textContent = fnum(a, 2);
+      bOut.textContent = fnum(b, 3);
+      sOut.textContent = fnum(sig, 3);
+      r0Out.textContent = fnum(r0, 3);
+      var sdInf = Math.sqrt(sig * sig / (2 * a));
+      hlEl.textContent = fnum(Math.log(2) / a, 2) + " yr";
+      meanEl.textContent = pct(b, 2);
+      stdEl.textContent = pct(sdInf, 2);
+
+      var paths = simulate(a, b, sig, r0);
+      var c = FM.setupCanvas(canvas, 320);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      var padL = 54, padR = 14, padT = 16, padB = 28;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      ctx.clearRect(0, 0, w, h);
+
+      /* vertical range across all paths + band + zero */
+      var lo = Math.min(r0, b - 3 * sdInf, 0), hi = Math.max(r0, b + 3 * sdInf);
+      var i, j;
+      for (i = 0; i < paths.length; i++)
+        for (j = 0; j < paths[i].length; j++) {
+          if (paths[i][j] < lo) lo = paths[i][j];
+          if (paths[i][j] > hi) hi = paths[i][j];
+        }
+      var pad = (hi - lo) * 0.08; lo -= pad; hi += pad;
+      function px(t) { return x0 + t / YEARS * (x1 - x0); }
+      function py(v) { return y0 - (v - lo) / (hi - lo) * (y0 - y1); }
+
+      /* stationary +/-1 sigma band around b */
+      ctx.fillStyle = "rgba(166,242,204,.07)";
+      ctx.fillRect(x0, py(b + sdInf), x1 - x0, py(b - sdInf) - py(b + sdInf));
+
+      /* negative-rate region */
+      if (lo < 0) {
+        ctx.fillStyle = "rgba(255,65,54,.08)";
+        ctx.fillRect(x0, py(0), x1 - x0, y0 - py(0));
+        ctx.strokeStyle = "rgba(255,65,54,.5)"; ctx.lineWidth = 1;
+        ctx.setLineDash([3, 3]);
+        ctx.beginPath(); ctx.moveTo(x0, py(0)); ctx.lineTo(x1, py(0)); ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      frame(ctx, x0, y1, x1, y0);
+
+      /* gridlines + y labels (as %) */
+      ctx.font = C.MONO; ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      for (i = 0; i <= 4; i++) {
+        var gv = lo + (hi - lo) * i / 4, gy = py(gv);
+        ctx.strokeStyle = "rgba(47,50,52,.5)";
+        ctx.beginPath(); ctx.moveTo(x0, gy); ctx.lineTo(x1, gy); ctx.stroke();
+        ctx.fillStyle = C.MUT; ctx.fillText((100 * gv).toFixed(1) + "%", x0 - 6, gy);
+      }
+      /* x labels */
+      ctx.textAlign = "center"; ctx.textBaseline = "top"; ctx.fillStyle = C.MUT;
+      for (i = 0; i <= YEARS; i += 3) ctx.fillText(i + "y", px(i), y0 + 6);
+
+      /* long-run level b dashed line */
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 1; ctx.setLineDash([5, 4]);
+      ctx.beginPath(); ctx.moveTo(x0, py(b)); ctx.lineTo(x1, py(b)); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = C.MINT; ctx.textAlign = "left"; ctx.textBaseline = "bottom";
+      ctx.fillText("b = " + (100 * b).toFixed(1) + "%", x0 + 4, py(b) - 2);
+
+      /* the paths */
+      for (i = 0; i < paths.length; i++) {
+        ctx.strokeStyle = COLORS[i % COLORS.length];
+        ctx.globalAlpha = i < 2 ? 0.95 : 0.6;
+        ctx.lineWidth = i < 2 ? 1.6 : 1.1;
+        ctx.beginPath();
+        for (j = 0; j < paths[i].length; j++) {
+          var X = px(j * dt), Y = py(paths[i][j]);
+          if (j === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y);
+        }
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    [aEl, bEl, sEl, r0El].forEach(function (el) { el.addEventListener("input", render); });
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT Q4.2 — Yield-curve shaper (EQ Q4.6)
+     ======================================================== */
+  (function () {
+    var canvas = document.getElementById("ir-cv-canvas");
+    if (!canvas) return;
+    var r0El = document.getElementById("ir-cv-r0");
+    var bEl = document.getElementById("ir-cv-b");
+    var aEl = document.getElementById("ir-cv-a");
+    var sEl = document.getElementById("ir-cv-sig");
+    var r0Out = document.getElementById("ir-cv-r0-out");
+    var bOut = document.getElementById("ir-cv-b-out");
+    var aOut = document.getElementById("ir-cv-a-out");
+    var sOut = document.getElementById("ir-cv-sig-out");
+    var shapeEl = document.getElementById("ir-cv-shape");
+    var longEl = document.getElementById("ir-cv-long");
+    var convEl = document.getElementById("ir-cv-conv");
+    var TMAX = 30, NSAMP = 180;
+
+    function render() {
+      var r0 = +r0El.value, b = +bEl.value, a = +aEl.value, sig = +sEl.value;
+      r0Out.textContent = fnum(r0, 3);
+      bOut.textContent = fnum(b, 3);
+      aOut.textContent = fnum(a, 2);
+      sOut.textContent = fnum(sig, 3);
+
+      /* sample the yield curve */
+      var xs = [], ys = [], i, lo = Infinity, hi = -Infinity;
+      for (i = 0; i < NSAMP; i++) {
+        var T = 0.08 + (TMAX - 0.08) * i / (NSAMP - 1);
+        var y = vasicekYield(a, b, sig, r0, T);
+        xs.push(T); ys.push(y);
+        if (y < lo) lo = y; if (y > hi) hi = y;
+      }
+      /* include r0 (short end) in range so the curve sits sensibly */
+      if (r0 < lo) lo = r0; if (r0 > hi) hi = r0;
+      var pad = (hi - lo) * 0.18 + 1e-4; lo -= pad; hi += pad;
+
+      var long30 = ys[ys.length - 1];
+      var asymptote = b - sig * sig / (2 * a * a);     /* long-yield limit */
+      var noVolLong = -Math.log(vasicekBond(a, b, 0, r0, TMAX)) / TMAX;
+      longEl.textContent = pct(long30, 2);
+      convEl.textContent = pct(noVolLong - long30, 2);
+
+      /* classify shape */
+      var slope = ys[ys.length - 1] - ys[0];
+      var maxIdx = 0; for (i = 1; i < ys.length; i++) if (ys[i] > ys[maxIdx]) maxIdx = i;
+      var humped = maxIdx > 3 && maxIdx < NSAMP - 4 && ys[maxIdx] - Math.max(ys[0], ys[ys.length - 1]) > 2e-4;
+      var shape, shapeCol;
+      if (humped) { shape = "HUMPED"; shapeCol = C.BLUE; }
+      else if (slope > 5e-4) { shape = "UPWARD"; shapeCol = C.MINT; }
+      else if (slope < -5e-4) { shape = "INVERTED"; shapeCol = C.RED; }
+      else { shape = "FLAT"; shapeCol = C.SEC; }
+      shapeEl.textContent = shape;
+      shapeEl.style.color = shapeCol;
+
+      var c = FM.setupCanvas(canvas, 320);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      var padL = 54, padR = 14, padT = 18, padB = 30;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      ctx.clearRect(0, 0, w, h);
+      function px(T) { return x0 + (T - 0.08) / (TMAX - 0.08) * (x1 - x0); }
+      function py(v) { return y0 - (v - lo) / (hi - lo) * (y0 - y1); }
+
+      frame(ctx, x0, y1, x1, y0);
+      ctx.font = C.MONO; ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      for (i = 0; i <= 4; i++) {
+        var gv = lo + (hi - lo) * i / 4, gy = py(gv);
+        ctx.strokeStyle = "rgba(47,50,52,.5)";
+        ctx.beginPath(); ctx.moveTo(x0, gy); ctx.lineTo(x1, gy); ctx.stroke();
+        ctx.fillStyle = C.MUT; ctx.fillText((100 * gv).toFixed(1) + "%", x0 - 6, gy);
+      }
+      ctx.textAlign = "center"; ctx.textBaseline = "top"; ctx.fillStyle = C.MUT;
+      [1, 5, 10, 20, 30].forEach(function (T) { ctx.fillText(T + "y", px(T), y0 + 6); });
+
+      /* long-run level b reference */
+      if (b >= lo && b <= hi) {
+        ctx.strokeStyle = "rgba(166,242,204,.4)"; ctx.lineWidth = 1; ctx.setLineDash([5, 4]);
+        ctx.beginPath(); ctx.moveTo(x0, py(b)); ctx.lineTo(x1, py(b)); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = "rgba(166,242,204,.7)"; ctx.textAlign = "right"; ctx.textBaseline = "bottom";
+        ctx.fillText("b", x1 - 2, py(b) - 2);
+      }
+      /* zero-vol expectation curve (blue, thin) — convexity reference */
+      ctx.strokeStyle = C.BLUE; ctx.lineWidth = 1; ctx.globalAlpha = 0.55;
+      ctx.beginPath();
+      for (i = 0; i < NSAMP; i++) {
+        var T2 = xs[i], yv = vasicekYield(a, b, 0, r0, T2);
+        var X = px(T2), Y = py(yv);
+        if (i === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y);
+      }
+      ctx.stroke(); ctx.globalAlpha = 1;
+      /* the yield curve (mint, thick) */
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      for (i = 0; i < NSAMP; i++) {
+        var X2 = px(xs[i]), Y2 = py(ys[i]);
+        if (i === 0) ctx.moveTo(X2, Y2); else ctx.lineTo(X2, Y2);
+      }
+      ctx.stroke();
+      /* legend */
+      ctx.font = C.MONO; ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillStyle = C.MINT; ctx.fillText("■ YIELD CURVE y(0,T)", x0 + 6, y1 + 4);
+      ctx.fillStyle = C.BLUE; ctx.fillText("■ σ=0 EXPECTATION", x0 + 6, y1 + 18);
+    }
+
+    [r0El, bEl, aEl, sEl].forEach(function (el) { el.addEventListener("input", render); });
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT Q4.3 — CIR vs Vasicek terminal density
+     Vasicek r_T ~ Normal (EQ Q4.5); CIR r_T ~ scaled non-central
+     chi-squared, here estimated by a fast seeded simulation so the
+     no-negative-rate property is exact and visible.
+     ======================================================== */
+  (function () {
+    var canvas = document.getElementById("ir-cmp-canvas");
+    if (!canvas) return;
+    var aEl = document.getElementById("ir-cmp-a");
+    var bEl = document.getElementById("ir-cmp-b");
+    var sEl = document.getElementById("ir-cmp-sig");
+    var TEl = document.getElementById("ir-cmp-T");
+    var aOut = document.getElementById("ir-cmp-a-out");
+    var bOut = document.getElementById("ir-cmp-b-out");
+    var sOut = document.getElementById("ir-cmp-sig-out");
+    var TOut = document.getElementById("ir-cmp-T-out");
+    var fellerEl = document.getElementById("ir-cmp-feller");
+    var pnegEl = document.getElementById("ir-cmp-pneg");
+    var cirnegEl = document.getElementById("ir-cmp-cirneg");
+    var NBIN = 64, NPATH = 8000, STEPS = 120;
+
+    function cirHistogram(a, b, sig, T) {
+      /* seeded Euler with full-truncation (Deelstra–Delbaen) — guarantees r>=0 */
+      var rng = FM.mulberry32(20240613);
+      var dt = T / STEPS, vals = new Array(NPATH), p, i, neg = 0;
+      for (p = 0; p < NPATH; p++) {
+        var r = b;                       /* start at long-run level */
+        for (i = 0; i < STEPS; i++) {
+          var u1 = Math.max(rng(), 1e-12), u2 = rng();
+          var z = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+          var rp = Math.max(r, 0);
+          r = r + a * (b - rp) * dt + sig * Math.sqrt(rp) * Math.sqrt(dt) * z;
+          if (r < 0) r = 0;              /* reflect at the floor */
+        }
+        vals[p] = r;
+        if (r < 0) neg++;               /* never happens by construction */
+      }
+      return { vals: vals, pneg: neg / NPATH };
+    }
+
+    function render() {
+      var a = +aEl.value, b = +bEl.value, sig = +sEl.value, T = +TEl.value;
+      aOut.textContent = fnum(a, 2);
+      bOut.textContent = fnum(b, 3);
+      sOut.textContent = fnum(sig, 3);
+      TOut.textContent = fnum(T, 1);
+
+      /* Vasicek terminal law: Normal(mu, sd) with r0 = b */
+      var muV = b;                                       /* r0=b => mean stays b */
+      var sdV = Math.sqrt(sig * sig / (2 * a) * (1 - Math.exp(-2 * a * T)));
+      var pNegV = ncdf((0 - muV) / sdV);
+      pnegEl.textContent = pct(pNegV, 2);
+
+      var cir = cirHistogram(a, b, sig, T);
+      cirnegEl.textContent = pct(cir.pneg, 2);
+
+      var feller = 2 * a * b, s2 = sig * sig, ok = feller >= s2;
+      fellerEl.textContent = (100 * feller).toFixed(2) + "e-2 " + (ok ? "≥" : "<") + " " +
+                             (100 * s2).toFixed(2) + "e-2";
+      fellerEl.style.color = ok ? C.MINT : C.RED;
+
+      /* horizontal range: cover both distributions */
+      var xmin = Math.min(muV - 4 * sdV, -0.01);
+      var xmax = Math.max(muV + 4 * sdV, b + 4 * Math.sqrt(s2 * b / (2 * a) + 1e-9));
+      /* extend to cover CIR samples */
+      var i, vv;
+      for (i = 0; i < cir.vals.length; i += 17) { vv = cir.vals[i]; if (vv > xmax) xmax = vv; }
+      var span = xmax - xmin;
+
+      /* CIR histogram (density-normalized) */
+      var binw = span / NBIN, hist = new Array(NBIN).fill(0);
+      for (i = 0; i < cir.vals.length; i++) {
+        var bi = Math.floor((cir.vals[i] - xmin) / binw);
+        if (bi >= 0 && bi < NBIN) hist[bi]++;
+      }
+      var hmax = 0;
+      for (i = 0; i < NBIN; i++) { hist[i] = hist[i] / (cir.vals.length * binw); if (hist[i] > hmax) hmax = hist[i]; }
+      /* Vasicek density peak for shared y-scale */
+      var vasPeak = nGauss(muV, muV, sdV);
+      var ymax = Math.max(hmax, vasPeak) * 1.12;
+
+      var c = FM.setupCanvas(canvas, 320);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      var padL = 16, padR = 14, padT = 18, padB = 30;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      ctx.clearRect(0, 0, w, h);
+      function px(v) { return x0 + (v - xmin) / span * (x1 - x0); }
+      function py(d) { return y0 - d / ymax * (y0 - y1); }
+
+      /* negative-rate region shading */
+      if (xmin < 0) {
+        ctx.fillStyle = "rgba(255,65,54,.08)";
+        ctx.fillRect(px(xmin), y1, px(0) - px(xmin), y0 - y1);
+      }
+      frame(ctx, x0, y1, x1, y0);
+
+      /* x axis labels (as %) + zero line */
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "center"; ctx.textBaseline = "top";
+      var ticks = 6, k;
+      for (k = 0; k <= ticks; k++) {
+        var xv = xmin + span * k / ticks;
+        ctx.fillText((100 * xv).toFixed(1) + "%", px(xv), y0 + 6);
+      }
+      ctx.strokeStyle = C.RED; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+      ctx.beginPath(); ctx.moveTo(px(0), y1); ctx.lineTo(px(0), y0); ctx.stroke();
+      ctx.setLineDash([]);
+
+      /* CIR histogram bars (blue) */
+      ctx.fillStyle = "rgba(78,138,247,.5)";
+      for (i = 0; i < NBIN; i++) {
+        if (hist[i] <= 0) continue;
+        var bx = px(xmin + i * binw), bw = px(xmin + (i + 1) * binw) - bx;
+        var byTop = py(hist[i]);
+        ctx.fillRect(bx, byTop, Math.max(bw - 0.5, 0.5), y0 - byTop);
+      }
+
+      /* Vasicek Gaussian curve (mint) */
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      var NS = 200;
+      for (i = 0; i <= NS; i++) {
+        var xv2 = xmin + span * i / NS;
+        var dv = nGauss(xv2, muV, sdV);
+        var X = px(xv2), Y = py(dv);
+        if (i === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y);
+      }
+      ctx.stroke();
+
+      /* legend */
+      ctx.font = C.MONO; ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillStyle = C.MINT; ctx.fillText("■ VASICEK  N(b, σ²/2a·…)", x0 + 6, y1 + 4);
+      ctx.fillStyle = C.BLUE; ctx.fillText("■ CIR  (non-central χ², r≥0)", x0 + 6, y1 + 18);
+    }
+
+    [aEl, bEl, sEl, TEl].forEach(function (el) { el.addEventListener("input", render); });
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

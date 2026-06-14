@@ -1,0 +1,685 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Games in AI — Self-Play, GANs &amp; Multi-Agent — AI Encyclopedia</title>
+<meta name="description" content="How framing learning as a game lets AI generate its own curriculum: GANs as a minimax game, self-play from AlphaZero to Pluribus, multi-agent reinforcement learning, and adversarial robustness." />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+</head>
+<body data-track="game-theory" data-level="advanced">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ GAME THEORY / 03 / GAMES IN AI</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../index.html#toc">NEXT: INDEX →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">GAME THEORY · CHAPTER 03 / 03</div>
+    <h1>Games in AI — Self-Play, GANs &amp; Multi-Agent</h1>
+    <p class="lede">Supervised learning is bounded by its teacher: a model can only chase the labels a human already wrote. Framing learning as a <strong>game lets the agents generate their own curriculum.</strong> Each improvement in one player redefines the problem for the other, so the difficulty rises in step with the system's capability. Self-play and adversarial objectives are how AI moved from imitating human experts to surpassing them.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>ADVANCED</b></span>
+      <span>READING TIME<b>≈ 28 MIN</b></span>
+      <span>BUILDS ON<b>GAME THEORY 01–02</b></span>
+      <span>INSTRUMENTS<b>GAN PAYOFF · SELF-PLAY LADDER · COORDINATION</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">3.1</span>When learning becomes a game</a>
+      <a href="#s2"><span class="n">3.2</span>GANs as a minimax game</a>
+      <a href="#s3"><span class="n">3.3</span>Self-play — AlphaZero &amp; beyond</a>
+      <a href="#s4"><span class="n">3.4</span>Multi-agent RL</a>
+      <a href="#s5"><span class="n">3.5</span>Mechanism design &amp; robustness</a>
+      <a href="#s6"><span class="n">§</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 3.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">3.1</span><h2>When learning becomes a game</h2></div>
+        <p>The first two chapters treated games as a <em>model of the world</em>: rational players, payoff matrices, equilibria you solve for. This chapter inverts the relationship. Here the game is a <strong>training objective</strong> — a structure we impose on optimization so that the loss surface is no longer fixed but co-created by the learner itself. The defining feature is a moving target: the thing a model is trying to beat improves whenever the model does.</p>
+
+        <p>Static supervised learning has a ceiling. The objective is a frozen dataset, and the best you can do is fit it; once you match the labels, the gradient goes quiet. A <strong>game-based objective never goes quiet</strong>, because the opponent (an adversary, a past version of yourself, a population of peers) keeps raising the bar. Three families dominate modern practice:</p>
+
+        <table class="data">
+          <thead><tr><th>Setup</th><th>The two sides</th><th>What the game produces</th><th>Canonical system</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Adversarial</strong></td><td class="m">generator vs critic</td><td>A learned <em>loss function</em> that sharpens as samples improve</td><td>GANs</td></tr>
+            <tr><td><strong>Self-play</strong></td><td class="m">agent vs its own past</td><td>An automatic curriculum of ever-stronger opponents</td><td>AlphaZero</td></tr>
+            <tr><td><strong>Multi-agent</strong></td><td class="m">N agents in a shared world</td><td>Emergent strategy, cooperation, and convention</td><td>Pluribus, MADDPG</td></tr>
+          </tbody>
+        </table>
+
+        <p>What unifies them is the <strong>minimax</strong> skeleton from Chapter 01: a value that one party maximizes and another minimizes. The mathematics of saddle points, best responses and equilibria — built for analyzing rational agents — turns out to be exactly the mathematics of training them. The catch, returned to throughout, is that gradient descent was designed to find minima, not saddle points, so these games are notoriously harder to optimize than ordinary losses.</p>
+
+        <div class="callout">
+          <span class="co-icon">FRAME</span>
+          <p>A useful slogan: <strong>supervised learning imitates a teacher; a game manufactures one.</strong> Everything below is a different answer to the question "where does the next, slightly-harder training example come from?"</p>
+        </div>
+      </section>
+
+      <!-- ====================== 3.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">3.2</span><h2>GANs as a minimax game</h2></div>
+        <p>A <strong>Generative Adversarial Network</strong> pits a generator \(G\), which maps noise \(z \sim p_z\) to fake samples \(G(z)\), against a discriminator \(D\), which outputs the probability that a sample is real. \(D\) wants to label reals as 1 and fakes as 0; \(G\) wants \(D(G(z))\) to read as 1. Goodfellow et al. (2014) wrote this as a single two-player zero-sum game on one value function:</p>
+
+        <div class="eq"><span class="eq-tag">EQ G3.1 — THE GAN MINIMAX</span>
+        $$ \min_{G}\,\max_{D}\; V(D,G) \;=\; \mathbb{E}_{x \sim p_{\text{data}}}\!\big[\log D(x)\big] \;+\; \mathbb{E}_{z \sim p_z}\!\big[\log\big(1 - D(G(z))\big)\big] $$
+        <div class="eq-note">\(D\) <b>maximizes</b> \(V\) (push \(D(x)\to 1\) on reals, \(D(G(z))\to 0\) on fakes); \(G\) <b>minimizes</b> it by fooling \(D\). It is zero-sum in spirit: every bit \(D\) gains, \(G\) loses. The generator never sees the data directly — its only teacher is the gradient flowing back through \(D\). That is the whole trick: <b>the loss function is itself learned</b>, and it grows more discerning exactly as the generator improves.</div>
+        </div>
+
+        <p>Fix \(G\) and ask for the best discriminator. For any \(x\), \(V\) is maximized pointwise, and calculus gives the optimal critic in closed form:</p>
+
+        <div class="eq"><span class="eq-tag">EQ G3.2 — THE OPTIMAL DISCRIMINATOR</span>
+        $$ D^{*}_{G}(x) \;=\; \frac{p_{\text{data}}(x)}{p_{\text{data}}(x) + p_{g}(x)} $$
+        <div class="eq-note">where \(p_g\) is the generator's induced distribution. When the generator has <b>won</b> — \(p_g = p_{\text{data}}\) everywhere — the optimal discriminator reads \(D^{*}(x) = \tfrac{1}{2}\) for every input: it can do no better than a coin flip. That fixed point is the Nash equilibrium of the game.</div>
+        </div>
+
+        <p>Substituting \(D^{*}_G\) back collapses the game onto a divergence between the two distributions:</p>
+
+        <div class="eq"><span class="eq-tag">EQ G3.3 — VALUE AT THE GENERATOR'S OPTIMUM</span>
+        $$ C(G) \;=\; \max_{D} V(D,G) \;=\; -\log 4 \;+\; 2\cdot \mathrm{JSD}\!\big(p_{\text{data}}\,\|\,p_g\big) $$
+        <div class="eq-note">\(\mathrm{JSD}\ge 0\) is the Jensen–Shannon divergence, zero only when \(p_g = p_{\text{data}}\). So the global minimum of \(C(G)\) is \(-\log 4 \approx -1.386\), attained <b>exactly</b> when the generator matches the data. Training a GAN is, in this idealized analysis, minimizing JSD by a game instead of by an explicit formula — which matters because JSD itself is intractable to compute on real high-dimensional data.</div>
+        </div>
+
+        <p class="note"><strong>The honest caveats.</strong> The clean theory assumes \(D\) is trained to optimality at every step and that both networks have unlimited capacity. Neither holds. In practice GANs are infamous for <strong>training instability</strong> and <strong>mode collapse</strong> (the generator parks all its mass on a few outputs that reliably fool the current \(D\)). JSD also saturates — its gradient vanishes when the distributions barely overlap — which motivated <strong>Wasserstein GANs</strong> (Arjovsky et al., 2017), replacing JSD with an Earth-Mover distance whose gradient stays informative. The minimax framing is the right mental model; the optimization is genuinely hard, and as of 2026 diffusion and autoregressive models have largely displaced GANs for frontier image and audio synthesis, even as the adversarial idea persists everywhere from super-resolution to robustness training.</p>
+
+        <div class="exercise" data-answer="0.5" data-tol="0.001" data-hint="Set p_g = p_data in EQ G3.2 and simplify.">
+          <div class="ex-q">At the GAN's Nash equilibrium the generator matches the data, so \(p_g(x) = p_{\text{data}}(x)\) for every \(x\). Plug this into EQ G3.2: what value does the optimal discriminator \(D^{*}(x)\) output everywhere?</div>
+          <div class="ex-reveal-src">\(D^{*}(x) = \dfrac{p_{\text{data}}}{p_{\text{data}} + p_g} = \dfrac{p_{\text{data}}}{2\,p_{\text{data}}} = \dfrac{1}{2} = \) <b>0.5</b>. The perfect critic is reduced to a coin flip — it can no longer tell real from fake.</div>
+        </div>
+
+        <div class="exercise" data-answer="-1.386" data-tol="0.01" data-hint="At p_g = p_data the JSD term is zero, so C(G) = -log 4. Use ln.">
+          <div class="ex-q">Using EQ G3.3, what is the value \(C(G)\) at the global optimum, where \(\mathrm{JSD} = 0\)? (Give the natural-log value of \(-\log 4\), to three decimals.)</div>
+          <div class="ex-reveal-src">\(C(G) = -\log 4 + 2\cdot 0 = -\log 4 = -1.38629\ldots \approx \) <b>−1.386</b>. This is the floor of the game; a generator that has matched the data can drive the value no lower.</div>
+        </div>
+
+        <div class="exercise" data-answer="true" data-tol="0" data-hint="Read EQ G3.1 — one player maximizes V, the other minimizes the same V.">
+          <div class="ex-q">A GAN is a zero-sum (minimax) game between the generator and the discriminator over a single value function \(V(D,G)\). True or false? (Answer <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">EQ G3.1 is literally \(\min_G \max_D V(D,G)\): the discriminator maximizes the same quantity the generator minimizes, so it is a two-player minimax (zero-sum) game. The answer is <b>true</b>.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># GAN minimax value on a toy: two distributions over 5 discrete bins.
+# Optimal D is closed-form (EQ G3.2); the game value collapses to JSD (EQ G3.3).
+import numpy as np
+
+p_data = np.array([0.05, 0.15, 0.40, 0.25, 0.15])      # the real distribution
+def value(p_g):
+    p_g = np.asarray(p_g, float); p_g /= p_g.sum()
+    D = p_data / (p_data + p_g)                          # EQ G3.2, optimal critic
+    V = (p_data * np.log(D) + p_g * np.log(1 - D)).sum() # EQ G3.1 at D*
+    m = 0.5 * (p_data + p_g)                             # JSD, base-e
+    jsd = 0.5*(p_data*np.log(p_data/m)).sum() + 0.5*(p_g*np.log(p_g/m)).sum()
+    return V, jsd, D
+
+for name, pg in [("bad   ", [0.40,0.30,0.10,0.10,0.10]),
+                 ("closer", [0.10,0.20,0.30,0.25,0.15]),
+                 ("matched", p_data.copy())]:
+    V, jsd, D = value(pg)
+    print(f"{name}: value V={V:+.4f}  JSD={jsd:.4f}  check(-log4+2*JSD)={-np.log(4)+2*jsd:+.4f}")
+print(f"\nfloor of the game: -log 4 = {-np.log(4):+.4f}  (reached only when p_g == p_data)")
+print("at the match, every D* entry equals 0.5:", np.round(value(p_data.copy())[2], 3))</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="gai-gan" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT G3.1 — GAN PAYOFF VISUALIZER</span><span class="w-sub">EQ G3.1–G3.3 · ONE BIN, CLOSED-FORM D*</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>GENERATOR MASS p_g (vs fixed p_data = 0.50) <output id="gai-gan-pg-out">0.20</output></label><input type="range" id="gai-gan-pg" min="0.02" max="0.98" step="0.01" value="0.20"/></div>
+            </div>
+            <canvas class="w-canvas" id="gai-gan-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">OPTIMAL D*(x)</div><div class="r-value" id="gai-gan-d">—</div></div>
+              <div class="readout acc"><div class="r-label">GAME VALUE C(G)</div><div class="r-value" id="gai-gan-v">—</div></div>
+              <div class="readout acc"><div class="r-label">JSD(p_data ‖ p_g)</div><div class="r-value" id="gai-gan-jsd">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">A single point with \(p_{\text{data}} = 0.5\); slide the generator's mass \(p_g\). The curve is the game value \(C(G)\) over all \(p_g\); the dot is where you are. It bottoms out at \(p_g = 0.5\) where \(D^{*} = 0.5\), JSD \(= 0\) and \(C(G) = -\log 4\). Push \(p_g\) to either extreme and the discriminator wins decisively — exactly the regime where \(G\)'s gradient (the slope of the curve) goes flat and learning stalls.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 3.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">3.3</span><h2>Self-play — AlphaZero &amp; beyond</h2></div>
+        <p>The cleanest game-as-curriculum is an agent playing <strong>against itself</strong>. There is no human data, no teacher, no fixed opponent: the agent's current policy is both the player and the environment it must beat. Because the opponent is a copy of you, the difficulty tracks your skill automatically — a perfectly calibrated curriculum that needs no designer.</p>
+
+        <p><strong>AlphaGo Zero</strong> (Silver et al., 2017) made this concrete for Go and then chess and shogi (AlphaZero). A single network \(f_\theta(s) = (\boldsymbol{p}, v)\) outputs a move-probability vector \(\boldsymbol{p}\) and a scalar value \(v \in [-1, 1]\) estimating who wins from state \(s\). Monte-Carlo Tree Search (MCTS) uses the network to look ahead, producing improved move counts \(\boldsymbol{\pi}\); the game is then played to a result \(z \in \{-1, +1\}\). Training pulls the network toward its own searched-and-played behavior:</p>
+
+        <div class="eq"><span class="eq-tag">EQ G3.4 — ALPHAZERO'S SELF-PLAY LOSS</span>
+        $$ \ell(\theta) \;=\; (z - v)^2 \;-\; \boldsymbol{\pi}^{\top} \log \boldsymbol{p} \;+\; c\,\lVert \theta \rVert^2 $$
+        <div class="eq-note">First term: regress the value head toward the actual game outcome \(z\). Second term: cross-entropy pulling the raw policy \(\boldsymbol{p}\) toward the <b>search-improved</b> policy \(\boldsymbol{\pi}\) — the network distills its own lookahead back into its instincts. Third: weight decay. The data is generated <b>entirely by the current network playing itself</b>; tomorrow's training set is produced by today's model, which is what makes the curriculum self-generating.</div>
+        </div>
+
+        <p>Each generation is stronger, so each generation's self-play games are harder, so the next network must improve to keep winning — a ratchet. The same ratchet drives AlphaStar (StarCraft II), OpenAI Five (Dota 2), and the policy-improvement loops inside RLHF, where a reward model plays the critic. The mechanism that powers <strong>Pluribus</strong> (Brown &amp; Sandholm, 2019) — superhuman six-player poker — is self-play too, but in an imperfect-information game, so it computes a blueprint via <strong>counterfactual regret minimization</strong> and refines it with real-time search; its solution concept is approximate Nash rather than a hard win/loss value.</p>
+
+        <p>The minimal engine behind self-play improvement is a <strong>value bootstrap</strong>: a state's value is estimated from the values of the states it leads to, and those estimates pull each other toward consistency. In a two-player zero-sum game the backup is a minimax — you assume the opponent (your own copy) plays its best reply:</p>
+
+        <div class="eq"><span class="eq-tag">EQ G3.5 — MINIMAX VALUE BACKUP</span>
+        $$ V(s) \;\leftarrow\; \max_{a}\; \Big[\, r(s,a) \;-\; \gamma\, V\big(s'(s,a)\big) \,\Big] $$
+        <div class="eq-note">The sign flips on the child value because what is good for you is bad for the opponent who moves next (a "negamax" backup, \(\gamma\) the discount). Iterating this map is a contraction: the values converge to the game's true minimax values regardless of where you start. <b>No labels were ever supplied</b> — the targets are bootstrapped from the agent's own evolving estimates.</div>
+        </div>
+
+        <div class="exercise" data-answer="true" data-tol="0" data-hint="In self-play, who writes the training data? The agent itself, playing copies of itself.">
+          <div class="ex-q">In self-play, the agent's own games against copies of itself produce the training data, so each generation's opponents are as strong as the current model — i.e. self-play generates its own training curriculum. True or false? (Answer <b>true</b> or <b>false</b>.)</div>
+          <div class="ex-reveal-src">There is no external dataset; the agent plays itself, and as it improves, the games it generates get harder, supplying a steadily-harder curriculum with no human in the loop. The answer is <b>true</b>.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Tiny self-play value bootstrap on a toy game.
+# A 6-node game tree: leaves have true outcomes; internal nodes back up by
+# negamax (EQ G3.5). We start from a WRONG guess and let it self-correct.
+import numpy as np
+
+# children[node] = list of child indices ([] means a leaf)
+children = {0:[1,2], 1:[3,4], 2:[4,5], 3:[], 4:[], 5:[]}
+leaf_val = {3:+1.0, 4:-1.0, 5:+1.0}   # zero-sum outcomes from mover's view
+gamma = 1.0
+
+V = {n: (leaf_val[n] if n in leaf_val else 0.7) for n in children}  # bad init
+print("init   :", {k: round(v,3) for k,v in V.items()})
+for sweep in range(5):
+    for n in [2,1,0]:                  # back up internal nodes, leaves to root
+        if children[n]:
+            V[n] = max(-gamma*V[c] for c in children[n])   # negamax backup
+    print(f"sweep {sweep}:", {k: round(v,3) for k,v in V.items()})
+
+best = max(children[0], key=lambda c: -V[c])
+print(f"\nroot value V(0) = {V[0]:+.0f}; mover should play toward child {best}.")
+print("targets were never labeled -- they bootstrapped from the leaves up.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="gai-ladder" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT G3.2 — SELF-PLAY LADDER SIMULATOR</span><span class="w-sub">ELO RATCHET · GENERATION-OVER-GENERATION</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>LEARNING RATE (ELO GAINED PER WIN-MARGIN) <output id="gai-lad-lr-out">32</output></label><input type="range" id="gai-lad-lr" min="4" max="64" step="2" value="32"/></div>
+              <div class="ctl"><label>NOISE (TRAINING VARIANCE) <output id="gai-lad-noise-out">20</output></label><input type="range" id="gai-lad-noise" min="0" max="80" step="5" value="20"/></div>
+            </div>
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>OPPONENT</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-gai-lad-mode="self">SELF-PLAY (LATEST)</button>
+                  <button class="w-btn ghost" data-gai-lad-mode="fixed">FIXED TEACHER (ELO 1500)</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="gai-lad-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">FINAL ELO</div><div class="r-value" id="gai-lad-final">—</div></div>
+              <div class="readout acc"><div class="r-label">VS FIXED TEACHER</div><div class="r-value" id="gai-lad-gap">—</div></div>
+              <div class="readout"><div class="r-label">GENERATIONS</div><div class="r-value" id="gai-lad-gens">40</div></div>
+            </div>
+          </div>
+          <div class="w-note">Forty training generations. In <b>SELF-PLAY</b> the opponent is always the latest version, so each win nudges the rating up and the bar rises with it — open-ended growth, the AlphaZero ratchet. Switch to <b>FIXED TEACHER</b> and watch the curve flatten the moment the agent matches the teacher: a frozen opponent is a ceiling. The dashed line marks the teacher's strength — self-play sails past it without ever being shown a stronger example.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 3.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">3.4</span><h2>Multi-agent reinforcement learning</h2></div>
+        <p>Two players is the easy case. <strong>Multi-agent reinforcement learning (MARL)</strong> drops \(N\) learners into a shared environment, each with its own policy \(\pi_i\) and reward \(r_i\). The hard part is structural: from any single agent's view, the others are part of the environment, and they are <em>changing</em> as they learn. The world is <strong>non-stationary</strong> — the ground that gradient descent assumes is fixed is, in fact, moving under every step.</p>
+
+        <p>The right object is the <strong>Markov (stochastic) game</strong>: state transitions and each agent's reward depend on the <em>joint</em> action \((a_1,\ldots,a_N)\). The solution concept is a Nash equilibrium of policies — no agent can improve by unilaterally changing its own. Cooperation, competition and mixtures all live here, distinguished only by how the reward functions relate:</p>
+
+        <table class="data">
+          <thead><tr><th>Reward structure</th><th>Game</th><th>What agents learn</th><th>Example</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Fully aligned</strong></td><td class="m">cooperative</td><td>Coordination, role assignment, shared conventions</td><td>Team play, traffic</td></tr>
+            <tr><td><strong>Fully opposed</strong></td><td class="m">zero-sum</td><td>Robust, minimax-optimal strategies</td><td>Go, poker</td></tr>
+            <tr><td><strong>Mixed</strong></td><td class="m">general-sum</td><td>Negotiation, reciprocity, social dilemmas</td><td>Markets, Diplomacy</td></tr>
+          </tbody>
+        </table>
+
+        <p>The workhorse algorithmic idea is <strong>centralized training, decentralized execution</strong> (CTDE). During training a <em>critic</em> may see everyone's observations and actions — making its target stationary — while each agent's <em>actor</em> learns a policy that runs on its own local view alone. MADDPG (Lowe et al., 2017) is the canonical instance. The key intuition is that one agent's policy-gradient sign depends on what the others do:</p>
+
+        <div class="eq"><span class="eq-tag">EQ G3.6 — DECENTRALIZED POLICY GRADIENT (CTDE)</span>
+        $$ \nabla_{\theta_i} J_i \;=\; \mathbb{E}\!\left[\, \nabla_{\theta_i} \log \pi_i(a_i \mid o_i)\; Q_i^{\boldsymbol{\pi}}\!\big(s,\, a_1,\ldots,a_N\big) \,\right] $$
+        <div class="eq-note">Agent \(i\)'s actor depends only on its local observation \(o_i\), but its <b>centralized critic</b> \(Q_i\) is conditioned on the joint action — so it can attribute outcomes correctly even when the cause was a teammate's move. This is what tames non-stationarity at training time. At deployment the critic is discarded and each policy acts on \(o_i\) alone.</div>
+        </div>
+
+        <p>The deepest lessons in MARL come from the simplest games. A <strong>coordination game</strong> can have several equilibria, and which one a population lands on is a matter of risk and history, not just payoff. The textbook case is the <strong>Stag Hunt</strong>: hunting a stag together pays best but only if your partner also commits; hunting hare is a safe solo payoff. There are two pure Nash equilibria — (stag, stag), which is <em>payoff-dominant</em>, and (hare, hare), which is <em>risk-dominant</em> — and learners frequently converge to the safe-but-worse one.</p>
+
+        <div class="eq"><span class="eq-tag">EQ G3.7 — STAG HUNT &amp; RISK DOMINANCE</span>
+        $$ \begin{array}{c|cc} &amp; \text{Stag} &amp; \text{Hare}\\\hline \text{Stag} &amp; (4,4) &amp; (0,3)\\ \text{Hare} &amp; (3,0) &amp; (3,3) \end{array} \qquad \mathbb{E}[\text{Stag}] = 4q,\;\; \mathbb{E}[\text{Hare}] = 3 $$
+        <div class="eq-note">With partner probability \(q\) of choosing Stag, hunting stag beats hunting hare only when \(4q &gt; 3\), i.e. \(q &gt; 0.75\). So you must believe your partner cooperates more than three-quarters of the time before cooperation is rational. <b>(stag, stag) earns more but demands trust; (hare, hare) is safe.</b> This single threshold — not a payoff comparison — is why coordination is hard, and why learned conventions and communication matter.</div>
+        </div>
+
+        <div class="exercise" data-answer="0.75" data-tol="0.001" data-hint="Set expected Stag payoff 4q equal to the safe Hare payoff 3 and solve for q.">
+          <div class="ex-q">In the Stag Hunt of EQ G3.7, your partner plays Stag with probability \(q\). Your expected payoff is \(4q\) for Stag and \(3\) for Hare. At what \(q\) are you exactly indifferent (the threshold above which cooperating is rational)?</div>
+          <div class="ex-reveal-src">Set \(4q = 3\): \(q = 3/4 = \) <b>0.75</b>. Below this you should defect to Hare; above it, hunt Stag. Cooperation requires believing your partner cooperates more than 75% of the time.</div>
+        </div>
+
+        <div class="widget" id="gai-coord" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT G3.3 — MULTI-AGENT COORDINATION TOY</span><span class="w-sub">STAG HUNT · BEST-RESPONSE DYNAMICS · EQ G3.7</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>INITIAL FRACTION HUNTING STAG <output id="gai-co-init-out">0.60</output></label><input type="range" id="gai-co-init" min="0" max="1" step="0.01" value="0.60"/></div>
+              <div class="ctl"><label>EXPLORATION (MUTATION RATE) <output id="gai-co-mut-out">0.03</output></label><input type="range" id="gai-co-mut" min="0" max="0.20" step="0.01" value="0.03"/></div>
+            </div>
+            <canvas class="w-canvas" id="gai-co-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">BASIN THRESHOLD q*</div><div class="r-value" id="gai-co-thr">0.75</div></div>
+              <div class="readout acc"><div class="r-label">CONVERGES TO</div><div class="r-value" id="gai-co-eq">—</div></div>
+              <div class="readout"><div class="r-label">FINAL STAG FRACTION</div><div class="r-value" id="gai-co-final">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">A population plays Stag Hunt and each round shifts toward the better reply (replicator-style best response). The basin boundary sits at \(q^{*} = 0.75\): start above it and the population climbs to the payoff-dominant <b>all-Stag</b> equilibrium; start below and it collapses to the risk-dominant <b>all-Hare</b>. Set the initial fraction near 0.75 to feel the knife-edge — a tiny change in starting beliefs flips the entire outcome. That sensitivity is the core difficulty of cooperative MARL.</div>
+        </div>
+
+        <p class="note"><strong>Where the field actually is (2026).</strong> MARL works well in two-team zero-sum settings (it inherits self-play's stability) and in tightly cooperative ones with CTDE. General-sum, partially-observable, many-agent settings remain hard: equilibria may not be unique or even exist in tractable form, credit assignment across agents is brittle, and emergent behavior is difficult to specify or guarantee. The standout recent result, Meta's <strong>CICERO</strong> playing Diplomacy, needed to fuse a planning engine with a language model precisely because raw self-play does not by itself produce the negotiation and trust-building a mixed-motive game demands.</p>
+      </section>
+
+      <!-- ====================== 3.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">3.5</span><h2>Mechanism design &amp; adversarial robustness</h2></div>
+        <p>Two more places where the game frame is load-bearing — one about <em>designing</em> games, one about <em>defending</em> against them.</p>
+
+        <h3>Mechanism design: the inverse game</h3>
+        <p>Ordinary game theory takes the rules as given and predicts behavior. <strong>Mechanism design</strong> runs the arrow backward: <em>choose the rules so that self-interested play produces the outcome you want.</em> It is the theory behind auctions, voting, and — increasingly — AI training. RLHF is a mechanism: the reward model is an incentive structure designed so that maximizing it yields helpful behavior, and reward hacking is what happens when the mechanism is mis-specified and the agent finds an unintended winning strategy. A central result is incentive compatibility — make truth-telling a dominant strategy — exemplified by the second-price (Vickrey) auction, where bidding your true value is optimal no matter what others do.</p>
+
+        <h3>Adversarial robustness: the game against your inputs</h3>
+        <p>A deployed model faces an implicit adversary: an attacker choosing the worst input within a small budget. Training a model to survive this is, again, a minimax game — but now the inner maximizer perturbs the data, not a network:</p>
+
+        <div class="eq"><span class="eq-tag">EQ G3.8 — ADVERSARIAL TRAINING (ROBUST OPTIMIZATION)</span>
+        $$ \min_{\theta}\; \mathbb{E}_{(x,y)\sim \mathcal{D}}\Big[\, \max_{\lVert \delta \rVert_p \le \epsilon}\; L\big(f_\theta(x + \delta),\, y\big) \,\Big] $$
+        <div class="eq-note">The inner \(\max\) (Madry et al., 2018) finds the most damaging perturbation \(\delta\) inside an \(\epsilon\)-ball; the outer \(\min\) hardens \(\theta\) against it. It is a self-generating curriculum of <b>hard examples</b> — the model manufactures its own worst case at every step. The persistent caveat: robustness usually costs clean accuracy, and an \(\ell_p\)-ball is a narrow proxy for the open-ended threats a real deployment faces.</div>
+        </div>
+
+        <p>The same shape recurs across modern safety work: red-teaming a model is an adversary searching for a prompt that breaks it; constitutional and debate-style training pit models against each other to surface flaws; GAN-style discriminators reappear as learned detectors. The lesson of the chapter, stated once more: <strong>whenever you want a system to be robust, train it against an adversary that improves alongside it.</strong> A fixed test set is a teacher with a ceiling; a learning opponent is a teacher without one.</p>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>You have now seen the through-line of the whole volume: from the rational agents of Chapter 01, to repeated cooperation in Chapter 02, to games as the engine of modern AI here.</strong> The minimax skeleton that began as a way to <em>analyze</em> strategic behavior turned out to be the way to <em>create</em> it. Return to the Index to branch into the deep-learning and reinforcement-learning volumes where these games are implemented at scale.</p>
+        </div>
+      </section>
+
+      <!-- ====================== References ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">3.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://arxiv.org/abs/1406.2661" target="_blank" rel="noopener">Goodfellow, I., Pouget-Abadie, J., Mirza, M., Xu, B., Warde-Farley, D., Ozair, S., Courville, A. &amp; Bengio, Y. (2014). <span class="ref-venue">Generative Adversarial Networks</span>.</a> <span class="ref-meta">NeurIPS — the minimax game of EQ G3.1–G3.3.</span></li>
+          <li><a href="https://doi.org/10.1038/nature24270" target="_blank" rel="noopener">Silver, D. et al. (2017). <span class="ref-venue">Mastering the game of Go without human knowledge</span>.</a> <span class="ref-meta">Nature 550 — AlphaGo Zero / AlphaZero self-play (EQ G3.4).</span></li>
+          <li><a href="https://doi.org/10.1126/science.aay2400" target="_blank" rel="noopener">Brown, N. &amp; Sandholm, T. (2019). <span class="ref-venue">Superhuman AI for multiplayer poker</span>.</a> <span class="ref-meta">Science 365 — Pluribus, self-play in imperfect information.</span></li>
+          <li><a href="https://arxiv.org/abs/1701.07875" target="_blank" rel="noopener">Arjovsky, M., Chintala, S. &amp; Bottou, L. (2017). <span class="ref-venue">Wasserstein GAN</span>.</a> <span class="ref-meta">ICML — replacing JSD with an Earth-Mover distance for stable gradients.</span></li>
+          <li><a href="https://arxiv.org/abs/1706.02275" target="_blank" rel="noopener">Lowe, R., Wu, Y., Tamar, A., Harb, J., Abbeel, P. &amp; Mordatch, I. (2017). <span class="ref-venue">Multi-Agent Actor-Critic for Mixed Cooperative-Competitive Environments</span>.</a> <span class="ref-meta">NeurIPS — MADDPG and the CTDE gradient of EQ G3.6.</span></li>
+          <li><a href="https://arxiv.org/abs/1706.06083" target="_blank" rel="noopener">Madry, A., Makelov, A., Schmidt, L., Tsipras, D. &amp; Vladu, A. (2018). <span class="ref-venue">Towards Deep Learning Models Resistant to Adversarial Attacks</span>.</a> <span class="ref-meta">ICLR — adversarial training as the robust min-max of EQ G3.8.</span></li>
+          <li><a href="https://doi.org/10.1126/science.ade9097" target="_blank" rel="noopener">Meta FAIR Diplomacy Team et al. (2022). <span class="ref-venue">Human-level play in the game of Diplomacy by combining language models with strategic reasoning (CICERO)</span>.</a> <span class="ref-meta">Science 378 — mixed-motive multi-agent play with negotiation.</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../game-theory/02-repeated-cooperative.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">02</span> Repeated Games</div></a>
+        <a class="next" href="../index.html#toc"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">→</span> Index</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — GAME THEORY · CH 03</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* ============================================================
+   Games in AI — chapter instruments. Single IIFE, no globals.
+   Three widgets, each guarded by element existence. Math agrees
+   with EQ G3.1–G3.7 and the runnable Python cells above.
+   ============================================================ */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+  var C = FM.C;
+
+  function fnum(x, d) { d = d === undefined ? 3 : d; return (x >= 0 ? "" : "") + x.toFixed(d); }
+
+  /* ========================================================
+     INSTRUMENT G3.1 — GAN payoff visualizer
+     One point, p_data = 0.5; closed-form D* and game value.
+     C(pg) = pd*log(pd/(pd+pg)) + pg*log(pg/(pd+pg)) ; with pd=.5
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("gai-gan");
+    if (!root) return;
+    var canvas = document.getElementById("gai-gan-canvas");
+    var pgIn = document.getElementById("gai-gan-pg");
+    var pgOut = document.getElementById("gai-gan-pg-out");
+    var dEl = document.getElementById("gai-gan-d");
+    var vEl = document.getElementById("gai-gan-v");
+    var jsdEl = document.getElementById("gai-gan-jsd");
+    var PD = 0.5;   /* balanced 2-outcome data: p_data = (0.5, 0.5) */
+
+    /* Genuine GAN value on a 2-outcome support. p_g = (pg, 1-pg).
+       D*_i = p_data_i / (p_data_i + p_g_i) (EQ G3.2); V = sum over the two
+       outcomes of the EQ G3.1 integrand at D*; this equals C(G) (EQ G3.3),
+       so V bottoms at -log 4 with JSD = 0 exactly when p_g = p_data. */
+    function valueAt(pg) {
+      var pd = [PD, 1 - PD], pgv = [pg, 1 - pg], V = 0, jsd = 0, i, D0;
+      for (i = 0; i < 2; i++) {
+        var Di = pd[i] / (pd[i] + pgv[i]);
+        V += pd[i] * Math.log(Di) + pgv[i] * Math.log(1 - Di);
+        var m = 0.5 * (pd[i] + pgv[i]);
+        jsd += 0.5 * pd[i] * Math.log(pd[i] / m) + 0.5 * pgv[i] * Math.log(pgv[i] / m);
+      }
+      D0 = pd[0] / (pd[0] + pgv[0]);              /* D* on outcome 0, for the readout */
+      return { D: D0, V: V, jsd: jsd };
+    }
+
+    function render() {
+      var pg = +pgIn.value;
+      pgOut.textContent = pg.toFixed(2);
+      var here = valueAt(pg);
+      dEl.textContent = here.D.toFixed(3);
+      vEl.textContent = (here.V >= 0 ? "+" : "") + here.V.toFixed(3);
+      jsdEl.textContent = here.jsd.toFixed(3);
+
+      var c = FM.setupCanvas(canvas, 300);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      var padL = 52, padR = 16, padT = 20, padB = 32;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      ctx.clearRect(0, 0, w, h);
+
+      var XMIN = 0.02, XMAX = 0.98, N = 200;
+      /* value range: min is -log4 at pg=0.5, max near the endpoints */
+      var lo = -Math.log(4), hi = valueAt(XMIN).V;
+      hi = Math.max(hi, valueAt(XMAX).V);
+      var pad = (hi - lo) * 0.12; lo -= pad; hi += pad;
+      function px(p) { return x0 + (p - XMIN) / (XMAX - XMIN) * (x1 - x0); }
+      function py(v) { return y0 - (v - lo) / (hi - lo) * (y0 - y1); }
+
+      /* frame + grid */
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(x0, y1, x1 - x0, y0 - y1);
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      var g;
+      for (g = 0; g <= 4; g++) {
+        var gv = lo + (hi - lo) * g / 4, gy = py(gv);
+        ctx.strokeStyle = "rgba(47,50,52,.55)";
+        ctx.beginPath(); ctx.moveTo(x0, gy); ctx.lineTo(x1, gy); ctx.stroke();
+        ctx.fillStyle = C.MUT; ctx.fillText(gv.toFixed(2), x0 - 6, gy);
+      }
+      /* optimum marker at pg=0.5 */
+      var ox = px(0.5);
+      ctx.strokeStyle = C.DEEP; ctx.lineWidth = 1; ctx.setLineDash([4, 4]);
+      ctx.beginPath(); ctx.moveTo(ox, y1); ctx.lineTo(ox, y0); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = C.SEC; ctx.textAlign = "center"; ctx.textBaseline = "top";
+      ctx.fillText("p_g = 0.5", ox, y0 + 6);
+      ctx.textAlign = "left"; ctx.fillText("p_g→0", x0, y0 + 6);
+      ctx.textAlign = "right"; ctx.fillText("p_g→1", x1, y0 + 6);
+
+      /* the value curve C(p_g) */
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 2; ctx.beginPath();
+      var i;
+      for (i = 0; i < N; i++) {
+        var p = XMIN + (XMAX - XMIN) * i / (N - 1);
+        var X = px(p), Y = py(valueAt(p).V);
+        if (i === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y);
+      }
+      ctx.stroke();
+
+      /* current point */
+      var cx = px(pg), cy = py(here.V);
+      ctx.fillStyle = C.BLUE;
+      ctx.beginPath(); ctx.arc(cx, cy, 4.5, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = C.BLUE; ctx.lineWidth = 1; ctx.setLineDash([2, 3]);
+      ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx, y0); ctx.stroke();
+      ctx.setLineDash([]);
+
+      ctx.fillStyle = C.MINT; ctx.font = C.MONO;
+      ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText("GAME VALUE C(G) vs GENERATOR MASS", x0 + 6, y1 + 4);
+      ctx.fillStyle = C.SEC; ctx.textAlign = "right";
+      ctx.fillText("floor = -log 4 = -1.386", x1 - 6, y1 + 4);
+    }
+    pgIn.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT G3.2 — Self-play ladder simulator
+     Elo ratchet: self-play opponent rises with you; fixed
+     teacher is a ceiling. Deterministic noise via mulberry32.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("gai-ladder");
+    if (!root) return;
+    var canvas = document.getElementById("gai-lad-canvas");
+    var lrIn = document.getElementById("gai-lad-lr");
+    var noiseIn = document.getElementById("gai-lad-noise");
+    var lrOut = document.getElementById("gai-lad-lr-out");
+    var noiseOut = document.getElementById("gai-lad-noise-out");
+    var finalEl = document.getElementById("gai-lad-final");
+    var gapEl = document.getElementById("gai-lad-gap");
+    var btns = root.querySelectorAll("[data-gai-lad-mode]");
+    var mode = "self";
+    var GENS = 40, START = 1200, TEACHER = 1500;
+
+    function simulate(lr, noise) {
+      var rng = FM.mulberry32(12345);
+      var elo = START, series = [elo];
+      for (var t = 0; t < GENS; t++) {
+        /* "skill ceiling" the network is climbing toward; in self-play it is
+           unbounded (capability grows), against a fixed teacher it caps near it */
+        var headroom;
+        if (mode === "self") {
+          headroom = 1.0;                          /* always more to gain */
+        } else {
+          /* fixed teacher: a win-margin proxy that shrinks to ~0 as you pass it */
+          headroom = 1 / (1 + Math.exp((elo - TEACHER) / 60));
+        }
+        var gain = lr * headroom + (rng() - 0.5) * noise;
+        elo += gain;
+        if (elo < START - 50) elo = START - 50;    /* don't run away downward */
+        series.push(elo);
+      }
+      return series;
+    }
+
+    function render() {
+      var lr = +lrIn.value, noise = +noiseIn.value;
+      lrOut.textContent = lr;
+      noiseOut.textContent = noise;
+      var series = simulate(lr, noise);
+      var finalElo = series[series.length - 1];
+      finalEl.textContent = Math.round(finalElo);
+      var gap = finalElo - TEACHER;
+      gapEl.textContent = (gap >= 0 ? "+" : "") + Math.round(gap);
+      gapEl.style.color = gap >= 0 ? C.MINT : C.RED;
+
+      var c = FM.setupCanvas(canvas, 300);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      var padL = 54, padR = 16, padT = 18, padB = 30;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      ctx.clearRect(0, 0, w, h);
+
+      var lo = START - 80, hi = Math.max(finalElo, TEACHER) + 120;
+      function px(t) { return x0 + t / GENS * (x1 - x0); }
+      function py(e) { return y0 - (e - lo) / (hi - lo) * (y0 - y1); }
+
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(x0, y1, x1 - x0, y0 - y1);
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      var g;
+      for (g = 0; g <= 4; g++) {
+        var gv = lo + (hi - lo) * g / 4, gy = py(gv);
+        ctx.strokeStyle = "rgba(47,50,52,.55)";
+        ctx.beginPath(); ctx.moveTo(x0, gy); ctx.lineTo(x1, gy); ctx.stroke();
+        ctx.fillStyle = C.MUT; ctx.fillText(Math.round(gv), x0 - 6, gy);
+      }
+      /* teacher line */
+      var ty = py(TEACHER);
+      ctx.strokeStyle = C.SEC; ctx.lineWidth = 1; ctx.setLineDash([5, 4]);
+      ctx.beginPath(); ctx.moveTo(x0, ty); ctx.lineTo(x1, ty); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = C.SEC; ctx.textAlign = "left"; ctx.textBaseline = "bottom";
+      ctx.fillText("FIXED TEACHER 1500", x0 + 6, ty - 3);
+
+      /* elo curve */
+      ctx.strokeStyle = mode === "self" ? C.MINT : C.BLUE;
+      ctx.lineWidth = 2; ctx.beginPath();
+      var i;
+      for (i = 0; i < series.length; i++) {
+        var X = px(i), Y = py(series[i]);
+        if (i === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y);
+      }
+      ctx.stroke();
+      /* endpoint dot */
+      ctx.fillStyle = mode === "self" ? C.MINT : C.BLUE;
+      ctx.beginPath(); ctx.arc(px(series.length - 1), py(finalElo), 4, 0, Math.PI * 2); ctx.fill();
+
+      ctx.fillStyle = C.MUT; ctx.font = C.MONO;
+      ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText("ELO vs GENERATION", x0 + 6, y1 + 4);
+      ctx.textAlign = "center"; ctx.textBaseline = "top";
+      ctx.fillText("0", x0, y0 + 6);
+      ctx.textAlign = "right"; ctx.fillText(GENS + " gens", x1, y0 + 6);
+    }
+
+    btns.forEach(function (b) {
+      b.addEventListener("click", function () {
+        mode = b.getAttribute("data-gai-lad-mode");
+        btns.forEach(function (o) { o.classList.toggle("on", o === b); });
+        render();
+      });
+    });
+    lrIn.addEventListener("input", render);
+    noiseIn.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+
+  /* ========================================================
+     INSTRUMENT G3.3 — Multi-agent coordination toy (Stag Hunt)
+     Best-response dynamics: fraction p hunting Stag. Stag pays
+     4p (needs partner), Hare pays 3 flat -> threshold q* = 0.75.
+     ======================================================== */
+  (function () {
+    var root = document.getElementById("gai-coord");
+    if (!root) return;
+    var canvas = document.getElementById("gai-co-canvas");
+    var initIn = document.getElementById("gai-co-init");
+    var mutIn = document.getElementById("gai-co-mut");
+    var initOut = document.getElementById("gai-co-init-out");
+    var mutOut = document.getElementById("gai-co-mut-out");
+    var eqEl = document.getElementById("gai-co-eq");
+    var finalEl = document.getElementById("gai-co-final");
+    var THRESH = 0.75, ROUNDS = 30;
+
+    function trajectory(p0, mut) {
+      var p = p0, series = [p];
+      for (var t = 0; t < ROUNDS; t++) {
+        /* expected payoffs given current Stag fraction p */
+        var eStag = 4 * p;          /* (4 if partner Stag, 0 if Hare) -> 4p */
+        var eHare = 3;              /* (3 either way) */
+        /* smooth best response: move toward the better action, with exploration */
+        var target = eStag > eHare ? 1 : 0;
+        p = p + 0.35 * (target - p);
+        /* mutation pulls a little toward 0.5 (random exploration) */
+        p = p + mut * (0.5 - p);
+        if (p < 0) p = 0; if (p > 1) p = 1;
+        series.push(p);
+      }
+      return series;
+    }
+
+    function render() {
+      var p0 = +initIn.value, mut = +mutIn.value;
+      initOut.textContent = p0.toFixed(2);
+      mutOut.textContent = mut.toFixed(2);
+      var series = trajectory(p0, mut);
+      var pf = series[series.length - 1];
+      finalEl.textContent = pf.toFixed(2);
+      var toStag = pf > 0.5;
+      eqEl.textContent = toStag ? "ALL-STAG (4,4)" : "ALL-HARE (3,3)";
+      eqEl.style.color = toStag ? C.MINT : C.SEC;
+
+      var c = FM.setupCanvas(canvas, 300);
+      var ctx = c.ctx, w = c.w, h = c.h;
+      var padL = 48, padR = 16, padT = 18, padB = 30;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      ctx.clearRect(0, 0, w, h);
+
+      function px(t) { return x0 + t / ROUNDS * (x1 - x0); }
+      function py(p) { return y0 - p * (y0 - y1); }
+
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(x0, y1, x1 - x0, y0 - y1);
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      var g;
+      for (g = 0; g <= 4; g++) {
+        var gv = g / 4, gy = py(gv);
+        ctx.strokeStyle = "rgba(47,50,52,.55)";
+        ctx.beginPath(); ctx.moveTo(x0, gy); ctx.lineTo(x1, gy); ctx.stroke();
+        ctx.fillStyle = C.MUT; ctx.fillText(gv.toFixed(2), x0 - 6, gy);
+      }
+      /* threshold q* = 0.75 */
+      var qy = py(THRESH);
+      ctx.strokeStyle = C.RED; ctx.lineWidth = 1; ctx.setLineDash([5, 4]);
+      ctx.beginPath(); ctx.moveTo(x0, qy); ctx.lineTo(x1, qy); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = C.RED; ctx.textAlign = "left"; ctx.textBaseline = "bottom";
+      ctx.fillText("BASIN THRESHOLD q* = 0.75", x0 + 6, qy - 3);
+
+      /* trajectory */
+      ctx.strokeStyle = toStag ? C.MINT : C.BLUE; ctx.lineWidth = 2; ctx.beginPath();
+      var i;
+      for (i = 0; i < series.length; i++) {
+        var X = px(i), Y = py(series[i]);
+        if (i === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y);
+      }
+      ctx.stroke();
+      ctx.fillStyle = toStag ? C.MINT : C.BLUE;
+      ctx.beginPath(); ctx.arc(px(series.length - 1), py(pf), 4, 0, Math.PI * 2); ctx.fill();
+
+      ctx.fillStyle = C.MUT; ctx.font = C.MONO;
+      ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText("STAG FRACTION vs ROUND", x0 + 6, y1 + 4);
+      ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText("0", x0, y0 + 6);
+      ctx.textAlign = "right"; ctx.fillText(ROUNDS + " rounds", x1, y0 + 6);
+    }
+    initIn.addEventListener("input", render);
+    mutIn.addEventListener("input", render);
+    window.addEventListener("resize", function () { setTimeout(render, 60); });
+    render();
+  })();
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

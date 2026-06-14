@@ -1,0 +1,169 @@
+{
+  "concepts": [
+    {
+      "id": "ml-15-boosting-libraries-s1",
+      "chapter": "ml/15-boosting-libraries",
+      "section": "s1",
+      "title": "Gradient boosting — the general algorithm",
+      "eyebrow": "MACHINE LEARNING",
+      "beats": [
+        {
+          "text": "Boosting builds weak decision trees in sequence, each one trained to fix the mistakes the running total still makes.",
+          "visual": { "type": "title", "text": "Gradient Boosting", "sub": "Sequential trees that reduce remaining bias" }
+        },
+        {
+          "text": "Friedman's gradient boosting machine treats the model as a point in function space and runs gradient descent on the loss.",
+          "visual": { "type": "equation", "tex": "F_m(x) = F_{m-1}(x) + \\nu\\, h_m(x)", "note": "Stagewise additive update; earlier trees are never re-touched" }
+        },
+        {
+          "text": "Each new tree is fit not to the labels but to the negative gradient of the loss, the steepest-descent direction.",
+          "visual": { "type": "equation", "tex": "r_{im} = -\\left[\\frac{\\partial L(y_i, F(x_i))}{\\partial F(x_i)}\\right]_{F=F_{m-1}}", "note": "The pseudo-residual every tree regresses on" }
+        },
+        {
+          "text": "For squared-error loss the negative gradient is exactly the ordinary residual, so the tree simply fits the leftover error.",
+          "visual": { "type": "equation", "tex": "L(y,F)=\\tfrac12(y-F)^2 \\Longrightarrow -\\frac{\\partial L}{\\partial F} = y - F", "note": "Squared loss: gradient equals residual" }
+        },
+        {
+          "text": "Starting from the mean, a sequence of stumps drives the training error down, falling monotonically with each added tree.",
+          "visual": { "type": "plot", "ys": [0.62, 0.41, 0.29, 0.21, 0.16, 0.12, 0.10, 0.08], "xlabel": "trees added", "ylabel": "training MSE", "dot": true }
+        },
+        {
+          "text": "The learning rate shrinks every correction, so a smaller rate means gentler steps that need more trees but generalize better.",
+          "visual": { "type": "stat", "value": 0.1, "label": "shrinkage applied per tree at ν = 0.1", "decimals": 1 }
+        }
+      ]
+    },
+    {
+      "id": "ml-15-boosting-libraries-s2",
+      "chapter": "ml/15-boosting-libraries",
+      "section": "s2",
+      "title": "AdaBoost & exponential loss — where it started",
+      "eyebrow": "MACHINE LEARNING",
+      "beats": [
+        {
+          "text": "AdaBoost predates the gradient view and works by keeping a weight on every training example, up-weighting the ones it gets wrong.",
+          "visual": { "type": "title", "text": "AdaBoost", "sub": "Freund & Schapire, 1997" }
+        },
+        {
+          "text": "Each round fits a classifier, measures its weighted error, and assigns it a vote that grows as the error falls.",
+          "visual": { "type": "equation", "tex": "\\alpha_m = \\tfrac12 \\ln\\frac{1-\\varepsilon_m}{\\varepsilon_m}", "note": "A learner at chance gets vote zero; a near-perfect one gets a large vote" }
+        },
+        {
+          "text": "A learner with thirty percent weighted error earns a vote of about 0.42, then errors are reweighted heavier than successes.",
+          "visual": { "type": "stat", "value": 0.4236, "label": "vote weight α at ε = 0.30", "decimals": 4 }
+        },
+        {
+          "text": "Misclassified points grow by about half while correct ones shrink by a third, forcing the next learner to attend to the hard cases.",
+          "visual": { "type": "bars", "values": [1.528, 0.655], "labels": ["wrong ×1.53", "correct ×0.66"], "highlight": 0 }
+        },
+        {
+          "text": "Friedman, Hastie and Tibshirani showed AdaBoost is exactly forward stagewise modeling under the exponential loss.",
+          "visual": { "type": "equation", "tex": "L(y, F(x)) = \\exp(-y\\,F(x))", "note": "AdaBoost is gradient boosting with a specific loss" }
+        },
+        {
+          "text": "Exponential loss punishes confident mistakes without bound, which makes vanilla AdaBoost sensitive to mislabeled data and outliers.",
+          "visual": { "type": "plot", "ys": [7.4, 4.5, 2.7, 1.6, 1.0, 0.6, 0.37], "xlabel": "margin y·F", "ylabel": "exponential loss" }
+        }
+      ]
+    },
+    {
+      "id": "ml-15-boosting-libraries-s3",
+      "chapter": "ml/15-boosting-libraries",
+      "section": "s3",
+      "title": "XGBoost — regularization & second-order gradients",
+      "eyebrow": "MACHINE LEARNING",
+      "beats": [
+        {
+          "text": "XGBoost took Friedman's algorithm and made it production-grade with two ideas: explicit regularization and second-order gradients.",
+          "visual": { "type": "title", "text": "XGBoost", "sub": "Chen & Guestrin, 2016" }
+        },
+        {
+          "text": "Its objective adds a per-leaf cost and an L2 penalty, and uses both the gradient and the Hessian of the loss.",
+          "visual": { "type": "equation", "tex": "\\mathcal{L}^{(m)} \\approx \\sum_{i}\\left[g_i h_m(x_i) + \\tfrac12 h_i h_m(x_i)^2\\right] + \\gamma T + \\tfrac12\\lambda\\sum_j w_j^2", "note": "g and h are the first and second derivatives; γ and λ are regularizers" }
+        },
+        {
+          "text": "Because each leaf is a quadratic, the optimal leaf value has a closed form: the negative gradient sum damped by the Hessian.",
+          "visual": { "type": "equation", "tex": "w_j^\\star = -\\frac{G_j}{H_j + \\lambda}", "note": "Closed-form optimal leaf weight" }
+        },
+        {
+          "text": "With gradient sum minus ten, Hessian sum five, and penalty one, the optimal leaf value works out to about 1.67.",
+          "visual": { "type": "stat", "value": 1.667, "label": "optimal leaf value w★ for G=−10, H=5, λ=1", "decimals": 3 }
+        },
+        {
+          "text": "A split's gain compares the children to the parent and subtracts the leaf cost, so XGBoost prunes any split whose gain is negative.",
+          "visual": { "type": "equation", "tex": "\\text{Gain} = \\tfrac12\\!\\left[\\frac{G_L^2}{H_L+\\lambda} + \\frac{G_R^2}{H_R+\\lambda} - \\frac{(G_L+G_R)^2}{H_L+H_R+\\lambda}\\right] - \\gamma", "note": "γ is a built-in pre-pruning knob" }
+        },
+        {
+          "text": "A small learning rate with many trees rides the held-out minimum down, while a large rate overfits as the held-out curve turns up.",
+          "visual": { "type": "plot", "ys": [0.55, 0.34, 0.22, 0.17, 0.16, 0.19, 0.25], "xlabel": "trees", "ylabel": "held-out loss", "dot": true }
+        }
+      ]
+    },
+    {
+      "id": "ml-15-boosting-libraries-s4",
+      "chapter": "ml/15-boosting-libraries",
+      "section": "s4",
+      "title": "LightGBM — histograms & leaf-wise growth",
+      "eyebrow": "MACHINE LEARNING",
+      "beats": [
+        {
+          "text": "LightGBM keeps XGBoost's objective but rebuilds the machinery for speed and memory at scale through three engineering bets.",
+          "visual": { "type": "title", "text": "LightGBM", "sub": "Ke et al., 2017" }
+        },
+        {
+          "text": "Rather than scanning every distinct feature value, it buckets each feature into fixed bins and builds gradient histograms once.",
+          "visual": { "type": "equation", "tex": "O(n\\,d) \\longrightarrow O(\\#\\text{bins}\\cdot d)", "note": "Split-finding scans bins, not rows" }
+        },
+        {
+          "text": "With 256 bins a feature offers 255 candidate cut points, instead of one per distinct value, which is what makes the scan cheap.",
+          "visual": { "type": "stat", "value": 255, "label": "candidate cut points from 256 bins", "decimals": 0 }
+        },
+        {
+          "text": "Histogram binning cuts split-finding cost from order n times d down to order bins times d, dramatically faster on huge data.",
+          "visual": { "type": "bars", "values": [20000, 256], "labels": ["rows scanned", "bins scanned"], "highlight": 1 }
+        },
+        {
+          "text": "LightGBM grows trees leaf-wise, always splitting the single leaf with the largest gain rather than splitting level by level.",
+          "visual": { "type": "equation", "tex": "\\text{split } \\arg\\max_{\\ell \\in \\text{leaves}} \\text{Gain}(\\ell)", "note": "Lower loss per leaf budget, but more prone to overfit" }
+        },
+        {
+          "text": "Setting num_leaves of eight against a depth-ten capacity uses under one percent of the tree, the standard guard against overfitting.",
+          "visual": { "type": "stat", "value": 0.0078125, "label": "fraction of 2^10 capacity used by num_leaves=8", "decimals": 7 }
+        }
+      ]
+    },
+    {
+      "id": "ml-15-boosting-libraries-s5",
+      "chapter": "ml/15-boosting-libraries",
+      "section": "s5",
+      "title": "CatBoost — ordered boosting & native categoricals",
+      "eyebrow": "MACHINE LEARNING",
+      "beats": [
+        {
+          "text": "CatBoost targets a bug the others share: target leakage, which appears both in categorical encoding and in residual computation.",
+          "visual": { "type": "title", "text": "CatBoost", "sub": "Prokhorenkova et al., 2018" }
+        },
+        {
+          "text": "Mean-encoding a category leaks because the row's own label sits in the average used to encode it, letting the model peek.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "Ordered target statistics encode each row using only earlier rows in a random permutation, plus a smoothing prior for rare categories.",
+          "visual": { "type": "equation", "tex": "\\hat{x}_i = \\frac{\\sum_{j<i}\\mathbb{1}[x_j = x_i]\\,y_j + a\\,p}{\\sum_{j<i}\\mathbb{1}[x_j = x_i] + a}", "note": "Row i's own label never enters its own encoding" }
+        },
+        {
+          "text": "Earlier labels summing to two over a count of three, with prior one-half and smoothing one, give an encoding of 0.625.",
+          "visual": { "type": "stat", "value": 0.625, "label": "ordered target statistic for Σy=2, count=3, a=1, p=0.5", "decimals": 3 }
+        },
+        {
+          "text": "Ordered boosting computes each row's gradient from a model that never saw that row, cutting the prediction-shift bias.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "No library dominates; tuned, all three sit within noise, so you pick by data shape and constraints rather than a mythical accuracy gap.",
+          "visual": { "type": "bars", "values": [3, 3, 3], "labels": ["XGBoost", "LightGBM", "CatBoost"] }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,169 @@
+{
+  "concepts": [
+    {
+      "id": "openmodels-05-red-teaming-s1",
+      "chapter": "openmodels/05-red-teaming",
+      "section": "s1",
+      "title": "Why models refuse — alignment & guardrails",
+      "eyebrow": "OPEN MODELS",
+      "beats": [
+        {
+          "text": "A base model has no notion of should not; refusal is a learned behavior layered on top of raw next-token prediction.",
+          "visual": { "type": "title", "text": "Why Models Refuse", "sub": "Alignment is suppression, not deletion" }
+        },
+        {
+          "text": "Post-training installs the policy: supervised fine-tuning shows harmful-to-refusal pairs, then preference optimization sharpens the contrast.",
+          "visual": { "type": "bars", "values": [12000, 8000, 1], "labels": ["SFT pairs", "Pref pairs", "Base notion"], "highlight": 2 }
+        },
+        {
+          "text": "We can caricature the decision as a logistic threshold on an internal harmfulness estimate of the prompt's representation.",
+          "visual": { "type": "equation", "tex": "P(\\text{refuse} \\mid x) = \\sigma(w^{\\top}\\phi(x) - b)", "note": "Refuses when the margin exceeds zero" }
+        },
+        {
+          "text": "A margin of one gives P refuse equal to 0.731, comfortably above the half-probability boundary, so the model refuses.",
+          "visual": { "type": "stat", "value": 0.731, "label": "P(refuse) at margin = 1", "decimals": 3 }
+        },
+        {
+          "text": "As the margin sweeps from negative to positive, refusal probability climbs along the logistic curve through the decision point.",
+          "visual": { "type": "plot", "ys": [0.05, 0.12, 0.27, 0.5, 0.73, 0.88, 0.95], "dot": 4, "xlabel": "margin w·φ − b", "ylabel": "P(refuse)" }
+        },
+        {
+          "text": "Safety training suppresses expression, it does not remove capability; failures exploit competing objectives or mismatched generalization.",
+          "visual": { "type": "bars", "values": [2, 2], "labels": ["Competing objectives", "Mismatched generalization"] }
+        }
+      ]
+    },
+    {
+      "id": "openmodels-05-red-teaming-s2",
+      "chapter": "openmodels/05-red-teaming",
+      "section": "s2",
+      "title": "How jailbreaks work — a taxonomy",
+      "eyebrow": "OPEN MODELS",
+      "beats": [
+        {
+          "text": "A jailbreak is any input that elicits behavior the safety training was meant to prevent, and most reduce to a few mechanisms.",
+          "visual": { "type": "title", "text": "Jailbreak Taxonomy", "sub": "Organized by what they exploit" }
+        },
+        {
+          "text": "Seven recurring families cover most attacks, from persona and encoding to gradient suffixes and indirect prompt injection.",
+          "visual": { "type": "bars", "values": [1, 1, 1, 1, 1, 1, 1], "labels": ["Persona", "Encoding", "Prefix", "Dilution", "Many-shot", "GCG", "Injection"], "highlight": 6 }
+        },
+        {
+          "text": "Indirect prompt injection is the key agentic threat: text planted in retrieved content is read as data but interpreted as instructions.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "Gradient attacks like GCG minimize the negative log-likelihood of an affirmative opening, maximizing the chance the reply starts with compliance.",
+          "visual": { "type": "equation", "tex": "\\min_{s \\in \\mathcal{V}^{k}} -\\log P_\\theta(y_{\\text{affirm}} \\mid x \\oplus s)", "note": "Suffix s of k tokens appended to prompt x" }
+        },
+        {
+          "text": "Suffixes optimized against open weights often transfer to closed models, because aligned models share a similar refusal geometry.",
+          "visual": { "type": "plot", "ys": [0.9, 0.7, 0.55, 0.45, 0.4], "dot": 2, "xlabel": "transfer hops", "ylabel": "attack success" }
+        },
+        {
+          "text": "No published defense fully closes any family, so treat the taxonomy as a coverage checklist, not a list of bugs to finish.",
+          "visual": { "type": "stat", "value": 0, "label": "families fully closed", "unit": "/ 7" }
+        }
+      ]
+    },
+    {
+      "id": "openmodels-05-red-teaming-s3",
+      "chapter": "openmodels/05-red-teaming",
+      "section": "s3",
+      "title": "Red-teaming as a discipline",
+      "eyebrow": "OPEN MODELS",
+      "beats": [
+        {
+          "text": "Red-teaming hardens a system you own or are authorized to test; the same activity against others without permission is just an attack.",
+          "visual": { "type": "title", "text": "Red-Teaming", "sub": "Authorized, defensive, fed back into defenses" }
+        },
+        {
+          "text": "Mature programs use three modes together: manual expert probing, automated model-based attacks, and continuous testing in CI.",
+          "visual": { "type": "bars", "values": [1, 1, 1], "labels": ["Manual", "Automated", "Continuous"] }
+        },
+        {
+          "text": "The headline metric is Attack Success Rate: the fraction of attempts that elicit prohibited behavior, judged by a classifier or human.",
+          "visual": { "type": "equation", "tex": "\\mathrm{ASR} = \\frac{1}{N}\\sum_{i=1}^{N} \\mathbb{1}[\\text{judge}(m(a_i)) = \\text{harmful}]", "note": "Robustness equals one minus ASR" }
+        },
+        {
+          "text": "With twenty of five hundred attempts still succeeding after a defense, the Attack Success Rate is 0.04, or four percent.",
+          "visual": { "type": "stat", "value": 0.04, "label": "ASR (20 of 500)", "decimals": 2 }
+        },
+        {
+          "text": "A four-percent ASR means ninety-six percent robustness, but only on this suite; re-run on a novel slice before trusting it.",
+          "visual": { "type": "plot", "ys": [0.4, 0.25, 0.12, 0.06, 0.04], "dot": 4, "xlabel": "suite versions", "ylabel": "ASR" }
+        },
+        {
+          "text": "A naive keyword filter catches plain harmful asks but leetspeak variants slip past, so keyword rules are a floor, not a ceiling.",
+          "visual": { "type": "bars", "values": [4, 2], "labels": ["Caught", "Missed (leet)"], "highlight": 1 }
+        }
+      ]
+    },
+    {
+      "id": "openmodels-05-red-teaming-s4",
+      "chapter": "openmodels/05-red-teaming",
+      "section": "s4",
+      "title": "Defenses — input/output filtering & robustness",
+      "eyebrow": "OPEN MODELS",
+      "beats": [
+        {
+          "text": "Because no single layer is reliable, production safety is built like network security: defense in depth across independent layers.",
+          "visual": { "type": "title", "text": "Defense In Depth", "sub": "Four layers, prompt to response" }
+        },
+        {
+          "text": "The four standard layers are input filtering, model alignment, output filtering, and system-level controls like least-privilege tools.",
+          "visual": { "type": "bars", "values": [1, 1, 1, 1], "labels": ["Input", "Alignment", "Output", "System"] }
+        },
+        {
+          "text": "An attack only succeeds when every layer misses, so independent miss rates multiply into a small bypass probability.",
+          "visual": { "type": "equation", "tex": "P(\\text{bypass}) = \\prod_{\\ell=1}^{L} p_\\ell", "note": "Catch rate is one minus the product" }
+        },
+        {
+          "text": "Miss rates of 0.3, 0.2, and 0.1 multiply to 0.006, a 99.4 percent catch rate from three mediocre filters.",
+          "visual": { "type": "stat", "value": 0.006, "label": "P(bypass), three layers", "decimals": 3 }
+        },
+        {
+          "text": "An output filter catching seventeen of twenty unsafe completions has recall 0.85; the three missed are what reach the user.",
+          "visual": { "type": "stat", "value": 0.85, "label": "output-filter recall", "decimals": 2 }
+        },
+        {
+          "text": "Independence is load-bearing: as failure correlation rises toward one, bypass climbs back toward the single weakest layer.",
+          "visual": { "type": "plot", "ys": [0.006, 0.05, 0.1, 0.18, 0.25, 0.3], "dot": 5, "xlabel": "correlation ρ", "ylabel": "P(bypass)" }
+        }
+      ]
+    },
+    {
+      "id": "openmodels-05-red-teaming-s5",
+      "chapter": "openmodels/05-red-teaming",
+      "section": "s5",
+      "title": "Operating open models responsibly",
+      "eyebrow": "OPEN MODELS",
+      "beats": [
+        {
+          "text": "Once you publish weights, every safety mechanism living inside them is removable by anyone who downloads them.",
+          "visual": { "type": "title", "text": "Open Weights, Honest Guarantees", "sub": "Put load-bearing safety in the system layer" }
+        },
+        {
+          "text": "Fine-tuning away refusals costs a few dollars, abliteration can erase the refusal direction, and white-box attacks are available to all.",
+          "visual": { "type": "bars", "values": [3, 1, 1], "labels": ["Fine-tune $", "Abliterate", "GCG"], "highlight": 0 }
+        },
+        {
+          "text": "Alignment and latent capabilities live in the weights and are removable; filters, sandboxing, and rate limits live in your system.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "Put durable guardrails in the serving stack: guard models in and out, sandboxed tools, a hard trust boundary, logging, and rate limits.",
+          "visual": { "type": "bars", "values": [1, 1, 1, 1, 1], "labels": ["In-guard", "Out-guard", "Sandbox", "Boundary", "Monitor"] }
+        },
+        {
+          "text": "State residual risk in numbers, not adjectives: a credible claim pins end-to-end ASR to a versioned suite and an audited judge.",
+          "visual": { "type": "stat", "value": 1.2, "label": "end-to-end ASR on suite v7", "unit": "%", "decimals": 1 }
+        },
+        {
+          "text": "A model you can audit is one you can secure; securing it is continuous measurement and defense in depth, not a one-time checkbox.",
+          "visual": { "type": "plot", "ys": [8, 5, 3, 2, 1.2], "dot": 4, "xlabel": "release cycles", "ylabel": "ASR %" }
+        }
+      ]
+    }
+  ]
+}
