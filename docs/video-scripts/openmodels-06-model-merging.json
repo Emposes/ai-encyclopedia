@@ -1,0 +1,169 @@
+{
+  "concepts": [
+    {
+      "id": "openmodels-06-model-merging-s1",
+      "chapter": "openmodels/06-model-merging",
+      "section": "s1",
+      "title": "Merging in weight space",
+      "eyebrow": "OPEN MODELS",
+      "beats": [
+        {
+          "text": "Two models fine-tuned from one base are two points in the same weight space, and the line between them is often passable.",
+          "visual": { "type": "title", "text": "Merging in weight space", "sub": "Combine checkpoints directly, no retraining" }
+        },
+        {
+          "text": "An ensemble runs both models and averages outputs, doubling inference cost; merging instead averages the weights once, offline.",
+          "visual": { "type": "stat", "value": 2, "label": "inference cost of an ensemble vs one merged model", "unit": "x" }
+        },
+        {
+          "text": "The plainest merge is a uniform mean of checkpoints that share a base; the result is what Wortsman calls a model soup.",
+          "visual": { "type": "equation", "tex": "\\theta_{\\text{soup}} = \\frac{1}{k}\\sum_{j=1}^{k} \\theta_j", "note": "Uniform average sets each weight to 1/k" }
+        },
+        {
+          "text": "Merging is element-wise, so it only makes sense when every ingredient shares the same base, architecture, and tokenizer.",
+          "visual": { "type": "bars", "values": [0.4, 0.55, 0.7, 0.85, 1.0], "labels": ["A", "0.25", "0.5", "0.75", "B"], "highlight": 1 }
+        },
+        {
+          "text": "Interpolating from a math model to a code model traces a family of compromise models as the mix coefficient runs from zero to one.",
+          "visual": { "type": "plot", "ys": [0.30, 0.27, 0.25, 0.23, 0.22], "dot": 1, "xlabel": "mix coefficient lambda", "ylabel": "loss" }
+        },
+        {
+          "text": "Whether that path stays low or crosses a barrier is the central empirical question for whether a merge works at all.",
+          "visual": { "type": "plot", "ys": [0.30, 0.65, 0.95, 0.55, 0.22], "mark": 2, "xlabel": "lambda (A to B)", "ylabel": "loss barrier" }
+        }
+      ]
+    },
+    {
+      "id": "openmodels-06-model-merging-s2",
+      "chapter": "openmodels/06-model-merging",
+      "section": "s2",
+      "title": "Task vectors & arithmetic",
+      "eyebrow": "OPEN MODELS",
+      "beats": [
+        {
+          "text": "A task vector isolates exactly what a fine-tune changed: the displacement in weight space that learning the task produced.",
+          "visual": { "type": "title", "text": "Task vectors & arithmetic", "sub": "Skills become vectors you can add and subtract" }
+        },
+        {
+          "text": "Ilharco defines it as fine-tuned weights minus pretrained weights, with the base model serving as the origin of the coordinate system.",
+          "visual": { "type": "equation", "tex": "\\tau = \\theta_{\\text{finetuned}} - \\theta_{\\text{pretrained}}", "note": "Same shape as the weights, points toward the task" }
+        },
+        {
+          "text": "Adding scaled task vectors installs skills, and adding several at once builds a multi-task model with no fine-tuning.",
+          "visual": { "type": "equation", "tex": "\\theta_0 + \\alpha(\\tau_A + \\tau_B)", "note": "One model that does both A and B" }
+        },
+        {
+          "text": "Negation is the move practitioners reach for most: subtracting a toxicity vector reduces toxic generation while preserving fluency.",
+          "visual": { "type": "bars", "values": [1.0, 0.35], "labels": ["base toxicity", "after negation"], "highlight": 1 }
+        },
+        {
+          "text": "Building the multi-task merge can overshoot: with base 0.9 and task vectors 0.5 and 0.7, the merged coordinate reaches 2.1.",
+          "visual": { "type": "stat", "value": 2.1, "label": "merged coordinate from base 0.9 plus tau_A plus tau_B", "decimals": 1 }
+        },
+        {
+          "text": "Task arithmetic is real but not magic: the scale alpha is a tuned dial, and adding vectors lets them collide coordinate by coordinate.",
+          "visual": { "type": "plot", "ys": [0.2, 0.6, 1.0, 0.7, 0.3], "dot": 2, "xlabel": "scale alpha", "ylabel": "skill score" }
+        }
+      ]
+    },
+    {
+      "id": "openmodels-06-model-merging-s3",
+      "chapter": "openmodels/06-model-merging",
+      "section": "s3",
+      "title": "Interference & the repair methods",
+      "eyebrow": "OPEN MODELS",
+      "beats": [
+        {
+          "text": "Summing task vectors works coordinate by coordinate, and that is exactly where merging many fine-tunes breaks down.",
+          "visual": { "type": "title", "text": "Interference & repair", "sub": "Why naive sums fail and how to fix them" }
+        },
+        {
+          "text": "Yadav names two failure modes: redundant noise swamping the few meaningful values, and sign conflicts that cancel both tasks.",
+          "visual": { "type": "bars", "values": [0.8, -0.55, 0.05, 0.04], "labels": ["task1", "task2", "noise", "noise"], "highlight": 1 }
+        },
+        {
+          "text": "TIES trims to the top values, elects the sign holding more total magnitude, then averages only the agreeing tasks.",
+          "visual": { "type": "equation", "tex": "\\gamma_m = \\operatorname{sgn}\\!\\Big(\\sum_{t=1}^{n}\\hat\\tau_t\\Big)", "note": "Sign election by summed magnitude, not head-count" }
+        },
+        {
+          "text": "DARE drops a fraction p of each vector's entries and rescales survivors, often discarding ninety percent with almost no loss.",
+          "visual": { "type": "equation", "tex": "\\tilde\\tau_i = \\frac{m_i}{1-p}\\,\\tau_i, \\quad \\mathbb{E}[\\tilde\\tau_i] = \\tau_i", "note": "Inverted-dropout rescale keeps the vector unbiased" }
+        },
+        {
+          "text": "For two models SLERP walks the arc on the hypersphere at constant angular speed, preserving norm instead of letting it sag.",
+          "visual": { "type": "equation", "tex": "\\cos\\Omega = \\frac{\\theta_A\\cdot\\theta_B}{\\lVert\\theta_A\\rVert\\,\\lVert\\theta_B\\rVert}", "note": "As the angle goes to zero SLERP reduces to the linear average" }
+        },
+        {
+          "text": "With three trimmed values plus 0.2, plus 0.1, minus 0.6, the elected sign is negative because magnitude outvotes count.",
+          "visual": { "type": "bars", "values": [0.2, 0.1, -0.6], "labels": ["+0.2", "+0.1", "-0.6"], "highlight": 2 }
+        }
+      ]
+    },
+    {
+      "id": "openmodels-06-model-merging-s4",
+      "chapter": "openmodels/06-model-merging",
+      "section": "s4",
+      "title": "The geometry that makes it work",
+      "eyebrow": "OPEN MODELS",
+      "beats": [
+        {
+          "text": "Averaging two neural networks is generally nonsense; merging is feasible only inside one specific geometric regime.",
+          "visual": { "type": "title", "text": "The geometry", "sub": "When the line between models stays low-loss" }
+        },
+        {
+          "text": "Linear mode connectivity is the enabler: fine-tunes of one base sit in a single basin, so any convex combination is also low-loss.",
+          "visual": { "type": "plot", "ys": [0.30, 0.26, 0.24, 0.25, 0.22], "dot": 2, "xlabel": "lambda (A to B)", "ylabel": "loss" }
+        },
+        {
+          "text": "The loss barrier measures how much the worst point on the path exceeds the average of the two endpoint losses.",
+          "visual": { "type": "equation", "tex": "B = \\max_{\\lambda\\in[0,1]} \\mathcal{L}\\big((1-\\lambda)\\theta_A + \\lambda\\theta_B\\big) - \\tfrac{1}{2}\\big(\\mathcal{L}(\\theta_A)+\\mathcal{L}(\\theta_B)\\big)", "note": "B near zero is safe; B much greater than zero is a barrier" }
+        },
+        {
+          "text": "With midpoint loss 0.9 and endpoint losses 0.4 and 0.2, the barrier is 0.6, far too high to trust a naive average.",
+          "visual": { "type": "stat", "value": 0.6, "label": "loss barrier between two unconnected models", "decimals": 1 }
+        },
+        {
+          "text": "Permutation symmetry means independently trained models sit in different copies of the basin, which is why the raw line crosses a barrier.",
+          "visual": { "type": "lattice" }
+        },
+        {
+          "text": "Ainsworth showed aligning permutations first can remove the barrier, so community fine-tunes of one base merge cleanly and from-scratch models do not.",
+          "visual": { "type": "bars", "values": [0.05, 0.6], "labels": ["shared base", "different init"], "highlight": 1 }
+        }
+      ]
+    },
+    {
+      "id": "openmodels-06-model-merging-s5",
+      "chapter": "openmodels/06-model-merging",
+      "section": "s5",
+      "title": "Practice & honest limits",
+      "eyebrow": "OPEN MODELS",
+      "beats": [
+        {
+          "text": "Merging is nearly free: it needs no training data, no gradient steps, and no GPU beyond the memory to hold the checkpoints.",
+          "visual": { "type": "title", "text": "Practice & honest limits", "sub": "Cheap multi-skill models, with real trade-offs" }
+        },
+        {
+          "text": "The dominant use is cheap multi-task models, combining separately trained specialists without ever assembling a joint training set.",
+          "visual": { "type": "bars", "values": [1, 1, 2], "labels": ["math FT", "code FT", "merged"], "highlight": 2 }
+        },
+        {
+          "text": "The standard toolkit is mergekit, which implements soup, task arithmetic, TIES, DARE, SLERP, and Fisher behind one config file.",
+          "visual": { "type": "stat", "value": 6, "label": "merge methods exposed by mergekit", "unit": "" }
+        },
+        {
+          "text": "The limits are structural: same base, same architecture, finite capacity, and hyperparameters that demand a search rather than one setting.",
+          "visual": { "type": "bars", "values": [1, 1, 1, 1, 1], "labels": ["base", "arch", "capacity", "hparams", "eval"], "highlight": 4 }
+        },
+        {
+          "text": "A merge buys breadth sometimes at the cost of peak, so it rarely matches either specialist on its home benchmark.",
+          "visual": { "type": "plot", "ys": [0.95, 0.7, 0.65, 0.7, 0.95], "mark": 2, "xlabel": "specialist to merge to specialist", "ylabel": "task score" }
+        },
+        {
+          "text": "A merge is a hypothesis, not a result: unproven until it clears the same evaluation suite you would demand of a fine-tune.",
+          "visual": { "type": "stat", "value": 0, "label": "evaluation you can skip after merging", "unit": "" }
+        }
+      ]
+    }
+  ]
+}

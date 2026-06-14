@@ -1,0 +1,200 @@
+[
+  {
+    "id": "chapters-12-inference-time-scaling-s1",
+    "chapter": "chapters/12-inference-time-scaling",
+    "section": "s1",
+    "title": "Why spending compute at inference raises accuracy",
+    "eyebrow": "LLM FIELD MANUAL",
+    "beats": [
+      {
+        "text": "Training is not the only place to spend compute; a frozen model gets more accurate when you let it run longer or more times.",
+        "visual": { "type": "title", "text": "Inference-Time Scaling", "sub": "A second compute budget after training" }
+      },
+      {
+        "text": "A language model is a distribution, not a function, so sampling a hard problem many times gives a spread of candidate answers.",
+        "visual": { "type": "bars", "values": [13, 13, 7, 13, 9], "labels": ["s1", "s2", "s3", "s4", "s5"], "highlight": 0 }
+      },
+      {
+        "text": "Coverage is the chance the best of N independent samples is correct, equal to one minus the probability all N draws fail.",
+        "visual": { "type": "equation", "tex": "\\text{pass@}N = 1 - (1-p)^{N}", "note": "p is per-sample success; N is the number of samples" }
+      },
+      {
+        "text": "The curve is concave: the first few samples buy the most accuracy, then returns diminish geometrically toward the ceiling.",
+        "visual": { "type": "plot", "ys": [0.3, 0.51, 0.66, 0.76, 0.83, 0.88, 0.92], "dot": 4, "xlabel": "samples N", "ylabel": "coverage", "mark": "knee" }
+      },
+      {
+        "text": "With a per-try probability of 0.3 and five samples, coverage climbs to about 0.83, but only if you can pick the right one.",
+        "visual": { "type": "stat", "value": 0.832, "label": "pass@5 at p = 0.3", "decimals": 3 }
+      },
+      {
+        "text": "Coverage is an upper bound, not accuracy; knowing a correct answer is somewhere in N samples is useless unless you can identify it.",
+        "visual": { "type": "lattice" }
+      }
+    ]
+  },
+  {
+    "id": "chapters-12-inference-time-scaling-s2",
+    "chapter": "chapters/12-inference-time-scaling",
+    "section": "s2",
+    "title": "Sampling-based scaling: best-of-N and majority vote",
+    "eyebrow": "LLM FIELD MANUAL",
+    "beats": [
+      {
+        "text": "The simplest way to turn coverage into accuracy needs no extra model: sample N answers and aggregate them.",
+        "visual": { "type": "title", "text": "Best-of-N and Majority Vote", "sub": "Aggregate without a verifier" }
+      },
+      {
+        "text": "Self-consistency samples N chains of thought, extracts each final answer, and returns the most frequent one.",
+        "visual": { "type": "equation", "tex": "\\hat a^{\\star} = \\arg\\max_{a} \\sum_{i=1}^{N} w_i \\,\\mathbb{1}[\\hat a_i = a]", "note": "w_i = 1 for plain majority, or a score for weighted voting" }
+      },
+      {
+        "text": "Given five values of 13, 13, 7, 13, and 9, the mode is 13 with three of five votes, so majority vote returns 13.",
+        "visual": { "type": "bars", "values": [3, 1, 1], "labels": ["13", "7", "9"], "highlight": 0 }
+      },
+      {
+        "text": "Voting works because correct reasoning paths converge while wrong ones disperse, so the modal answer is usually right.",
+        "visual": { "type": "plot", "ys": [0.42, 0.55, 0.62, 0.69, 0.72, 0.73, 0.74], "dot": 5, "xlabel": "samples N", "ylabel": "vote accuracy", "mark": "saturates" }
+      },
+      {
+        "text": "By the Condorcet jury theorem, when the correct answer is most probable, majority accuracy rises toward one with N.",
+        "visual": { "type": "stat", "value": 0.5, "label": "two-way threshold for voting to help", "decimals": 1 }
+      },
+      {
+        "text": "When probability is low or split across distractors, voting saturates below the best-of-N oracle, and that gap is what a verifier recovers.",
+        "visual": { "type": "lattice" }
+      }
+    ]
+  },
+  {
+    "id": "chapters-12-inference-time-scaling-s3",
+    "chapter": "chapters/12-inference-time-scaling",
+    "section": "s3",
+    "title": "Verifier-guided selection: outcome vs process rewards",
+    "eyebrow": "LLM FIELD MANUAL",
+    "beats": [
+      {
+        "text": "A verifier is a learned model that scores candidate solutions, bridging the gap from coverage to delivered accuracy.",
+        "visual": { "type": "title", "text": "Verifier-Guided Selection", "sub": "Outcome vs process rewards" }
+      },
+      {
+        "text": "An outcome reward model scores only the final answer, while a process reward model scores each reasoning step.",
+        "visual": { "type": "equation", "tex": "V_{\\text{ORM}}(c) = r_\\theta(c), \\quad V_{\\text{PRM}}(c) = \\prod_{t=1}^{T} r_\\theta(c_{1:t})", "note": "PRM multiplies per-step scores, so one bad step tanks the chain" }
+      },
+      {
+        "text": "Process supervision multiplies per-step scores, so a three-step chain at 0.9, 0.7, and 0.667 earns an overall score of 0.42.",
+        "visual": { "type": "stat", "value": 0.42, "label": "PRM product of step scores", "decimals": 2 }
+      },
+      {
+        "text": "Setting the verifier to one recovers plain voting, and a perfect verifier recovers the oracle, so quality is the dial between them.",
+        "visual": { "type": "bars", "values": [0.62, 0.74, 0.83], "labels": ["vote", "verifier", "oracle"], "highlight": 1 }
+      },
+      {
+        "text": "Push N high enough and best-of-N starts reward-hacking, selecting answers that exploit the verifier's blind spots.",
+        "visual": { "type": "plot", "ys": [0.4, 0.58, 0.71, 0.78, 0.75, 0.69, 0.62], "dot": 3, "xlabel": "samples N", "ylabel": "verifier accuracy", "mark": "peak then decline" }
+      },
+      {
+        "text": "A verifier is only as trustworthy as its weakest covered case, and gains above the voting line are borrowed against its reliability.",
+        "visual": { "type": "lattice" }
+      }
+    ]
+  },
+  {
+    "id": "chapters-12-inference-time-scaling-s4",
+    "chapter": "chapters/12-inference-time-scaling",
+    "section": "s4",
+    "title": "Search: beam, lookahead, tree-of-thought, MCTS",
+    "eyebrow": "LLM FIELD MANUAL",
+    "beats": [
+      {
+        "text": "Search expands a solution incrementally, scoring partial states and steering generation toward promising branches.",
+        "visual": { "type": "title", "text": "Search Over Reasoning", "sub": "Beam, lookahead, tree-of-thought, MCTS" }
+      },
+      {
+        "text": "Beam search keeps the B highest-scored partial solutions at each step, expands each, re-scores, and prunes back to B.",
+        "visual": { "type": "bars", "values": [4, 12, 4, 4, 4], "labels": ["expand", "score", "prune", "expand", "prune"], "highlight": 2 }
+      },
+      {
+        "text": "A step-level PRM makes search possible because it scores prefixes, letting you prune dead branches before paying to finish them.",
+        "visual": { "type": "lattice" }
+      },
+      {
+        "text": "Lookahead rolls the model forward a few steps to estimate a branch, while MCTS balances exploring against exploiting known-good lines.",
+        "visual": { "type": "plot", "ys": [0.3, 0.45, 0.58, 0.67, 0.73, 0.77, 0.79], "dot": 4, "xlabel": "search budget", "ylabel": "accuracy", "mark": "diminishing" }
+      },
+      {
+        "text": "Snell and colleagues found the best test-time strategy depends on difficulty: cheap refinement for easy, search for hard.",
+        "visual": { "type": "stat", "value": 14, "label": "larger model best-of-N can sometimes match", "unit": "x", "decimals": 0 }
+      },
+      {
+        "text": "Search inherits the verifier's flaws and can collapse diversity, leaving it below simple sampling on some problems.",
+        "visual": { "type": "equation", "tex": "\\text{score}(c_{1:t}) = \\prod_{j=1}^{t} r_\\theta(c_{1:j})", "note": "search climbs the PRM and can over-rate flawed lines" }
+      }
+    ]
+  },
+  {
+    "id": "chapters-12-inference-time-scaling-s5",
+    "chapter": "chapters/12-inference-time-scaling",
+    "section": "s5",
+    "title": "Thinking longer: long chain-of-thought & budget forcing",
+    "eyebrow": "LLM FIELD MANUAL",
+    "beats": [
+      {
+        "text": "Instead of many parallel samples, the 2024 to 2025 shift spent compute sequentially in one very long chain of thought.",
+        "visual": { "type": "title", "text": "Thinking Longer", "sub": "Long chain-of-thought and budget forcing" }
+      },
+      {
+        "text": "The o1 and DeepSeek-R1 paradigm trains one model to plan, explore, check itself, and backtrack within a single generation.",
+        "visual": { "type": "lattice" }
+      },
+      {
+        "text": "Accuracy on reasoning benchmarks grows roughly linearly in the log of the thinking-token budget B, with cost linear in B.",
+        "visual": { "type": "equation", "tex": "\\text{Acc}(B) \\approx a + b\\,\\log B", "note": "doubling tokens buys a roughly constant accuracy increment" }
+      },
+      {
+        "text": "With a = 0.50 and b = 0.02 per doubling, a budget of 4096 tokens is twelve doublings, reaching an accuracy of 0.74.",
+        "visual": { "type": "stat", "value": 0.74, "label": "Acc at B = 4096 tokens", "decimals": 2 }
+      },
+      {
+        "text": "Each doubling of the budget adds a fixed increment, so accuracy grows in log-B while compute grows in B itself.",
+        "visual": { "type": "plot", "ys": [0.5, 0.52, 0.54, 0.56, 0.58, 0.6, 0.62], "dot": 6, "xlabel": "log thinking budget", "ylabel": "accuracy", "mark": "linear in log B" }
+      },
+      {
+        "text": "Budget forcing steers thinking at decode time by suppressing the stop token and appending Wait, but it saturates and can degrade.",
+        "visual": { "type": "bars", "values": [0.62, 0.71, 0.74, 0.72], "labels": ["short", "medium", "long", "too long"], "highlight": 2 }
+      }
+    ]
+  },
+  {
+    "id": "chapters-12-inference-time-scaling-s6",
+    "chapter": "chapters/12-inference-time-scaling",
+    "section": "s6",
+    "title": "Compute-optimal scaling and the cost of thinking",
+    "eyebrow": "LLM FIELD MANUAL",
+    "beats": [
+      {
+        "text": "The real question is where a fixed FLOP budget should go: a bigger model, more test-time samples, or longer thinking.",
+        "visual": { "type": "title", "text": "Compute-Optimal Allocation", "sub": "Where every FLOP returns the most accuracy" }
+      },
+      {
+        "text": "Total inference cost scales with model size times tokens generated, about 2P FLOPs per token times N times L.",
+        "visual": { "type": "equation", "tex": "C \\approx 2P \\times N \\cdot L", "note": "P parameters, N samples, L tokens per sample" }
+      },
+      {
+        "text": "On easy-to-moderate problems at modest budgets, a small model plus test-time compute can match a model about 14 times larger.",
+        "visual": { "type": "stat", "value": 14, "label": "larger-model equivalent at modest budget", "unit": "x", "decimals": 0 }
+      },
+      {
+        "text": "The optimum is not constant; it slides toward many samples on easy problems and toward a bigger model on hard ones.",
+        "visual": { "type": "bars", "values": [64, 16, 4, 1], "labels": ["easy", "moderate", "hard", "hardest"], "highlight": 0 }
+      },
+      {
+        "text": "With a perfect verifier at p = 0.5 and four samples, pass@4 is 0.9375, so cost per solved task is 4.27 units.",
+        "visual": { "type": "stat", "value": 4.27, "label": "expected cost per solved task", "unit": "units", "decimals": 2 }
+      },
+      {
+        "text": "Both axes show diminishing returns, so production systems route by difficulty, taking the expensive path only when it earns its keep.",
+        "visual": { "type": "plot", "ys": [0.4, 0.6, 0.72, 0.78, 0.8, 0.81, 0.81], "dot": 3, "xlabel": "FLOP budget", "ylabel": "accuracy", "mark": "knee" }
+      }
+    ]
+  }
+]
