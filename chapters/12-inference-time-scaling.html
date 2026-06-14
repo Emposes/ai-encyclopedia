@@ -1,0 +1,693 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Inference-Time Compute Scaling — AI Encyclopedia</title>
+<meta name="description" content="Spending more compute at inference — by sampling, verifying, searching, or thinking longer — raises accuracy, and sometimes beats training a bigger model. This chapter maps the methods, the compute-optimal trade-offs, and the honest limits set by verifier reliability and diminishing returns." />
+<link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
+<meta name="theme-color" content="#000000" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+<link rel="canonical" href="https://ai-encyclopedia.com/chapters/12-inference-time-scaling" />
+<meta property="og:url" content="https://ai-encyclopedia.com/chapters/12-inference-time-scaling" />
+</head>
+<body data-track="chapters" data-level="advanced">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ VOL II / 12 / INFERENCE-TIME SCALING</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="13-mechanistic-interpretability.html">NEXT: INTERPRETABILITY →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">VOLUME II — THE LLM FIELD MANUAL · CHAPTER 12 / 13</div>
+    <h1>Inference-Time Compute Scaling</h1>
+    <p class="lede">Training is not the only place to spend FLOPs. A frozen model gets measurably more accurate when you let it sample more, check its own work, search over candidates, or simply think for longer before answering. <strong>For many problems a fixed model plus extra test-time compute beats a much larger model run once</strong> — but only up to a point, and only when something reliable can tell good answers from bad. This chapter is the engineering of that trade.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>ADVANCED</b></span>
+      <span>READING TIME<b>≈ 30 MIN</b></span>
+      <span>BUILDS ON<b>CH 05 · CH 08 · CH 11</b></span>
+      <span>INSTRUMENTS<b>BEST-OF-N · COMPUTE-OPTIMAL</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">12.1</span>Why more compute at inference helps</a>
+      <a href="#s2"><span class="n">12.2</span>Sampling: best-of-N &amp; majority vote</a>
+      <a href="#s3"><span class="n">12.3</span>Verifier-guided selection (ORM/PRM)</a>
+      <a href="#s4"><span class="n">12.4</span>Search: beam, tree, MCTS</a>
+      <a href="#s5"><span class="n">12.5</span>Thinking longer: long-CoT &amp; budget forcing</a>
+      <a href="#s6"><span class="n">12.6</span>Compute-optimal scaling &amp; cost</a>
+      <a href="#s7"><span class="n">12.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 12.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">12.1</span><h2>Why spending compute at inference raises accuracy</h2></div>
+        <p>Everything earlier in this volume spent its compute <em>before</em> deployment: pre-training (Chapter 04), alignment (Chapter 05), the one forward pass per token at serving time (Chapter 08). Inference-time scaling adds a second budget. Instead of accepting the model's first greedy answer, you let it run longer or more times and then pick — or build — a better answer from what it produced. The accuracy gains are real and, on reasoning benchmarks, often larger per FLOP than the same FLOPs spent enlarging the model.</p>
+
+        <p>The reason it works at all is that a language model is a <em>distribution</em>, not a function. Sample it many times on a hard problem and you get a spread of answers. Two facts about that spread make extra compute pay off:</p>
+        <ul>
+          <li><strong>Coverage rises with samples.</strong> Even if any single sample is often wrong, the probability that <em>at least one</em> of \(N\) samples is correct climbs fast. This is the ceiling that best-of-\(N\) and search chase.</li>
+          <li><strong>Correct answers cluster.</strong> On problems with a single right answer, the model's mistakes tend to scatter while its correct reasoning paths agree. Taking the most common answer (majority vote) therefore beats taking a random one — no extra model required.</li>
+        </ul>
+
+        <p>The cleanest quantity is <strong>coverage</strong>, sometimes written <span style="white-space:nowrap">pass@\(N\)</span>: the chance that the best of \(N\) independent samples is correct, given a per-sample success probability \(p\). If draws are independent, the only way to fail is for all \(N\) to be wrong:</p>
+
+        <div class="eq"><span class="eq-tag">EQ 12.1 — COVERAGE: P(AT LEAST ONE CORRECT IN N)</span>
+        $$ \text{pass@}N \;=\; 1 - (1-p)^{N} $$
+        <div class="eq-note">\(p\) is the per-sample probability the model produces a correct answer; \(N\) is the number of independent samples. The failure event is "every one of the \(N\) draws is wrong", probability \((1-p)^N\); coverage is its complement. The curve is concave: the first few samples buy the most, then returns diminish geometrically. <b>Coverage is an upper bound on what any selection method can deliver</b> — you cannot pick a right answer that was never sampled. The whole rest of the chapter is about how close to this ceiling a real selector can get.</div>
+        </div>
+
+        <p>Two warnings before we build on EQ 12.1. First, independence is an idealization: real samples from one model on one prompt are correlated, so empirical coverage grows a little slower than \(1-(1-p)^N\), though Brown et al. (2024) found the log-coverage-versus-log-\(N\) relationship is strikingly clean across orders of magnitude. Second, <strong>coverage is not accuracy</strong>. Knowing a correct answer is <em>somewhere</em> in the \(N\) samples is worthless unless you can identify it. Closing the gap between coverage and delivered accuracy is the job of voting (§12.2) and verifiers (§12.3).</p>
+
+        <div class="exercise" data-answer="0.832" data-tol="0.01" data-hint="pass@N = 1 − (1−p)^N with p=0.3, N=5.">
+          <div class="ex-q">A model solves a problem on any single try with probability \(p = 0.3\). You draw \(N = 5\) independent samples. Using EQ 12.1, what is the coverage — the probability that <b>at least one</b> sample is correct? (Give a probability in \([0,1]\).)</div>
+          <div class="ex-reveal-src">\(\text{pass@}5 = 1 - (1-0.3)^5 = 1 - 0.7^5 = 1 - 0.16807 = 0.83193\). So five tries lift a 30%-per-try model to about <b>0.832</b> coverage — provided you can pick the right one out of the five.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 12.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">12.2</span><h2>Sampling-based scaling: best-of-N and majority vote</h2></div>
+        <p>The simplest way to turn coverage into accuracy needs no extra model. Sample \(N\) answers and aggregate them. Three variants, in rising order of what they assume:</p>
+        <ul>
+          <li><strong>Best-of-\(N\) (oracle / pass@\(N\)).</strong> Keep the sample that is actually correct. This is only achievable with a perfect checker (a unit test that compiles, a numeric answer you can verify). Its accuracy equals coverage, EQ 12.1 — the ceiling.</li>
+          <li><strong>Self-consistency / majority vote.</strong> Sample \(N\) chains of thought, extract each final answer, and return the most frequent one. No verifier, no labels. It works because correct reasoning paths tend to converge on the same answer while wrong ones disperse.</li>
+          <li><strong>Weighted voting.</strong> Same as majority vote but each answer's tally is weighted by a confidence score — the model's own sequence probability, or a verifier's score (§12.3). It strictly generalizes plain voting and usually edges it out.</li>
+        </ul>
+
+        <p><strong>Self-consistency</strong> (Wang et al., 2022) is the workhorse. Formally, for an answer value \(a\) and sampled chains \(c_1,\dots,c_N\) with extracted answers \(\hat a_i\):</p>
+
+        <div class="eq"><span class="eq-tag">EQ 12.2 — SELF-CONSISTENCY (MAJORITY / WEIGHTED VOTE)</span>
+        $$ \hat a^{\star} \;=\; \arg\max_{a}\; \sum_{i=1}^{N} w_i \,\mathbb{1}\!\left[\hat a_i = a\right], \qquad w_i = \begin{cases} 1 & \text{plain majority} \\ s(c_i) & \text{weighted} \end{cases} $$
+        <div class="eq-note">\(\mathbb{1}[\cdot]\) is the indicator, \(s(c_i)\) a confidence or verifier score for chain \(i\). Plain voting sets every weight to 1 and just counts. The key property: marginalizing over reasoning paths recovers the answer the model "believes" most, which is far more reliable than any single greedy decode. <b>Voting helps only when correct answers are modal</b> — when the single most likely answer is the right one more often than not. On tasks where the model is confidently and consistently wrong, more votes entrench the error.</div>
+        </div>
+
+        <p>How well does voting track the oracle ceiling? Under independence and a single dominant correct answer, majority accuracy is governed by the binomial: if \(p &gt; \tfrac12\) for a two-way choice, the probability the majority is correct rises toward 1 with \(N\) (the Condorcet jury theorem). Reasoning problems are not binary, but the intuition holds: when the correct answer is the most probable single answer, voting converges to it. When \(p\) is low or split across plausible distractors, voting can saturate well below the best-of-\(N\) oracle — that gap is exactly what a verifier is for.</p>
+
+        <div class="figure" data-reveal>
+          <svg viewBox="0 0 720 200" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Sample-aggregate-select pipeline">
+            <g data-pop>
+              <rect class="dg-box" x="14" y="74" width="120" height="52" rx="4"/>
+              <text class="dg-label" x="74" y="96" text-anchor="middle">PROMPT</text>
+              <text class="dg-label" x="74" y="112" text-anchor="middle" style="fill:#636363">1 hard question</text>
+            </g>
+            <path class="dg-line" d="M134 100 H 196" data-draw/>
+            <g data-pop>
+              <rect class="dg-box-accent" x="196" y="22" width="150" height="34" rx="4"/>
+              <text class="dg-label" x="271" y="43" text-anchor="middle">sample 1 → â₁</text>
+              <rect class="dg-box-accent" x="196" y="64" width="150" height="34" rx="4"/>
+              <text class="dg-label" x="271" y="85" text-anchor="middle">sample 2 → â₂</text>
+              <rect class="dg-box-accent" x="196" y="106" width="150" height="34" rx="4"/>
+              <text class="dg-label" x="271" y="127" text-anchor="middle">⋮  (N draws)</text>
+              <rect class="dg-box-accent" x="196" y="148" width="150" height="34" rx="4"/>
+              <text class="dg-label" x="271" y="169" text-anchor="middle">sample N → â_N</text>
+            </g>
+            <path class="dg-line" d="M346 100 H 408" data-draw/>
+            <g data-pop>
+              <rect class="dg-box" x="408" y="62" width="150" height="76" rx="4"/>
+              <text class="dg-label" x="483" y="92" text-anchor="middle">AGGREGATE</text>
+              <text class="dg-label" x="483" y="110" text-anchor="middle" style="fill:#636363">vote · verify · search</text>
+            </g>
+            <path class="dg-line" d="M558 100 H 620" data-draw/>
+            <g data-pop>
+              <rect class="dg-box-accent" x="620" y="74" width="86" height="52" rx="4"/>
+              <text class="dg-label" x="663" y="104" text-anchor="middle">â★</text>
+            </g>
+          </svg>
+        </div>
+
+        <div class="exercise" data-answer="13" data-tol="0.001" data-hint="Best-of-N takes the single highest-scoring sample → it's a maximum, not a sum.">
+          <div class="ex-q">You sample 5 answers to an arithmetic problem and read off these final values: <b>13, 13, 7, 13, 9</b>. A unit test is unavailable, so you use plain <b>self-consistency</b> (majority vote, EQ 12.2). What final answer does it return?</div>
+          <div class="ex-reveal-src">Tally the votes: 13 appears 3 times, 7 once, 9 once. The mode is <b>13</b>, with 3 of 5 votes. Majority vote returns the most frequent extracted answer regardless of any single chain's probability — here three independent chains agreeing on 13 outweighs the two scattered wrong answers.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Self-consistency: sample noisy answers, take the mode, plot accuracy vs N (EQ 12.2)
+import numpy as np
+rng = np.random.default_rng(0)
+
+correct = 7                              # the true answer to one hard problem
+p = 0.42                                 # per-sample chance of getting it right
+distractors = [3, 5, 9, 11, 13]          # wrong answers the model scatters across
+Ns = [1, 3, 5, 11, 21, 41, 81]
+trials = 4000
+
+def one_sample():
+    if rng.random() < p: return correct
+    return distractors[rng.integers(len(distractors))]
+
+accs = []
+for N in Ns:
+    wins = 0
+    for _ in range(trials):
+        votes = [one_sample() for _ in range(N)]
+        vals, counts = np.unique(votes, return_counts=True)
+        if vals[np.argmax(counts)] == correct:   # majority vote (ties -> lowest value)
+            wins += 1
+    accs.append(wins / trials)
+    print(f"N={N:>3}  majority-vote accuracy = {accs[-1]:.3f}   (single-sample p={p})")
+
+print("\nvoting lifts a p<0.5 model well above p because correct answers are modal;")
+print("it plateaus once the mode is locked in -- diminishing returns past ~N=40.")
+plot_xy(Ns, accs)                        # accuracy rises then saturates</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="its-bon" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT 12.1 — BEST-OF-N vs MAJORITY VOTE</span><span class="w-sub">ACCURACY AS N GROWS · EQ 12.1 / 12.2</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>PER-SAMPLE p(correct) <output id="its-bon-p-out">0.35</output></label><input type="range" id="its-bon-p" min="0.05" max="0.95" step="0.01" value="0.35"/></div>
+              <div class="ctl"><label>WRONG-ANSWER SPREAD k <output id="its-bon-k-out">4</output></label><input type="range" id="its-bon-k" min="1" max="9" step="1" value="4"/></div>
+              <div class="ctl"><label>SAMPLES N <output id="its-bon-n-out">16</output></label><input type="range" id="its-bon-n" min="1" max="128" step="1" value="16"/></div>
+            </div>
+            <canvas class="w-canvas" id="its-bon-canvas" height="220"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">COVERAGE pass@N (ORACLE)</div><div class="r-value" id="its-bon-cov">—</div></div>
+              <div class="readout acc"><div class="r-label">MAJORITY-VOTE ACC</div><div class="r-value" id="its-bon-maj">—</div></div>
+              <div class="readout acc"><div class="r-label">VOTE / ORACLE GAP</div><div class="r-value" id="its-bon-gap">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The red curve is the best-of-\(N\) <b>oracle</b> (coverage, EQ 12.1) — what a perfect verifier could reach. The mint curve is plain <b>majority vote</b> (no verifier), modelled as: each wrong sample lands on one of \(k\) distractors uniformly. Drag \(p\): below 0.5 with few distractors voting still climbs, but the gap to the oracle widens — that gap is the value a verifier (§12.3) can recover. Push the spread \(k\) up and voting degrades while coverage barely moves, because scattered wrongs never form a false majority but also never get picked without a checker.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 12.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">12.3</span><h2>Verifier-guided selection: outcome vs process rewards</h2></div>
+        <p>Majority vote throws away the model's confidence. A <strong>verifier</strong> — a learned model that scores candidate solutions — does better, and it is the bridge from coverage to delivered accuracy. There are two kinds, differing in what they score.</p>
+        <ul>
+          <li><strong>Outcome reward model (ORM).</strong> Scores the <em>final answer</em> of a complete solution: one scalar per candidate, "is this likely correct?". Trained on (solution, correct/incorrect) labels. Cheap to label, but it cannot localize where a wrong solution went off the rails, and it can be fooled by a wrong chain that happens to reach a right-looking answer.</li>
+          <li><strong>Process reward model (PRM).</strong> Scores <em>each reasoning step</em>, producing a per-step correctness signal. The solution's score is then an aggregate of step scores (often the product, or the minimum). Lightman et al. (2023) showed step-level supervision substantially outperforms outcome-only on hard math, because it rewards <em>valid reasoning</em>, not just lucky answers, and gives search (§12.4) a dense signal to climb.</li>
+        </ul>
+
+        <p>Best-of-\(N\) with a verifier replaces "pick the correct one" (oracle) and "pick the most common one" (voting) with "pick the highest-scored one":</p>
+
+        <div class="eq"><span class="eq-tag">EQ 12.3 — VERIFIER-WEIGHTED SELECTION (ORM &amp; PRM)</span>
+        $$ \hat a^{\star} = \arg\max_{a}\; \sum_{i:\,\hat a_i = a} V(c_i), \qquad V_{\text{ORM}}(c) = r_\theta(c), \quad V_{\text{PRM}}(c) = \prod_{t=1}^{T} r_\theta\!\big(c_{1:t}\big) $$
+        <div class="eq-note">\(V(\cdot)\) is the verifier's score for a chain. The ORM emits a single score \(r_\theta(c)\) for the whole solution; the PRM scores each prefix \(c_{1:t}\) and aggregates (here a product, so one bad step tanks the chain). Setting \(V \equiv 1\) recovers plain majority vote (EQ 12.2), and using a perfect \(V\) recovers the oracle (EQ 12.1) — so verifier quality is the dial between the two. <b>Weighted best-of-\(N\) (sum scores per answer) usually beats both naive best-of-\(N\) and plain voting</b>, because it combines agreement with confidence.</div>
+        </div>
+
+        <p class="note"><strong>The verifier is the bottleneck, and an honest one.</strong> Every gain above the voting line is borrowed against the verifier's reliability, and verifiers are imperfect in ways that bite exactly when you lean on them hardest. Push \(N\) high enough and best-of-\(N\) starts <strong>reward-hacking</strong>: it selects samples that score well not because they are correct but because they exploit the verifier's blind spots. So accuracy-versus-\(N\) under a learned verifier is often hump-shaped — it rises, peaks, then <em>declines</em> as the search finds adversarial high-scoring wrong answers. PRMs are also expensive to train (step labels are costly, whether human-annotated as in Lightman et al. or estimated by rollouts) and can be miscalibrated on out-of-distribution problems. A verifier is only as trustworthy as its weakest covered case.</p>
+
+        <div class="exercise" data-answer="0.42" data-tol="0.01" data-hint="PRM product aggregation: multiply the per-step scores together.">
+          <div class="ex-q">A PRM scores a 3-step solution with per-step correctness probabilities \(0.9,\ 0.7,\ 0.667\). Using the product aggregation \(V_{\text{PRM}} = \prod_t r_\theta(c_{1:t})\) from EQ 12.3, what is the chain's overall verifier score? (Round to two decimals.)</div>
+          <div class="ex-reveal-src">Product of the step scores: \(0.9 \times 0.7 \times 0.667 = 0.4202\). Rounded, <b>0.42</b>. Product aggregation is deliberately strict — a single weak step (here the last, 0.667) drags the whole-chain score down, which is why PRMs penalize a single broken step far more harshly than an ORM scoring only the final answer.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Best-of-N with a TOY NOISY VERIFIER: oracle vs verifier vs vote (EQ 12.3)
+import numpy as np
+rng = np.random.default_rng(1)
+
+p = 0.40                                  # per-sample chance the answer is correct
+sigma = 0.30                              # verifier noise: higher = less reliable
+Ns = [1, 2, 4, 8, 16, 32, 64]
+trials = 3000
+
+def run(N):
+    orc = ver = 0
+    for _ in range(trials):
+        correct = rng.random(N) < p                      # which samples are truly right
+        # verifier score: correct ~ N(1,sigma), wrong ~ N(0,sigma), clipped to [0,1]
+        score = np.where(correct, 1.0, 0.0) + rng.normal(0, sigma, N)
+        score = np.clip(score, 0, 1)
+        orc += correct.any()                             # oracle: a correct sample exists?
+        ver += correct[int(np.argmax(score))]            # pick the top-scored sample
+    return orc / trials, ver / trials
+
+print(f"{'N':>3} {'oracle pass@N':>14} {'verifier acc':>13}")
+for N in Ns:
+    o, v = run(N)
+    print(f"{N:>3} {o:>14.3f} {v:>13.3f}")
+
+print(f"\nverifier (sigma={sigma}) trails the oracle and the gap GROWS with N:")
+print("more samples => more chances for a noisy-high-scoring WRONG answer to win.")
+print("set sigma=0 for a perfect verifier (matches the oracle); raise it to see hacking.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 12.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">12.4</span><h2>Search: beam, lookahead, tree-of-thought, MCTS</h2></div>
+        <p>Sampling treats each solution as atomic: generate the whole chain, then judge it. <strong>Search</strong> instead expands the solution incrementally, scoring partial states and steering generation toward promising ones. A step-level verifier (a PRM) is what makes this possible — it scores prefixes, so you can prune dead branches before paying to finish them. The same test-time budget buys more when it is spent guiding generation rather than just filtering finished outputs.</p>
+        <ul>
+          <li><strong>Beam search over reasoning steps.</strong> Keep the \(B\) highest-PRM-scored partial solutions at each step, expand each into several continuations, re-score, and prune back to \(B\). It concentrates compute on the live frontier instead of spreading it across independent full samples.</li>
+          <li><strong>Lookahead / step-level rollouts.</strong> Before committing to a step, roll the model forward a few steps to estimate where that branch is heading, then score the branch by its lookahead. More accurate per node, more expensive per node.</li>
+          <li><strong>Tree-of-Thought (ToT).</strong> Treat reasoning as an explicit tree of partial thoughts, expanding, evaluating, and backtracking with breadth- or depth-first control. Useful when a problem benefits from exploring and abandoning alternatives (puzzles, planning) rather than one linear chain.</li>
+          <li><strong>MCTS-style search.</strong> Monte-Carlo tree search balances exploring new branches against exploiting known-good ones (a UCT-style bonus), using rollouts or a value model to estimate each node. It is the most sample-efficient on the hardest problems and the most engineering-heavy to run.</li>
+        </ul>
+
+        <p>Snell et al. (2024) compared these against plain best-of-\(N\) at matched compute and found the honest, useful answer: <strong>the best test-time strategy depends on the difficulty of the question.</strong> On easier problems, where the model's first attempts are usually close, cheap sequential refinement and small \(N\) win. On harder problems, where the model needs to find a rare correct path, search and verifier-guided selection with more compute pull ahead. There is no single dominant method — matching the strategy to the question is itself part of being compute-optimal (§12.6).</p>
+
+        <p class="note"><strong>Search inherits the verifier's flaws and adds its own.</strong> A search that climbs a learned PRM will, given enough budget, find states the PRM over-rates — the reward-hacking of §12.3, now actively optimized for. Beam and MCTS can also collapse diversity, repeatedly refining one flawed line of attack instead of exploring genuinely different approaches, which can leave search <em>below</em> simple sampling on problems whose only solution requires a different opening move. More search is not monotonically better.</p>
+
+        <table class="data">
+          <thead><tr><th>Method</th><th>Compute axis</th><th>Needs verifier?</th><th>Best when…</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Majority vote</strong></td><td class="m">parallel</td><td>no</td><td>Correct answer is modal; no checker available</td></tr>
+            <tr><td><strong>Best-of-N + ORM</strong></td><td class="m">parallel</td><td>outcome</td><td>Cheap final-answer scoring; moderate N</td></tr>
+            <tr><td><strong>Beam / lookahead (PRM)</strong></td><td class="m">parallel + step</td><td>process</td><td>Hard problems; dense step signal exists</td></tr>
+            <tr><td><strong>Tree-of-Thought / MCTS</strong></td><td class="m">tree</td><td>process/value</td><td>Backtracking helps; budget is large</td></tr>
+            <tr><td class="hl"><strong>Long-CoT (§12.5)</strong></td><td class="hl">sequential</td><td>internalized</td><td>Model trained to self-correct in one chain</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <!-- ====================== 12.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">12.5</span><h2>Thinking longer: long chain-of-thought &amp; budget forcing</h2></div>
+        <p>Every method so far spends compute <em>in parallel</em> — many samples, scored or searched. The 2024–2025 shift was to spend it <em>sequentially</em>: train a single model to produce one very long chain of thought that plans, explores, checks itself, and backtracks within the same generation, before emitting an answer. This is the <strong>o1 / DeepSeek-R1 paradigm</strong>, and it changed what "test-time compute" means.</p>
+
+        <p>The defining empirical result, established by OpenAI's o1 and reproduced openly by DeepSeek-AI's R1 (2025), is two coupled scaling curves: accuracy rises smoothly both with <em>training</em>-time RL compute and with <em>test</em>-time thinking length. R1 demonstrated that large-scale reinforcement learning with simple, verifiable rewards (correct answer / valid format) — without a learned PRM in the loop — can induce long-CoT behaviors on its own: the model learns to allocate more reasoning tokens to harder problems, to re-examine its steps, and to recover from mistakes mid-chain. The "verifier" here is internalized into the policy by RL rather than run as a separate selector at inference.</p>
+
+        <div class="eq"><span class="eq-tag">EQ 12.4 — TEST-TIME SCALING AS A FUNCTION OF THINKING TOKENS</span>
+        $$ \text{Acc}(B) \;\approx\; a + b\,\log B, \qquad B = \text{thinking-token budget}, \quad \text{cost} \propto B $$
+        <div class="eq-note">Across a wide band, accuracy on reasoning benchmarks grows roughly <b>linearly in the log of the thinking budget</b> \(B\) — doubling the tokens you let the model spend buys a roughly constant accuracy increment. Because cost is linear in \(B\), each additional point of accuracy costs exponentially more compute: the same diminishing-returns geometry as EQ 12.1, now along the sequential axis. The relation is empirical and saturates: beyond some budget the model loops, second-guesses correct answers, or drifts, and accuracy flattens or dips.</div>
+        </div>
+
+        <p><strong>Budget forcing</strong> (Muennighoff et al., 2025, "s1") is the clean control knob for the sequential axis. To make a model think <em>more</em>, suppress its end-of-thinking token and append a continuation cue (literally "Wait") so it keeps reasoning; to make it think <em>less</em>, force the end-of-thinking token after a token cap and elicit the answer. With a tiny curated dataset and this one inference-time trick, s1 reproduced a clear test-time scaling curve, showing the effect is a property you can steer at decode time, not only a property baked in by massive RL.</p>
+
+        <p class="note"><strong>Sequential is not strictly better than parallel.</strong> Long-CoT models excel where self-correction within one chain pays off, but they have their own failure modes: <em>overthinking</em> easy problems (spending thousands of tokens to confirm an answer reached in the first sentence), latency that can be tens of seconds per query, and degradation past a sweet-spot budget. The strongest 2026 systems combine axes — a long-CoT policy, sampled a few times, with the final answers voted or verified — because parallel and sequential scaling attack partly independent sources of error.</p>
+
+        <div class="exercise" data-answer="0.74" data-tol="0.01" data-hint="Acc = a + b·log2(B). Plug in a=0.50, b=0.02, B=4096; log2(4096)=12.">
+          <div class="ex-q">A model's test-time scaling fits \(\text{Acc}(B) = a + b\log_2 B\) (EQ 12.4) with \(a = 0.50\) and \(b = 0.02\) per doubling of the thinking-token budget \(B\). What accuracy does it reach at a budget of \(B = 4096\) tokens?</div>
+          <div class="ex-reveal-src">\(\log_2 4096 = 12\), so the budget is 12 doublings above one token. \(\text{Acc} = 0.50 + 0.02 \times 12 = 0.50 + 0.24 = 0.74\). The answer is <b>0.74</b>. Each doubling of \(B\) adds only the fixed increment \(b = 0.02\), so the accuracy grows linearly in \(\log B\) while compute grows linearly in \(B\) itself — the EQ 12.4 diminishing-returns law along the sequential axis.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 12.6 ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">12.6</span><h2>Compute-optimal scaling and the cost of thinking</h2></div>
+        <p>The strategic question is not "does test-time compute help" — it does — but "given a fixed total FLOP budget, where should it go?" You can spend FLOPs three ways: a <em>bigger model</em> (more training and more per-token inference cost), <em>more test-time samples/search</em> on a smaller model, or <em>longer thinking</em> per query. Snell et al. (2024) framed this as a <strong>compute-optimal</strong> allocation problem and reached a nuanced conclusion worth stating precisely.</p>
+
+        <div class="eq"><span class="eq-tag">EQ 12.5 — COMPUTE-OPTIMAL TEST-TIME ALLOCATION</span>
+        $$ \theta^{\star}(q, C) \;=\; \arg\max_{\theta}\; \mathbb{E}\big[\text{Acc} \mid q,\ \theta,\ C\big], \qquad C \approx \underbrace{2 P}_{\text{model FLOPs/token}} \times \underbrace{N \cdot L}_{\text{tokens generated}} $$
+        <div class="eq-note">\(\theta\) is the test-time strategy (samples \(N\), search width, thinking length \(L\)), chosen per prompt \(q\) under a FLOP budget \(C\). A forward pass over a \(P\)-parameter dense model costs about \(2P\) FLOPs per token (Vol II · Ch 08), so total inference FLOPs scale with \(P \times N \times L\). The optimum is <b>not a constant</b>: it depends on prompt difficulty \(q\). Easy prompts want little extra compute; hard prompts want a lot. Allocating compute per-difficulty rather than uniformly was worth several-fold efficiency in Snell et al.</div>
+        </div>
+
+        <p>The headline findings, stated honestly with their boundaries:</p>
+        <ul>
+          <li><strong>When test-time compute wins.</strong> On easy-to-moderate problems and at modest total budgets, a smaller model plus optimally allocated test-time compute can <em>match or beat</em> a model ~14× larger run once. The small-model-plus-thinking configuration is cheaper to serve and easier to update.</li>
+          <li><strong>When a bigger model wins.</strong> On the hardest problems, or when you face many queries (amortizing the bigger model's training over huge inference volume), pretraining a larger model is the better spend. Test-time compute cannot manufacture capability the base model fundamentally lacks: if coverage (EQ 12.1) is near zero because the model never samples a correct path, no amount of voting, verifying, or searching helps.</li>
+          <li><strong>Diminishing returns are real on both axes.</strong> Coverage (EQ 12.1), voting (§12.2), and thinking length (EQ 12.4) all bend over. Past their knees you pay exponentially more FLOPs, dollars, and latency for vanishing accuracy — and with learned verifiers, over-spending can actively <em>lower</em> accuracy via reward hacking (§12.3).</li>
+        </ul>
+
+        <p>The economics are blunt. Parallel scaling multiplies your <strong>dollar cost</strong> per query by \(N\) (you pay for every sample) but can be done concurrently, so latency need not rise. Sequential scaling multiplies <strong>latency</strong> by the thinking length (the user waits through the whole chain) and the dollar cost with it. A reasoning model emitting tens of thousands of thinking tokens can cost orders of magnitude more per answered query than a single greedy decode, which is why production systems gate long thinking behind difficulty routing — cheap path for easy queries, expensive path only when it earns its keep.</p>
+
+        <div class="exercise" data-answer="4.27" data-tol="0.02" data-unit="units" data-hint="Cost per solved task = (N × cost-per-sample) / pass@N. Compute pass@N = 1−(1−p)^N first, then divide.">
+          <div class="ex-q">A sample costs <b>1 unit</b>. With per-sample \(p = 0.5\) you draw \(N = 4\) samples and have a <b>perfect</b> verifier (so you solve the task iff at least one of the four is correct). What is the <b>expected cost per solved task</b>, \(\dfrac{N \times \text{cost-per-sample}}{\text{pass@}N}\)? (Give the cost in units, to two decimals.)</div>
+          <div class="ex-reveal-src">Success rate: \(\text{pass@}4 = 1 - (1-0.5)^4 = 1 - 0.5^4 = 1 - 0.0625 = 0.9375\). You always pay for all 4 samples, so cost per <em>attempt</em> is 4 units. Cost per <em>solved</em> task \(= 4 / 0.9375 = 4.2667\), i.e. <b>4.27</b> units. The lesson: as per-sample \(p\) falls, coverage falls and the wasted samples on unsolved attempts inflate cost-per-solve super-linearly — low-\(p\) problems are expensive even with a perfect checker.</div>
+        </div>
+
+        <div class="widget" id="its-opt" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT 12.2 — COMPUTE-OPTIMAL ALLOCATION</span><span class="w-sub">ACCURACY SURFACE OVER {MODEL SIZE × SAMPLES} AT FIXED FLOPs · EQ 12.5</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>FIXED FLOP BUDGET <output id="its-opt-c-out">1.0e15</output></label><input type="range" id="its-opt-c" min="14" max="16.5" step="0.05" value="15"/></div>
+              <div class="ctl"><label>PROBLEM DIFFICULTY <output id="its-opt-d-out">0.50</output></label><input type="range" id="its-opt-d" min="0.10" max="0.90" step="0.01" value="0.5"/></div>
+            </div>
+            <canvas class="w-canvas" id="its-opt-canvas" height="240"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">OPTIMAL MODEL SIZE</div><div class="r-value" id="its-opt-size">—</div></div>
+              <div class="readout acc"><div class="r-label">OPTIMAL SAMPLES N</div><div class="r-value" id="its-opt-n">—</div></div>
+              <div class="readout acc"><div class="r-label">PEAK ACCURACY</div><div class="r-value" id="its-opt-acc">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">A fixed FLOP budget \(C \approx 2P\cdot N\cdot L\) (EQ 12.5) buys an iso-cost frontier: spend it on more parameters \(P\) (bigger, smarter per sample, but fewer tries) or more samples \(N\) (smaller model, more shots). The curve plots best-of-\(N\) accuracy along that frontier; the marker is the optimum. Drag <b>difficulty</b> down (easy problems): the optimum slides toward <em>many samples on a small model</em> — test-time compute wins. Drag it up (hard problems): the optimum slides toward a <em>bigger model</em>, because a tiny model's per-sample \(p\) is too low for sampling to rescue. There is no universal best split — it moves with the problem.</div>
+        </div>
+
+        <p>The synthesis for 2026: inference-time scaling is now a first-class lever, co-equal with model size and data. The skill is no longer "make the model bigger" but "spend each FLOP where it returns the most accuracy" — sample when answers cluster, verify when you have a trustworthy checker, search when steps can be scored, think longer when the model was trained to self-correct, and route by difficulty so you never overspend on easy queries. And throughout, respect the two hard ceilings: you cannot select an answer the model never sampled (coverage), and you cannot trust selection beyond the reliability of whatever does the selecting (the verifier).</p>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>We have been treating the model as a black box that emits distributions we sample, score, and search.</strong> The next chapter cracks it open. Mechanistic interpretability and sparse autoencoders (SAEs) ask what the activations actually represent — the features, circuits, and directions inside the residual stream — turning "the model believes X" from a behavioral guess into something we can locate, read off, and intervene on.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 12.R ====================== -->
+      <section class="section" id="s7">
+        <div class="sec-head"><span class="sec-num">12.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://arxiv.org/abs/2408.03314" target="_blank" rel="noopener">Snell, C., Lee, J., Xu, K. &amp; Kumar, A. (2024). <span class="ref-venue">Scaling LLM Test-Time Compute Optimally Can Be More Effective Than Scaling Model Parameters</span>.</a> <span class="ref-meta">The compute-optimal allocation and difficulty-dependent strategy of EQ 12.5 / §12.6.</span></li>
+          <li><a href="https://arxiv.org/abs/2203.11171" target="_blank" rel="noopener">Wang, X. et al. (2022). <span class="ref-venue">Self-Consistency Improves Chain of Thought Reasoning in Language Models</span>.</a> <span class="ref-meta">ICLR 2023 — majority / weighted vote over sampled chains (EQ 12.2, §12.2).</span></li>
+          <li><a href="https://arxiv.org/abs/2407.21787" target="_blank" rel="noopener">Brown, B. et al. (2024). <span class="ref-venue">Large Language Monkeys: Scaling Inference Compute with Repeated Sampling</span>.</a> <span class="ref-meta">Coverage / pass@N scaling with repeated sampling (EQ 12.1, §12.1–12.2).</span></li>
+          <li><a href="https://arxiv.org/abs/2305.20050" target="_blank" rel="noopener">Lightman, H. et al. (2023). <span class="ref-venue">Let's Verify Step by Step</span>.</a> <span class="ref-meta">OpenAI — process reward models (PRM) vs outcome supervision (EQ 12.3, §12.3).</span></li>
+          <li><a href="https://arxiv.org/abs/2501.12948" target="_blank" rel="noopener">DeepSeek-AI (2025). <span class="ref-venue">DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning</span>.</a> <span class="ref-meta">Open long-CoT reasoning via RL with verifiable rewards (EQ 12.4, §12.5).</span></li>
+          <li><a href="https://arxiv.org/abs/2501.19393" target="_blank" rel="noopener">Muennighoff, N. et al. (2025). <span class="ref-venue">s1: Simple Test-Time Scaling</span>.</a> <span class="ref-meta">Budget forcing as a decode-time control on thinking length (§12.5).</span></li>
+          <li><a href="https://arxiv.org/abs/2305.10601" target="_blank" rel="noopener">Yao, S. et al. (2023). <span class="ref-venue">Tree of Thoughts: Deliberate Problem Solving with Large Language Models</span>.</a> <span class="ref-meta">NeurIPS 2023 — explicit search over reasoning trees (§12.4).</span></li>
+          <li><a href="https://arxiv.org/abs/2110.14168" target="_blank" rel="noopener">Cobbe, K. et al. (2021). <span class="ref-venue">Training Verifiers to Solve Math Word Problems (GSM8K)</span>.</a> <span class="ref-meta">OpenAI — outcome verifiers + best-of-N selection on math (§12.2–12.3).</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../chapters/11-frontier-2026.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">11</span> The 2026 Frontier</div></a>
+        <a class="next" href="../chapters/13-mechanistic-interpretability.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">13</span> Mechanistic Interpretability</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — VOL II · CH 12</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* Chapter 12 — Inference-Time Compute Scaling instruments. Single IIFE, no globals.
+   setTimeout-only animation; every widget guarded by element existence. */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  var C = (FM && FM.C) || {
+    MINT: "#a6f2cc", DEEP: "#2b5945", BLUE: "#4e8af7", RED: "#ff4136",
+    HAIR: "#2f3234", MUT: "#636363", SEC: "#9b9b9b", BRIGHT: "#ffffff",
+    MONO: "10px ui-monospace, SF Mono, Menlo, monospace"
+  };
+
+  /* ============================================================
+     INSTRUMENT 12.1 — Best-of-N (coverage oracle) vs majority vote
+     ============================================================ */
+  (function () {
+    var root = document.getElementById("its-bon");
+    if (!root) return;
+    var pIn = document.getElementById("its-bon-p");
+    var kIn = document.getElementById("its-bon-k");
+    var nIn = document.getElementById("its-bon-n");
+    var pOut = document.getElementById("its-bon-p-out");
+    var kOut = document.getElementById("its-bon-k-out");
+    var nOut = document.getElementById("its-bon-n-out");
+    var cv = document.getElementById("its-bon-canvas");
+    var covEl = document.getElementById("its-bon-cov");
+    var majEl = document.getElementById("its-bon-maj");
+    var gapEl = document.getElementById("its-bon-gap");
+
+    // coverage = 1 - (1-p)^N
+    function coverage(p, N) { return 1 - Math.pow(1 - p, N); }
+
+    // majority-vote accuracy: each wrong sample lands uniformly on one of k distractors.
+    // P(correct mode) via Monte-Carlo expectation in closed-ish form:
+    // model each of N draws: correct w.p. p, else distractor j (j=1..k) w.p. (1-p)/k.
+    // accuracy = P(count_correct strictly beats every distractor count); ties -> not correct.
+    // Estimate by a fast deterministic-seed simulation (background-tab safe, no rAF).
+    function majorityAcc(p, k, N) {
+      var trials = 1500;
+      var rnd = FM.mulberry32(1234 + N * 131 + k * 17 + Math.round(p * 1000));
+      var wins = 0, t, i;
+      for (t = 0; t < trials; t++) {
+        var cCorrect = 0;
+        var counts = new Array(k).fill(0);
+        for (i = 0; i < N; i++) {
+          var r = rnd();
+          if (r < p) { cCorrect++; }
+          else {
+            var j = Math.floor((r - p) / (1 - p) * k);
+            if (j >= k) j = k - 1; if (j < 0) j = 0;
+            counts[j]++;
+          }
+        }
+        var maxD = 0;
+        for (i = 0; i < k; i++) if (counts[i] > maxD) maxD = counts[i];
+        if (cCorrect > maxD) wins++; // strict majority for correct
+      }
+      return wins / trials;
+    }
+
+    function render() {
+      var p = parseFloat(pIn.value);
+      var k = parseInt(kIn.value, 10);
+      var N = parseInt(nIn.value, 10);
+      pOut.textContent = p.toFixed(2);
+      kOut.textContent = k;
+      nOut.textContent = N;
+
+      var cov = coverage(p, N);
+      var maj = majorityAcc(p, k, N);
+      covEl.textContent = (cov * 100).toFixed(1) + "%";
+      majEl.textContent = (maj * 100).toFixed(1) + "%";
+      gapEl.textContent = ((cov - maj) * 100).toFixed(1) + " pts";
+
+      var s = FM.setupCanvas(cv, 220);
+      var ctx = s.ctx, w = s.w, h = s.h;
+      ctx.clearRect(0, 0, w, h);
+      var padL = 40, padR = 14, padT = 14, padB = 26;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+      var Nmax = 128;
+
+      function px(nn) { return x0 + (Math.log2(nn) / Math.log2(Nmax)) * (x1 - x0); }
+      function py(v) { return y0 + v * (y1 - y0); }
+
+      // grid + axes
+      ctx.strokeStyle = "rgba(47,50,52,.55)"; ctx.lineWidth = 1;
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "center"; ctx.textBaseline = "top";
+      [1, 2, 4, 8, 16, 32, 64, 128].forEach(function (nn) {
+        var gx = px(nn);
+        ctx.beginPath(); ctx.moveTo(gx, y1); ctx.lineTo(gx, y0); ctx.stroke();
+        ctx.fillText(nn, gx, y0 + 6);
+      });
+      ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      [0, 0.5, 1].forEach(function (v) {
+        var gy = py(v);
+        ctx.strokeStyle = "rgba(47,50,52,.35)";
+        ctx.beginPath(); ctx.moveTo(x0, gy); ctx.lineTo(x1, gy); ctx.stroke();
+        ctx.fillStyle = C.MUT; ctx.fillText((v * 100).toFixed(0), x0 - 6, gy);
+      });
+
+      // oracle coverage curve (red)
+      ctx.strokeStyle = C.RED; ctx.lineWidth = 1.5; ctx.beginPath();
+      var first = true, nn;
+      for (nn = 1; nn <= Nmax; nn++) {
+        var X = px(nn), Y = py(coverage(p, nn));
+        if (first) { ctx.moveTo(X, Y); first = false; } else ctx.lineTo(X, Y);
+      }
+      ctx.stroke();
+
+      // majority-vote curve (mint) — sample at a sparse set of N for speed
+      var votePts = [1, 2, 3, 5, 8, 12, 16, 24, 32, 48, 64, 96, 128];
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 1.75; ctx.beginPath();
+      first = true;
+      votePts.forEach(function (vn) {
+        var X = px(vn), Y = py(majorityAcc(p, k, vn));
+        if (first) { ctx.moveTo(X, Y); first = false; } else ctx.lineTo(X, Y);
+      });
+      ctx.stroke();
+
+      // base per-sample p line (muted dashed)
+      ctx.setLineDash([3, 4]); ctx.strokeStyle = "rgba(155,155,155,.4)";
+      ctx.beginPath(); ctx.moveTo(x0, py(p)); ctx.lineTo(x1, py(p)); ctx.stroke();
+      ctx.setLineDash([]);
+
+      // marker at current N
+      var mx = px(N);
+      ctx.setLineDash([3, 4]); ctx.strokeStyle = "rgba(155,155,155,.5)";
+      ctx.beginPath(); ctx.moveTo(mx, y1); ctx.lineTo(mx, y0); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = C.RED; ctx.beginPath(); ctx.arc(mx, py(cov), 3.4, 0, 2 * Math.PI); ctx.fill();
+      ctx.fillStyle = C.MINT; ctx.beginPath(); ctx.arc(mx, py(maj), 3.4, 0, 2 * Math.PI); ctx.fill();
+
+      // legend
+      ctx.textAlign = "left"; ctx.textBaseline = "middle";
+      ctx.fillStyle = C.RED; ctx.fillRect(x0 + 6, y1 + 6, 14, 2);
+      ctx.fillText("best-of-N (coverage)", x0 + 24, y1 + 7);
+      ctx.fillStyle = C.MINT; ctx.fillRect(x0 + 6, y1 + 20, 14, 2);
+      ctx.fillText("majority vote", x0 + 24, y1 + 21);
+      ctx.fillStyle = C.SEC; ctx.fillText("single-sample p", x0 + 6, py(p) - 8);
+
+      ctx.save();
+      ctx.translate(12, (y0 + y1) / 2); ctx.rotate(-Math.PI / 2);
+      ctx.textAlign = "center"; ctx.fillStyle = C.MUT;
+      ctx.fillText("accuracy %", 0, 0);
+      ctx.restore();
+    }
+
+    pIn.addEventListener("input", render);
+    kIn.addEventListener("input", render);
+    nIn.addEventListener("input", render);
+    window.addEventListener("resize", render);
+    render();
+  })();
+
+  /* ============================================================
+     INSTRUMENT 12.2 — Compute-optimal allocation surface
+     Fixed FLOPs C ~ 2P * N (L held constant). Trade P vs N along the
+     iso-cost frontier; per-sample p rises with model size and falls
+     with difficulty; best-of-N accuracy = 1-(1-p)^N. Find the optimum.
+     ============================================================ */
+  (function () {
+    var root = document.getElementById("its-opt");
+    if (!root) return;
+    var cIn = document.getElementById("its-opt-c");
+    var dIn = document.getElementById("its-opt-d");
+    var cOut = document.getElementById("its-opt-c-out");
+    var dOut = document.getElementById("its-opt-d-out");
+    var cv = document.getElementById("its-opt-canvas");
+    var sizeEl = document.getElementById("its-opt-size");
+    var nEl = document.getElementById("its-opt-n");
+    var accEl = document.getElementById("its-opt-acc");
+
+    var L = 8000;         // thinking tokens per sample (long reasoning chain, held fixed)
+    var Pmin = 1e9;       // smallest model on the frontier (1B)
+    var Pmax = 3e10;      // largest model on the frontier (30B)
+
+    // per-sample success p(P, difficulty): bounded logistic in log-params.
+    // bigger model -> higher p; harder problem (d->1) -> lower p; a size×difficulty
+    // term means hard problems need bigger models before extra size pays off.
+    function pSample(P, d) {
+      var x = (Math.log10(P) - Math.log10(Pmin)) /
+        (Math.log10(Pmax) - Math.log10(Pmin)); // 0..1 over size range
+      var z = 5.0 * x - 9.0 * d + 4.0 * x * d; // capability vs size, difficulty, interaction
+      return 0.55 / (1 + Math.exp(-z));        // ceiling 0.55 keeps per-sample p modest
+    }
+
+    function fmtP(P) {
+      if (P >= 1e9) return (P / 1e9).toFixed(P >= 1e10 ? 1 : 1) + "B";
+      return (P / 1e6).toFixed(0) + "M";
+    }
+
+    function render() {
+      var logC = parseFloat(cIn.value);
+      var C_budget = Math.pow(10, logC);
+      var d = parseFloat(dIn.value);
+      cOut.textContent = C_budget.toExponential(1);
+      dOut.textContent = d.toFixed(2);
+
+      // iso-cost frontier: C = 2 * P * N * L  =>  N = C / (2 P L)
+      // sweep P, compute N (>=1), accuracy = coverage(p(P,d), N).
+      var pts = [];
+      var steps = 90, i;
+      var best = { acc: -1, P: Pmin, N: 1 };
+      for (i = 0; i <= steps; i++) {
+        var f = i / steps;
+        var P = Math.pow(10, Math.log10(Pmin) + f * (Math.log10(Pmax) - Math.log10(Pmin)));
+        var N = C_budget / (2 * P * L);
+        if (N < 1) continue;            // budget can't afford even one sample of this size
+        var Nr = Math.max(1, Math.round(N));
+        var p = pSample(P, d);
+        var acc = 1 - Math.pow(1 - p, N); // use continuous N for a smooth surface
+        pts.push({ P: P, N: N, acc: acc, p: p });
+        if (acc > best.acc) best = { acc: acc, P: P, N: Nr };
+      }
+
+      if (pts.length === 0) {
+        sizeEl.textContent = "—"; nEl.textContent = "budget too small"; accEl.textContent = "—";
+      } else {
+        sizeEl.textContent = fmtP(best.P) + " params";
+        nEl.textContent = best.N >= 1000 ? (best.N / 1000).toFixed(1) + "K" : "" + best.N;
+        accEl.textContent = (best.acc * 100).toFixed(1) + "%";
+        accEl.style.color = best.acc >= 0.7 ? C.MINT : best.acc >= 0.4 ? C.BLUE : C.RED;
+      }
+
+      var s = FM.setupCanvas(cv, 240);
+      var ctx = s.ctx, w = s.w, h = s.h;
+      ctx.clearRect(0, 0, w, h);
+      var padL = 44, padR = 16, padT = 16, padB = 30;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+
+      // x axis: log model size; y axis: accuracy 0..1
+      function px(P) {
+        return x0 + (Math.log10(P) - Math.log10(Pmin)) /
+          (Math.log10(Pmax) - Math.log10(Pmin)) * (x1 - x0);
+      }
+      function py(a) { return y0 + a * (y1 - y0); }
+
+      // grid
+      ctx.strokeStyle = "rgba(47,50,52,.5)"; ctx.lineWidth = 1;
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "center"; ctx.textBaseline = "top";
+      [1e9, 3e9, 1e10, 3e10].forEach(function (P) {
+        var gx = px(P);
+        ctx.beginPath(); ctx.moveTo(gx, y1); ctx.lineTo(gx, y0); ctx.stroke();
+        ctx.fillText(fmtP(P), gx, y0 + 6);
+      });
+      ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      [0, 0.5, 1].forEach(function (a) {
+        var gy = py(a);
+        ctx.strokeStyle = "rgba(47,50,52,.3)";
+        ctx.beginPath(); ctx.moveTo(x0, gy); ctx.lineTo(x1, gy); ctx.stroke();
+        ctx.fillStyle = C.MUT; ctx.fillText((a * 100).toFixed(0), x0 - 6, gy);
+      });
+
+      // accuracy-along-frontier curve (mint)
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 1.9; ctx.beginPath();
+      pts.forEach(function (pt, idx) {
+        var X = px(pt.P), Y = py(pt.acc);
+        if (idx === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y);
+      });
+      ctx.stroke();
+
+      // per-sample p curve (blue, dashed) — the underlying capability
+      ctx.setLineDash([4, 4]); ctx.strokeStyle = "rgba(78,138,247,.7)";
+      ctx.lineWidth = 1.25; ctx.beginPath();
+      var firstP = true;
+      pts.forEach(function (pt) {
+        var X = px(pt.P), Y = py(pt.p);
+        if (firstP) { ctx.moveTo(X, Y); firstP = false; } else ctx.lineTo(X, Y);
+      });
+      ctx.stroke(); ctx.setLineDash([]);
+
+      // optimum marker
+      if (best.acc >= 0) {
+        var mx = px(best.P), my = py(best.acc);
+        ctx.strokeStyle = "rgba(166,242,204,.45)"; ctx.setLineDash([2, 3]);
+        ctx.beginPath(); ctx.moveTo(mx, my); ctx.lineTo(mx, y0); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = C.MINT; ctx.beginPath(); ctx.arc(mx, my, 4.2, 0, 2 * Math.PI); ctx.fill();
+        ctx.fillStyle = C.BRIGHT; ctx.font = C.MONO;
+        ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+        ctx.fillText("optimum", mx, my - 7);
+      }
+
+      // legend
+      ctx.textAlign = "left"; ctx.textBaseline = "middle"; ctx.font = C.MONO;
+      ctx.fillStyle = C.MINT; ctx.fillRect(x0 + 6, y1 + 6, 14, 2);
+      ctx.fillText("best-of-N acc along iso-cost", x0 + 24, y1 + 7);
+      ctx.fillStyle = C.BLUE; ctx.fillRect(x0 + 6, y1 + 20, 14, 2);
+      ctx.fillText("per-sample p (capability)", x0 + 24, y1 + 21);
+
+      ctx.fillStyle = C.MUT; ctx.textAlign = "center"; ctx.textBaseline = "top";
+      ctx.fillText("model size P  (more P ⇒ fewer samples N at fixed FLOPs)", (x0 + x1) / 2, y0 + 18);
+      ctx.save();
+      ctx.translate(12, (y0 + y1) / 2); ctx.rotate(-Math.PI / 2);
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText("accuracy %", 0, 0);
+      ctx.restore();
+    }
+
+    cIn.addEventListener("input", render);
+    dIn.addEventListener("input", render);
+    window.addEventListener("resize", render);
+    render();
+  })();
+
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

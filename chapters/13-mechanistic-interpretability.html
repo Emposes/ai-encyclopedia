@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Mechanistic Interpretability &amp; Sparse Autoencoders — AI Encyclopedia</title>
+<meta name="description" content="Reverse-engineering the algorithms a network learned: features versus neurons, the superposition hypothesis, sparse autoencoders as dictionary learning, circuits, causal tracing, and feature steering — with the field's honest limits." />
+<link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
+<meta name="theme-color" content="#000000" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+<link rel="canonical" href="https://ai-encyclopedia.com/chapters/13-mechanistic-interpretability" />
+<meta property="og:url" content="https://ai-encyclopedia.com/chapters/13-mechanistic-interpretability" />
+</head>
+<body data-track="chapters" data-level="advanced">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ VOL II / 13 / INTERPRETABILITY</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../chapters/capstone.html">NEXT: CAPSTONE →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">VOLUME II — THE LLM FIELD MANUAL · CHAPTER 13 / 13</div>
+    <h1>Mechanistic Interpretability &amp; Sparse Autoencoders</h1>
+    <p class="lede">A trained network is not a black box because it is mysterious. It is a black box because it stores far more concepts than it has neurons, smeared across overlapping directions in activation space. <strong>Mechanistic interpretability tries to read that representation back out as human-legible features and circuits</strong>, and sparse autoencoders are the current best tool for prying the features apart. This chapter covers the goal, the superposition that makes it hard, the dictionary-learning fix, the causal tests that keep it honest, and the limits the field is candid about.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>ADVANCED</b></span>
+      <span>READING TIME<b>≈ 30 MIN</b></span>
+      <span>BUILDS ON<b>CH 02 · CH 03 · CH 12</b></span>
+      <span>INSTRUMENTS<b>SUPERPOSITION · SAE TRADE-OFF</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">13.1</span>The goal: reverse-engineering circuits</a>
+      <a href="#s2"><span class="n">13.2</span>Features, neurons &amp; polysemanticity</a>
+      <a href="#s3"><span class="n">13.3</span>The superposition hypothesis</a>
+      <a href="#s4"><span class="n">13.4</span>Sparse autoencoders</a>
+      <a href="#s5"><span class="n">13.5</span>Circuits, motifs &amp; causal methods</a>
+      <a href="#s6"><span class="n">13.6</span>Steering, and honest limits</a>
+      <a href="#s7"><span class="n">13.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 13.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">13.1</span><h2>The goal: reverse-engineering learned algorithms</h2></div>
+        <p>Training tells you <em>that</em> a network works. It does not tell you <em>how</em>. The weights are the only artifact, and they encode whatever algorithm gradient descent happened to find. Mechanistic interpretability is the program of recovering that algorithm: not "which input pixels mattered" (the question saliency maps ask) but "what computation is this set of weights actually running, expressed in terms a person can audit." The unit of explanation is the <strong>circuit</strong> — a subgraph of features and the weights connecting them that together implement an identifiable function, such as "detect that the current token repeats an earlier bigram, then copy what came next."</p>
+
+        <p>The motivation is partly scientific and partly safety. If a model can be made to lie, refuse, or pursue a goal, you would like to find the internal mechanism that does so, verify it causally, and ideally intervene. Saliency and attention-weight visualization were the first attempts; both proved too coarse, because they describe <em>where</em> a network looked, not <em>what it concluded</em>. The mechanistic program instead insists on three commitments: name the intermediate variables (features), describe the computation over them (circuits), and confirm each claim with a causal experiment rather than a correlation.</p>
+
+        <p>Two facts make this hard, and they structure the rest of the chapter. First, the natural unit you can read off directly — the neuron — usually does not correspond to a single concept. Second, the reason is not noise but an efficient encoding the network chose deliberately: <strong>superposition</strong>, packing more features than it has dimensions. Sections 13.2 and 13.3 establish the problem; 13.4 gives the tool that addresses it; 13.5 supplies the causal tests; 13.6 is the honest accounting of what we can and cannot yet claim.</p>
+
+        <div class="callout">
+          <span class="co-icon">FRAME</span>
+          <p>Keep one distinction front of mind throughout. A <strong>neuron</strong> is a coordinate of the activation vector — a basis direction fixed by the architecture. A <strong>feature</strong> is a direction in that same space that the network actually uses to represent one concept. They coincide only by accident. Interpretability is largely the search for the feature directions hiding inside the neuron basis.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 13.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">13.2</span><h2>Features versus neurons, and polysemanticity</h2></div>
+        <p>If features lined up with neurons, interpretability would be a labeling exercise: read each neuron's top-activating inputs, write down the concept. Some neurons do behave this way — a few are cleanly <strong>monosemantic</strong>, firing for exactly one human-recognizable thing. Most are not. A typical neuron is <strong>polysemantic</strong>: its top activations include unrelated concepts — French text, DNA codons, and HTTP headers all lighting up the same coordinate. There is no single caption you can write for it that is faithful.</p>
+
+        <p>Polysemanticity is the central obstacle. It is not that the network failed to organize itself; it is that the natural basis (the neurons) is the wrong coordinate system. The concepts are still in there, but they live along directions that cut across many neurons at once. Reading the activation vector in the neuron basis is like reading a paragraph with the word boundaries deleted: every letter is present, but the units of meaning are not where the gaps are.</p>
+
+        <div class="eq"><span class="eq-tag">EQ 13.1 — THE LINEAR REPRESENTATION ASSUMPTION</span>
+        $$ x \;\approx\; \sum_{i=1}^{F} a_i\, \mathbf{d}_i, \qquad \mathbf{d}_i \in \mathbb{R}^{d},\; \lVert \mathbf{d}_i \rVert = 1,\; a_i \ge 0 $$
+        <div class="eq-note">An activation vector \(x\in\mathbb{R}^{d}\) is modeled as a sparse, non-negative combination of \(F\) unit feature directions \(\mathbf{d}_i\), where \(a_i\) is how strongly feature \(i\) is present. This <b>linear representation</b> assumption — concepts are directions, and they add — underlies almost all of mechanistic interpretability. A neuron is just the special case \(\mathbf{d}_i = e_i\), a standard basis vector. Polysemanticity is what you get when the true \(\mathbf{d}_i\) are <em>not</em> axis-aligned, so each axis collects pieces of several features.</div>
+        </div>
+
+        <p>Why would training produce non-axis-aligned features? Because there is no pressure to align them. Gradient descent optimizes the loss, and the loss is invariant to how you rotate the hidden basis: any rotation of the representation, undone by the next layer's weights, computes the same function. The network is free to place features wherever is cheapest, and §13.3 argues that "cheapest" usually means "not one per neuron."</p>
+
+        <div class="exercise" data-answer="3" data-tol="0.001" data-hint="count how many distinct, unrelated concepts the neuron fires for.">
+          <div class="ex-q">A neuron's top-activating dataset examples cluster into three clearly distinct, unrelated concepts: legal contracts, chess notation, and Python tracebacks. How many <b>monosemantic</b> features would a faithful description need to assign to this single neuron's behavior (i.e. how many separate concepts is it encoding)?</div>
+          <div class="ex-reveal-src">A monosemantic feature captures exactly one concept. This neuron fires for three unrelated ones, so a faithful account needs <b>3</b> distinct features — the neuron is polysemantic, mixing three directions onto one axis. That mismatch is precisely why the neuron basis is the wrong place to read features, and why we need a method (the SAE of §13.4) to recover the three underlying directions.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 13.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">13.3</span><h2>The superposition hypothesis</h2></div>
+        <p>The leading explanation for polysemanticity is <strong>superposition</strong>: a network represents <em>more features than it has dimensions</em> by storing them as directions that are not orthogonal but merely close to orthogonal. With \(d\) dimensions you get only \(d\) perfectly orthogonal directions, but you can pack many more <em>nearly</em>-orthogonal ones into the same space — the Johnson–Lindenstrauss bound says the number you can fit while keeping pairwise overlap below \(\varepsilon\) grows exponentially in \(d\). The price is <strong>interference</strong>: any two features whose directions are not exactly perpendicular leak a little into each other's readout.</p>
+
+        <div class="eq"><span class="eq-tag">EQ 13.2 — INTERFERENCE FROM NON-ORTHOGONALITY</span>
+        $$ \hat{a}_i \;=\; \mathbf{d}_i^{\top} x \;=\; \mathbf{d}_i^{\top}\!\Big(\textstyle\sum_j a_j \mathbf{d}_j\Big) \;=\; a_i \;+\; \underbrace{\sum_{j\neq i} a_j\,(\mathbf{d}_i^{\top}\mathbf{d}_j)}_{\text{cross-talk}} $$
+        <div class="eq-note">Reading feature \(i\) by projecting onto its direction recovers the true activation \(a_i\) <em>plus</em> a sum of contaminations, each weighted by the cosine \(\mathbf{d}_i^{\top}\mathbf{d}_j\) between feature \(i\) and every other active feature \(j\). If all directions were orthogonal the cross-talk term vanishes and \(\hat a_i = a_i\) exactly — but then you are capped at \(d\) features. <b>Superposition trades a small, tolerable amount of interference for a large gain in capacity.</b> It works because of the next idea: sparsity.</div>
+        </div>
+
+        <p>Superposition is only viable because real features are <strong>sparse</strong>: on any given input, almost none of the thousands of possible features are active. If two rarely-active features happen to share a slightly-overlapping direction, they almost never fire together, so the cross-talk in EQ 13.2 almost never materializes. Sparsity is what lets the network get away with the overpacking. Elhage et al. (2022) showed in toy models that as feature sparsity rises, networks transition from a "one feature per neuron" regime into dense superposition, often arranging features into tidy geometric structures (antipodal pairs, pentagons, tetrahedra) that minimize worst-case interference.</p>
+
+        <div class="eq"><span class="eq-tag">EQ 13.3 — WHEN SUPERPOSITION PAYS</span>
+        $$ \text{loss} \;\approx\; \underbrace{\text{(features not represented)}}_{\text{capacity cost}} \;+\; \underbrace{\textstyle\sum_{i}\Pr[a_i\!\neq\!0]\sum_{j\neq i}\Pr[a_j\!\neq\!0]\,(\mathbf{d}_i^{\top}\mathbf{d}_j)^2}_{\text{interference cost}} $$
+        <div class="eq-note">A schematic of the trade-off the network optimizes. Forcing orthogonality kills the interference term but caps you at \(d\) features, paying the capacity cost. Packing more features incurs interference, but each term is scaled by the <em>product</em> of two firing probabilities — so when features are sparse (small \(\Pr[a\neq0]\)) the interference cost is tiny and superposition wins. The sparser the features, the more you can pack. This is the quantitative heart of the hypothesis.</div>
+        </div>
+
+        <div class="exercise" data-answer="0.6" data-tol="0.01" data-hint="cosine = (u·v)/(|u||v|); here both norms are √(0.6²+0.8²)=1, so it's just the dot product.">
+          <div class="ex-q">Two unit feature directions are \(\mathbf{d}_i = (0.6,\ 0.8)\) and \(\mathbf{d}_j = (1.0,\ 0.0)\). Their cosine similarity \(\mathbf{d}_i^{\top}\mathbf{d}_j\) is the per-unit interference one leaks into the other (EQ 13.2). Compute it.</div>
+          <div class="ex-reveal-src">Both vectors are already unit length (\(\sqrt{0.6^2+0.8^2}=1\), \(\sqrt{1^2+0^2}=1\)). The cosine is the dot product: \((0.6)(1.0) + (0.8)(0.0) = \) <b>0.6</b>. That is a large overlap — these two features would interfere heavily if ever active together, so the network would only pack them this way if they almost never co-occur. Truly orthogonal features (cosine 0) carry zero cross-talk.</div>
+        </div>
+
+        <div class="widget" id="mi-super" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT 13.1 — SUPERPOSITION: PACKING F FEATURES INTO d DIMENSIONS</span><span class="w-sub">INTERFERENCE &amp; RECONSTRUCTION · EQ 13.2</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>FEATURES F <output id="mi-super-F-out">12</output></label><input type="range" id="mi-super-F" min="2" max="40" step="1" value="12"/></div>
+              <div class="ctl"><label>DIMENSIONS d <output id="mi-super-d-out">6</output></label><input type="range" id="mi-super-d" min="2" max="16" step="1" value="6"/></div>
+              <div class="ctl"><label>ACTIVE / INPUT (L0) <output id="mi-super-k-out">2</output></label><input type="range" id="mi-super-k" min="1" max="8" step="1" value="2"/></div>
+            </div>
+            <canvas class="w-canvas" id="mi-super-canvas" height="230"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">F / d (PACKING)</div><div class="r-value" id="mi-super-ratio">—</div></div>
+              <div class="readout acc"><div class="r-label">MEAN |COSINE|</div><div class="r-value" id="mi-super-cos">—</div></div>
+              <div class="readout acc"><div class="r-label">RECON ERROR (RMS)</div><div class="r-value" id="mi-super-err">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Left: the \(F\) feature directions placed in \(d\) dimensions (shown as a Gram-matrix heatmap of pairwise cosines — the diagonal is 1, off-diagonal is interference). Right: a bar of read-out error. Push F up past d and the off-diagonal heats up: you cannot keep many vectors orthogonal in few dimensions, so cross-talk rises. Now lower L0 (fewer features active per input): error falls even at high F/d, because sparse features rarely collide. That is superposition's bargain — overpack, but stay sparse.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Superposition: pack F features into d dims, measure interference (EQ 13.2/13.3)
+import numpy as np
+rng = np.random.default_rng(0)
+d, F, k = 8, 40, 3          # dims, features, active-per-input (L0)
+
+D = rng.normal(0, 1, (d, F))
+D /= np.linalg.norm(D, axis=0, keepdims=True)   # unit feature directions
+G = D.T @ D                                       # Gram matrix of cosines
+off = G[~np.eye(F, dtype=bool)]                   # off-diagonal = interference
+print(f"F/d packing ratio     : {F/d:.2f}  (>1 means superposition)")
+print(f"mean |cosine| off-diag: {np.abs(off).mean():.4f}")
+print(f"max  |cosine| off-diag: {np.abs(off).max():.4f}")
+
+errs = []                                          # read-out error vs sparsity
+for kk in (1, 2, 4, 8):
+    e = []
+    for _ in range(400):
+        a = np.zeros(F); idx = rng.choice(F, kk, replace=False)
+        a[idx] = rng.uniform(0.5, 1.5, kk)         # kk active features
+        x = D @ a                                   # superposed activation
+        a_hat = D.T @ x                             # project to read each feature
+        e.append(np.sqrt(np.mean((a_hat - a)**2)))
+    errs.append(np.mean(e))
+    print(f"L0={kk}: mean recon RMSE over {F} features = {errs[-1]:.4f}")
+print("\nfewer active features -> less collision -> lower error: sparsity buys capacity.")
+plot_xy([1,2,4,8], errs)                            # error rises with density</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 13.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">13.4</span><h2>Sparse autoencoders: dictionary learning for features</h2></div>
+        <p>If superposition is the disease, <strong>dictionary learning</strong> is the cure, and a <strong>sparse autoencoder</strong> (SAE) is how the field runs it at scale. The idea: train a small auxiliary network to re-express each activation vector \(x\) as a sparse, non-negative combination of a large, learned dictionary of directions — exactly the form of EQ 13.1. If we force the code to be sparse, individual dictionary entries are pushed toward each capturing one concept, recovering the monosemantic features the neuron basis hid.</p>
+
+        <div class="eq"><span class="eq-tag">EQ 13.4 — SAE ENCODE / DECODE</span>
+        $$ \mathbf{f}(x) \;=\; \mathrm{ReLU}\!\big(W_{\text{enc}}(x - \mathbf{b}_{\text{dec}}) + \mathbf{b}_{\text{enc}}\big), \qquad \hat{x} \;=\; W_{\text{dec}}\,\mathbf{f}(x) + \mathbf{b}_{\text{dec}} $$
+        <div class="eq-note">The encoder maps an activation \(x\in\mathbb{R}^{d}\) to a much wider code \(\mathbf{f}(x)\in\mathbb{R}^{m}\) with \(m\gg d\) (the dictionary is <b>overcomplete</b>, typically 8×–64× wider). ReLU forces non-negativity and lets most entries be exactly zero. The decoder rebuilds \(x\) as \(\hat x = \sum_i f_i(x)\,W_{\text{dec},:,i}\): each <b>column of \(W_{\text{dec}}\) is a learned feature direction \(\mathbf{d}_i\)</b>, and \(f_i(x)\) is how active that feature is. The SAE is just EQ 13.1 made trainable.</div>
+        </div>
+
+        <p>What stops the SAE from learning the trivial identity (one dictionary atom per input)? The loss. It balances two terms: reconstruct \(x\) faithfully, and keep the code sparse.</p>
+
+        <div class="eq"><span class="eq-tag">EQ 13.5 — RECONSTRUCTION + SPARSITY LOSS</span>
+        $$ \mathcal{L} \;=\; \underbrace{\lVert x - \hat{x} \rVert_2^2}_{\text{reconstruction (fidelity)}} \;+\; \lambda\,\underbrace{\lVert \mathbf{f}(x)\rVert_1}_{\text{sparsity penalty}} $$
+        <div class="eq-note">The first term wants a perfect copy; the second, an \(L_1\) penalty on the code, wants as few active features as possible. The coefficient \(\lambda\) sets the exchange rate. \(L_1\) is a convex surrogate for the true target, the \(L_0\) "count of nonzeros" — it both zeroes out weak features and shrinks the survivors (which is why modern SAEs add tricks like a TopK constraint or a JumpReLU to penalize <em>count</em> directly without shrinking magnitudes). The number of nonzero entries per input is the SAE's <b>L0</b>, the headline sparsity metric.</div>
+        </div>
+
+        <p>Training an SAE is then ordinary gradient descent on EQ 13.5 over a large bank of cached model activations. Three engineering realities dominate the practice:</p>
+        <ul>
+          <li><strong>Dead features.</strong> Some dictionary atoms stop activating on any input and contribute nothing. A large fraction can die during training. Practitioners track the dead-feature count and revive them (resampling, auxiliary "ghost" losses, or careful initialization), because a dead atom is wasted dictionary width.</li>
+          <li><strong>The width / L0 / fidelity trilemma.</strong> Wider dictionaries (\(m\) larger) and lower \(\lambda\) both buy lower reconstruction error, but lower \(\lambda\) also raises L0 (less sparse, less monosemantic), and wider dictionaries cost compute and tend to <strong>split</strong> one concept into many near-duplicate atoms. There is no single best point; you choose where on the frontier to sit.</li>
+          <li><strong>Feature splitting and absorption.</strong> As you add width, a coarse feature ("a dog") fractures into finer ones ("a dog, in French", "a dog, as subject"). Useful sometimes, misleading others — it means the count of "features" is partly an artifact of dictionary size, not a fact about the model.</li>
+        </ul>
+
+        <p>The landmark demonstrations are Anthropic's "Towards Monosemanticity" (Bricken et al., 2023), which extracted thousands of interpretable features from a one-layer transformer, and "Scaling Monosemanticity" (Templeton et al., 2024), which pushed SAEs to a production-scale model (Claude 3 Sonnet) and found millions of features, including abstract and multilingual ones, that could be located and manipulated. Those results are the reason SAEs went from a curiosity to the field's default decomposition tool.</p>
+
+        <div class="exercise" data-answer="3" data-tol="0.001" data-hint="L0 is just the count of strictly-nonzero entries in the code vector.">
+          <div class="ex-q">An SAE produces the feature code \( \mathbf{f}(x) = (0,\ 0.8,\ 0,\ 1.2,\ 0,\ 0,\ 0.4,\ 0) \) for some input. The sparsity metric <b>L0</b> is the number of nonzero entries. What is the L0 of this code?</div>
+          <div class="ex-reveal-src">Count the strictly-nonzero entries: \(0.8,\ 1.2,\) and \(0.4\) are active; the other five are exactly zero. So \(L_0 = \) <b>3</b>. A low L0 means few features explain each input — the goal of the sparsity penalty in EQ 13.5. (Note \(L_1 = 0.8+1.2+0.4 = 2.4\) is a different, magnitude-weighted quantity.)</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Train a tiny SAE on synthetic sparse data by plain gradient descent (EQ 13.4/13.5)
+import numpy as np
+rng = np.random.default_rng(0)
+d, m, k = 6, 20, 2          # input dim, dictionary width (overcomplete), true active-per-input
+
+Dtrue = rng.normal(0, 1, (d, m)); Dtrue /= np.linalg.norm(Dtrue, axis=0, keepdims=True)
+def batch(B):                                   # sparse codes -> superposed activations
+    A = np.zeros((B, m))
+    for r in range(B):
+        idx = rng.choice(m, k, replace=False); A[r, idx] = rng.uniform(.5, 1.5, k)
+    return A @ Dtrue.T, A                        # x = D a  (shape B x d), and true code
+
+Wenc = rng.normal(0, .1, (m, d)); Wdec = rng.normal(0, .1, (d, m)); lr, lam = .05, .04
+for step in range(600):
+    x, _ = batch(128)
+    f = np.maximum(0, x @ Wenc.T)               # encode: ReLU code (EQ 13.4)
+    xh = f @ Wdec.T                             # decode
+    e = xh - x
+    gWdec = e.T @ f / len(x)
+    gf = (e @ Wdec) * (f > 0) + lam * np.sign(f) * (f > 0)   # recon + L1 grads (EQ 13.5)
+    gWenc = gf.T @ x / len(x)
+    Wdec -= lr * gWdec; Wenc -= lr * gWenc
+    Wdec /= np.linalg.norm(Wdec, axis=0, keepdims=True)      # keep atoms unit-norm
+
+x, _ = batch(2000); f = np.maximum(0, x @ Wenc.T); xh = f @ Wdec.T
+recon = np.sqrt(np.mean((x - xh)**2)) / np.sqrt(np.mean(x**2))
+L0 = (f > 1e-3).sum(1).mean()
+dead = int((f.max(0) < 1e-3).sum())
+print(f"relative reconstruction error : {recon:.3f}")
+print(f"mean L0 (active feats / input): {L0:.2f}   (true sparsity k = {k})")
+print(f"dead dictionary atoms         : {dead} / {m}")
+print("the SAE learns a sparse code that rebuilds x while firing only a few atoms.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="mi-sae" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT 13.2 — SAE SPARSITY–FIDELITY TRADE-OFF</span><span class="w-sub">DICTIONARY WIDTH &amp; L1 WEIGHT vs L0 / RECON · EQ 13.5</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>DICTIONARY WIDTH (× d) <output id="mi-sae-w-out">8×</output></label><input type="range" id="mi-sae-w" min="1" max="64" step="1" value="8"/></div>
+              <div class="ctl"><label>L1 WEIGHT λ <output id="mi-sae-l-out">0.020</output></label><input type="range" id="mi-sae-l" min="0" max="100" step="1" value="40"/></div>
+            </div>
+            <canvas class="w-canvas" id="mi-sae-canvas" height="210"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">RECON ERROR</div><div class="r-value" id="mi-sae-err">—</div></div>
+              <div class="readout acc"><div class="r-label">L0 (ACTIVE / INPUT)</div><div class="r-value" id="mi-sae-l0">—</div></div>
+              <div class="readout acc"><div class="r-label">MONOSEMANTICITY</div><div class="r-value" id="mi-sae-mono">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The Pareto curve the field actually navigates. Raise λ: the code gets sparser (L0 falls, features more monosemantic) but reconstruction error climbs — you are dropping real signal. Lower λ toward 0: near-perfect reconstruction but a dense, polysemantic code that has explained nothing. Widen the dictionary: the whole curve shifts down (better fidelity at a given L0), at compute cost and the risk of feature splitting. The dot is your current operating point; there is no free corner.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 13.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">13.5</span><h2>Circuits, motifs &amp; causal methods</h2></div>
+        <p>Features are nouns; <strong>circuits</strong> are the sentences. A circuit is a set of features wired together by the model's weights to compute something. The most thoroughly reverse-engineered example is the <strong>induction head</strong> (Chapter 03), a two-head circuit that implements in-context copying: a "previous-token" head writes each token's predecessor into the residual stream, and a second head then attends from the current token to the position after its earlier copy, predicting "what came next last time." Olsson et al. (2022) traced the abrupt appearance of induction heads to the sharp drop in training loss that coincides with models acquiring in-context learning — a rare case where a capability, a circuit, and a loss-curve kink were tied together.</p>
+
+        <p>Two cheap tools are the everyday workhorses of circuit-finding:</p>
+        <ul>
+          <li><strong>The logit lens.</strong> Apply the model's final unembedding to the residual stream at <em>intermediate</em> layers, as if you had stopped early. This reveals the model's "current best guess" forming layer by layer, and where in depth a prediction crystallizes. It is approximate (the residual stream is not calibrated to be decoded early), but it is a fast first read on where a computation happens.</li>
+          <li><strong>Ablations.</strong> Zero out (or mean-out) a component — a head, a neuron, an SAE feature — and measure how much the output changes. A large change implicates the component; a negligible one rules it out. Ablation is correlational about <em>importance</em> but a direct causal test of <em>necessity</em>.</li>
+        </ul>
+
+        <p>The gold standard, though, is <strong>activation patching</strong> (also called causal tracing or interchange intervention). It isolates which internal location <em>causes</em> a behavior by transplanting activations between two runs.</p>
+
+        <div class="eq"><span class="eq-tag">EQ 13.6 — ACTIVATION PATCHING (CAUSAL TRACING)</span>
+        $$ \Delta_{\ell,p} \;=\; M\!\big(x_{\text{clean}}\,\big|\, h^{(\ell)}_{p} \!\leftarrow\! h^{(\ell)}_{p}(x_{\text{corrupt}})\big) \;-\; M\!\big(x_{\text{clean}}\big) $$
+        <div class="eq-note">Run the model on a <b>clean</b> prompt and on a <b>corrupted</b> one (e.g. a key fact swapped). Then re-run the clean prompt but <em>patch in</em> the corrupted run's activation \(h\) at one location — layer \(\ell\), position \(p\) — and measure how much the output metric \(M\) (say, the logit of the correct token) moves. A large \(\Delta\) means that single location <b>carries the information that decides the answer</b>. Sweeping \((\ell,p)\) draws a causal map of where a fact or computation lives. Meng et al. (2022, ROME) used exactly this to localize factual associations to mid-layer MLPs, then edited them.</div>
+        </div>
+
+        <p>Patching is causal because it asks a counterfactual: <em>had this one location held the other run's value, would the answer change?</em> That is stronger than ablation (which only asks "does removing it hurt") and far stronger than attention-weight inspection (which asks nothing causal at all). The same logic, applied to SAE features instead of raw activations, is how the field tests whether a discovered feature is a genuine causal variable or merely a correlate.</p>
+
+        <div class="exercise" data-answer="4.2" data-tol="0.02" data-hint="Δ = patched logit − clean baseline logit; subtract.">
+          <div class="ex-q">In an activation-patching run, the clean prompt gives the correct token a logit of \(2.1\). After patching a corrupted activation into layer 8, position 5, the correct-token logit becomes \(6.3\). What is the patching effect \(\Delta_{8,5}\) (EQ 13.6) at that location?</div>
+          <div class="ex-reveal-src">\(\Delta = \text{patched} - \text{clean} = 6.3 - 2.1 = \) <b>4.2</b>. A large positive effect means this single location carries decisive information for the prediction — the kind of hotspot a causal-tracing sweep is built to find. Locations with \(\Delta \approx 0\) are causally irrelevant to this behavior.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Activation-patching toy: swap one hidden coordinate, measure output change (EQ 13.6)
+import numpy as np
+rng = np.random.default_rng(1)
+d = 8
+Wout = rng.normal(0, 1, d)                       # toy readout: logit = Wout . h
+
+def hidden(prompt_seed, fact):                    # a toy "model": fact lives in coord 3
+    rng2 = np.random.default_rng(prompt_seed)
+    h = rng2.normal(0, 0.3, d)                     # generic context
+    h[3] = 2.5 * fact                              # the decisive coordinate
+    return h
+
+h_clean   = hidden(7, fact=+1)                     # clean run: correct fact
+h_corrupt = hidden(7, fact=-1)                     # corrupted run: wrong fact
+base = Wout @ h_clean
+print(f"clean logit baseline: {base:+.3f}\n")
+
+print(" patch coord | logit after patch |  delta")
+for c in range(d):
+    h = h_clean.copy()
+    h[c] = h_corrupt[c]                            # patch ONE coordinate from corrupt run
+    delta = (Wout @ h) - base
+    flag = "  <-- decisive" if abs(delta) > 1.0 else ""
+    print(f"     {c:2d}     |      {Wout @ h:+7.3f}     | {delta:+7.3f}{flag}")
+print("\nonly the coordinate that stores the fact (coord 3) moves the logit -- causal tracing")
+print("localizes the computation to that one place, exactly as ROME does in real MLPs.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 13.6 ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">13.6</span><h2>Feature steering, and honest limits</h2></div>
+        <p>Once you have a feature direction and a causal test that it matters, you can <strong>steer</strong>: add the feature's decoder vector to the residual stream (or clamp its SAE activation to a chosen value) and watch the behavior change. Templeton et al. (2024) made this concrete and a little famous — clamping a "Golden Gate Bridge" feature high made the model fixate on the bridge across unrelated prompts. More usefully, steering can amplify or suppress features tied to safety-relevant behavior, offering a knob that operates on concepts rather than tokens.</p>
+
+        <div class="eq"><span class="eq-tag">EQ 13.7 — FEATURE STEERING / CLAMPING</span>
+        $$ x' \;=\; x \;+\; \alpha\,\mathbf{d}_i, \qquad \text{or clamp } f_i(x) \leftarrow c \;\Rightarrow\; x' = x + \big(c - f_i(x)\big)\,\mathbf{d}_i $$
+        <div class="eq-note">Adding \(\alpha\) units of feature \(i\)'s direction \(\mathbf{d}_i\) to the activation pushes the model toward (or, with \(\alpha&lt;0\), away from) that concept. Clamping fixes the feature's activation to a target \(c\) regardless of input. The same direction that <em>reads</em> the feature (EQ 13.2) also <em>writes</em> it — the linear representation hypothesis (EQ 13.1) is what makes steering possible at all. <b>Steering is the strongest evidence a feature is real:</b> if writing the direction reliably produces the concept, the direction is doing causal work, not just correlating.</div>
+        </div>
+
+        <p>Now the honest part, because this is a young field and overclaiming is the main hazard:</p>
+        <ul>
+          <li><strong>SAE features are not ground truth.</strong> They are the output of a particular SAE with a particular width and \(\lambda\). Change those and you get different features. "The model has \(N\) features" is shorthand for "this SAE found \(N\) atoms," not a discovered constant of the network.</li>
+          <li><strong>Evaluation is genuinely hard.</strong> There is no gold label for "is this feature monosemantic." Proxies (auto-interpretation scores from an LLM judge, activation sparsity, steering specificity) all have failure modes. A feature can look clean on its top activations yet fire spuriously on the long tail.</li>
+          <li><strong>Reconstruction is incomplete.</strong> Even good SAEs leave a residual; the part of the activation they fail to reconstruct may contain exactly the computation you care about. Recent work also finds SAEs can <em>miss</em> features that probing finds, and can introduce artifacts (feature absorption, composition) that are properties of the SAE, not the model.</li>
+          <li><strong>Scaling cost.</strong> Training SAEs for every layer of a frontier model, wide enough to resolve rare features, is a major compute and storage undertaking — and the dictionary needed seems to grow with model scale.</li>
+          <li><strong>Circuits remain mostly hand-found.</strong> Fully reverse-engineering a nontrivial behavior end-to-end is still rare, labor-intensive, and validated case by case. We can read fragments of the algorithm, not yet the whole program.</li>
+        </ul>
+
+        <p class="note"><strong>The honest scorecard.</strong> Mechanistic interpretability has moved from "neurons are confusing" to a working pipeline: superposition explains the confusion, SAEs decompose it into features, and causal methods (patching, ablation, steering) test those features for real. That is genuine progress, and at frontier scale it has produced steerable, human-legible concepts that did not exist as tools two years ago. What it has <em>not</em> done is deliver a complete, verified account of any large model's behavior, or a feature set anyone calls canonical. Treat extracted features as useful, falsifiable hypotheses — powerful when they pass a causal test, provisional always.</p>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>You can now read a model from the outside in: features inside neurons, circuits inside weights, and causal tests that keep the story honest.</strong> The capstone assembles the whole volume into one end-to-end picture — how a token becomes an embedding, mixes through attention or a state-space scan, is trained, aligned, fine-tuned, compressed, scaled at inference, and finally made legible by the tools of this chapter — and shows where each idea lives in a real 2026 deployment.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 13.R ====================== -->
+      <section class="section" id="s7">
+        <div class="sec-head"><span class="sec-num">13.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://arxiv.org/abs/2209.10652" target="_blank" rel="noopener">Elhage, N. et al. (2022). <span class="ref-venue">Toy Models of Superposition</span>.</a> <span class="ref-meta">Anthropic / Transformer Circuits — the superposition hypothesis and feature geometry behind EQ 13.2–13.3.</span></li>
+          <li><a href="https://transformer-circuits.pub/2023/monosemantic-features" target="_blank" rel="noopener">Bricken, T. et al. (2023). <span class="ref-venue">Towards Monosemanticity: Decomposing Language Models With Dictionary Learning</span>.</a> <span class="ref-meta">Anthropic Transformer Circuits — the SAE recipe of EQ 13.4–13.5 on a one-layer model.</span></li>
+          <li><a href="https://transformer-circuits.pub/2024/scaling-monosemanticity" target="_blank" rel="noopener">Templeton, A. et al. (2024). <span class="ref-venue">Scaling Monosemanticity: Extracting Interpretable Features from Claude 3 Sonnet</span>.</a> <span class="ref-meta">Anthropic Transformer Circuits — production-scale SAEs and feature steering (§13.4, §13.6).</span></li>
+          <li><a href="https://arxiv.org/abs/2209.11895" target="_blank" rel="noopener">Olsson, C. et al. (2022). <span class="ref-venue">In-context Learning and Induction Heads</span>.</a> <span class="ref-meta">Anthropic / Transformer Circuits — the induction-head circuit and its link to in-context learning (§13.5).</span></li>
+          <li><a href="https://arxiv.org/abs/2202.05262" target="_blank" rel="noopener">Meng, K., Bau, D., Andonian, A. &amp; Belinkov, Y. (2022). <span class="ref-venue">Locating and Editing Factual Associations in GPT (ROME)</span>.</a> <span class="ref-meta">NeurIPS 2022 — causal tracing / activation patching of EQ 13.6, then weight editing.</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../chapters/12-inference-time-scaling.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">12</span> Inference-Time Scaling</div></a>
+        <a class="next" href="../chapters/capstone.html"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">—</span> Capstone</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — VOL II · CH 13</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* Chapter 13 — Mechanistic Interpretability instruments. Single IIFE, no globals.
+   setTimeout-only animation; every widget guarded by element existence. */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  var C = (FM && FM.C) || {
+    MINT: "#a6f2cc", DEEP: "#2b5945", BLUE: "#4e8af7", RED: "#ff4136",
+    HAIR: "#2f3234", MUT: "#636363", SEC: "#9b9b9b", BRIGHT: "#ffffff",
+    MONO: "10px ui-monospace, SF Mono, Menlo, monospace"
+  };
+
+  /* small deterministic RNG so renders are stable */
+  function rng(seed) {
+    return (FM && FM.mulberry32) ? FM.mulberry32(seed) : (function () {
+      var s = seed >>> 0;
+      return function () {
+        s |= 0; s = (s + 0x6D2B79F5) | 0;
+        var t = Math.imul(s ^ (s >>> 15), 1 | s);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    })();
+  }
+  function gauss(r) {
+    var u = 1 - r(), v = r();
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+  }
+
+  /* build F unit feature directions in d dims (deterministic) */
+  function dictionary(F, d, seed) {
+    var r = rng(seed), D = [], i, j;
+    for (i = 0; i < F; i++) {
+      var v = new Array(d), nrm = 0;
+      for (j = 0; j < d; j++) { v[j] = gauss(r); nrm += v[j] * v[j]; }
+      nrm = Math.sqrt(nrm) || 1;
+      for (j = 0; j < d; j++) v[j] /= nrm;
+      D.push(v);
+    }
+    return D;
+  }
+  function dot(a, b) { var s = 0, i; for (i = 0; i < a.length; i++) s += a[i] * b[i]; return s; }
+
+  /* ============================================================
+     INSTRUMENT 13.1 — Superposition: pack F features into d dims
+     ============================================================ */
+  (function () {
+    var root = document.getElementById("mi-super");
+    if (!root) return;
+    var FIn = document.getElementById("mi-super-F");
+    var dIn = document.getElementById("mi-super-d");
+    var kIn = document.getElementById("mi-super-k");
+    var FOut = document.getElementById("mi-super-F-out");
+    var dOut = document.getElementById("mi-super-d-out");
+    var kOut = document.getElementById("mi-super-k-out");
+    var cv = document.getElementById("mi-super-canvas");
+    var ratEl = document.getElementById("mi-super-ratio");
+    var cosEl = document.getElementById("mi-super-cos");
+    var errEl = document.getElementById("mi-super-err");
+
+    function render() {
+      var F = parseInt(FIn.value, 10);
+      var d = parseInt(dIn.value, 10);
+      var k = Math.min(parseInt(kIn.value, 10), F);
+      FOut.textContent = F; dOut.textContent = d; kOut.textContent = k;
+
+      var D = dictionary(F, d, 12345);
+
+      // pairwise cosine (Gram off-diagonal) stats
+      var i, j, sumAbs = 0, cnt = 0;
+      var G = [];
+      for (i = 0; i < F; i++) {
+        G.push([]);
+        for (j = 0; j < F; j++) {
+          var c = dot(D[i], D[j]);
+          G[i].push(c);
+          if (i !== j) { sumAbs += Math.abs(c); cnt++; }
+        }
+      }
+      var meanCos = cnt ? sumAbs / cnt : 0;
+
+      // read-out error: average over random k-sparse inputs (EQ 13.2)
+      var r = rng(777), trials = 120, errAcc = 0, t, idxSet, a, x, m, ah, diff;
+      for (t = 0; t < trials; t++) {
+        a = new Array(F); for (m = 0; m < F; m++) a[m] = 0;
+        // pick k distinct active features
+        idxSet = {};
+        var picked = 0;
+        while (picked < k) {
+          var id = Math.floor(r() * F);
+          if (!idxSet[id]) { idxSet[id] = 1; a[id] = 0.5 + r(); picked++; }
+        }
+        // x = sum a_j d_j
+        x = new Array(d); for (m = 0; m < d; m++) x[m] = 0;
+        for (j = 0; j < F; j++) if (a[j]) for (m = 0; m < d; m++) x[m] += a[j] * D[j][m];
+        // read each feature back, accumulate squared error
+        var se = 0;
+        for (i = 0; i < F; i++) { ah = dot(D[i], x); diff = ah - a[i]; se += diff * diff; }
+        errAcc += Math.sqrt(se / F);
+      }
+      var rmse = errAcc / trials;
+
+      ratEl.textContent = (F / d).toFixed(2) + "×";
+      cosEl.textContent = meanCos.toFixed(3);
+      errEl.textContent = rmse.toFixed(3);
+      errEl.style.color = rmse < 0.12 ? C.MINT : rmse < 0.3 ? C.BLUE : C.RED;
+      ratEl.style.color = (F / d) > 1 ? C.BLUE : C.SEC;
+
+      var s = FM.setupCanvas(cv, 230);
+      var ctx = s.ctx, w = s.w, h = s.h;
+      ctx.clearRect(0, 0, w, h);
+
+      // ---- left: Gram heatmap ----
+      var pad = 14, gap = 26;
+      var gridSize = Math.min(h - 2 * pad, (w - 3 * pad) * 0.5);
+      var gx0 = pad, gy0 = pad;
+      var cell = gridSize / F;
+      for (i = 0; i < F; i++) {
+        for (j = 0; j < F; j++) {
+          var val = Math.abs(G[i][j]);
+          var col;
+          if (i === j) col = "rgba(166,242,204,.95)"; // diagonal = 1, mint
+          else {
+            // off-diagonal interference: muted -> red as it grows
+            var tt = Math.min(1, val * 2.2);
+            var rr = Math.round(40 + tt * 215);
+            var gg = Math.round(50 - tt * 30);
+            var bb = Math.round(54 - tt * 30);
+            col = "rgb(" + rr + "," + gg + "," + bb + ")";
+          }
+          ctx.fillStyle = col;
+          ctx.fillRect(gx0 + j * cell, gy0 + i * cell, Math.ceil(cell), Math.ceil(cell));
+        }
+      }
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.strokeRect(gx0, gy0, gridSize, gridSize);
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText("Gram |cosine|  (diag=1, off=interference)", gx0, gy0 + gridSize + 6);
+
+      // ---- right: error gauge ----
+      var bx0 = gx0 + gridSize + gap;
+      var bw = w - bx0 - pad;
+      if (bw > 40) {
+        var by0 = pad, bh = gridSize;
+        ctx.strokeStyle = C.HAIR; ctx.strokeRect(bx0, by0, bw, bh);
+        // fill proportional to error (cap visualize at 0.5)
+        var frac = Math.min(1, rmse / 0.5);
+        var fillH = frac * bh;
+        var grad = ctx.createLinearGradient(0, by0 + bh, 0, by0);
+        grad.addColorStop(0, "rgba(166,242,204,.85)");
+        grad.addColorStop(0.5, "rgba(78,138,247,.85)");
+        grad.addColorStop(1, "rgba(255,65,54,.85)");
+        ctx.fillStyle = grad;
+        ctx.fillRect(bx0 + 1, by0 + bh - fillH + 1, bw - 2, fillH - 2);
+        ctx.fillStyle = C.MUT; ctx.textAlign = "center"; ctx.textBaseline = "top";
+        ctx.fillText("read-out", bx0 + bw / 2, by0 + bh + 6);
+        ctx.fillText("error", bx0 + bw / 2, by0 + bh + 18);
+        ctx.fillStyle = C.BRIGHT; ctx.font = "11px ui-monospace, Menlo, monospace";
+        ctx.textBaseline = "bottom";
+        ctx.fillText(rmse.toFixed(3), bx0 + bw / 2, by0 + bh - fillH - 4);
+      }
+    }
+
+    FIn.addEventListener("input", render);
+    dIn.addEventListener("input", render);
+    kIn.addEventListener("input", render);
+    window.addEventListener("resize", render);
+    render();
+  })();
+
+  /* ============================================================
+     INSTRUMENT 13.2 — SAE sparsity–fidelity trade-off
+     ============================================================ */
+  (function () {
+    var root = document.getElementById("mi-sae");
+    if (!root) return;
+    var wIn = document.getElementById("mi-sae-w");
+    var lIn = document.getElementById("mi-sae-l");
+    var wOut = document.getElementById("mi-sae-w-out");
+    var lOut = document.getElementById("mi-sae-l-out");
+    var cv = document.getElementById("mi-sae-canvas");
+    var errEl = document.getElementById("mi-sae-err");
+    var l0El = document.getElementById("mi-sae-l0");
+    var monoEl = document.getElementById("mi-sae-mono");
+
+    // analytic surrogate of the SAE Pareto frontier (monotone, calibrated):
+    //   wider dict -> lower error floor; larger lambda -> sparser (low L0) but higher error.
+    function lambdaFromSlider(v) { return v / 2000; }   // slider 0..100 -> 0..0.05
+
+    function metrics(widthMul, lam) {
+      // L0 falls with lambda; a wider dictionary can keep more atoms active at a given lambda
+      var L0 = (1 + 28 * Math.exp(-lam / 0.012)) * (0.6 + 0.06 * Math.sqrt(widthMul));
+      if (L0 < 1) L0 = 1;
+      // reconstruction error: floor shrinks with width; rises as sparsity (lambda) increases
+      var floor = 0.30 / Math.sqrt(widthMul);
+      var err = floor + 0.55 * (1 - Math.exp(-lam / 0.02));
+      // monosemanticity score: best at moderate L0 (sparse but not starved)
+      var mono = Math.max(0, 1 - Math.abs(Math.log(L0) - Math.log(6)) / 2.4);
+      return { L0: L0, err: err, mono: mono };
+    }
+
+    function render() {
+      var widthMul = parseInt(wIn.value, 10);
+      var lam = lambdaFromSlider(parseInt(lIn.value, 10));
+      wOut.textContent = widthMul + "×";
+      lOut.textContent = lam.toFixed(3);
+
+      var m = metrics(widthMul, lam);
+      errEl.textContent = (m.err * 100).toFixed(1) + "%";
+      l0El.textContent = m.L0.toFixed(1);
+      var monoPct = Math.round(m.mono * 100);
+      monoEl.textContent = monoPct + "%";
+      errEl.style.color = m.err < 0.2 ? C.MINT : m.err < 0.4 ? C.BLUE : C.RED;
+      monoEl.style.color = monoPct > 60 ? C.MINT : monoPct > 35 ? C.BLUE : C.RED;
+
+      var s = FM.setupCanvas(cv, 210);
+      var ctx = s.ctx, w = s.w, h = s.h;
+      ctx.clearRect(0, 0, w, h);
+      var padL = 44, padR = 16, padT = 16, padB = 28;
+      var x0 = padL, x1 = w - padR, y0 = h - padB, y1 = padT;
+
+      // axes: x = L0 (0..30), y = reconstruction error (0..0.9)
+      var L0max = 30, errMax = 0.9;
+      function px(L0) { return x0 + Math.min(L0, L0max) / L0max * (x1 - x0); }
+      function py(e) { return y0 - Math.min(e, errMax) / errMax * (y0 - y1); }
+
+      // grid
+      ctx.strokeStyle = "rgba(47,50,52,.55)"; ctx.lineWidth = 1;
+      ctx.font = C.MONO; ctx.fillStyle = C.MUT;
+      ctx.textAlign = "center"; ctx.textBaseline = "top";
+      var gxv;
+      for (gxv = 0; gxv <= L0max; gxv += 10) {
+        var gx = px(gxv);
+        ctx.beginPath(); ctx.moveTo(gx, y1); ctx.lineTo(gx, y0); ctx.stroke();
+        ctx.fillText("L0=" + gxv, gx, y0 + 6);
+      }
+      ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      var gyv;
+      for (gyv = 0; gyv <= 0.8; gyv += 0.2) {
+        var gy = py(gyv);
+        ctx.beginPath(); ctx.moveTo(x0, gy); ctx.lineTo(x1, gy); ctx.stroke();
+        ctx.fillText((gyv * 100).toFixed(0) + "%", x0 - 6, gy);
+      }
+
+      // Pareto curve: sweep lambda for the CURRENT width
+      ctx.strokeStyle = C.MINT; ctx.lineWidth = 1.75; ctx.beginPath();
+      var first = true, lv, mm;
+      for (lv = 0; lv <= 0.10; lv += 0.002) {
+        mm = metrics(widthMul, lv);
+        var X = px(mm.L0), Y = py(mm.err);
+        if (first) { ctx.moveTo(X, Y); first = false; } else ctx.lineTo(X, Y);
+      }
+      ctx.stroke();
+
+      // faint curve for a fixed reference width (8x) to show the "widen shifts down" effect
+      ctx.strokeStyle = "rgba(99,99,99,.6)"; ctx.lineWidth = 1; ctx.setLineDash([3, 4]);
+      ctx.beginPath(); first = true;
+      for (lv = 0; lv <= 0.10; lv += 0.002) {
+        mm = metrics(8, lv);
+        var X2 = px(mm.L0), Y2 = py(mm.err);
+        if (first) { ctx.moveTo(X2, Y2); first = false; } else ctx.lineTo(X2, Y2);
+      }
+      ctx.stroke(); ctx.setLineDash([]);
+
+      // current operating point
+      var cx = px(m.L0), cy = py(m.err);
+      ctx.fillStyle = m.mono > 0.6 ? C.MINT : m.mono > 0.35 ? C.BLUE : C.RED;
+      ctx.beginPath(); ctx.arc(cx, cy, 4.5, 0, 2 * Math.PI); ctx.fill();
+      ctx.strokeStyle = "rgba(155,155,155,.4)"; ctx.setLineDash([2, 3]);
+      ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx, y0); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(x0, cy); ctx.stroke();
+      ctx.setLineDash([]);
+
+      // legend
+      ctx.textAlign = "left"; ctx.textBaseline = "middle"; ctx.font = C.MONO;
+      ctx.fillStyle = C.MINT; ctx.fillRect(x1 - 130, y1 + 6, 14, 2);
+      ctx.fillText("current width", x1 - 112, y1 + 7);
+      ctx.fillStyle = C.MUT; ctx.fillRect(x1 - 130, y1 + 20, 14, 2);
+      ctx.fillText("ref. 8× width", x1 - 112, y1 + 21);
+
+      ctx.save();
+      ctx.translate(12, (y0 + y1) / 2); ctx.rotate(-Math.PI / 2);
+      ctx.textAlign = "center"; ctx.fillStyle = C.MUT;
+      ctx.fillText("reconstruction error", 0, 0);
+      ctx.restore();
+    }
+
+    wIn.addEventListener("input", render);
+    lIn.addEventListener("input", render);
+    window.addEventListener("resize", render);
+    render();
+  })();
+
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>

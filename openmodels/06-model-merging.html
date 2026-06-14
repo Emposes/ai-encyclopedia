@@ -1,0 +1,853 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Model Merging &amp; Task Vectors — AI Encyclopedia</title>
+<meta name="description" content="How fine-tuned checkpoints combine in weight space without retraining: model soups, task vectors and task arithmetic, the interference problem and the methods that fix it (TIES, DARE, SLERP, Fisher), the geometry that makes it work, and the honest limits." />
+<link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
+<meta name="theme-color" content="#000000" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+<link rel="canonical" href="https://ai-encyclopedia.com/openmodels/06-model-merging" />
+<meta property="og:url" content="https://ai-encyclopedia.com/openmodels/06-model-merging" />
+</head>
+<body data-track="openmodels" data-level="advanced">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ OPEN MODELS / 06 / MODEL MERGING</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../index.html#toc">NEXT: INDEX →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">OPEN MODELS &amp; PRACTICE · CHAPTER 06 / 06</div>
+    <h1>Model Merging &amp; Task Vectors</h1>
+    <p class="lede">Two models fine-tuned from the same base are not just two sets of files. They are two points in the same weight space, and the line between them is often passable. <strong>Model merging combines fine-tuned checkpoints directly in weight space — averaging them, adding and subtracting their skills — to build a multi-skill model with no gradient step and no training data.</strong> This chapter covers why that works, the arithmetic of task vectors, the interference that breaks naive merges, and the methods that repair it.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>ADVANCED</b></span>
+      <span>READING TIME<b>≈ 27 MIN</b></span>
+      <span>BUILDS ON<b>OPEN MODELS · 03–04 · Vol II · CH 06</b></span>
+      <span>INSTRUMENTS<b>INTERPOLATION · TASK ARITHMETIC · INTERFERENCE</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">6.1</span>Merging in weight space</a>
+      <a href="#s2"><span class="n">6.2</span>Task vectors &amp; arithmetic</a>
+      <a href="#s3"><span class="n">6.3</span>Interference &amp; the repair methods</a>
+      <a href="#s4"><span class="n">6.4</span>The geometry that makes it work</a>
+      <a href="#s5"><span class="n">6.5</span>Practice &amp; honest limits</a>
+      <a href="#s6"><span class="n">6.R</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 6.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">6.1</span><h2>Merging in weight space</h2></div>
+        <p>Fine-tuning produces a checkpoint: a vector of weights \(\theta\) that differs from the base model it started from. The conventional way to combine two fine-tunes is an ensemble — run both models, average their outputs. That doubles inference cost and memory. <strong>Model merging takes the cheaper, stranger route: average the weights themselves, once, offline, and serve a single model.</strong> No second forward pass, no training, no data. The merged model is just \(\theta_{\text{merged}}\), a new point in the same parameter space.</p>
+
+        <p>The plainest version is a uniform weight average. Given checkpoints \(\theta_1, \dots, \theta_k\) that all started from the same base, the merge is their mean. <strong>Wortsman et al. (2022)</strong> call the result a <em>model soup</em>: average several fine-tunes of one base — say, runs with different hyperparameters or seeds — and the soup frequently beats the single best ingredient on held-out data, at the inference cost of one model.</p>
+
+        <div class="eq"><span class="eq-tag">EQ OM6.1 — WEIGHT AVERAGING (MODEL SOUP)</span>
+        $$ \theta_{\text{soup}} \;=\; \frac{1}{k}\sum_{j=1}^{k} \theta_j, \qquad \text{or weighted: } \theta_{\text{merged}} \;=\; \sum_{j=1}^{k} \lambda_j\, \theta_j, \;\; \sum_j \lambda_j = 1 $$
+        <div class="eq-note">\(\theta_j\) is the full weight vector of the \(j\)-th fine-tune; \(\lambda_j\) are mixing coefficients that sum to one. The uniform soup sets \(\lambda_j = 1/k\). The merge is element-wise: every coordinate of the result is a convex combination of the same coordinate across ingredients. <b>This only makes sense because all ingredients share the same base, architecture, and tokenizer — coordinate \(i\) means the same thing in every model.</b> Merge two models with different bases and you are averaging unrelated numbers. The soup works because fine-tuning from a shared initialization keeps the checkpoints in one connected, low-loss basin (§6.4); average two randomly initialized models and you land in a high-loss region between them.</div>
+        </div>
+
+        <p>The interesting case is two models specialized for <em>different</em> things. Average a math fine-tune and a code fine-tune and you get a model that is decent at both — a cheap multi-task model with no multi-task training set. The averaging coefficient \(\lambda\) is a dial: \(\lambda = 0\) is one model, \(\lambda = 1\) is the other, and the segment between them traces out a family of compromise models. Whether that segment stays low-loss or crosses a <em>barrier</em> is the central empirical question, and the instrument below lets you see both regimes.</p>
+
+        <div class="exercise" data-answer="0.55" data-tol="0.001" data-unit="" data-hint="Linear interpolation: theta = (1 - lambda)*a + lambda*b, with lambda = 0.25, a = 0.4, b = 1.0.">
+          <div class="ex-q">Two checkpoints differ in one coordinate: \( \theta_A = 0.4 \) and \( \theta_B = 1.0 \). Using EQ OM6.1 as a two-model interpolation \( \theta = (1-\lambda)\theta_A + \lambda\theta_B \) with \( \lambda = 0.25 \), what is the merged value of that coordinate?</div>
+          <div class="ex-reveal-src">\( \theta = (1 - 0.25)(0.4) + (0.25)(1.0) = 0.75 \times 0.4 + 0.25 \times 1.0 = 0.30 + 0.25 = \) <b>0.55</b>. Interpolation weights stay between the two endpoints; at \(\lambda = 0.25\) the result sits a quarter of the way from \(A\) toward \(B\).</div>
+        </div>
+
+        <div class="widget" id="mm-interp" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT OM6.1 — WEIGHT-SPACE INTERPOLATION</span><span class="w-sub">EQ OM6.1 · LINEAR MODE CONNECTIVITY vs A LOSS BARRIER</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>MIX COEFFICIENT λ (A → B) <output id="mm-interp-lam-out">0.50</output></label><input type="range" id="mm-interp-lam" min="0" max="1" step="0.01" value="0.5"/></div>
+              <div class="ctl"><label>BARRIER HEIGHT (mid-path bump) <output id="mm-interp-bar-out">0.00</output></label><input type="range" id="mm-interp-bar" min="0" max="1.2" step="0.05" value="0"/></div>
+            </div>
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>SHARED BASE?</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-mm-base="shared">SHARED BASE (connected)</button>
+                  <button class="w-btn ghost" data-mm-base="diff">DIFFERENT INIT (barrier)</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="mm-interp-canvas" height="250"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">MERGED LOSS @ λ</div><div class="r-value" id="mm-interp-loss">—</div></div>
+              <div class="readout acc"><div class="r-label">BARRIER (max − endpoints)</div><div class="r-value" id="mm-interp-barval">—</div></div>
+              <div class="readout acc"><div class="r-label">VERDICT</div><div class="r-value" id="mm-interp-verdict">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The curve is the (synthetic) loss along the straight line from model A (λ=0) to model B (λ=1); the dot is your current merge. With <b>SHARED BASE</b> and zero barrier the path stays low — that is <em>linear mode connectivity</em>, and any λ gives a usable merge. Drag <b>BARRIER HEIGHT</b> up, or switch to <b>DIFFERENT INIT</b>, and a hump appears in the middle: the merge at λ≈0.5 is now worse than either endpoint, and naive averaging fails. The whole feasibility of merging is the question of whether that hump is there.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Interpolate between two toy weight vectors and evaluate a quadratic loss
+# along the line. A shared-basin loss has its min INSIDE the segment;
+# a two-basin loss has a BARRIER in the middle.
+import numpy as np
+
+A = np.array([0.4, -0.2, 1.0])     # "model A" weights
+B = np.array([1.0,  0.6, 0.2])     # "model B" weights
+
+# Connected case: one bowl centered at the average of A and B.
+c_shared = 0.5 * (A + B)
+def loss_shared(theta):  return float(((theta - c_shared) ** 2).sum())
+
+# Barrier case: two separate bowls, one at A and one at B.
+def loss_barrier(theta):
+    return float(min(((theta - A) ** 2).sum(), ((theta - B) ** 2).sum()))
+
+lams = np.linspace(0, 1, 11)
+print("  lam   theta(merged)            shared   barrier")
+for lam in lams:
+    th = (1 - lam) * A + lam * B
+    print(f"  {lam:.1f}  {np.round(th,3)}   {loss_shared(th):.3f}    {loss_barrier(th):.3f}")
+
+end_avg = 0.5 * (loss_barrier(A) + loss_barrier(B))
+mid     = loss_barrier(0.5 * (A + B))
+print(f"\nbarrier height = mid - endpoint_avg = {mid - end_avg:.3f}")
+print("shared-basin loss dips in the middle (merge helps); barrier loss")
+print("peaks in the middle (merge lands between basins -> worse than either).")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 6.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">6.2</span><h2>Task vectors &amp; arithmetic</h2></div>
+        <p>Averaging whole checkpoints is blunt. A sharper object isolates exactly what a fine-tune <em>changed</em>. <strong>Ilharco et al. (2022)</strong> define a <strong>task vector</strong> as the difference between the fine-tuned weights and the pretrained weights they came from: it is the displacement in weight space that learning the task produced.</p>
+
+        <div class="eq"><span class="eq-tag">EQ OM6.2 — TASK VECTOR</span>
+        $$ \tau \;=\; \theta_{\text{finetuned}} \;-\; \theta_{\text{pretrained}} $$
+        <div class="eq-note">\(\theta_{\text{pretrained}}\) is the base model; \(\theta_{\text{finetuned}}\) is the same model after training on a task. \(\tau\) is the same shape as the weights — one number per parameter — and it points "toward" the task. <b>The base model is the origin of this coordinate system, which is exactly why every model you mix must share that origin.</b> A task vector from a different base is a vector in a different space. To <em>apply</em> a task vector you add it back to a base: \(\theta_{\text{pretrained}} + \tau\) reconstructs the fine-tune; scaling it, \(\theta_{\text{pretrained}} + \alpha\tau\), dials the skill up or down.</div>
+        </div>
+
+        <p>Once skills are vectors, you can do arithmetic with them. This is the surprising empirical result of the task-arithmetic line of work: adding and subtracting task vectors edits a model's behavior in predictable, compositional ways, with no fine-tuning at all.</p>
+
+        <table class="data">
+          <thead><tr><th>Operation</th><th>Form</th><th>Effect</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Add (learn a skill)</strong></td><td class="m">θ₀ + α τ<sub>A</sub></td><td>installs task A into the base; α scales how strongly</td></tr>
+            <tr><td><strong>Add many (multi-task)</strong></td><td class="m">θ₀ + α(τ<sub>A</sub> + τ<sub>B</sub>)</td><td>one model that does A and B — a merge built from vectors</td></tr>
+            <tr><td><strong>Negate (forget / detoxify)</strong></td><td class="m">θ₀ − α τ<sub>A</sub></td><td>moves away from task A: unlearns a skill, or reduces a behavior such as toxicity</td></tr>
+            <tr><td><strong>Analogy</strong></td><td class="m">τ<sub>B</sub> + (τ<sub>C</sub> − τ<sub>D</sub>)</td><td>"B is to ? as C is to D" — transfers the C→D relation onto B</td></tr>
+          </tbody>
+        </table>
+
+        <p>The negation result is the one practitioners reach for most. Build a task vector for an <em>undesirable</em> behavior — train briefly on toxic text to get \(\tau_{\text{toxic}}\), then subtract it: \(\theta_0 - \alpha\tau_{\text{toxic}}\) reduces toxic generation while largely preserving fluency, because you only moved along the toxicity direction and left the rest of the weights alone. The multi-skill case is the merge: \(\theta_0 + \sum_t \alpha\tau_t\) is a model that holds several skills at once, and it is identical in form to a soup of the underlying fine-tunes.</p>
+
+        <p class="note"><strong>The honest caveat.</strong> Task arithmetic is real but not magic. The scaling \(\alpha\) is a tuned hyperparameter — too large and you overshoot into degraded text, too small and the skill never lands. And the operations interfere: adding two vectors is not the same as having both skills cleanly, because the vectors collide coordinate by coordinate. That interference is the subject of §6.3.</p>
+
+        <div class="exercise" data-answer="2.1" data-tol="0.001" data-unit="" data-hint="tau_A = ft - base = 0.5, tau_B = 0.7. Then theta = base + tau_A + tau_B = 0.9 + 0.5 + 0.7.">
+          <div class="ex-q">For one coordinate, the base is \( \theta_0 = 0.9 \), fine-tune A gives \( 1.4 \) and fine-tune B gives \( 1.6 \). Form both task vectors (EQ OM6.2) and build the multi-task merge \( \theta_0 + \tau_A + \tau_B \) (α = 1). What is the merged coordinate?</div>
+          <div class="ex-reveal-src">\( \tau_A = 1.4 - 0.9 = 0.5 \); \( \tau_B = 1.6 - 0.9 = 0.7 \). Then \( \theta_0 + \tau_A + \tau_B = 0.9 + 0.5 + 0.7 = \) <b>2.1</b>. Note this overshoots both endpoints — adding raw vectors stacks their pulls, which is precisely the over-shoot that interference-aware methods damp.</div>
+        </div>
+
+        <div class="widget" id="mm-arith" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT OM6.2 — TASK-VECTOR ARITHMETIC</span><span class="w-sub">EQ OM6.2 · ADD / NEGATE TWO TASK VECTORS ON A TOY BASE</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>SCALE α<sub>A</sub> (task A) <output id="mm-arith-a-out">+1.0</output></label><input type="range" id="mm-arith-a" min="-1.5" max="1.5" step="0.1" value="1"/></div>
+              <div class="ctl"><label>SCALE α<sub>B</sub> (task B) <output id="mm-arith-b-out">+1.0</output></label><input type="range" id="mm-arith-b" min="-1.5" max="1.5" step="0.1" value="1"/></div>
+            </div>
+            <canvas class="w-canvas" id="mm-arith-canvas" height="250"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">SKILL A SCORE</div><div class="r-value" id="mm-arith-sa">—</div></div>
+              <div class="readout acc"><div class="r-label">SKILL B SCORE</div><div class="r-value" id="mm-arith-sb">—</div></div>
+              <div class="readout"><div class="r-label">MERGED θ (3 coords)</div><div class="r-value" id="mm-arith-theta" style="font-size:11px;">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The base sits at the origin; \(\tau_A\) and \(\tau_B\) are two fixed task directions. Move \(\alpha_A,\alpha_B\) to build \(\theta_0 + \alpha_A\tau_A + \alpha_B\tau_B\). At +1 / +1 you get the multi-task merge — both skill scores rise. Drive \(\alpha_A\) <b>negative</b> to <em>negate</em> task A (its score falls below baseline — unlearning), while task B is untouched. Push a scale past ±1 and watch a toy "degradation" penalty grow: too much α corrupts the model, the over-shoot warning of §6.2.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Compute task vectors from base/fine-tuned toy params, then add and
+# negate them and read off the effect on two toy skill scores.
+import numpy as np
+
+base = np.array([0.0, 0.0, 0.0, 0.0])     # pretrained origin
+ft_A = np.array([0.6, 0.0, 0.3, 0.0])     # fine-tuned for task A
+ft_B = np.array([0.0, 0.5, 0.0, 0.4])     # fine-tuned for task B
+
+tau_A = ft_A - base                        # EQ OM6.2
+tau_B = ft_B - base
+
+# Toy "skill probes": a skill score = dot(theta, its task direction).
+def score(theta, tau):  return float(theta @ tau)
+
+def report(name, theta):
+    print(f"{name:18s} A={score(theta,tau_A):+.3f}  B={score(theta,tau_B):+.3f}")
+
+report("base only",        base)
+report("merge A+B",        base + tau_A + tau_B)        # both skills
+report("negate A (forget)",base - tau_A + tau_B)        # drop A, keep B
+report("amplify A x1.5",   base + 1.5*tau_A)            # scaled-up A
+print("\ntau_A:", np.round(tau_A,2), " tau_B:", np.round(tau_B,2))
+print("Adding raises both scores; negating A drives A below zero while")
+print("B is untouched -- arithmetic on directions edits skills independently")
+print("ONLY where the task vectors don't overlap (interference is in s3).")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 6.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">6.3</span><h2>Interference &amp; the repair methods</h2></div>
+        <p>Summing task vectors works coordinate by coordinate, and that is where it breaks. Two failure modes, named by <strong>Yadav et al. (2023)</strong>, account for most of the lost performance when you merge many fine-tunes:</p>
+        <ul>
+          <li><strong>Redundant-parameter interference.</strong> Most coordinates of a task vector are tiny noise; only a small fraction carry the skill. When you add many vectors, the mass of small noisy values from every task swamps the few large meaningful ones, diluting the signal.</li>
+          <li><strong>Sign conflict.</strong> Task A wants a coordinate to go up, task B wants the same coordinate to go down. Summed, they cancel — and you lose the contribution of <em>both</em> tasks on that parameter rather than picking one.</li>
+        </ul>
+
+        <p><strong>TIES-Merging</strong> attacks both with three steps applied to the stacked task vectors. <em>Trim</em>: keep only the top-magnitude fraction of each vector, zeroing the redundant noise. <em>Elect sign</em>: for each coordinate, pick the sign whose total magnitude across tasks is larger, resolving the conflict by majority of mass. <em>Disjoint mean</em>: average only the values that agree with the elected sign, ignoring the dissenters. The result keeps each task's strong, agreeing contributions and discards the cancellation.</p>
+
+        <div class="eq"><span class="eq-tag">EQ OM6.3 — TIES SIGN ELECTION &amp; DISJOINT MEAN</span>
+        $$ \gamma_m = \operatorname{sgn}\!\Big(\sum_{t=1}^{n}\hat\tau_t\Big), \qquad \tau^{\,\text{merged}} \;=\; \frac{1}{|\mathcal{A}|}\sum_{t\in\mathcal{A}} \hat\tau_t, \quad \mathcal{A}=\{\,t : \operatorname{sgn}(\hat\tau_t)=\gamma_m\,\} $$
+        <div class="eq-note">\(\hat\tau_t\) is the trimmed task vector for task \(t\) at a given coordinate; \(\gamma_m\) is the <b>elected sign</b> for that coordinate — the sign of the summed (signed) values, i.e. the direction holding more total magnitude. \(\mathcal{A}\) is the set of tasks that agree with the elected sign; the merged value is the mean over only those agreeing tasks. <b>The key move is the disjoint mean: a task pulling the wrong way contributes nothing instead of cancelling a task pulling the right way.</b> Sign election is decided by summed magnitude, so a single large value can outvote several small opposing ones.</div>
+        </div>
+
+        <p><strong>DARE</strong> (Yu et al., 2023; "Language Models are Super Mario") is an even simpler preprocessing step you can put in front of any merge. Randomly <em>drop</em> a fraction \(p\) of each task vector's entries to zero, then <em>rescale</em> the survivors by \(1/(1-p)\) so the expected vector is preserved. The striking finding is that you can drop 90% or more of a fine-tune's delta with almost no loss — most of a task vector is redundant — and the sparsified vectors collide far less when summed.</p>
+
+        <div class="eq"><span class="eq-tag">EQ OM6.4 — DARE DROP-AND-RESCALE</span>
+        $$ m_i \sim \text{Bernoulli}(1-p), \qquad \tilde\tau_i \;=\; \frac{m_i}{1-p}\,\tau_i, \qquad \mathbb{E}[\tilde\tau_i] = \tau_i $$
+        <div class="eq-note">\(p\) is the drop rate; \(m_i\) is a 0/1 mask that keeps each entry with probability \(1-p\); the \(1/(1-p)\) factor rescales survivors so the vector is unbiased in expectation (the same trick as inverted dropout). <b>Sparsity is the whole point: thinned vectors overlap less, so their sum has fewer sign conflicts.</b> DARE composes — apply it before TIES or a soup. It works because fine-tuning deltas are extremely redundant, not because dropping is harmless in general.</div>
+        </div>
+
+        <p>For the special case of <em>two</em> models, practitioners often prefer <strong>SLERP</strong> — spherical linear interpolation — over a straight average. SLERP walks the arc on the hypersphere between the two weight vectors at constant angular speed, preserving their norm rather than letting it sag toward the origin the way a linear average can. And when you have access to a little data, <strong>Fisher-weighted merging</strong> (Matena &amp; Raffel, 2022) replaces the uniform average with a per-parameter weighting by each model's Fisher information: parameters a model is <em>confident</em> about (high curvature of its loss) get more say in the merge.</p>
+
+        <div class="eq"><span class="eq-tag">EQ OM6.5 — SLERP (TWO MODELS) &amp; FISHER-WEIGHTED MERGE</span>
+        $$ \text{SLERP: } \theta(\lambda) = \frac{\sin((1-\lambda)\Omega)}{\sin\Omega}\,\theta_A + \frac{\sin(\lambda\Omega)}{\sin\Omega}\,\theta_B, \quad \cos\Omega = \tfrac{\theta_A\cdot\theta_B}{\lVert\theta_A\rVert\lVert\theta_B\rVert} $$
+        $$ \text{Fisher: } \theta^{\star}_i = \frac{\sum_j F^{(j)}_i\,\theta^{(j)}_i}{\sum_j F^{(j)}_i} $$
+        <div class="eq-note">\(\Omega\) is the angle between the two weight vectors; as \(\Omega\to 0\) (nearly parallel models) SLERP reduces to the linear average, so it only differs meaningfully when the models point in genuinely different directions. \(F^{(j)}_i\) is the diagonal Fisher information of model \(j\) at parameter \(i\), estimated cheaply as the mean squared gradient on a data sample. <b>Fisher merging is a precision-weighted average: it is the closest-to-principled merge, but it needs data and gradients, which uniform averaging and task arithmetic do not.</b></div>
+        </div>
+
+        <div class="exercise" data-answer="-1" data-tol="0.001" data-unit="" data-hint="Sign election (EQ OM6.3): sum the signed values; the elected sign is the sign of that sum. 0.2 + 0.1 + (-0.6) = -0.3 < 0.">
+          <div class="ex-q">At one coordinate, three trimmed task vectors hold the values \( +0.2,\ +0.1,\ -0.6 \). By TIES sign election (EQ OM6.3), which sign \( \gamma_m \) is elected? Answer \( +1 \) or \( -1 \).</div>
+          <div class="ex-reveal-src">Sum the signed values: \( 0.2 + 0.1 + (-0.6) = -0.3 \). The election is decided by total magnitude, not a head-count: two positives (0.3 combined) lose to one larger negative (0.6). So \( \gamma_m = \operatorname{sgn}(-0.3) = \) <b>−1</b>, and the disjoint mean then averages only the agreeing task — the single \(-0.6\) value.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># Tiny TIES merge: trim, elect sign, disjoint mean -- compare to naive sum.
+import numpy as np
+
+# 3 task vectors over 6 coordinates (rows = tasks).
+T = np.array([
+    [ 0.80, -0.05,  0.60, -0.02,  0.01,  0.50],   # task 1
+    [ 0.70,  0.04, -0.55,  0.03, -0.02, -0.40],   # task 2 (conflicts on col 2,5)
+    [-0.10,  0.90,  0.05,  0.85,  0.02,  0.45],   # task 3
+])
+
+def trim(tau, keep=0.5):                  # keep top-|.| fraction per row
+    out = np.zeros_like(tau)
+    for i, row in enumerate(tau):
+        k = max(1, int(round(keep * row.size)))
+        idx = np.argsort(-np.abs(row))[:k]
+        out[i, idx] = row[idx]
+    return out
+
+Th = trim(T, keep=0.5)
+gamma = np.sign(Th.sum(axis=0))           # elected sign per coordinate (EQ OM6.3)
+gamma[gamma == 0] = 1
+agree = (np.sign(Th) == gamma) & (Th != 0)
+merged = np.where(agree.sum(0) > 0,
+                  (np.where(agree, Th, 0).sum(0) / np.maximum(agree.sum(0), 1)),
+                  0.0)
+
+print("naive sum   :", np.round(T.sum(0), 3))
+print("elected sign:", gamma.astype(int).tolist())
+print("TIES merged :", np.round(merged, 3))
+print("\nOn the conflict columns (2 & 5) the naive sum cancels toward 0;")
+print("TIES picks the majority-magnitude sign and averages only the agreeing")
+print("tasks, so the merged value keeps a clear, uncancelled contribution.")</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="mm-ties" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT OM6.3 — INTERFERENCE &amp; TIES REPAIR</span><span class="w-sub">EQ OM6.3 · NAIVE SUM vs TRIM + ELECT-SIGN + DISJOINT-MEAN</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>TRIM KEEP FRACTION <output id="mm-ties-keep-out">0.50</output></label><input type="range" id="mm-ties-keep" min="0.1" max="1" step="0.05" value="0.5"/></div>
+              <div class="ctl"><label>SIGN-CONFLICT LEVEL <output id="mm-ties-conf-out">0.50</output></label><input type="range" id="mm-ties-conf" min="0" max="1" step="0.05" value="0.5"/></div>
+            </div>
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>MERGE METHOD</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-mm-method="naive">NAIVE SUM</button>
+                  <button class="w-btn ghost" data-mm-method="ties">TIES</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="mm-ties-canvas" height="220"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">CONFLICTED COORDS</div><div class="r-value" id="mm-ties-conflicts">—</div></div>
+              <div class="readout acc"><div class="r-label">SIGNAL PRESERVED</div><div class="r-value" id="mm-ties-signal">—</div></div>
+              <div class="readout acc"><div class="r-label">METHOD</div><div class="r-value" id="mm-ties-verdict">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Each bar is one coordinate's merged value across several toy task vectors. Raise <b>SIGN-CONFLICT LEVEL</b> to make tasks disagree more. Under <b>NAIVE SUM</b> the conflicted bars cancel toward zero — lost signal in red. Switch to <b>TIES</b>: trimming drops the noisy small entries, sign-election picks the majority direction, and the disjoint mean restores the conflicted bars instead of cancelling them. The "signal preserved" readout is the fraction of the intended magnitude that survives.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 6.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">6.4</span><h2>The geometry that makes it work</h2></div>
+        <p>None of this should work. Averaging the weights of two neural networks is, in general, nonsense — the loss landscape is wildly non-convex, and the midpoint of two random good models is usually a bad one. Merging is feasible only inside a specific geometric regime, and naming that regime tells you exactly when to trust a merge and when to expect it to fail.</p>
+
+        <p>The enabling phenomenon is <strong>linear mode connectivity</strong>: when two models are fine-tuned from the <em>same</em> pretrained checkpoint, the straight line between them in weight space stays at low loss — there is no barrier (this is the flat curve of INSTRUMENT OM6.1). Shared initialization keeps both fine-tunes inside a single connected low-loss basin, so any convex combination of them is also low-loss. This is the geometric reason a soup beats its ingredients: averaging finds a flatter, more central point in the basin, which generalizes better.</p>
+
+        <div class="eq"><span class="eq-tag">EQ OM6.6 — THE LOSS BARRIER</span>
+        $$ B(\theta_A,\theta_B) \;=\; \max_{\lambda\in[0,1]} \mathcal{L}\big((1-\lambda)\theta_A + \lambda\theta_B\big) \;-\; \tfrac{1}{2}\big(\mathcal{L}(\theta_A)+\mathcal{L}(\theta_B)\big) $$
+        <div class="eq-note">\(B\) measures how much the worst point on the straight path exceeds the average of the two endpoints' losses. <b>\(B \approx 0\) means the models are linearly mode-connected and the merge is safe; \(B \gg 0\) means a barrier sits between them and naive averaging will land on it.</b> Same-base fine-tunes typically have \(B \approx 0\); models from different initializations almost never do. This is exactly the quantity the interpolation instrument plots and reports.</div>
+        </div>
+
+        <p>The crucial caveat is <strong>permutation symmetry</strong>. A neural network's hidden units can be permuted — relabel the neurons of a layer and permute the next layer's weights to match, and you have an identical function with a completely different weight vector. Two <em>independently</em> trained models almost always sit in different permutation "copies" of the same basin, which is why the raw line between them crosses a barrier. <strong>Ainsworth et al. (2023)</strong> showed this barrier can often be removed by first finding the permutation that aligns one model's units to the other's, after which even independently trained models become linearly connected. The practical takeaway for merging is sharp:</p>
+
+        <div class="callout">
+          <span class="co-icon">WHEN MERGING IS SAFE</span>
+          <p>Merge models that <strong>share a base, architecture, and tokenizer</strong>, and you are inside one basin with no permutation problem — averaging and task arithmetic just work. Merge models from <strong>different initializations</strong> and you must align their permutations first, or expect a barrier. This single distinction explains nearly every merging success and failure in the wild: community fine-tunes of one base model (Llama, Mistral) merge cleanly; two from-scratch models do not.</p>
+        </div>
+
+        <div class="exercise" data-answer="0.6" data-tol="0.001" data-unit="" data-hint="Barrier B = max loss on path - average of endpoint losses (EQ OM6.6). Mid loss 0.9, endpoints (0.4 + 0.2)/2 = 0.3.">
+          <div class="ex-q">On the path between two models the maximum loss is \( 0.9 \) (at the midpoint), while \( \mathcal{L}(\theta_A) = 0.4 \) and \( \mathcal{L}(\theta_B) = 0.2 \). What is the loss barrier \( B \) (EQ OM6.6)?</div>
+          <div class="ex-reveal-src">\( B = 0.9 - \tfrac{1}{2}(0.4 + 0.2) = 0.9 - 0.3 = \) <b>0.6</b>. A positive barrier this large means the midpoint merge is far worse than the endpoints — these models are not linearly connected, so a naive average should not be trusted without permutation alignment.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 6.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">6.5</span><h2>Practice &amp; honest limits</h2></div>
+        <p>Why merge at all, when you could multi-task fine-tune? Because merging is nearly free. It needs no training data, no gradient steps, and no GPU beyond the memory to hold the checkpoints. The practical wins follow directly:</p>
+        <ul>
+          <li><strong>Cheap multi-task models.</strong> Combine separately-trained specialists into one model that does all their jobs, without ever assembling a joint training set or running a joint fine-tune. This is the dominant use.</li>
+          <li><strong>Combining community fine-tunes.</strong> The open-model ecosystem (Open Models · Ch 03) produces thousands of fine-tunes of a handful of bases. Merging lets you blend, say, a coding fine-tune and an instruction fine-tune of the same Llama into one model — the engine behind most top community models on the leaderboards.</li>
+          <li><strong>Behavior editing without data.</strong> Negate a toxicity task vector to detoxify; subtract a memorized-data vector to reduce regurgitation; scale a style vector up or down. Edits you would otherwise need a fine-tuning run to make.</li>
+          <li><strong>Soups for robustness.</strong> Average your own hyperparameter sweep into one checkpoint that generalizes better than any single run, at the cost of one model.</li>
+        </ul>
+
+        <p>The standard open-source toolkit is <strong>mergekit</strong>, which implements soup, task arithmetic, TIES, DARE, SLERP, and Fisher merging behind a single config file. But the tooling hides none of the genuine limits, and a serious caveat list belongs in any honest treatment:</p>
+
+        <table class="data">
+          <thead><tr><th>Limit</th><th>Why</th><th>Consequence</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Same base required</strong></td><td>weights only share a coordinate system if they share an origin</td><td class="m">cannot merge across different base models or tokenizers</td></tr>
+            <tr><td><strong>Same architecture</strong></td><td>parameter \(i\) must be the same role in every ingredient</td><td class="m">no merging a 7B into a 13B</td></tr>
+            <tr><td><strong>No free lunch</strong></td><td>a merge is a compromise; capacity is finite and skills can trade off</td><td class="m">merged model often below each specialist on its own task</td></tr>
+            <tr><td><strong>Hyperparameters matter</strong></td><td>\(\lambda\), \(\alpha\), trim fraction, DARE \(p\) all change the result</td><td class="m">needs a search, not a single setting</td></tr>
+            <tr><td><strong>Evaluation is mandatory</strong></td><td>merge quality is unpredictable a priori; barriers and interference are silent</td><td class="m">always benchmark — a merge that looks fine can be quietly degraded</td></tr>
+          </tbody>
+        </table>
+
+        <p>The last row is the one to internalize. Merging is fast enough that it invites a "ship it" reflex, but a merge can satisfy every algebraic constraint and still land on a barrier, overshoot a scale, or trade away a skill you needed. <strong>A merge is a hypothesis, not a result — it is unproven until it clears the same evaluation suite you would demand of a fine-tune.</strong> The cost saving is in the training you skipped, not in the evaluation, which you still owe in full.</p>
+
+        <div class="callout warn">
+          <span class="co-icon">NO FREE LUNCH</span>
+          <p><strong>Merging buys breadth, sometimes at the cost of peak.</strong> The cheap multi-skill model is real, and for many deployments "good at several things on one GPU" beats "excellent at one." But do not expect a merge of a math specialist and a code specialist to match either on its home benchmark. Interference, finite capacity, and compromise are structural, not bugs to be tuned away. State the trade you made in numbers, the same discipline §6.5 of the previous chapter demanded of safety claims.</p>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>That closes the open-models loop: choose a model, run it, fine-tune it, train it well, break-then-harden it, and now combine fine-tunes in weight space for free.</strong> Merging is the payoff of working with open weights — full access to the parameters is exactly what lets you average, add, and subtract them. Return to the <a href="../index.html#toc">index</a> to branch into the volumes this track builds on: fine-tuning and LoRA (Vol II · Ch 06), post-training and alignment (Vol II · Ch 05), and the deep-learning track for the loss-landscape geometry behind linear mode connectivity.</p>
+        </div>
+      </section>
+
+      <!-- ====================== 6.R ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">6.R</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://arxiv.org/abs/2212.04089" target="_blank" rel="noopener">Ilharco, G., Ribeiro, M. T., Wortsman, M. et&nbsp;al. (2022). <span class="ref-venue">Editing Models with Task Arithmetic</span>.</a> <span class="ref-meta">ICLR 2023 — defines the task vector \(\tau = \theta_{ft} - \theta_{pre}\) and add/negate/analogy arithmetic (§6.2, EQ OM6.2).</span></li>
+          <li><a href="https://arxiv.org/abs/2203.05482" target="_blank" rel="noopener">Wortsman, M., Ilharco, G., Gadre, S. Y. et&nbsp;al. (2022). <span class="ref-venue">Model Soups: averaging weights of multiple fine-tuned models improves accuracy without increasing inference time</span>.</a> <span class="ref-meta">ICML 2022 — weight averaging of fine-tunes (§6.1, EQ OM6.1).</span></li>
+          <li><a href="https://arxiv.org/abs/2306.01708" target="_blank" rel="noopener">Yadav, P., Tam, D., Choshen, L., Raffel, C. &amp; Bansal, M. (2023). <span class="ref-venue">TIES-Merging: Resolving Interference When Merging Models</span>.</a> <span class="ref-meta">NeurIPS 2023 — trim, elect-sign, disjoint-mean (§6.3, EQ OM6.3).</span></li>
+          <li><a href="https://arxiv.org/abs/2311.03099" target="_blank" rel="noopener">Yu, L., Yu, B., Yu, H., Huang, F. &amp; Li, Y. (2023). <span class="ref-venue">Language Models are Super Mario: Absorbing Abilities from Homologous Models as a Free Lunch (DARE)</span>.</a> <span class="ref-meta">ICML 2024 — drop-and-rescale sparsification of task vectors (§6.3, EQ OM6.4).</span></li>
+          <li><a href="https://arxiv.org/abs/2111.09832" target="_blank" rel="noopener">Matena, M. &amp; Raffel, C. (2022). <span class="ref-venue">Merging Models with Fisher-Weighted Averaging</span>.</a> <span class="ref-meta">NeurIPS 2022 — per-parameter precision-weighted merge (§6.3, EQ OM6.5).</span></li>
+          <li><a href="https://arxiv.org/abs/2209.04836" target="_blank" rel="noopener">Ainsworth, S. K., Hayase, J. &amp; Srinivasa, S. (2023). <span class="ref-venue">Git Re-Basin: Merging Models modulo Permutation Symmetries</span>.</a> <span class="ref-meta">ICLR 2023 — permutation alignment that removes the loss barrier between independently trained models (§6.4).</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="../openmodels/05-red-teaming.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">05</span> Red-teaming &amp; Safety</div></a>
+        <a class="next" href="../index.html#toc"><div class="p-dir">NEXT CHAPTER</div><div class="p-title"><span class="p-num">§</span> Index</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — OPEN MODELS · CH 06</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script>
+/* chapter instruments — single IIFE, no globals */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  var C = (FM && FM.C) || {
+    MINT: "#a6f2cc", DEEP: "#2b5945", BLUE: "#4e8af7", RED: "#ff4136",
+    HAIR: "#2f3234", MUT: "#636363", SEC: "#9b9b9b", BRIGHT: "#ffffff",
+    MONO: "10px ui-monospace, SF Mono, Menlo, monospace"
+  };
+  var MONO = C.MONO || "10px ui-monospace, SF Mono, Menlo, monospace";
+
+  /* ============================================================
+     INSTRUMENT OM6.1 — WEIGHT-SPACE INTERPOLATION
+     Loss along the line A->B. Shared base + low barrier = flat,
+     connected path; different init or high barrier = mid-path hump.
+     ============================================================ */
+  (function interpolation() {
+    var root = document.getElementById("mm-interp");
+    if (!root) return;
+    var canvas = document.getElementById("mm-interp-canvas");
+    if (!canvas) return;
+    var lamEl = document.getElementById("mm-interp-lam");
+    var lamOut = document.getElementById("mm-interp-lam-out");
+    var barEl = document.getElementById("mm-interp-bar");
+    var barOut = document.getElementById("mm-interp-bar-out");
+    var lossEl = document.getElementById("mm-interp-loss");
+    var barvalEl = document.getElementById("mm-interp-barval");
+    var verdictEl = document.getElementById("mm-interp-verdict");
+    var baseBtns = root.querySelectorAll("[data-mm-base]");
+    var mode = "shared";
+
+    var L_A = 0.30, L_B = 0.22; // endpoint losses (fixed, low)
+
+    function barrierHeight() {
+      // slider barrier + a large structural barrier when init differs
+      var b = parseFloat(barEl.value);
+      if (mode === "diff") b += 0.95;
+      return b;
+    }
+
+    // loss along path: endpoints interpolate linearly, plus a symmetric
+    // mid-path bump of height = barrierHeight() peaking at lambda = 0.5
+    function lossAt(lam) {
+      var base = (1 - lam) * L_A + lam * L_B;
+      var bump = barrierHeight() * 4 * lam * (1 - lam); // 0 at ends, max at 0.5
+      return base + bump;
+    }
+
+    function render() {
+      var lam = parseFloat(lamEl.value);
+      lamOut.textContent = lam.toFixed(2);
+      barOut.textContent = parseFloat(barEl.value).toFixed(2);
+
+      // measured barrier per EQ OM6.6: max path loss - mean endpoints
+      var maxL = 0;
+      for (var t = 0; t <= 1.0001; t += 0.01) { var v = lossAt(t); if (v > maxL) maxL = v; }
+      var bVal = maxL - 0.5 * (L_A + L_B);
+      var curLoss = lossAt(lam);
+      lossEl.textContent = curLoss.toFixed(3);
+      barvalEl.textContent = (bVal >= 0 ? "+" : "") + bVal.toFixed(3);
+      var connected = bVal < 0.08;
+      verdictEl.textContent = connected ? "CONNECTED" : "BARRIER";
+      verdictEl.style.color = connected ? C.MINT : C.RED;
+
+      var s = FM.setupCanvas(canvas, 250);
+      var ctx = s.ctx, w = s.w, h = s.h;
+      ctx.clearRect(0, 0, w, h);
+      var padL = 44, padR = 18, padT = 18, padB = 32;
+      var plotW = w - padL - padR, plotH = h - padT - padB;
+
+      var YMAX = 1.7;
+      function xOf(l) { return padL + l * plotW; }
+      function yOf(v) { return padT + plotH - (v / YMAX) * plotH; }
+
+      // axes
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(padL, padT); ctx.lineTo(padL, padT + plotH); ctx.lineTo(padL + plotW, padT + plotH);
+      ctx.stroke();
+
+      // endpoint-average reference line (for the barrier definition)
+      var endAvg = 0.5 * (L_A + L_B);
+      ctx.strokeStyle = "rgba(99,99,99,.5)"; ctx.setLineDash([3, 4]);
+      ctx.beginPath(); ctx.moveTo(padL, yOf(endAvg)); ctx.lineTo(padL + plotW, yOf(endAvg)); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = C.MUT; ctx.font = MONO; ctx.textAlign = "left";
+      ctx.fillText("endpoint-loss average", padL + 4, yOf(endAvg) - 5);
+
+      // loss curve along the path
+      ctx.strokeStyle = connected ? C.MINT : C.RED; ctx.lineWidth = 1.9;
+      ctx.beginPath();
+      var first = true;
+      for (var l = 0; l <= 1.0001; l += 0.01) {
+        var x = xOf(l), y = yOf(lossAt(l));
+        if (first) { ctx.moveTo(x, y); first = false; } else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+
+      // endpoints
+      ctx.fillStyle = C.SEC;
+      ctx.beginPath(); ctx.arc(xOf(0), yOf(L_A), 4, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(xOf(1), yOf(L_B), 4, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = C.MUT; ctx.font = MONO; ctx.textAlign = "center";
+      ctx.fillText("MODEL A", xOf(0) + 26, yOf(L_A) - 8);
+      ctx.fillText("MODEL B", xOf(1) - 26, yOf(L_B) - 8);
+
+      // current merge point
+      var px = xOf(lam), py = yOf(curLoss);
+      ctx.strokeStyle = "rgba(229,229,229,.3)"; ctx.setLineDash([3, 3]);
+      ctx.beginPath(); ctx.moveTo(px, padT + plotH); ctx.lineTo(px, py); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = connected ? C.MINT : C.RED;
+      ctx.beginPath(); ctx.arc(px, py, 5.5, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = C.BRIGHT; ctx.font = "11px ui-monospace, Menlo, monospace";
+      ctx.fillText("MERGE", px, py - 11);
+
+      // axis labels
+      ctx.fillStyle = C.MUT; ctx.font = MONO; ctx.textAlign = "center";
+      ctx.fillText("λ   (A → B)", padL + plotW / 2, h - 7);
+      ctx.fillText("0", xOf(0), padT + plotH + 14);
+      ctx.fillText("0.5", xOf(0.5), padT + plotH + 14);
+      ctx.fillText("1", xOf(1), padT + plotH + 14);
+      ctx.save();
+      ctx.translate(12, padT + plotH / 2); ctx.rotate(-Math.PI / 2);
+      ctx.fillText("loss", 0, 0);
+      ctx.restore();
+    }
+
+    for (var i = 0; i < baseBtns.length; i++) {
+      (function (btn) {
+        btn.addEventListener("click", function () {
+          for (var j = 0; j < baseBtns.length; j++) baseBtns[j].classList.remove("on");
+          btn.classList.add("on");
+          mode = btn.getAttribute("data-mm-base");
+          render();
+        });
+      })(baseBtns[i]);
+    }
+    lamEl.addEventListener("input", render);
+    barEl.addEventListener("input", render);
+    window.addEventListener("resize", render);
+    render();
+  })();
+
+  /* ============================================================
+     INSTRUMENT OM6.2 — TASK-VECTOR ARITHMETIC
+     theta = base + aA*tauA + aB*tauB. Skill score = dot(theta, tau).
+     Over-scaling adds a degradation penalty. 2D plot of the two
+     task directions plus the resulting merged point.
+     ============================================================ */
+  (function taskArithmetic() {
+    var root = document.getElementById("mm-arith");
+    if (!root) return;
+    var canvas = document.getElementById("mm-arith-canvas");
+    if (!canvas) return;
+    var aEl = document.getElementById("mm-arith-a");
+    var aOut = document.getElementById("mm-arith-a-out");
+    var bEl = document.getElementById("mm-arith-b");
+    var bOut = document.getElementById("mm-arith-b-out");
+    var saEl = document.getElementById("mm-arith-sa");
+    var sbEl = document.getElementById("mm-arith-sb");
+    var thetaEl = document.getElementById("mm-arith-theta");
+
+    // two task directions in a 2D toy weight space (drawn), plus a 3rd
+    // reported coordinate for the readout
+    var TAU_A = [1.0, 0.25];
+    var TAU_B = [0.2, 1.0];
+    var TAU_A3 = 0.6, TAU_B3 = 0.3; // hidden 3rd coordinate
+
+    function fmt(x) { return (x >= 0 ? "+" : "") + x.toFixed(2); }
+
+    function render() {
+      var aA = parseFloat(aEl.value);
+      var aB = parseFloat(bEl.value);
+      aOut.textContent = fmt(aA);
+      bOut.textContent = fmt(aB);
+
+      var th = [aA * TAU_A[0] + aB * TAU_B[0], aA * TAU_A[1] + aB * TAU_B[1]];
+      var th3 = aA * TAU_A3 + aB * TAU_B3;
+
+      // skill score = projection of theta onto each task direction
+      var sa = th[0] * TAU_A[0] + th[1] * TAU_A[1];
+      var sb = th[0] * TAU_B[0] + th[1] * TAU_B[1];
+      // degradation penalty grows when |scale| exceeds 1
+      function pen(a) { var e = Math.max(0, Math.abs(a) - 1); return e * e; }
+      var degrade = pen(aA) + pen(aB);
+
+      saEl.textContent = sa.toFixed(2) + (aA < 0 ? "  (unlearn)" : "");
+      saEl.style.color = sa >= 0 ? C.MINT : C.RED;
+      sbEl.textContent = sb.toFixed(2) + (aB < 0 ? "  (unlearn)" : "");
+      sbEl.style.color = sb >= 0 ? C.MINT : C.RED;
+      thetaEl.textContent = "[" + th[0].toFixed(2) + ", " + th[1].toFixed(2) + ", " + th3.toFixed(2) + "]" +
+        (degrade > 0.02 ? "  ⚠ overshoot " + degrade.toFixed(2) : "");
+      thetaEl.style.color = degrade > 0.02 ? C.RED : C.SEC;
+
+      var s = FM.setupCanvas(canvas, 250);
+      var ctx = s.ctx, w = s.w, h = s.h;
+      ctx.clearRect(0, 0, w, h);
+      var cx = w / 2, cy = h / 2;
+      var SC = Math.min(w, h) / 6; // px per unit
+
+      function X(u) { return cx + u * SC; }
+      function Y(v) { return cy - v * SC; }
+
+      // grid axes
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(0, cy); ctx.lineTo(w, cy); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx, 0); ctx.lineTo(cx, h); ctx.stroke();
+      ctx.fillStyle = C.MUT; ctx.font = MONO; ctx.textAlign = "left";
+      ctx.fillText("weight dim 1 →", w - 92, cy - 6);
+      ctx.save(); ctx.translate(cx + 6, 12); ctx.fillText("weight dim 2 ↑", 0, 0); ctx.restore();
+
+      // base at origin
+      ctx.fillStyle = C.SEC;
+      ctx.beginPath(); ctx.arc(X(0), Y(0), 4, 0, Math.PI * 2); ctx.fill();
+      ctx.fillText("base θ₀", X(0) + 7, Y(0) + 14);
+
+      function arrow(vx, vy, col, label) {
+        ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineWidth = 1.8;
+        ctx.beginPath(); ctx.moveTo(X(0), Y(0)); ctx.lineTo(X(vx), Y(vy)); ctx.stroke();
+        var ang = Math.atan2(-(Y(vy) - Y(0)), X(vx) - X(0));
+        ctx.beginPath();
+        ctx.moveTo(X(vx), Y(vy));
+        ctx.lineTo(X(vx) - 8 * Math.cos(ang - 0.4), Y(vy) + 8 * Math.sin(ang - 0.4));
+        ctx.lineTo(X(vx) - 8 * Math.cos(ang + 0.4), Y(vy) + 8 * Math.sin(ang + 0.4));
+        ctx.closePath(); ctx.fill();
+        if (label) { ctx.font = MONO; ctx.fillText(label, X(vx) + 5, Y(vy) - 4); }
+      }
+
+      // unit task directions (faint reference)
+      arrow(TAU_A[0], TAU_A[1], "rgba(78,138,247,.55)", "τA");
+      arrow(TAU_B[0], TAU_B[1], "rgba(166,242,204,.55)", "τB");
+
+      // scaled components
+      ctx.setLineDash([4, 4]);
+      ctx.strokeStyle = "rgba(99,99,99,.6)";
+      ctx.beginPath(); ctx.moveTo(X(aA * TAU_A[0]), Y(aA * TAU_A[1])); ctx.lineTo(X(th[0]), Y(th[1])); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(X(aB * TAU_B[0]), Y(aB * TAU_B[1])); ctx.lineTo(X(th[0]), Y(th[1])); ctx.stroke();
+      ctx.setLineDash([]);
+
+      // merged point
+      var degraded = degrade > 0.02;
+      ctx.strokeStyle = degraded ? C.RED : C.BRIGHT; ctx.lineWidth = 1.8;
+      ctx.beginPath(); ctx.moveTo(X(0), Y(0)); ctx.lineTo(X(th[0]), Y(th[1])); ctx.stroke();
+      ctx.fillStyle = degraded ? C.RED : C.MINT;
+      ctx.beginPath(); ctx.arc(X(th[0]), Y(th[1]), 5.5, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = C.BRIGHT; ctx.font = "11px ui-monospace, Menlo, monospace"; ctx.textAlign = "center";
+      ctx.fillText("MERGED θ", X(th[0]), Y(th[1]) - 11);
+    }
+
+    aEl.addEventListener("input", render);
+    bEl.addEventListener("input", render);
+    window.addEventListener("resize", render);
+    render();
+  })();
+
+  /* ============================================================
+     INSTRUMENT OM6.3 — INTERFERENCE & TIES REPAIR
+     Several toy task vectors merged per-coordinate. Naive sum cancels
+     on sign-conflicted coords; TIES (trim, elect sign, disjoint mean)
+     restores them. Bars show the merged value per coordinate.
+     ============================================================ */
+  (function interference() {
+    var root = document.getElementById("mm-ties");
+    if (!root) return;
+    var canvas = document.getElementById("mm-ties-canvas");
+    if (!canvas) return;
+    var keepEl = document.getElementById("mm-ties-keep");
+    var keepOut = document.getElementById("mm-ties-keep-out");
+    var confEl = document.getElementById("mm-ties-conf");
+    var confOut = document.getElementById("mm-ties-conf-out");
+    var conflictsEl = document.getElementById("mm-ties-conflicts");
+    var signalEl = document.getElementById("mm-ties-signal");
+    var verdictEl = document.getElementById("mm-ties-verdict");
+    var methodBtns = root.querySelectorAll("[data-mm-method]");
+    var method = "naive";
+
+    var NCOORD = 10, NTASK = 4;
+    var rng = (FM && FM.mulberry32) ? FM.mulberry32(73) : Math.random;
+    // base task matrix: tasks x coords. Some coords are "signal" (large,
+    // agreeing); some are noise (small). Conflict slider flips signs.
+    var BASE = [];
+    for (var t = 0; t < NTASK; t++) {
+      var row = [];
+      for (var c = 0; c < NCOORD; c++) {
+        var signal = (c % 3 === 0);           // coords 0,3,6,9 carry skill
+        var mag = signal ? 0.6 + 0.3 * rng() : 0.05 + 0.1 * rng();
+        row.push(mag);
+      }
+      BASE.push(row);
+    }
+
+    function buildTasks() {
+      var conf = parseFloat(confEl.value);
+      var T = [];
+      for (var t = 0; t < NTASK; t++) {
+        var row = [];
+        for (var c = 0; c < NCOORD; c++) {
+          var v = BASE[t][c];
+          // intended direction is +; conflict flips a fraction of tasks
+          // on signal coords to the opposite sign
+          var flip = (c % 3 === 0) && (t >= NTASK * (1 - conf)) ;
+          row.push(flip ? -v : v);
+        }
+        T.push(row);
+      }
+      return T;
+    }
+
+    function naiveMerge(T) {
+      var m = [];
+      for (var c = 0; c < NCOORD; c++) {
+        var s = 0;
+        for (var t = 0; t < NTASK; t++) s += T[t][c];
+        m.push(s / NTASK);
+      }
+      return m;
+    }
+
+    function tiesMerge(T, keep) {
+      // trim each row to top-|.| fraction
+      var Th = [];
+      for (var t = 0; t < NTASK; t++) {
+        var idx = [];
+        for (var c = 0; c < NCOORD; c++) idx.push(c);
+        idx.sort(function (a, b) { return Math.abs(T[t][b]) - Math.abs(T[t][a]); });
+        var k = Math.max(1, Math.round(keep * NCOORD));
+        var rowTrim = new Array(NCOORD).fill(0);
+        for (var i = 0; i < k; i++) rowTrim[idx[i]] = T[t][idx[i]];
+        Th.push(rowTrim);
+      }
+      var m = [];
+      for (var c2 = 0; c2 < NCOORD; c2++) {
+        var sum = 0;
+        for (var t2 = 0; t2 < NTASK; t2++) sum += Th[t2][c2];
+        var gamma = sum > 0 ? 1 : (sum < 0 ? -1 : 1);
+        var agg = 0, n = 0;
+        for (var t3 = 0; t3 < NTASK; t3++) {
+          var val = Th[t3][c2];
+          if (val !== 0 && Math.sign(val) === gamma) { agg += val; n++; }
+        }
+        m.push(n > 0 ? agg / n : 0);
+      }
+      return m;
+    }
+
+    function intendedSignal(T) {
+      // ideal: magnitude of signal coords if no cancellation (mean of |.|)
+      var ideal = 0;
+      for (var c = 0; c < NCOORD; c++) {
+        if (c % 3 !== 0) continue;
+        var s = 0;
+        for (var t = 0; t < NTASK; t++) s += Math.abs(T[t][c]);
+        ideal += s / NTASK;
+      }
+      return ideal;
+    }
+
+    function render() {
+      keepOut.textContent = parseFloat(keepEl.value).toFixed(2);
+      confOut.textContent = parseFloat(confEl.value).toFixed(2);
+      var keep = parseFloat(keepEl.value);
+      var T = buildTasks();
+      var merged = method === "ties" ? tiesMerge(T, keep) : naiveMerge(T);
+
+      // conflicted coords: signal coords where signs disagree across tasks
+      var conflicts = 0;
+      for (var c = 0; c < NCOORD; c++) {
+        if (c % 3 !== 0) continue;
+        var pos = 0, neg = 0;
+        for (var t = 0; t < NTASK; t++) { if (T[t][c] > 0) pos++; else if (T[t][c] < 0) neg++; }
+        if (pos > 0 && neg > 0) conflicts++;
+      }
+      // preserved signal: merged magnitude on signal coords vs ideal
+      var got = 0;
+      for (var cc = 0; cc < NCOORD; cc++) { if (cc % 3 === 0) got += Math.abs(merged[cc]); }
+      var ideal = intendedSignal(T);
+      var preserved = ideal > 0 ? Math.max(0, Math.min(1, got / ideal)) : 1;
+
+      conflictsEl.textContent = conflicts + " / " + 4;
+      signalEl.textContent = (preserved * 100).toFixed(0) + "%";
+      signalEl.style.color = preserved > 0.6 ? C.MINT : (preserved > 0.35 ? C.SEC : C.RED);
+      verdictEl.textContent = method === "ties" ? "TIES" : "NAIVE SUM";
+      verdictEl.style.color = method === "ties" ? C.MINT : C.SEC;
+
+      var s = FM.setupCanvas(canvas, 220);
+      var ctx = s.ctx, w = s.w, h = s.h;
+      ctx.clearRect(0, 0, w, h);
+      var padL = 20, padR = 14, padT = 16, padB = 30;
+      var plotW = w - padL - padR, plotH = h - padT - padB;
+      var midY = padT + plotH / 2;
+      var YMAX = 0.95;
+
+      // zero line
+      ctx.strokeStyle = C.HAIR; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(padL, midY); ctx.lineTo(padL + plotW, midY); ctx.stroke();
+
+      var bw = plotW / NCOORD;
+      for (var i2 = 0; i2 < NCOORD; i2++) {
+        var v = merged[i2];
+        var bh = (Math.abs(v) / YMAX) * (plotH / 2);
+        var x = padL + i2 * bw + bw * 0.18;
+        var bwi = bw * 0.64;
+        var signal2 = (i2 % 3 === 0);
+        var y = v >= 0 ? midY - bh : midY;
+        // color: signal coords mint (good) unless cancelled near 0 -> red ghost
+        var nearZero = signal2 && Math.abs(v) < 0.18;
+        ctx.fillStyle = signal2 ? (nearZero ? "rgba(255,65,54,.85)" : C.MINT) : "rgba(99,99,99,.7)";
+        ctx.fillRect(x, y, bwi, Math.max(1, bh));
+        // ghost outline showing lost signal on cancelled coords
+        if (nearZero) {
+          var lostH = (0.6 / YMAX) * (plotH / 2);
+          ctx.strokeStyle = "rgba(255,65,54,.5)"; ctx.setLineDash([2, 3]); ctx.lineWidth = 1;
+          ctx.strokeRect(x, midY - lostH, bwi, lostH); ctx.setLineDash([]);
+        }
+        ctx.fillStyle = C.MUT; ctx.font = MONO; ctx.textAlign = "center";
+        ctx.fillText(String(i2), x + bwi / 2, padT + plotH + 12);
+      }
+      ctx.fillStyle = C.MUT; ctx.font = MONO; ctx.textAlign = "left";
+      ctx.fillText("merged value per coordinate (mint = skill coords, grey = noise, red = cancelled)", padL, h - 6);
+    }
+
+    for (var i = 0; i < methodBtns.length; i++) {
+      (function (btn) {
+        btn.addEventListener("click", function () {
+          for (var j = 0; j < methodBtns.length; j++) methodBtns[j].classList.remove("on");
+          btn.classList.add("on");
+          method = btn.getAttribute("data-mm-method");
+          render();
+        });
+      })(methodBtns[i]);
+    }
+    keepEl.addEventListener("input", render);
+    confEl.addEventListener("input", render);
+    window.addEventListener("resize", render);
+    render();
+  })();
+})();
+</script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+</body>
+</html>
