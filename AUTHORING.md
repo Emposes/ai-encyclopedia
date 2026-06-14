@@ -237,3 +237,21 @@ bucket's contribution"). Do NOT add the input/buttons yourself — exercises.js 
 7. Mentally execute every widget's math once with default slider values.
 8. File parses: balanced tags, single `<main>`, scripts block identical to skeleton
    (plus pyrunner.js only if pycells used).
+
+## After authoring: render the concept videos (REQUIRED)
+
+A chapter is not "done" until its concept videos exist — every new content
+section needs a narrated Watch-step video. Once the new pages are written and
+`node scripts/build.mjs` passes, run the concept-video pipeline:
+
+1. Script-gen fleet: run `scripts/gen-video-scripts.workflow.mjs` with
+   `args = { root, chapters: ["dir/name", …] }` → per-section beats in `docs/video-scripts/*.json`.
+2. In `remotion-demo/`: `node scripts/merge-video-scripts.mjs` (→ registry.json).
+3. Narrate: `node scripts/gen-narration-kokoro.mjs build-jobs` →
+   `.venv-kokoro/bin/python scripts/kokoro-narrate.py out/narration-jobs.json > out/narration-out.jsonl`
+   (voice `af_heart`) → `node scripts/gen-narration-kokoro.mjs finalize`.
+4. Render + wire: `node scripts/render-all.mjs "dir/name,…"` (Remotion, CRF 28) →
+   `node scripts/sync-videos.mjs --all` (the `--all` matters — the default log-gate misses a fresh batch) → it regenerates `videos.js`.
+5. Back in the site repo: `node scripts/build.mjs`, then deploy.
+
+The lesson player degrades gracefully if a video is missing, but new chapters ship WITH videos.
