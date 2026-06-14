@@ -1,0 +1,818 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>07 · Retrieval-Augmented Generation — AI Encyclopedia</title>
+<meta name="description" content="How RAG grounds an LLM in external knowledge: chunking, embeddings, vector indexes and ANN, sparse vs dense vs hybrid retrieval, reciprocal-rank fusion, cross-encoder reranking, query transformation, the lost-in-the-middle effect, retrieval and faithfulness evaluation, and the honest choice between RAG, long context, and fine-tuning." />
+<link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
+<meta name="theme-color" content="#000000" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="../assets/css/manual.css?v=5690dc48" />
+<link rel="canonical" href="https://ai-encyclopedia.com/agents/07-retrieval-augmented-generation" />
+<meta property="og:url" content="https://ai-encyclopedia.com/agents/07-retrieval-augmented-generation" />
+</head>
+<body data-track="agents" data-level="core">
+
+<header class="topbar">
+  <a class="wordmark" href="../index.html"><span class="tick"></span>AI // ENCYCLOPEDIA</a>
+  <span class="crumb">/ VOL IV / AGENT ENGINEERING / 07 / RETRIEVAL-AUGMENTED GENERATION</span>
+  <span class="spacer"></span>
+  <a class="bar-link" href="../index.html#toc">INDEX</a>
+  <a class="bar-link primary" href="../index.html#toc">BACK TO INDEX →</a>
+</header>
+<div class="progress-rail"><div class="progress-fill"></div></div>
+
+<div class="shell">
+  <section class="chapter-hero">
+    <div class="ch-index">VOLUME IV — AGENT ENGINEERING · CHAPTER 07 / 07</div>
+    <h1>Retrieval-Augmented Generation</h1>
+    <p class="lede">A model only knows what it was trained on and what fits in its context window. Retrieval-Augmented Generation fixes both limits at once: at query time it fetches the relevant passages from an external corpus and places them in context, so the model reasons over current, private, citable facts instead of parametric memory. <strong>RAG does not make the model smarter; it changes what the model is allowed to look at, and that is usually the bottleneck.</strong> This chapter builds the pipeline end to end — chunk, embed, index, retrieve, rerank, assemble — then measures it honestly and closes on when not to use it at all.</p>
+    <div class="ch-meta">
+      <span>LEVEL<b>CORE</b></span>
+      <span>READING TIME<b>≈ 28 MIN</b></span>
+      <span>BUILDS ON<b>VOL IV CH 01–02 · VOL II CH 03 · VOL III CH 07</b></span>
+      <span>INSTRUMENTS<b>RETRIEVAL PLAYGROUND · CHUNK TRADE-OFF · RERANKER</b></span>
+    </div>
+  </section>
+
+  <div class="chapter-grid">
+    <nav class="side-nav">
+      <div class="side-label">IN THIS CHAPTER</div>
+      <a href="#s1"><span class="n">7.1</span>Why retrieve at all</a>
+      <a href="#s2"><span class="n">7.2</span>The pipeline</a>
+      <a href="#s3"><span class="n">7.3</span>Chunking</a>
+      <a href="#s4"><span class="n">7.4</span>Embeddings &amp; similarity</a>
+      <a href="#s5"><span class="n">7.5</span>Sparse, dense, hybrid</a>
+      <a href="#s6"><span class="n">7.6</span>Reranking &amp; query transforms</a>
+      <a href="#s7"><span class="n">7.7</span>Assembly &amp; lost-in-the-middle</a>
+      <a href="#s8"><span class="n">7.8</span>Evaluation &amp; failure modes</a>
+      <a href="#s9"><span class="n">7.9</span>Agentic RAG, and when not to</a>
+      <a href="#refs"><span class="n">§</span>References</a>
+    </nav>
+
+    <main>
+      <!-- ====================== 7.1 ====================== -->
+      <section class="section" id="s1">
+        <div class="sec-head"><span class="sec-num">7.1</span><h2>Why retrieve at all</h2></div>
+        <p>A pretrained model stores knowledge in its weights. That parametric memory has four chronic problems, and retrieval addresses each one directly:</p>
+        <ul>
+          <li><strong>Freshness.</strong> Weights freeze at the training cutoff. Anything that changed afterward — a price, a policy, last quarter's numbers — is invisible to the model and cannot be patched without retraining. A retrieval corpus is updated by writing a row.</li>
+          <li><strong>Private and proprietary knowledge.</strong> The model never saw your wiki, your contracts, or this customer's ticket history. You cannot prompt your way to facts the model was never shown; you have to put them in the context.</li>
+          <li><strong>Grounding and citations.</strong> A model asked a factual question will produce fluent text whether or not it knows the answer. Supplying the source passages lets the model quote them and lets you show the user <em>where</em> an answer came from. Grounding does not eliminate hallucination, but it converts an unanswerable "is this true?" into a checkable "does this follow from these passages?"</li>
+          <li><strong>Cost and context economy.</strong> The naive alternative — paste the entire knowledge base into every prompt — is quadratic in attention cost (Vol II · EQ 3.1) and bumps into the window limit. Retrieval sends the model a few hundred relevant tokens instead of a few hundred thousand, which is cheaper, faster, and frequently <em>more</em> accurate because the model is not distracted by irrelevant text.</li>
+        </ul>
+        <p>The original framing (Lewis et al., 2020) treated retrieval as a differentiable component trained jointly with the generator. Production RAG in 2026 is almost always the simpler, modular version: a frozen retriever feeds a frozen generator, and you engineer the seam between them. That seam — chunk, embed, index, retrieve, rerank, assemble — is the subject of this chapter, and every stage is a place where recall quietly leaks.</p>
+        <p class="note">RAG is not a model; it is a systems discipline wrapped around one. The failure surface looks like the agent failure surface from Ch 06: most "the model is wrong" complaints turn out to be "the right passage was never retrieved," which is a recall bug, not a reasoning bug. Diagnosing which one you have is half the job.</p>
+      </section>
+
+      <!-- ====================== 7.2 ====================== -->
+      <section class="section" id="s2">
+        <div class="sec-head"><span class="sec-num">7.2</span><h2>The pipeline, end to end</h2></div>
+        <p>RAG has two phases. <strong>Indexing</strong> runs offline, once per corpus version: documents are split into chunks, each chunk is embedded into a vector, and the vectors are loaded into a searchable index. <strong>Query time</strong> runs per request: the question is embedded, the index returns the nearest chunks, an optional reranker reorders them, and the top survivors are assembled into a prompt alongside the question.</p>
+
+        <figure class="figure" data-reveal>
+          <div class="fig-head"><span class="fig-id">FIG A7.A</span><span class="fig-title">THE RAG PIPELINE — INDEX OFFLINE, RETRIEVE ONLINE</span></div>
+          <div class="fig-body">
+            <svg viewBox="0 0 880 330" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Two-phase RAG pipeline: offline indexing of documents and online query-time retrieval and generation">
+              <text class="dg-label" x="20" y="28" text-anchor="start">INDEXING · OFFLINE</text>
+              <rect class="dg-box" x="20"  y="40" width="120" height="42" rx="4" data-pop/>
+              <text class="dg-label" x="80"  y="65" text-anchor="middle">DOCUMENTS</text>
+              <rect class="dg-box" x="170" y="40" width="120" height="42" rx="4" data-pop/>
+              <text class="dg-label" x="230" y="65" text-anchor="middle">CHUNK (7.3)</text>
+              <rect class="dg-box" x="320" y="40" width="120" height="42" rx="4" data-pop/>
+              <text class="dg-label" x="380" y="65" text-anchor="middle">EMBED (7.4)</text>
+              <rect class="dg-box-accent" x="470" y="40" width="150" height="42" rx="4" data-pop/>
+              <text class="dg-label-acc" x="545" y="65" text-anchor="middle">VECTOR INDEX</text>
+              <path class="dg-line" d="M140 61 H170" data-draw/>
+              <path class="dg-line" d="M290 61 H320" data-draw/>
+              <path class="dg-line" d="M440 61 H470" data-draw/>
+
+              <text class="dg-label" x="20" y="150" text-anchor="start">QUERY TIME · ONLINE</text>
+              <rect class="dg-box" x="20"  y="162" width="120" height="42" rx="4" data-pop/>
+              <text class="dg-label" x="80"  y="187" text-anchor="middle">QUESTION</text>
+              <rect class="dg-box" x="170" y="162" width="120" height="42" rx="4" data-pop/>
+              <text class="dg-label" x="230" y="187" text-anchor="middle">EMBED + REWRITE</text>
+              <rect class="dg-box" x="320" y="162" width="120" height="42" rx="4" data-pop/>
+              <text class="dg-label" x="380" y="187" text-anchor="middle">RETRIEVE top-k</text>
+              <rect class="dg-box" x="470" y="162" width="120" height="42" rx="4" data-pop/>
+              <text class="dg-label" x="530" y="187" text-anchor="middle">RERANK (7.6)</text>
+              <rect class="dg-box" x="620" y="162" width="120" height="42" rx="4" data-pop/>
+              <text class="dg-label" x="680" y="187" text-anchor="middle">ASSEMBLE (7.7)</text>
+              <rect class="dg-box-accent" x="770" y="162" width="90" height="42" rx="4" data-pop/>
+              <text class="dg-label-acc" x="815" y="187" text-anchor="middle">LLM</text>
+              <path class="dg-line" d="M140 183 H170" data-draw/>
+              <path class="dg-line" d="M290 183 H320" data-draw/>
+              <path class="dg-line" d="M440 183 H470" data-draw/>
+              <path class="dg-line" d="M590 183 H620" data-draw/>
+              <path class="dg-line" d="M740 183 H770" data-draw/>
+
+              <path class="dg-line" d="M545 82 V120 H380 V162" data-draw/>
+              <text class="dg-label" x="560" y="106" text-anchor="start">same vector space</text>
+
+              <rect class="dg-box-accent" x="770" y="250" width="90" height="42" rx="4" data-pop/>
+              <text class="dg-label-acc" x="815" y="275" text-anchor="middle">GROUNDED ANSWER</text>
+              <path class="dg-line" d="M815 204 V250" data-draw/>
+              <text class="dg-label" x="20" y="282" text-anchor="start">CITATIONS POINT BACK TO RETRIEVED CHUNKS</text>
+            </svg>
+          </div>
+        </figure>
+
+        <p>Two design constraints fall straight out of the diagram. First, the query and the documents must be embedded into the <strong>same</strong> vector space — usually the same encoder — or nearness is meaningless. Second, every chunk must carry its provenance (document id, section, offsets) all the way through, because the answer's value is only as good as the citation you can attach to it. Treat the chunk's metadata as load-bearing, not decorative.</p>
+        <p>The rest of the chapter walks the stages in order. Keep one number in mind throughout: end-to-end answer quality is bounded above by retrieval quality. If the right passage is not in the top-k that reaches the model, no amount of prompting recovers it. That is why we spend more pages on retrieval than on generation.</p>
+      </section>
+
+      <!-- ====================== 7.3 ====================== -->
+      <section class="section" id="s3">
+        <div class="sec-head"><span class="sec-num">7.3</span><h2>Chunking: the unglamorous decision that dominates</h2></div>
+        <p>An embedding represents a whole chunk as one vector, so the chunk is the atomic unit of retrieval. You can only ever retrieve a chunk, never half of one, which makes the splitting policy more consequential than practitioners expect. The trade-off is a tension you cannot escape:</p>
+        <ul>
+          <li><strong>Small chunks</strong> (one or two sentences) are semantically focused: the embedding is a tight summary, so a matching query scores high and <em>precision</em> per chunk is good. But a small chunk often lacks the surrounding context the model needs to answer, and the fact you want may straddle two chunks.</li>
+          <li><strong>Large chunks</strong> (a page or more) carry full context and rarely split a fact, helping <em>recall</em>. But one vector now averages many topics, diluting the signal, so the right chunk scores lower and may not crack the top-k. Large chunks also waste context budget on irrelevant neighbouring text.</li>
+        </ul>
+        <p>The standard knobs: a target chunk size (commonly 200–500 tokens for dense embeddings, bounded by the encoder's max sequence length), a token <strong>overlap</strong> between adjacent chunks (50–100 tokens) so a fact spanning a boundary survives in at least one chunk, and a <strong>splitter</strong> that respects structure — split on paragraphs, headings, or markdown sections rather than a blind character count, so chunks coincide with semantic units. More elaborate schemes exist: <em>semantic chunking</em> places boundaries where adjacent-sentence embedding similarity drops; <em>hierarchical / parent-document</em> retrieval indexes small chunks for precise matching but feeds the model the larger parent passage for context. There is no universal best; the size is an evaluated hyperparameter, tuned against the metrics of §7.8 on your own corpus.</p>
+
+        <div class="eq"><span class="eq-tag">EQ A7.1 — CHUNK COUNT WITH OVERLAP</span>
+        $$ N_{\text{chunks}} \;=\; \left\lceil \frac{L_{\text{doc}} - o}{\,c - o\,} \right\rceil, \qquad \text{stride} \;=\; c - o $$
+        <div class="eq-note">\(L_{\text{doc}}\) document length in tokens, \(c\) chunk size, \(o\) overlap (\(0 \le o &lt; c\)). Each new chunk advances by the <em>stride</em> \(c-o\), not by \(c\), because the last \(o\) tokens are repeated in the next chunk. <b>Overlap is pure storage cost: doubling overlap roughly doubles the redundant tokens you embed and store, so it buys boundary safety at a real index-size price.</b> At \(o \to c\) the stride collapses and the chunk count diverges — a useful sanity check that you have not set overlap too high.</div>
+        </div>
+
+        <div class="exercise" data-answer="14" data-tol="0.001" data-hint="stride = c − o = 450; chunks = ceil((L − o)/stride)">
+          <div class="ex-q">A document is \(L_{\text{doc}} = 6000\) tokens. With chunk size \(c = 500\) and overlap \(o = 50\), how many chunks does EQ A7.1 produce? (Stride \(= c - o\); take the ceiling.)</div>
+          <div class="ex-reveal-src">Stride \(= c - o = 500 - 50 = 450\). EQ A7.1 gives \(\lceil (L_{\text{doc}} - o)/(c - o) \rceil = \lceil (6000 - 50)/450 \rceil = \lceil 5950/450 \rceil = \lceil 13.22 \rceil\). The ceiling rounds up to cover the trailing partial chunk, so the count is <b>14</b>. Note that without overlap (\(o = 0\)) the same document tiles into exactly \(6000/500 = 12\) chunks: overlap added two extra chunks, the storage price of boundary safety. The answer is <b>14</b>.</div>
+        </div>
+
+        <div class="widget" id="rag-chunk" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT A7.2 — CHUNK-SIZE TRADE-OFF</span><span class="w-sub">PRECISION VS RECALL VS INDEX COST · ILLUSTRATIVE</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>CHUNK SIZE c (tokens) <output id="rag-chunk-c-out">350</output></label><input type="range" id="rag-chunk-c" min="50" max="1200" step="25" value="350"/></div>
+              <div class="ctl"><label>OVERLAP o (tokens) <output id="rag-chunk-o-out">60</output></label><input type="range" id="rag-chunk-o" min="0" max="400" step="10" value="60"/></div>
+              <div class="ctl"><label>CORPUS SIZE <output id="rag-chunk-L-out">2.0M tok</output></label><input type="range" id="rag-chunk-L" min="1" max="50" step="1" value="20"/></div>
+            </div>
+            <canvas class="w-canvas" id="rag-chunk-canvas" height="240"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">EST. PRECISION@k</div><div class="r-value" id="rag-chunk-prec">—</div></div>
+              <div class="readout acc"><div class="r-label">EST. RECALL@k</div><div class="r-value" id="rag-chunk-rec">—</div></div>
+              <div class="readout"><div class="r-label">CHUNKS IN INDEX</div><div class="r-value" id="rag-chunk-n">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">The curves are an illustrative model of the real tension, not a fit to any benchmark: tiny chunks score high precision but lose facts that span boundaries (recall sags); huge chunks recover every fact but dilute the embedding (precision sags). The sweet spot is the crossover, typically a few hundred tokens. Raise overlap and watch recall recover at the boundaries while the index-size readout climbs — overlap is recall you buy with storage. Push corpus size to feel how the chunk count scales linearly with it.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 7.4 ====================== -->
+      <section class="section" id="s4">
+        <div class="sec-head"><span class="sec-num">7.4</span><h2>Embeddings, similarity, and the index</h2></div>
+        <p>An <strong>embedding model</strong> maps a chunk of text to a fixed-length vector \(\mathbf{e} \in \mathbb{R}^{d}\) (typical \(d\): 384 to 3072) such that semantically similar text lands nearby. These are the same dense representations whose geometry we met in attention, but trained with a contrastive objective so that "how do I reset my password" and "I forgot my login" map to neighbours even with no shared words. Nearness is measured by an inner product:</p>
+
+        <div class="eq"><span class="eq-tag">EQ A7.2 — COSINE SIMILARITY</span>
+        $$ \cos(\mathbf{q}, \mathbf{d}) \;=\; \frac{\mathbf{q} \cdot \mathbf{d}}{\lVert \mathbf{q} \rVert\, \lVert \mathbf{d} \rVert} \;=\; \frac{\sum_{i=1}^{d} q_i d_i}{\sqrt{\sum_i q_i^2}\,\sqrt{\sum_i d_i^2}} \;\in\; [-1, 1] $$
+        <div class="eq-note">The cosine of the angle between query and document vectors: 1 means identical direction, 0 orthogonal (unrelated), negative means opposed. It ignores magnitude and compares only direction, which is what you want when document length should not dominate relevance. <b>If every vector is L2-normalized to unit length, cosine similarity equals the plain dot product</b> \(\mathbf{q}\cdot\mathbf{d}\), and maximizing cosine is equivalent to minimizing squared Euclidean distance. This is why production pipelines normalize at index time and then use the cheaper dot product everywhere downstream.</div>
+        </div>
+
+        <p>Retrieval is then <strong>k-nearest-neighbour search</strong>: return the \(k\) document vectors with the highest cosine to the query vector. Exact kNN scans every vector, an \(O(Nd)\) cost that is fine for thousands of chunks and ruinous for hundreds of millions. Production systems use a <strong>vector index</strong> that answers <em>approximate</em> nearest-neighbour (ANN) queries in sub-linear time by trading a little recall for a lot of speed. The two dominant families:</p>
+        <ul>
+          <li><strong>HNSW</strong> (Hierarchical Navigable Small World): a multi-layer proximity graph you greedily traverse from a coarse top layer down to a dense bottom layer. Excellent recall–latency curve, the default for in-memory indexes; memory-heavy because it stores the graph alongside the vectors.</li>
+          <li><strong>IVF</strong> (inverted file, often with product quantization, IVF-PQ): cluster vectors into cells, search only the few cells nearest the query, and compress vectors so billions fit in RAM. Cheaper memory, slightly lower recall, the workhorse for very large corpora.</li>
+        </ul>
+        <p>Both expose a knob (HNSW's <code>efSearch</code>, IVF's <code>nprobe</code>) that trades recall for latency. The number that matters in the eval (§7.8) is index recall against an exact-kNN ground truth: an ANN index that silently returns the 9th-best instead of the best neighbour is a recall leak you will mistake for a model failure.</p>
+
+        <div class="exercise" data-answer="0.8909" data-tol="0.01" data-hint="dot product over the product of the two L2 norms">
+          <div class="ex-q">Query vector \(\mathbf{q} = (1, 2, 2)\) and document vector \(\mathbf{d} = (2, 3, 1)\). Compute their cosine similarity \(\dfrac{\mathbf{q}\cdot\mathbf{d}}{\lVert\mathbf{q}\rVert\,\lVert\mathbf{d}\rVert}\) (round to 4 decimals).</div>
+          <div class="ex-reveal-src">Dot product \(\mathbf{q}\cdot\mathbf{d} = 1{\cdot}2 + 2{\cdot}3 + 2{\cdot}1 = 2 + 6 + 2 = 10\). Norms: \(\lVert\mathbf{q}\rVert = \sqrt{1+4+4} = \sqrt{9} = 3\); \(\lVert\mathbf{d}\rVert = \sqrt{4+9+1} = \sqrt{14} = 3.7417\). Cosine \(= 10/(3 \times 3.7417) = 10/11.2250 = \) <b>0.8909</b>. Both vectors point in a similar direction, so they are strongly related. The answer is <b>0.8909</b>.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># dense retrieval, end to end: embed toy docs, L2-normalize, cosine top-k
+import numpy as np
+
+# toy "embeddings" for 5 docs and 1 query (already in some vector space)
+docs = np.array([
+    [0.9, 0.1, 0.0, 0.2],   # 0: password reset
+    [0.8, 0.2, 0.1, 0.1],   # 1: forgot login
+    [0.1, 0.9, 0.2, 0.0],   # 2: billing invoice
+    [0.0, 0.1, 0.95, 0.1],  # 3: ship a package
+    [0.85,0.15,0.05,0.25],  # 4: account recovery
+], dtype=float)
+labels = ["password reset","forgot login","billing","shipping","recovery"]
+q = np.array([0.88, 0.12, 0.0, 0.15])
+
+def l2norm(x):                       # unit vectors: cosine becomes dot product
+    return x / (np.linalg.norm(x, axis=-1, keepdims=True) + 1e-12)
+
+D, qn = l2norm(docs), l2norm(q)
+scores = D @ qn                      # cosine of each doc with the query
+order = np.argsort(-scores)          # descending
+
+print("rank  cosine  document")
+for r, i in enumerate(order):
+    mark = "  <- query is a login problem" if r == 0 else ""
+    print(f"{r+1:>4d}{scores[i]:8.3f}  {labels[i]}{mark}")
+print("\ntop-3 retrieved:", [labels[i] for i in order[:3]])</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+
+        <div class="widget" id="rag-sim" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT A7.1 — COSINE RETRIEVAL PLAYGROUND</span><span class="w-sub">EQ A7.2 · QUERY VS DOC SET IN 2-D · TOP-k</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl"><label>QUERY ANGLE θ <output id="rag-sim-ang-out">30°</output></label><input type="range" id="rag-sim-ang" min="0" max="90" step="1" value="30"/></div>
+              <div class="ctl"><label>TOP-k RETRIEVED <output id="rag-sim-k-out">3</output></label><input type="range" id="rag-sim-k" min="1" max="6" step="1" value="3"/></div>
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>SIMILARITY</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-rag-sim-metric="cos">COSINE</button>
+                  <button class="w-btn ghost" data-rag-sim-metric="dot">DOT</button>
+                </div>
+              </div>
+            </div>
+            <canvas class="w-canvas" id="rag-sim-canvas" height="300"></canvas>
+            <div class="readout-strip">
+              <div class="readout acc"><div class="r-label">TOP MATCH</div><div class="r-value" id="rag-sim-top">—</div></div>
+              <div class="readout"><div class="r-label">TOP SCORE</div><div class="r-value" id="rag-sim-score">—</div></div>
+              <div class="readout"><div class="r-label">RETRIEVED SET</div><div class="r-value" id="rag-sim-set" style="font-size:12px;">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Six documents sit at fixed angles; the query is the bright vector you steer. Highlighted dots are the current top-k by similarity. Sweep the query angle and watch the ranking re-sort. The instructive part: switch from COSINE to DOT and the long red vector — a high-magnitude but off-angle document — can jump the ranking, because the dot product rewards magnitude while cosine ignores it. That is exactly why pipelines normalize before indexing: so a verbose document cannot buy relevance with length.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 7.5 ====================== -->
+      <section class="section" id="s5">
+        <div class="sec-head"><span class="sec-num">7.5</span><h2>Sparse, dense, and hybrid retrieval</h2></div>
+        <p>Dense embeddings are not the only way to rank documents, and on their own they are not the best. There are two complementary regimes:</p>
+        <ul>
+          <li><strong>Sparse / lexical retrieval</strong> scores documents by exact term overlap, weighted by how rare and how frequent each term is. The canonical scorer is <strong>BM25</strong> (Robertson &amp; Zaragoza, 2009), the refined heir to TF-IDF. It is unbeatable at one thing: matching exact tokens — product codes, error strings, proper nouns, acronyms — that a dense model may smear into a nearby-but-wrong region of the vector space.</li>
+          <li><strong>Dense / semantic retrieval</strong> scores by embedding similarity (§7.4), as in Dense Passage Retrieval (Karpukhin et al., 2020). It captures paraphrase and meaning, matching "car won't start" to "engine fails to crank" with zero shared content words — exactly where BM25 returns nothing.</li>
+        </ul>
+
+        <div class="eq"><span class="eq-tag">EQ A7.3 — BM25 SCORE</span>
+        $$ \text{BM25}(q, D) \;=\; \sum_{t \in q} \text{IDF}(t)\,\cdot\, \frac{f(t, D)\,(k_1 + 1)}{f(t, D) + k_1\left(1 - b + b\,\dfrac{|D|}{\overline{|D|}}\right)} $$
+        <div class="eq-note">Sum over query terms \(t\). \(f(t,D)\) is term \(t\)'s frequency in document \(D\); \(\text{IDF}(t)\) up-weights rare terms; \(|D|/\overline{|D|}\) is the document length divided by the average, so \(b\) (\(\approx 0.75\)) penalizes long documents and \(k_1\) (\(\approx 1.2\text{–}2.0\)) controls term-frequency saturation. <b>The saturation is the whole point: the tenth occurrence of a term adds far less than the first, so keyword stuffing cannot run away with the score.</b> BM25 needs no training and no GPU; it is the baseline every dense retriever must beat, and frequently does not, alone.</div>
+        </div>
+
+        <p>Because their failure modes are disjoint, the production answer is <strong>hybrid retrieval</strong>: run both, then fuse the two ranked lists. The simplest robust fusion does not even need the raw scores — which live on incomparable scales — only the ranks. <strong>Reciprocal Rank Fusion</strong> sums a discounted contribution from each list:</p>
+
+        <div class="eq"><span class="eq-tag">EQ A7.4 — RECIPROCAL RANK FUSION</span>
+        $$ \text{RRF}(d) \;=\; \sum_{r \in R} \frac{1}{\,K + \text{rank}_r(d)\,} $$
+        <div class="eq-note">For document \(d\), sum over each ranker \(r\) (e.g. BM25 and dense) the reciprocal of its rank in that list, softened by a constant \(K\) (commonly 60). A document ranked 1st by BM25 and 2nd by the dense retriever scores \(1/61 + 1/62\). <b>RRF is scale-free</b>: it never compares BM25 scores to cosine values, only positions, which is why it is the default fusion in production search and beats hand-tuned score weighting in most settings. \(K\) damps the influence of low ranks: a large \(K\) flattens the contribution curve, a small \(K\) lets the top of each list dominate.</div>
+        </div>
+
+        <div class="exercise" data-answer="0.0325" data-tol="0.01" data-hint="RRF = 1/(K+rank_bm25) + 1/(K+rank_dense) with K = 60">
+          <div class="ex-q">With \(K = 60\), a document is ranked <b>1st</b> by BM25 and <b>3rd</b> by the dense retriever. By EQ A7.4 its RRF score is \(\frac{1}{60+1} + \frac{1}{60+3}\). Compute it (round to 4 decimals).</div>
+          <div class="ex-reveal-src">\(\frac{1}{61} = 0.016393\) and \(\frac{1}{63} = 0.015873\). Sum \(= 0.016393 + 0.015873 = 0.032266 \approx\) <b>0.0323</b>. A document that both rankers like rises above one that only a single ranker liked, with no score-scale calibration needed. The answer is <b>0.0323</b>.</div>
+        </div>
+
+        <div class="pycell" data-py>
+          <div class="py-head"><span>PYTHON · RUNNABLE IN-BROWSER</span><span class="py-status"></span></div>
+          <pre class="py-src" contenteditable="true" spellcheck="false"># a tiny BM25 over toy documents (EQ A7.3), then fuse with a dense list (EQ A7.4)
+import numpy as np
+
+docs = [
+    "reset your password from the account settings page",
+    "i forgot my login and cannot sign in",
+    "billing invoice and payment refund policy",
+    "track a shipped package with the tracking id",
+]
+def toks(s): return s.lower().split()
+corpus = [toks(d) for d in docs]
+avgdl = np.mean([len(d) for d in corpus])
+N = len(corpus)
+k1, b = 1.5, 0.75
+
+def idf(term):                        # BM25 idf with the +0.5 smoothing
+    nq = sum(term in d for d in corpus)
+    return np.log((N - nq + 0.5) / (nq + 0.5) + 1)
+
+def bm25(query):
+    q = toks(query); out = []
+    for d in corpus:
+        s = 0.0
+        for t in set(q):
+            f = d.count(t)
+            if f == 0: continue
+            s += idf(t) * f * (k1 + 1) / (f + k1 * (1 - b + b * len(d) / avgdl))
+        out.append(s)
+    return np.array(out)
+
+scores = bm25("forgot password login")
+rank_bm25 = np.argsort(-scores)       # best first
+# pretend a dense retriever returned this order (doc indices, best first):
+rank_dense = np.array([0, 1, 3, 2])
+
+def rrf(ranks_lists, K=60):
+    fused = np.zeros(N)
+    for ranks in ranks_lists:
+        for pos, doc in enumerate(ranks):
+            fused[doc] += 1.0 / (K + pos + 1)   # rank is 1-based
+    return fused
+
+fused = rrf([rank_bm25, rank_dense])
+print("BM25 scores :", scores.round(3))
+print("BM25 order  :", rank_bm25.tolist())
+print("dense order :", rank_dense.tolist())
+print("RRF fused   :", fused.round(4).tolist())
+print("hybrid top-2:", np.argsort(-fused)[:2].tolist(),
+      "->", [docs[i][:24] for i in np.argsort(-fused)[:2]])</pre>
+          <div class="py-bar"><button class="w-btn py-run">RUN ▶</button><span class="py-note">edits are live — break it on purpose</span></div>
+          <pre class="py-out" hidden></pre>
+          <canvas class="py-plot" hidden height="260"></canvas>
+        </div>
+      </section>
+
+      <!-- ====================== 7.6 ====================== -->
+      <section class="section" id="s6">
+        <div class="sec-head"><span class="sec-num">7.6</span><h2>Reranking and query transformation</h2></div>
+        <p>The retriever's job is recall under a tight latency budget: surface a generous candidate set (say top-50) fast. That set is usually <em>mis-ordered</em> — the truly best passage may sit at rank 11. A <strong>reranker</strong> takes the small candidate set and re-scores it with a much more expensive, much more accurate model, then keeps the top few.</p>
+        <p>The architectural distinction is the whole story. The first-stage retriever is a <strong>bi-encoder</strong>: it embeds the query and each document <em>separately</em>, so document vectors can be precomputed and indexed, but the query never interacts with the document text — only their final vectors meet, at a dot product. A reranker is a <strong>cross-encoder</strong>: it feeds the query and one candidate document <em>together</em> through a transformer, so every query token can attend to every document token (Vol II · EQ 3.1). That cross-attention is far more discriminating — it sees the actual word-level interactions a single dot product cannot — but it cannot be precomputed, so it costs one full forward pass per candidate. The two-stage pattern resolves the tension: cheap bi-encoder narrows millions to dozens, expensive cross-encoder perfects the order of those dozens.</p>
+        <table class="data">
+          <thead><tr><th></th><th>Bi-encoder (retriever)</th><th>Cross-encoder (reranker)</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Query–doc interaction</strong></td><td class="m">none until the dot product</td><td class="m">full cross-attention, all token pairs</td></tr>
+            <tr><td><strong>Precompute docs?</strong></td><td class="hl">yes — index offline</td><td class="m">no — must run at query time</td></tr>
+            <tr><td><strong>Cost</strong></td><td class="m">one ANN lookup</td><td class="m">one forward pass per candidate</td></tr>
+            <tr><td><strong>Role</strong></td><td class="m">recall over millions, fast</td><td class="hl">precision over dozens, accurate</td></tr>
+          </tbody>
+        </table>
+
+        <p><strong>Query transformation</strong> attacks the same recall problem from the other end — by fixing the query before it ever hits the index. Three techniques earn their keep:</p>
+        <ul>
+          <li><strong>Query rewriting / expansion.</strong> Have an LLM rephrase a terse or conversational query into a retrieval-friendly form, resolve pronouns from the conversation ("it" → "the refund policy"), and add synonyms. Cheap, and it fixes the most common failure: a user query that is not phrased like the documents.</li>
+          <li><strong>HyDE (Hypothetical Document Embeddings).</strong> Instead of embedding the question, ask the LLM to <em>write a hypothetical answer</em> and embed that. A fabricated answer, even if factually wrong, lives near real answers in embedding space — it shares their vocabulary and shape — so it retrieves better than the bare question, which is phrased nothing like the documents it should match.</li>
+          <li><strong>Multi-query.</strong> Generate several paraphrases of the question, retrieve for each, and union (or RRF-fuse) the results. This widens recall for ambiguous queries at the cost of more retrieval calls.</li>
+        </ul>
+
+        <div class="widget" id="rag-rerank" data-reveal>
+          <div class="w-head"><span class="w-dot"></span><span class="w-title">INSTRUMENT A7.3 — RERANKER ORDER SHIFT</span><span class="w-sub">BI-ENCODER CANDIDATES → CROSS-ENCODER ORDER</span></div>
+          <div class="w-body">
+            <div class="ctl-row">
+              <div class="ctl" style="flex:0 0 auto;min-width:auto;">
+                <label>STAGE</label>
+                <div class="seg-row">
+                  <button class="w-btn ghost on" data-rag-rr-stage="retr">RETRIEVER ORDER</button>
+                  <button class="w-btn ghost" data-rag-rr-stage="rerank">AFTER RERANK</button>
+                </div>
+              </div>
+              <div class="ctl"><label>KEEP TOP-k <output id="rag-rr-k-out">3</output></label><input type="range" id="rag-rr-k" min="1" max="6" step="1" value="3"/></div>
+            </div>
+            <canvas class="w-canvas" id="rag-rr-canvas" height="290"></canvas>
+            <div class="readout-strip">
+              <div class="readout"><div class="r-label">RELEVANT IN TOP-k (RETRIEVER)</div><div class="r-value" id="rag-rr-before">—</div></div>
+              <div class="readout acc"><div class="r-label">RELEVANT IN TOP-k (RERANKED)</div><div class="r-value" id="rag-rr-after">—</div></div>
+              <div class="readout"><div class="r-label">PRECISION@k LIFT</div><div class="r-value" id="rag-rr-lift">—</div></div>
+            </div>
+          </div>
+          <div class="w-note">Eight candidates the bi-encoder returned, mint = truly relevant. In RETRIEVER ORDER two relevant passages languish below the top-3 cut line — the dot product mis-ranked them. Toggle AFTER RERANK and the cross-encoder pulls them up, because it actually read the query against each document. The lift readout is the precision@k gain. Slide k to see why reranking matters most at small k: the tighter the context budget, the more the order of the first few passages decides the answer.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 7.7 ====================== -->
+      <section class="section" id="s7">
+        <div class="sec-head"><span class="sec-num">7.7</span><h2>Context assembly and lost-in-the-middle</h2></div>
+        <p>You now have a short, reranked list of passages. How you arrange them in the prompt is not cosmetic. Liu et al. (2023) documented a robust position effect: when relevant information is placed in the <em>middle</em> of a long context, models use it markedly less reliably than when the same information sits at the very start or the very end. Accuracy as a function of the gold passage's position is U-shaped, not flat — a model with a 100K window does not attend uniformly across it.</p>
+        <p>The engineering consequences are concrete:</p>
+        <ul>
+          <li><strong>Order by relevance toward the edges.</strong> Put the most relevant reranked passages first and last, not buried in the middle. Some pipelines deliberately interleave to keep top passages at both ends.</li>
+          <li><strong>Fewer, better passages beat more, noisier ones.</strong> Padding the context with marginal chunks does not help and can hurt: it adds <strong>distractors</strong> (§7.8) and pushes the gold passage toward the lost-in-the-middle zone. This is the quantitative case for aggressive reranking — context budget spent on rank-20 noise is worse than wasted.</li>
+          <li><strong>Cite explicitly.</strong> Number the passages and instruct the model to ground each claim in a numbered source. This makes citations checkable and discourages the model from answering from parametric memory when the passages do not support a claim.</li>
+        </ul>
+        <p>The instruction also matters: a prompt that says "answer only from the provided context; if the answer is not present, say so" measurably reduces ungrounded answers compared to a prompt that merely provides context. Grounding is partly retrieval and partly instruction.</p>
+        <p class="note">Lost-in-the-middle is the retrieval-side mirror of the long-context argument in §7.9. A bigger window does not make position effects disappear; it enlarges the middle where attention is weakest. Retrieving fewer, well-ordered passages is often more accurate than dumping a hundred candidates into a long context and hoping the model finds the needle.</p>
+      </section>
+
+      <!-- ====================== 7.8 ====================== -->
+      <section class="section" id="s8">
+        <div class="sec-head"><span class="sec-num">7.8</span><h2>Evaluation and failure modes</h2></div>
+        <p>RAG has two stages to evaluate, and conflating them is the most common measurement mistake. Evaluate the <strong>retriever</strong> and the <strong>generator</strong> separately, because a bad answer can come from either, and the fix differs entirely.</p>
+        <p><strong>Retrieval metrics</strong> need a labelled set: queries with their known-relevant chunks. The two workhorses:</p>
+        <div class="eq"><span class="eq-tag">EQ A7.5 — RECALL@k AND PRECISION@k</span>
+        $$ \text{Recall@}k \;=\; \frac{|\,\text{relevant} \cap \text{top-}k\,|}{|\,\text{relevant}\,|}, \qquad \text{Precision@}k \;=\; \frac{|\,\text{relevant} \cap \text{top-}k\,|}{k} $$
+        <div class="eq-note">Recall@k: of all the chunks that should have been found, what fraction made the top-\(k\). Precision@k: of the \(k\) you returned, what fraction were relevant. <b>For RAG, recall@k is the metric that bounds answer quality</b> — a passage the retriever never surfaces is a passage the model can never use, so recall is the ceiling on everything downstream. Precision@k matters because every irrelevant passage spends context budget and risks distracting the generator (lost-in-the-middle, §7.7). Rank-aware variants (MRR, nDCG) additionally reward putting the relevant chunk near the top.</div>
+        </div>
+
+        <p><strong>Generation metrics</strong> ask whether the answer is supported by the retrieved context, which is the property RAG actually promises:</p>
+        <ul>
+          <li><strong>Faithfulness / groundedness.</strong> Is every claim in the answer entailed by the retrieved passages? An unfaithful answer hallucinated beyond its sources even though the sources were present. Typically scored by an LLM judge (Vol IV Ch 06) decomposing the answer into claims and checking each against the context — with all the judge caveats from that chapter.</li>
+          <li><strong>Answer relevance.</strong> Does the answer actually address the question, regardless of grounding?</li>
+          <li><strong>Context relevance / precision.</strong> Were the retrieved passages actually needed, or did the retriever pad the context with noise?</li>
+        </ul>
+        <p>The diagnostic table that turns a vague "RAG is wrong" into an owned bug:</p>
+        <table class="data">
+          <thead><tr><th>Failure mode</th><th>Symptom</th><th>Where it lives</th><th>First fix</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Stale index</strong></td><td class="m">confidently cites outdated facts</td><td>indexing</td><td class="hl">Re-index on source change; track corpus version in the trace</td></tr>
+            <tr><td><strong>Chunk boundary split</strong></td><td class="m">retrieves half a fact; answer truncated mid-reasoning</td><td>chunking (7.3)</td><td class="hl">Increase overlap; structure-aware splitter; parent-document retrieval</td></tr>
+            <tr><td><strong>Recall miss</strong></td><td class="m">right passage exists but never reaches the model</td><td>retrieval (7.4–7.5)</td><td class="hl">Add hybrid (BM25 + dense); raise efSearch/nprobe; query rewrite / HyDE</td></tr>
+            <tr><td><strong>Distractors</strong></td><td class="m">a near-miss passage misleads the answer</td><td>ranking (7.6)</td><td class="hl">Add a cross-encoder reranker; shrink k; tighten context-only prompt</td></tr>
+            <tr><td><strong>Lost in the middle</strong></td><td class="m">relevant passage retrieved but ignored</td><td>assembly (7.7)</td><td class="hl">Reorder top passages to the edges; fewer, better chunks</td></tr>
+            <tr><td><strong>Ungrounded answer</strong></td><td class="m">good context, answer drifts beyond it</td><td>generation</td><td class="hl">Stronger grounding instruction; faithfulness eval gate; citation check</td></tr>
+          </tbody>
+        </table>
+
+        <div class="exercise" data-answer="0.6" data-tol="0.001" data-hint="recall@k = (relevant items retrieved in top-k) / (total relevant items)">
+          <div class="ex-q">A query has <b>5</b> relevant chunks in the corpus. The retriever's top-10 contains <b>3</b> of them. By EQ A7.5, what is recall@10? (Answer as a decimal.)</div>
+          <div class="ex-reveal-src">Recall@10 \(= \dfrac{|\text{relevant} \cap \text{top-}10|}{|\text{relevant}|} = \dfrac{3}{5} = \) <b>0.6</b>. Two relevant chunks were missed entirely, so the model can answer from at most 3 of 5 sources — recall@k is the ceiling on what the generator can possibly use. The answer is <b>0.6</b>.</div>
+        </div>
+      </section>
+
+      <!-- ====================== 7.9 ====================== -->
+      <section class="section" id="s9">
+        <div class="sec-head"><span class="sec-num">7.9</span><h2>Agentic RAG, and the honest decision</h2></div>
+        <p>Everything above describes <strong>naive RAG</strong>: one retrieval, one generation, fixed pipeline. It is the right default and solves most cases. It fails on questions that need more than one hop — "compare our 2024 and 2025 refund policies" needs two distinct retrievals — or where the first retrieval reveals what the second query should be.</p>
+        <p><strong>Agentic / iterative RAG</strong> hands retrieval to the agent loop of Ch 01. Retrieval becomes a tool the model calls (Ch 03): the agent decides whether to retrieve, formulates its own query, reads the results, and decides whether to retrieve again, refine, or answer. This subsumes the techniques above — query rewriting becomes the agent choosing a better query; multi-query becomes the agent issuing several searches; reranking becomes the agent reading and discarding. It is strictly more capable and strictly more expensive (every hop is a model call plus a retrieval), and it inherits every agent failure mode from Ch 06: loops, premature termination, hallucinated tool args. Reach for it when single-shot recall is provably insufficient, not by default.</p>
+
+        <p>Finally, the question that should precede all of this engineering. RAG is one of three ways to give a model knowledge it did not have, and they are not interchangeable:</p>
+        <table class="data">
+          <thead><tr><th></th><th>RAG</th><th>Long context</th><th>Fine-tuning</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Best for</strong></td><td class="m">large, changing, citable knowledge bases</td><td class="m">a few documents, used once, per request</td><td class="m">teaching style, format, or a skill</td></tr>
+            <tr><td><strong>Freshness</strong></td><td class="hl">update by writing a row</td><td class="hl">whatever you paste in</td><td class="m">frozen at training time</td></tr>
+            <tr><td><strong>Citations</strong></td><td class="hl">native — points to chunks</td><td class="m">possible but unindexed</td><td class="m">none</td></tr>
+            <tr><td><strong>Per-query cost</strong></td><td class="hl">low (small context)</td><td class="m">high (whole corpus in context)</td><td class="hl">low</td></tr>
+            <tr><td><strong>Upfront cost</strong></td><td class="m">build &amp; maintain a pipeline</td><td class="hl">none</td><td class="m">a training run + data curation</td></tr>
+            <tr><td><strong>Main failure</strong></td><td class="m">recall misses</td><td class="m">lost-in-the-middle; price</td><td class="m">catastrophic forgetting; staleness</td></tr>
+          </tbody>
+        </table>
+        <p>The honest reading: they are complementary, not competing. Fine-tuning teaches the model <em>how</em> to behave (a domain's tone, an output schema, a reasoning style); RAG supplies <em>what</em> is true right now; long context handles the one-off document you will never query again. A common production stack fine-tunes for format and behaviour, then uses RAG for facts. "Just use a long context window" is tempting as windows grow, but it pays the full context price on <em>every</em> query, offers no citations, and walks straight into lost-in-the-middle at the scales where it would matter. Use the cheapest mechanism that meets the requirement, and reach for RAG precisely when the knowledge is large, private, changing, or must be cited.</p>
+
+        <div class="exercise" data-answer="0.6429" data-tol="0.01" data-hint="cost per resolved = cost per run / resolution rate; pick the cheaper one">
+          <div class="ex-q">A long-context approach costs \(\$0.90\) per query and answers correctly <b>80%</b> of the time; a RAG pipeline costs \(\$0.45\) per query and answers correctly <b>70%</b> of the time. Using the cost-per-resolved-task idea from Ch 06 (\(C/\Pr[\text{correct}]\)), what is the cost per correct answer of the <em>cheaper-per-correct-answer</em> option (round to 4 decimals)?</div>
+          <div class="ex-reveal-src">Long context: \(0.90/0.80 = \$1.125\) per correct answer. RAG: \(0.45/0.70 = \$0.6429\) per correct answer. RAG is cheaper per correct answer despite the lower raw accuracy, because it is half the price per query — exactly the lesson of Ch 06: compare on cost per resolved task, never on accuracy or raw cost alone. The cheaper option costs <b>0.6429</b>.</div>
+        </div>
+
+        <div class="callout">
+          <span class="co-icon">NEXT</span>
+          <p><strong>That closes Volume IV.</strong> Across seven chapters you went from the bare agentic loop to context engineering, tools and MCP, harness and loop design, evaluation and cost, and now retrieval — the discipline that grounds an agent in knowledge it was never trained on. The four volumes together cover the stack: foundations, prompting, and agent engineering. <a href="../index.html#toc">Return to the full contents</a> to revisit a thread, or carry these patterns into the Gym and put them under load.</p>
+        </div>
+      </section>
+
+      <!-- ====================== REFERENCES ====================== -->
+      <section class="section" id="refs">
+        <div class="sec-head"><span class="sec-num">§</span><h2>References</h2></div>
+        <ol class="ref-list">
+          <li><a href="https://arxiv.org/abs/2005.11401" target="_blank" rel="noopener">Lewis, P. et al. (2020). <span class="ref-venue">Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks</span>.</a> <span class="ref-meta">arXiv:2005.11401 · the paper that named RAG and trained retriever + generator jointly</span></li>
+          <li><a href="https://arxiv.org/abs/2004.04906" target="_blank" rel="noopener">Karpukhin, V. et al. (2020). <span class="ref-venue">Dense Passage Retrieval for Open-Domain Question Answering</span>.</a> <span class="ref-meta">arXiv:2004.04906 · the dual-encoder dense retriever behind modern semantic search</span></li>
+          <li><a href="https://arxiv.org/abs/2307.03172" target="_blank" rel="noopener">Liu, N. F. et al. (2023). <span class="ref-venue">Lost in the Middle: How Language Models Use Long Contexts</span>.</a> <span class="ref-meta">arXiv:2307.03172 · the U-shaped position effect that governs context assembly</span></li>
+          <li><a href="https://arxiv.org/abs/2312.10997" target="_blank" rel="noopener">Gao, Y. et al. (2023). <span class="ref-venue">Retrieval-Augmented Generation for Large Language Models: A Survey</span>.</a> <span class="ref-meta">arXiv:2312.10997 · the naive / advanced / modular RAG taxonomy used here</span></li>
+          <li><a href="https://doi.org/10.1561/1500000019" target="_blank" rel="noopener">Robertson, S. &amp; Zaragoza, H. (2009). <span class="ref-venue">The Probabilistic Relevance Framework: BM25 and Beyond</span>.</a> <span class="ref-meta">DOI:10.1561/1500000019 · the canonical derivation of the BM25 scorer</span></li>
+        </ol>
+      </section>
+
+      <nav class="pager">
+        <a href="06-evals-observability.html"><div class="p-dir">← PREVIOUS</div><div class="p-title"><span class="p-num">06</span> Evals, Observability &amp; Cost</div></a>
+        <a class="next" href="../index.html#toc"><div class="p-dir">BACK TO INDEX</div><div class="p-title"><span class="p-num">↩</span> The Full Contents</div></a>
+      </nav>
+    </main>
+  </div>
+</div>
+
+<footer class="footer"><div class="shell">
+  <div class="f-col">AI // ENCYCLOPEDIA — VOL IV · CH 07</div>
+  <div class="f-col"><a href="../index.html#toc">FULL CONTENTS ↗</a></div>
+</div></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="if(window.__manualMathReady)window.__manualMathReady()"></script>
+<script src="../assets/js/glossary.js?v=2bf561ce"></script>
+<script src="../assets/js/shared.js?v=73df24d8"></script>
+<script src="../assets/js/exercises.js?v=56a8ee64"></script>
+<script src="../assets/js/pyrunner.js?v=501f0a15"></script>
+<script src="../assets/js/search.js?v=b56ede0c"></script>
+<script>
+/* chapter instruments — single IIFE, no globals */
+(function () {
+  "use strict";
+  var FM = window.FM;
+  if (!FM) return;
+
+  function pct(x, d) { return (100 * x).toFixed(d === undefined ? 1 : d) + "%"; }
+
+  /* ============ INSTRUMENT A7.1 — COSINE RETRIEVAL PLAYGROUND ============ */
+  (function () {
+    var root = document.getElementById("rag-sim");
+    if (!root) return;
+    var angEl = document.getElementById("rag-sim-ang"),
+        kEl = document.getElementById("rag-sim-k"),
+        angOut = document.getElementById("rag-sim-ang-out"),
+        kOut = document.getElementById("rag-sim-k-out"),
+        cv = document.getElementById("rag-sim-canvas"),
+        rTop = document.getElementById("rag-sim-top"),
+        rScore = document.getElementById("rag-sim-score"),
+        rSet = document.getElementById("rag-sim-set");
+    var metric = "cos";
+
+    /* six docs: angle (deg) + magnitude. The long red one is high-magnitude, off-angle. */
+    var DOCS = [
+      { name: "D1 login",    deg: 12,  mag: 1.0 },
+      { name: "D2 password", deg: 26,  mag: 0.9 },
+      { name: "D3 account",  deg: 44,  mag: 1.05 },
+      { name: "D4 billing",  deg: 63,  mag: 0.95 },
+      { name: "D5 shipping", deg: 80,  mag: 1.0 },
+      { name: "D6 verbose",  deg: 70,  mag: 1.7 }   /* long off-angle distractor */
+    ];
+
+    function score(d, qDeg) {
+      var dr = d.deg * Math.PI / 180, qr = qDeg * Math.PI / 180;
+      var dx = Math.cos(dr) * d.mag, dy = Math.sin(dr) * d.mag;
+      var qx = Math.cos(qr), qy = Math.sin(qr);          /* query is unit length */
+      var dot = dx * qx + dy * qy;
+      if (metric === "dot") return dot;
+      return dot / (d.mag * 1.0);                         /* cosine */
+    }
+
+    function draw(qDeg, k) {
+      var s = FM.setupCanvas(cv, 300), ctx = s.ctx;
+      ctx.clearRect(0, 0, s.w, s.h);
+      var ox = 54, oy = s.h - 40;                          /* origin */
+      var span = Math.min(s.w - ox - 30, oy - 24);
+      function PX(deg, mag) { return ox + Math.cos(deg * Math.PI / 180) * mag * span; }
+      function PY(deg, mag) { return oy - Math.sin(deg * Math.PI / 180) * mag * span; }
+
+      /* axes */
+      ctx.strokeStyle = FM.C.HAIR; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(ox, oy); ctx.lineTo(ox + span + 18, oy); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(ox, oy); ctx.lineTo(ox, oy - span - 12); ctx.stroke();
+      ctx.font = FM.C.MONO; ctx.fillStyle = FM.C.MUT; ctx.textAlign = "center";
+      ctx.fillText("DIM 1", ox + span - 10, oy + 18);
+      ctx.save(); ctx.translate(ox - 18, oy - span / 2); ctx.rotate(-Math.PI / 2);
+      ctx.fillText("DIM 2", 0, 0); ctx.restore();
+
+      /* rank docs */
+      var scored = DOCS.map(function (d, i) { return { i: i, d: d, sc: score(d, qDeg) }; });
+      scored.sort(function (a, b) { return b.sc - a.sc; });
+      var inTop = {};
+      var ki; for (ki = 0; ki < k && ki < scored.length; ki++) inTop[scored[ki].i] = true;
+
+      /* doc vectors */
+      var i;
+      for (i = 0; i < DOCS.length; i++) {
+        var d = DOCS[i], hot = inTop[i];
+        var x = PX(d.deg, d.mag), y = PY(d.deg, d.mag);
+        var isVerbose = (d.name.indexOf("verbose") >= 0);
+        ctx.strokeStyle = hot ? FM.C.MINT : (isVerbose ? FM.C.RED : FM.C.MUT);
+        ctx.lineWidth = hot ? 1.8 : 1;
+        ctx.beginPath(); ctx.moveTo(ox, oy); ctx.lineTo(x, y); ctx.stroke();
+        ctx.fillStyle = hot ? FM.C.MINT : (isVerbose ? FM.C.RED : FM.C.SEC);
+        ctx.beginPath(); ctx.arc(x, y, hot ? 4 : 3, 0, Math.PI * 2); ctx.fill();
+        ctx.textAlign = "left";
+        ctx.fillText(d.name, x + 6, y - 4);
+      }
+
+      /* query vector */
+      var qx = PX(qDeg, 1.0), qy = PY(qDeg, 1.0);
+      ctx.strokeStyle = FM.C.BLUE; ctx.lineWidth = 2.2;
+      ctx.beginPath(); ctx.moveTo(ox, oy); ctx.lineTo(qx, qy); ctx.stroke();
+      ctx.fillStyle = FM.C.BRIGHT;
+      ctx.beginPath(); ctx.arc(qx, qy, 4, 0, Math.PI * 2); ctx.fill();
+      ctx.textAlign = "left"; ctx.fillText("QUERY", qx + 6, qy - 4);
+
+      return scored;
+    }
+
+    function render() {
+      var qDeg = +angEl.value, k = +kEl.value;
+      angOut.textContent = qDeg + "°";
+      kOut.textContent = k;
+      var scored = draw(qDeg, k);
+      rTop.textContent = scored[0].d.name;
+      rScore.textContent = scored[0].sc.toFixed(3);
+      var names = [];
+      var i; for (i = 0; i < k && i < scored.length; i++) names.push(scored[i].d.name.split(" ")[0]);
+      rSet.textContent = names.join(" · ");
+    }
+
+    var mbtns = root.querySelectorAll("[data-rag-sim-metric]");
+    var b;
+    for (b = 0; b < mbtns.length; b++) {
+      (function (btn) {
+        btn.addEventListener("click", function () {
+          metric = btn.getAttribute("data-rag-sim-metric");
+          var j; for (j = 0; j < mbtns.length; j++) mbtns[j].classList.remove("on");
+          btn.classList.add("on");
+          render();
+        });
+      })(mbtns[b]);
+    }
+    [angEl, kEl].forEach(function (el) { el.addEventListener("input", render); });
+    window.addEventListener("resize", render);
+    render();
+  })();
+
+  /* ============ INSTRUMENT A7.2 — CHUNK-SIZE TRADE-OFF ============ */
+  (function () {
+    var root = document.getElementById("rag-chunk");
+    if (!root) return;
+    var cEl = document.getElementById("rag-chunk-c"),
+        oEl = document.getElementById("rag-chunk-o"),
+        lEl = document.getElementById("rag-chunk-L"),
+        cOut = document.getElementById("rag-chunk-c-out"),
+        oOut = document.getElementById("rag-chunk-o-out"),
+        lOut = document.getElementById("rag-chunk-L-out"),
+        cv = document.getElementById("rag-chunk-canvas"),
+        rPrec = document.getElementById("rag-chunk-prec"),
+        rRec = document.getElementById("rag-chunk-rec"),
+        rN = document.getElementById("rag-chunk-n");
+
+    /* illustrative models of the precision/recall tension over chunk size c.
+       precision falls as chunks grow (one vector averages more topics);
+       recall rises with size (facts less likely to split) but overlap helps recall too. */
+    function precision(c) {
+      /* high at small c, decays toward large c; bounded in (0.3, 0.97) */
+      return 0.35 + 0.62 * Math.exp(-(c - 50) / 520);
+    }
+    function recall(c, o) {
+      /* low at tiny c (boundary splits), saturating high as c grows */
+      var base = 0.95 - 0.55 * Math.exp(-(c - 50) / 300);
+      var ovl = 0.10 * (1 - Math.exp(-o / 120));      /* overlap recovers boundary recall */
+      return Math.min(0.99, base + ovl);
+    }
+
+    function draw(c, o) {
+      var s = FM.setupCanvas(cv, 240), ctx = s.ctx;
+      ctx.clearRect(0, 0, s.w, s.h);
+      var L = 44, R = 16, T = 16, B = 30;
+      var pw = s.w - L - R, ph = s.h - T - B;
+      var cMin = 50, cMax = 1200;
+      function X(cc) { return L + ((cc - cMin) / (cMax - cMin)) * pw; }
+      function Y(v) { return T + (1 - v) * ph; }
+
+      ctx.font = FM.C.MONO;
+      /* grid */
+      var g;
+      for (g = 0; g <= 4; g++) {
+        var v = g / 4;
+        ctx.strokeStyle = FM.C.HAIR; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(L, Y(v)); ctx.lineTo(L + pw, Y(v)); ctx.stroke();
+        ctx.fillStyle = FM.C.MUT; ctx.textAlign = "right";
+        ctx.fillText((v * 100).toFixed(0) + "%", L - 6, Y(v) + 3);
+      }
+      ctx.textAlign = "center";
+      var ticks = [50, 350, 700, 1050], t;
+      for (t = 0; t < ticks.length; t++) ctx.fillText(ticks[t], X(ticks[t]), T + ph + 16);
+      ctx.fillStyle = FM.C.MUT; ctx.fillText("CHUNK SIZE c (tokens)", L + pw / 2, T + ph + 26);
+
+      /* precision curve (blue) */
+      ctx.strokeStyle = FM.C.BLUE; ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      var cc, first = true;
+      for (cc = cMin; cc <= cMax; cc += 12) {
+        var y = Y(precision(cc));
+        if (first) { ctx.moveTo(X(cc), y); first = false; } else ctx.lineTo(X(cc), y);
+      }
+      ctx.stroke();
+      /* recall curve (mint) */
+      ctx.strokeStyle = FM.C.MINT; ctx.lineWidth = 1.6;
+      ctx.beginPath(); first = true;
+      for (cc = cMin; cc <= cMax; cc += 12) {
+        var yr = Y(recall(cc, o));
+        if (first) { ctx.moveTo(X(cc), yr); first = false; } else ctx.lineTo(X(cc), yr);
+      }
+      ctx.stroke();
+
+      /* current c marker */
+      ctx.strokeStyle = FM.C.SEC; ctx.lineWidth = 1; ctx.setLineDash([2, 3]);
+      ctx.beginPath(); ctx.moveTo(X(c), T); ctx.lineTo(X(c), T + ph); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = FM.C.BLUE; ctx.beginPath(); ctx.arc(X(c), Y(precision(c)), 3.5, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = FM.C.MINT; ctx.beginPath(); ctx.arc(X(c), Y(recall(c, o)), 3.5, 0, Math.PI * 2); ctx.fill();
+
+      /* legend */
+      ctx.textAlign = "left";
+      ctx.fillStyle = FM.C.BLUE; ctx.fillRect(L + 4, T + 2, 8, 8);
+      ctx.fillStyle = FM.C.SEC; ctx.fillText("PRECISION@k", L + 16, T + 9);
+      ctx.fillStyle = FM.C.MINT; ctx.fillRect(L + 110, T + 2, 8, 8);
+      ctx.fillStyle = FM.C.SEC; ctx.fillText("RECALL@k", L + 122, T + 9);
+    }
+
+    function chunkCount(Ltok, c, o) {
+      var stride = Math.max(1, c - o);
+      return Math.max(1, Math.ceil((Ltok - o) / stride));
+    }
+
+    function render() {
+      var c = +cEl.value, o = +oEl.value, Lm = +lEl.value;
+      if (o >= c) { o = c - 10; oEl.value = o; }          /* keep overlap < chunk */
+      cOut.textContent = c;
+      oOut.textContent = o;
+      var Ltok = Lm * 100000;                              /* corpus tokens */
+      lOut.textContent = (Ltok / 1e6).toFixed(1) + "M tok";
+      rPrec.textContent = pct(precision(c));
+      rRec.textContent = pct(recall(c, o));
+      rN.textContent = FM.siFormat(chunkCount(Ltok, c, o), 1);
+      draw(c, o);
+    }
+
+    [cEl, oEl, lEl].forEach(function (el) { el.addEventListener("input", render); });
+    window.addEventListener("resize", render);
+    render();
+  })();
+
+  /* ============ INSTRUMENT A7.3 — RERANKER ORDER SHIFT ============ */
+  (function () {
+    var root = document.getElementById("rag-rerank");
+    if (!root) return;
+    var kEl = document.getElementById("rag-rr-k"),
+        kOut = document.getElementById("rag-rr-k-out"),
+        cv = document.getElementById("rag-rr-canvas"),
+        rBefore = document.getElementById("rag-rr-before"),
+        rAfter = document.getElementById("rag-rr-after"),
+        rLift = document.getElementById("rag-rr-lift");
+    var stage = "retr";
+
+    /* 8 candidates: label, relevant?, retriever rank order, reranked order.
+       The retriever buries two relevant docs; the cross-encoder lifts them. */
+    var CAND = [
+      { id: "C-a", rel: true  },
+      { id: "C-b", rel: false },
+      { id: "C-c", rel: false },
+      { id: "C-d", rel: true  },
+      { id: "C-e", rel: false },
+      { id: "C-f", rel: true  },
+      { id: "C-g", rel: false },
+      { id: "C-h", rel: true  }
+    ];
+    /* indices into CAND, best-first */
+    var RETR_ORDER   = [0, 1, 2, 3, 4, 5, 6, 7];   /* relevant at 1,4,6,8 */
+    var RERANK_ORDER = [0, 3, 5, 7, 1, 2, 4, 6];   /* all relevant lifted to top-4 */
+
+    function order() { return stage === "retr" ? RETR_ORDER : RERANK_ORDER; }
+
+    function relevantInTopK(ord, k) {
+      var n = 0, i;
+      for (i = 0; i < k && i < ord.length; i++) if (CAND[ord[i]].rel) n++;
+      return n;
+    }
+
+    function draw(k) {
+      var s = FM.setupCanvas(cv, 290), ctx = s.ctx;
+      ctx.clearRect(0, 0, s.w, s.h);
+      var ord = order();
+      var L = 14, R = 14, T = 22, rowH = 30;
+      var bw = s.w - L - R;
+      ctx.font = FM.C.MONO;
+      ctx.textAlign = "left"; ctx.fillStyle = FM.C.MUT;
+      ctx.fillText(stage === "retr" ? "BI-ENCODER RETRIEVER ORDER" : "CROSS-ENCODER RERANKED ORDER", L, 13);
+
+      var i;
+      for (i = 0; i < ord.length; i++) {
+        var c = CAND[ord[i]];
+        var y = T + i * rowH;
+        var inTop = i < k;
+        /* row bar */
+        ctx.fillStyle = c.rel ? (inTop ? FM.C.MINT : "rgba(166,242,204,0.28)")
+                              : (inTop ? FM.C.MUT : "rgba(99,99,99,0.4)");
+        ctx.fillRect(L, y, 24, rowH - 8);
+        ctx.fillStyle = inTop ? FM.C.BRIGHT : FM.C.SEC;
+        ctx.fillText((i + 1) + ".  " + c.id + (c.rel ? "  · relevant" : "  · distractor"),
+                     L + 34, y + (rowH - 8) / 2 + 3);
+      }
+      /* cut line below top-k */
+      var cy = T + k * rowH - 4;
+      ctx.strokeStyle = FM.C.BLUE; ctx.lineWidth = 1; ctx.setLineDash([4, 3]);
+      ctx.beginPath(); ctx.moveTo(L, cy); ctx.lineTo(L + bw, cy); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = FM.C.BLUE; ctx.textAlign = "right";
+      ctx.fillText("top-" + k + " cut", L + bw, cy - 4);
+    }
+
+    function render() {
+      var k = +kEl.value;
+      kOut.textContent = k;
+      var before = relevantInTopK(RETR_ORDER, k);
+      var after = relevantInTopK(RERANK_ORDER, k);
+      rBefore.textContent = before + " / " + k;
+      rAfter.textContent = after + " / " + k;
+      var pBefore = before / k, pAfter = after / k;
+      rLift.textContent = (pAfter >= pBefore ? "+" : "") + pct(pAfter - pBefore, 0);
+      draw(k);
+    }
+
+    var sbtns = root.querySelectorAll("[data-rag-rr-stage]");
+    var b;
+    for (b = 0; b < sbtns.length; b++) {
+      (function (btn) {
+        btn.addEventListener("click", function () {
+          stage = btn.getAttribute("data-rag-rr-stage");
+          var j; for (j = 0; j < sbtns.length; j++) sbtns[j].classList.remove("on");
+          btn.classList.add("on");
+          render();
+        });
+      })(sbtns[b]);
+    }
+    kEl.addEventListener("input", render);
+    window.addEventListener("resize", render);
+    render();
+  })();
+})();
+</script>
+<script src="../assets/js/videos.js?v=909a2ab2"></script>
+<script src="../assets/js/lesson.js?v=3be29f93"></script>
+<script defer src="/_vercel/insights/script.js"></script>
+</body>
+</html>
